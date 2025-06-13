@@ -16,7 +16,7 @@
 	<title>BBBANDAR SSSAHAM - Bandar Saham Kolektif Untuk Para Ritel Saham</title>
 	<style>
 	body {
-		background-color: #f7f7f7;
+		background-color: #f2f2f2;
 	}
 	
 	section{
@@ -41,6 +41,7 @@
 
 	#home-page > .this-page{
 		background: white;
+		border-radius: 15px;
 	}
 
 	#splash-logo{
@@ -99,10 +100,15 @@
         color: #007bff;
         font-weight: bold;
         border-radius: 6px;
+		width: 30%;
     }
         #emiten-list a:hover {
             color: #fff;
         }
+	
+	.emiten-info{
+		background-color: white;
+	}
 
 	@media (max-width: 960px) {
 		#splash-logo{
@@ -187,24 +193,36 @@
 
 		<!-- halaman home -->
 		<section id="home-page">
-			<div class="this-page d-flex flex-row align-items-center justify-content-between p-4 py-3 my-4">
-				<h2 class="d-flex text-center fs-6" style="font-weight: 600;">Selamat Datang Prajogo Pangestu</h2>
+			<div class="this-page border-bottom d-flex flex-row align-items-center justify-content-between p-4 py-3 my-4">
+				<h2 class="d-flex text-center fs-6" style="font-weight: 600;">👋 Selamat Datang Prajogo Pangestu</h2>
 				<button id="d-flex logout-button" class="btn btn-lg p-0"><i class="fa-solid fa-power-off" style="color: green;"></i></button>
 			</div>
-			
+			<div>
+				<p class="text-center">Bagaimana colllective bandar bekerja, <a href="">Pelajari Lebih Lanjut</a></p>
+			</div>
 			<div class="this-page d-flex flex-column align-items-center border-bottom p-4 mb-4">
-				<p class="text-center">Your collective betting application for stock retail.</p>
-				<h1 class="text-center">Kemungkinan saham yang besok naik</h1> 
-				<span style="margin-bottom: 1rem;">Klik untuk memilih</span>
-				<div id="emiten-list" class="d-flex flex-row align-items-center justify-content-center gap-2 mb-3    "> 
+				<h1 class="text-center mb-4 fs-3 fw-bold">Kemungkinan saham yang besok naik</h1> 
+				<span style="margin-bottom: 1rem;">Klik untuk vote</span>
+				<div id="emiten-list" class="w-100 d-flex flex-row align-items-center justify-content-center gap-2 mb-3    "> 
 					<a class="btn btn-lg btn-outline-primary" href="">BRPT</a> 
 					<a class="btn btn-lg btn-outline-primary" href="">BREN</a> 
 					<a class="btn btn-lg btn-outline-primary" href="">CUAN</a> 
 				</div>
-				<span style="margin-bottom: 1rem;">Hasil dari vote xxx orang akan diumumkan</span>
 				<!-- HTML countdown -->
-				<div id="countdown" class="fs-3 fw-bold text-primary mt-3"></div>
+				<div id="countdown" class="fs-2 fw-bold text-primary my-3"></div>
 				<!-- END HTML countdown -->
+				<span style="margin-bottom: 1rem;">Hasil dari vote akan diumumkan besok jam 09:05 WIB <span style="background-color: yellow;padding: 0px 2px;font-weight: 600;">secara serentak</span></span>
+			</div>
+			<div class="w-100 d-flex flex-grid align-items-center justify-content-center border-bottom mb-4 gap-2">
+				<div class="emiten-info p-4 w-25">
+					<h2 class="text-center">BRPT</h2>
+				</div>
+				<div class="emiten-info p-4 w-25">
+					<h2 class="text-center">BREN</h2>
+				</div>
+				<div class="emiten-info p-4 w-25">
+					<h2 class="text-center">CUAN</h2>
+				</div>	
 			</div>
 		</section>
 
