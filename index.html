@@ -6,16 +6,21 @@
 	<meta name="viewport" content="width=device-width, initial-scale=1.0">
 	<meta name="theme-color" content="#ffffff" />
 	<link rel="manifest" href="manifest.json">
+	<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
+	<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+	<link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+	<link rel="manifest" href="/site.webmanifest">
 	<!-- Bootstrap CSS -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+	<link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css" rel="stylesheet">
 	<title>BBBANDAR SSSAHAM - Bandar Saham Kolektif Untuk Para Ritel Saham</title>
 	<style>
 	body {
-		background-color: #eee;
+		background-color: #f7f7f7;
 	}
 	
-	section {
-		background-color: white;
+	section{
+		background: transparent;
 	}
 	
 	.container {
@@ -32,6 +37,16 @@
 		margin: 0;
 		padding: 0;
 		overflow: hidden;
+	}
+
+	#home-page > .this-page{
+		background: white;
+	}
+
+	#splash-logo{
+		border: 10px solid gold;
+		border-radius: 50%;
+		max-width: 15%;
 	}
 
 	.bg-overlay {
@@ -90,6 +105,10 @@
         }
 
 	@media (max-width: 960px) {
+		#splash-logo{
+			max-width: 30%;
+		}
+
 		/* Buat semua .form-control memenuhi lebar container */
 		#login-form {
 			width: 100% !important;
@@ -113,7 +132,7 @@
 			<div class="this-page d-flex flex-column align-items-center p-4 my-4" style="position: relative;overflow: hidden;color: #fff;z-index:5">
 				
 				<h1 class="text-center" style="font-weight: 900;">SSSAHAM</h1>
-				<img src="splash-logo.png" class="img-fluid my-4" style="border: 10px solid gold;border-radius: 50%;max-width: 30%;">
+				<img src="splash-logo.png" id="splash-logo" class="img-fluid my-4">
 				<div id="manifesto">
 				<!--<div id="manifesto" class="d-grid gap-3" style="grid-template-columns: repeat(2, 1fr);">-->
 					<div class="border-bottom p-3">
@@ -140,11 +159,11 @@
 				<h1 class="text-center">Login</h1>
 				<form id="login-form" class="w-50">
 					<div class="mb-3">
-						<label style="color:#fff" for="username" class="form-label">Username</label>
-						<input type="text" class="form-control" id="username" required> </div>
+						<label style="color:#fff" for="Handphone" class="form-label">No Handphone</label>
+						<input type="text" class="form-control" id="OTP" required> </div>
 					<div class="mb-3">
-						<label style="color:#fff" for="password" class="form-label">Password</label>
-						<input type="password" class="form-control" id="password" required> </div>
+						<label style="color:#fff" for="OTP" class="form-label">OTP</label>
+						<input type="OTP" class="form-control" id="OTP" required> </div>
 					<button type="submit" class="btn btn-primary">Login</button>
 				</form>
 			</div>
@@ -168,10 +187,13 @@
 
 		<!-- halaman home -->
 		<section id="home-page">
-			<div class="this-page d-flex flex-column align-items-center border-bottom p-4 my-4">
-				<button id="logout-button" class="btn btn-danger">Logout</button>
+			<div class="this-page d-flex flex-row align-items-center justify-content-between p-4 py-3 my-4">
+				<h2 class="d-flex text-center fs-6" style="font-weight: 600;">Selamat Datang Prajogo Pangestu</h2>
+				<button id="d-flex logout-button" class="btn btn-lg p-0"><i class="fa-solid fa-power-off" style="color: green;"></i></button>
+			</div>
+			
+			<div class="this-page d-flex flex-column align-items-center border-bottom p-4 mb-4">
 				<p class="text-center">Your collective betting application for stock retail.</p>
-				<h2 class="text-center">Welcome Fajar Putranto</h2>
 				<h1 class="text-center">Kemungkinan saham yang besok naik</h1> 
 				<span style="margin-bottom: 1rem;">Klik untuk memilih</span>
 				<div id="emiten-list" class="d-flex flex-row align-items-center justify-content-center gap-2 mb-3    "> 
