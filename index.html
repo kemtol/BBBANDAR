@@ -8,7 +8,7 @@
 	<link rel="manifest" href="manifest.json">
 	<!-- Bootstrap CSS -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-	<title>BBBANDAR - Aplikasi Bandar Kolektif Untuk Ritel Saham</title>
+	<title>BBBANDAR SSSAHAM - Bandar Saham Kolektif Untuk Para Ritel Saham</title>
 	<style>
 	body {
 		background-color: #eee;
@@ -23,6 +23,62 @@
 		margin: auto;
 	}
 
+	#splash-page, #login-page{
+		display: flex;
+		align-items: center;      /* vertikal center */
+		justify-content: center;  /* horizontal center */
+		width: 100%;
+		height: 100vh;            /* tinggi = tinggi layar */
+		margin: 0;
+		padding: 0;
+		overflow: hidden;
+	}
+
+	.bg-overlay {
+		position: absolute;
+		inset: 0;
+		z-index: 1;
+
+		background-image:
+			linear-gradient(rgba(75, 0, 130, 0.4), rgba(75, 0, 130, 0.4)),
+			url('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIW2P8z/C/HwAF/wI/5lD6GQAAAABJRU5ErkJggg=='),
+			url('splash-screen.jpg');
+		background-size:
+			cover,        /* 1) ungu */
+			1000px 1000px,/* 2) noise tile */
+			initial;        /* 3) foto */
+		background-repeat:
+			no-repeat,
+			repeat,
+			no-repeat;
+		background-position:
+			center,
+			center,
+			center;
+		background-blend-mode:
+			normal,
+			overlay,
+			normal;
+		filter: brightness(0.3);
+	}
+
+	.bg-overlay::after {
+		content: "";
+		position: absolute;
+		inset: 0;
+		z-index: 2;
+		pointer-events: none;
+
+		/* hanya satu background di pseudo-element */
+		background-image: 
+			url('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAwAAAAMCAIAAADZF8uwAAAAGXRFWHRTb2Z0d2FyZQBBZG9iZSBJbWFnZVJlYWR5ccllPAAAANxJREFUeNpi/P//PwMlgImBQjDwH4j8GDAwMDAwT+T8jQxA0j+z8wMDAwPDfzPxkYGJi+P//P5hYGBgYGAD4z8TJQECDAwMDCw4GJgYGBkbGbIwMzAwIMfjP4z8YGhgeH+z8wMDAwPDfzPxgYGBlZEbGRgYGBgZGHjwMMDAwMHgwMTExMDgwMDAyMmJiYgIJGkDMDAwMjJmZGBgYGBjYwMDAzMzMzMTAwMDAwMDAwMDACDAwMDCwf/v37/BwYGhgaEhlcAAAwAAB1TjMh+Bt1NgAAAABJRU5ErkJggg==');
+		background-repeat: repeat;
+		background-size: 100px 100px;  /* ukuran noise tile pseudo */
+		mix-blend-mode: overlay;
+		opacity: 0.75;                  /* sesuaikan untuk intensitas */
+	}
+
+
     #emiten-list a {
         text-decoration: none;
         color: #007bff;
@@ -32,99 +88,113 @@
         #emiten-list a:hover {
             color: #fff;
         }
+
+	@media (max-width: 960px) {
+		/* Buat semua .form-control memenuhi lebar container */
+		#login-form {
+			width: 100% !important;
+			box-sizing: border-box; /* sertakan padding/ border ke dalam width */
+		}
+
+		/* Jika kamu pakai class .w-50 pada form, jadikan 100% di mobile */
+		.this-page {
+			width: 100% !important;
+			max-width: 100% !important;
+		}
+	}
 	</style>
 </head>
 
 <body>
-	<div id="app" class="container mt-5">
+	<div id="app" class="container">
         <!-- halaman splash -->
-		<section id="splash-page" class="d-flex flex-column align-items-center border-bottom p-4 my-4" style="position: relative;overflow: hidden;">
-            <h1 class="text-center">Welcome to SSSAHAM</h1>
-            <div style="position: absolute;top:0;left:0;bottom:0;right:0;">    
-                <img src="splash-screen.jpg" alt="splash" class="img-fluid mb-3 w-100">
-            </div>
-            <div id="manifesto" class="d-grid gap-3" style="grid-template-columns: repeat(2, 1fr);">
-                <div>
-                    <p class="d-block">
-                        "Dulu mereka bilang saham itu buat orang atas.
-                        Sekarang waktunya yang bawah bersuara lantang.
-                        Kita kumpul, kita beli bareng, kita bikin geger!
-                        Biar para bento-bento itu tahu,
-                        kita nggak diam, kita nggak bisa dibeli,
-                        kita bangun kuasa ritel!"
-                    </p>
-                </div>
-                <div>
-                    <p class="d-block">
-                        Satu Suara. Satu Aksi. Kolektif Melawan Oligarki.
-                    </p>
-                </div>
-                <div>
-                    <p class="d-block">
-                        "Ini bukan saham para bento.
-                        Ini suara rakyat, duit rakyat, gerak rakyat!"
-                    </p>
-                </div>
-                <div>
-                    <p class="d-block">
-                        Dulu saham buat segelintir.
-                        Sekarang, waktunya rakyat bersatu.
-                        Kolektif. Solid. Melawan rakusnya pasar."
-                    </p>
-                </div>
-            </div>                       
+		<section id="splash-page">
+			<div class="bg-overlay"></div>
+			<div class="this-page d-flex flex-column align-items-center p-4 my-4" style="position: relative;overflow: hidden;color: #fff;z-index:5">
+				
+				<h1 class="text-center" style="font-weight: 900;">SSSAHAM</h1>
+				<img src="splash-logo.png" class="img-fluid my-4" style="border: 10px solid gold;border-radius: 50%;max-width: 30%;">
+				<div id="manifesto">
+				<!--<div id="manifesto" class="d-grid gap-3" style="grid-template-columns: repeat(2, 1fr);">-->
+					<div class="border-bottom p-3">
+						<p class="d-block text-center" style="font-family: georgia;">
+							Satu Suara. Satu Aksi. Kolektif Melawan Oligarki. Dengan AI, open governance, dan transparansi.
+						</p>
+					</div>
+					<div class=" p-3">
+						<ol>
+							<li>VOTE SAHAM secara Kolektif dari rekomendasi AI MALAM SEBELUMNYA.</li>
+							<li>Masa blackout hasi voting antara pukul 21:00 - 09:05 keesokan harinya.</li>
+							<li>Tepat 09:05 hasil voting saham akan  di berikan secara serentak</li>
+							<li>BOOM VOLUME!</li>
+						</ol>
+					</div>
+				</div>
+				<button id="start-onboard" style="font-weight: 700;padding: 0.5rem 2rem;" class="btn btn-primary my-4">GABUNG PERGERAKAN</button>			</div>
         </section>
 
-
 		<!-- halaman login -->
-		<section id="login-page" class="d-flex flex-column align-items-center border-bottom p-4 my-4">
-			<h1 class="text-center">Login</h1>
-			<form id="login-form" class="w-50">
-				<div class="mb-3">
-					<label for="username" class="form-label">Username</label>
-					<input type="text" class="form-control" id="username" required> </div>
-				<div class="mb-3">
-					<label for="password" class="form-label">Password</label>
-					<input type="password" class="form-control" id="password" required> </div>
-				<button type="submit" class="btn btn-primary">Login</button>
-			</form>
+		<section id="login-page">
+			<div class="bg-overlay"></div>
+			<div class="this-page d-flex flex-column align-items-center p-4 my-4" style="position:relative;z-index:5">
+				<h1 class="text-center">Login</h1>
+				<form id="login-form" class="w-50">
+					<div class="mb-3">
+						<label style="color:#fff" for="username" class="form-label">Username</label>
+						<input type="text" class="form-control" id="username" required> </div>
+					<div class="mb-3">
+						<label style="color:#fff" for="password" class="form-label">Password</label>
+						<input type="password" class="form-control" id="password" required> </div>
+					<button type="submit" class="btn btn-primary">Login</button>
+				</form>
+			</div>
 		</section>
+
 		<!-- register page -->
-		<section id="register-page" class="d-flex flex-column align-items-center border-bottom p-4 my-4">
-			<h1 class="text-center">Register</h1>
-			<form id="register-form" class="w-50">
-				<div class="mb-3">
-					<label for="new-username" class="form-label">Username</label>
-					<input type="text" class="form-control" id="new-username" required> </div>
-				<div class="mb-3">
-					<label for="new-password" class="form-label">Password</label>
-					<input type="password" class="form-control" id="new-password" required> </div>
-				<button type="submit" class="btn btn-primary">Register</button>
-			</form>
+		<section id="register-page">
+			<div class="this-page d-flex flex-column align-items-center border-bottom p-4 my-4">
+				<h1 class="text-center">Register</h1>
+				<form id="register-form" class="w-50">
+					<div class="mb-3">
+						<label for="new-username" class="form-label">Username</label>
+						<input type="text" class="form-control" id="new-username" required> </div>
+					<div class="mb-3">
+						<label for="new-password" class="form-label">Password</label>
+						<input type="password" class="form-control" id="new-password" required> </div>
+					<button type="submit" class="btn btn-primary">Register</button>
+				</form>
+			</div>
 		</section>
+
 		<!-- halaman home -->
-		<section id="home-page" class="d-flex flex-column align-items-center border-bottom p-4 my-4">
-			<button id="logout-button" class="btn btn-danger">Logout</button>
-			<p class="text-center">Your collective betting application for stock retail.</p>
-			<h2 class="text-center">Welcome Fajar Putranto</h2>
-			<h1 class="text-center">Kemungkinan saham yang besok naik</h1> 
-            <span style="margin-bottom: 1rem;">Klik untuk memilih</span>
-            <div id="emiten-list" class="d-flex flex-row align-items-center justify-content-center gap-2 mb-3    "> 
-                <a class="btn btn-lg btn-outline-primary" href="">BRPT</a> 
-                <a class="btn btn-lg btn-outline-primary" href="">BREN</a> 
-                <a class="btn btn-lg btn-outline-primary" href="">CUAN</a> 
-            </div>
-            <span style="margin-bottom: 1rem;">Hasil dari vote xxx orang akan diumumkan</span>
-			<!-- HTML countdown -->
-			<div id="countdown" class="fs-3 fw-bold text-primary mt-3"></div>
-			<!-- END HTML countdown -->
+		<section id="home-page">
+			<div class="this-page d-flex flex-column align-items-center border-bottom p-4 my-4">
+				<button id="logout-button" class="btn btn-danger">Logout</button>
+				<p class="text-center">Your collective betting application for stock retail.</p>
+				<h2 class="text-center">Welcome Fajar Putranto</h2>
+				<h1 class="text-center">Kemungkinan saham yang besok naik</h1> 
+				<span style="margin-bottom: 1rem;">Klik untuk memilih</span>
+				<div id="emiten-list" class="d-flex flex-row align-items-center justify-content-center gap-2 mb-3    "> 
+					<a class="btn btn-lg btn-outline-primary" href="">BRPT</a> 
+					<a class="btn btn-lg btn-outline-primary" href="">BREN</a> 
+					<a class="btn btn-lg btn-outline-primary" href="">CUAN</a> 
+				</div>
+				<span style="margin-bottom: 1rem;">Hasil dari vote xxx orang akan diumumkan</span>
+				<!-- HTML countdown -->
+				<div id="countdown" class="fs-3 fw-bold text-primary mt-3"></div>
+				<!-- END HTML countdown -->
+			</div>
 		</section>
+
 		<!-- halaman error -->
-		<section id="error-page" class="d-flex flex-column align-items-center border-bottom p-4 my-4">
-			<h1 class="text-center">Error</h1>
-			<p class="text-center">An error occurred. Please try again later.</p>
+		<section id="error-page">
+			<div class="this-page d-flex flex-column align-items-center border-bottom p-4 my-4">
+				<h1 class="text-center">Error</h1>
+				<p class="text-center">An error occurred. Please try again later.</p>
+			</div>
 		</section>
 	</div>
+
 
     <!--------------------------------->
     <!-------- ALLL LOGIC HERE--------->
@@ -137,11 +207,55 @@
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 	
     
-    
-    
     <!-- jQuery in here -->
     <script>
 	$(document).ready(function() {
+
+		// Core: show page tanpa ngubah history
+		function showPageNoHistory(id) {
+			$('section').hide();
+			$('#' + id).fadeIn();
+		}
+
+		// Navigasi: set hash (otomatis bikin history) lalu show
+		function navigate(id) {
+			if (location.hash !== '#' + id) {
+			location.hash = id;  // pushes history entry
+			} else {
+			showPageNoHistory(id);
+			}
+		}
+
+		// Saat hash berubah (Back/Forward browser), tampilkan page
+		$(window).on('hashchange', function() {
+			let page = location.hash.substring(1);
+			if (page && $('#' + page).length) {
+			showPageNoHistory(page);
+			}
+		});
+
+		// Inisialisasi: cek hash pertama kali
+		let initial = location.hash.substring(1);
+		if (initial && $('#' + initial).length) {
+			showPageNoHistory(initial);
+		} else {
+			navigate('splash-page');
+		}
+
+		// Hook navigasi
+		$('#start-onboard').click(() => navigate('login-page'));
+		$('#login-form button').click(function(e){
+			e.preventDefault();
+			navigate('home-page');
+		});
+		$('#logout-button').click(() => navigate('login-page'));
+
+		// 7) Kalau ada error di AJAX, tampilkan error-page
+		function showError() {
+			showPage('error-page');
+		}
+		
+
 		// COUNTDOWN TIMER  
 		// Target waktu: jam 09:00 besok
 		let now = new Date();
