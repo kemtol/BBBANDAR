@@ -135,15 +135,16 @@
 	}
 
 	#notif-container {
-	position: fixed;    /* penting */
-	bottom: 1rem;
-	left: 1rem;
-	display: flex;
-	flex-direction: column;
-	gap: 0.5rem;
-	pointer-events: none;
-	z-index: 9999;
+		position: fixed;
+		bottom: 1rem;
+		left: 1rem;
+		display: flex;
+		flex-direction: column;   /* notifikasi baru di bawah */
+		gap: 0.5rem;
+		pointer-events: none;
+		z-index: 9999;
 	}
+
 
 	.notif {
 		background-color:aliceblue;
@@ -466,35 +467,38 @@
 		})();
 
 		// ——————————————————————
-		// 4) Countdown timer (tetap di luar pembacaan hash)
+		// 4) Nootif stacking
 		// ——————————————————————
 		function showNotif(text) {
-		const container = document.getElementById('notif-container');
-		const el = document.createElement('div');
-		el.className = 'notif';
-		el.textContent = text;
-		container.prepend(el);    // <-- prepend agar di atas
+			const container = document.getElementById('notif-container');
+			const el = document.createElement('div');
+			el.className = 'notif';
+			el.textContent = text;
 
-		// jika lebih dari 5 notif, hapus yang paling bawah
-		if (container.children.length > 5) {
-			container.removeChild(container.lastElementChild);
-		}
+			// 1) Tambah NOTIF di bawah
+			container.appendChild(el);
 
-		// auto-remove setelah 9 detik
-		setTimeout(() => {
-			if (container.contains(el)) {
-			container.removeChild(el);
+			// 2) Kalau sudah >5, hapus notif paling atas (yang pertama)
+			if (container.children.length > 5) {
+				container.removeChild(container.firstElementChild);
 			}
-		}, 9000);
-		}
 
-		// simulasi setiap 3 detik
-		setInterval(() => {
-		const phone = '08' + Math.floor(10000000 + Math.random()*90000000);
-		const stocks = ['BRPT','BREN','CUAN','TLKM'];
-		const stock = stocks[Math.floor(Math.random()*stocks.length)];
-		showNotif(`${phone} vote ${stock}`);
-		}, 3000);
+			// 3) Hapus elemen ini setelah 9 detik
+			setTimeout(() => {
+				if (container.contains(el)) {
+				container.removeChild(el);
+				}
+			}, 9000);
+			}
+
+			// simulasi setiap 3 detik
+			setInterval(() => {
+			const phone = '08' + Math.floor(10000000 + Math.random()*90000000);
+			const stocks = ['BRPT','BREN','CUAN','TLKM'];
+			const stock = stocks[Math.floor(Math.random()*stocks.length)];
+			showNotif(`${phone} vote ${stock}`);
+			}, 3000);
+
 
 
 
