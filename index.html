@@ -11,280 +11,51 @@
 	<link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
 	<link rel="manifest" href="/site.webmanifest">
 	<!-- Bootstrap CSS -->
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+	<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
 	<link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css" rel="stylesheet">
 	<title>BBBANDAR SSSAHAM - Bandar Saham Kolektif Untuk Para Ritel Saham</title>
-
-	<style>
-		/* ====== FLAT THEME (no structure/JS changes) ====== */
-		:root{
-		--bg: #f6f8fb;
-		--surface: #ffffff;
-		--text: #0f172a;
-		--muted: #64748b;
-		--border: #e5e7eb;
-		--radius: 12px;
-		--primary: #1e90ff;        /* dodgerblue (sesuai aset lama) */
-		--primary-hover: #1877d4;
-		}
-
-		* { box-sizing: border-box; }
-		html, body { height: 100%; }
-
-		body {
-		background-color: var(--bg);
-		color: var(--text);
-		font-family: system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji", "Segoe UI Emoji", sans-serif;
-		line-height: 1.5;
-		}
-
-		section{ background: transparent; }
-
-		/* ====== Layout wrapper ====== */
-		#app.container {
-		max-width: 460px;
-		width: 100%;
-		margin: auto;
-		}
-
-		/* ====== Fullscreen pages (splash, login) ====== */
-		#splash-page, #login-page{
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: 100%;
-		height: 100vh;
-		margin: 0;
-		padding: 0;
-		overflow: hidden;
-		}
-
-		/* ====== Flat cards ====== */
-		.this-page{
-		background: var(--surface) !important;
-		border: 1px solid var(--border);
-		border-radius: var(--radius);
-		box-shadow: none; /* flat: tanpa shadow/glassmorphism */
-		color: var(--text) !important;
-		}
-
-		#home-page > .this-page{
-		background: var(--surface) !important;
-		border-radius: var(--radius);
-		}
-
-		/* ====== Splash visuals: hilangkan noise/texture/overlay ====== */
-		.bg-overlay{
-		position: absolute;
-		inset: 0;
-		z-index: 1;
-		background: #0f172a !important;    /* flat solid hero */
-		filter: none !important;
-		background-image: none !important;
-		}
-		.bg-overlay::after{
-		content: "";
-		position: absolute;
-		inset: 0;
-		z-index: 2;
-		pointer-events: none;
-		background: transparent !important; /* no noise layer */
-		mix-blend-mode: normal !important;
-		opacity: 1 !important;
-		}
-
-		/* ====== Logo splash: flat border tipis ====== */
-		#splash-logo{
-		border: 4px solid var(--primary);
-		border-radius: 50%;
-		max-width: 15%;
-		}
-
-		/* ====== Headings & text ====== */
-		h1,h2,h3,h4,h5,h6{
-		font-weight: 800;
-		letter-spacing: -0.02em;
-		margin: 0;
-		}
-		.fw-900{ font-weight: 900; }
-
-		#manifesto p,
-		#manifesto ol{
-		color: var(--muted) !important;
-		margin: 0;
-		}
-
-		/* ====== Buttons (flat) ====== */
-		.btn{
-		border-radius: 10px;
-		box-shadow: none !important;
-		font-weight: 600;
-		}
-		.btn-primary{
-		background-color: var(--primary) !important;
-		border-color: var(--primary) !important;
-		}
-		.btn-primary:hover,
-		.btn-primary:focus{
-		background-color: var(--primary-hover) !important;
-		border-color: var(--primary-hover) !important;
-		}
-
-		/* Outline buttons (vote list) */
-		.btn-outline-primary{
-		border-color: var(--primary) !important;
-		color: var(--primary) !important;
-		background: transparent !important;
-		}
-		.btn-outline-primary:hover,
-		.btn-outline-primary:focus{
-		background: var(--primary) !important;
-		color: #fff !important;
-		}
-
-		/* ====== Emiten vote list ====== */
-		#emiten-list{
-		gap: 0.5rem !important;
-		}
-		#emiten-list a{
-		text-decoration: none;
-		width: auto;
-		min-width: 30%;
-		border-top: 0;
-		border-left: 0;
-		}
-
-		/* ====== Emiten info cards ====== */
-		.emiten-info{
-		background-color: var(--surface);
-		border: 1px solid var(--border);
-		border-radius: var(--radius);
-		}
-		@media (max-width: 600px){
-		.w-25{ width: 100% !important; }
-		.emiten-info + .emiten-info{ margin-top: .5rem; }
-		}
-
-		/* ====== Countdown ====== */
-		#countdown{
-		font-size: 3rem;
-		font-weight: 800;
-		color: var(--primary) !important;
-		}
-
-		/* ====== Helper text ====== */
-		.text-center a{
-		color: var(--primary) !important;
-		text-decoration: none;
-		}
-		.text-center a:hover{ text-decoration: underline; }
-
-		/* ====== Forms (flat) ====== */
-		.form-label{
-		font-weight: 700;
-		color: var(--text) !important;
-		}
-		.form-control{
-		border-radius: 10px;
-		border: 1px solid var(--border);
-		box-shadow: none;
-		}
-		.form-control:focus{
-		border-color: var(--primary);
-		outline: none;
-		box-shadow: none;
-		}
-
-		/* ====== Header (home) ====== */
-		#home-page .this-page:first-of-type{
-		border: 1px solid var(--border);
-		}
-		#home-page h2{
-		font-weight: 600;
-		color: var(--text);
-		}
-		#home-page i{ color: var(--primary) !important; }
-
-		/* ====== Notifications (flat, simple) ====== */
-		#notif-container {
-		position: fixed;
-		bottom: 1rem;
-		left: 1rem;
-		display: flex;
-		flex-direction: column;
-		gap: 0.5rem;
-		pointer-events: none;
-		z-index: 9999;
-		}
-		.notif{
-		background-color: var(--surface);
-		color: var(--text);
-		border: 1px solid var(--border);
-		border-radius: 10px;
-		padding: 0.5rem 0.75rem;
-		font-size: 0.85rem;
-		white-space: nowrap;
-		opacity: 0;
-		animation: slideIn 0.25s ease-out forwards, fadeOut 0.3s ease-in forwards 8.7s;
-		}
-		@keyframes slideIn{
-		from{ transform: translateY(10px); opacity: 0; }
-		to{ transform: translateY(0); opacity: 1; }
-		}
-		@keyframes fadeOut{ to{ opacity: 0; } }
-
-		/* ====== Responsive tweaks ====== */
-		@media (max-width: 960px) {
-		#splash-logo{ max-width: 30%; }
-
-		#login-form{
-			width: 100% !important;
-		}
-
-		.this-page{
-			width: 100% !important;
-			max-width: 100% !important;
-		}
-		}
-	</style>
-
-
-
-
+	<!-- App CSS -->
+	<link rel="stylesheet" href="style.css">
 </head>
 
 <body>
 	<div id="app" class="container">
-        <!-- halaman splash -->
+		<!-- halaman splash -->
 		<section id="splash-page">
-			<div class="bg-overlay"></div>
-			<div class="this-page d-flex flex-column align-items-center p-4 my-4" style="position: relative;overflow: hidden;color: #fff;z-index:5">
-				
+			<div class="d-none bg-overlay"></div>
+			<div class="this-page d-flex flex-column align-items-center p-4 my-4"
+				style="position: relative;overflow: hidden;color: #fff;z-index:5">
+
 				<h1 class="text-center" style="font-weight: 900;">SSSAHAM</h1>
 				<img src="android-chrome-192x192.png" id="splash-logo" class="img-fluid my-4">
 				<div id="manifesto">
-				<!--<div id="manifesto" class="d-grid gap-3" style="grid-template-columns: repeat(2, 1fr);">-->
+					<!--<div id="manifesto" class="d-grid gap-3" style="grid-template-columns: repeat(2, 1fr);">-->
 					<div class="border-bottom p-3">
 						<p class="d-block text-center" style="font-family: georgia;">
-							Satu Suara. Satu Aksi. Kolektif Melawan Oligarki. 
+							Satu Suara. Satu Aksi. Kolektif Melawan Oligarki.
 							<br />Dengan AI, open governance, dan transparansi.
 						</p>
 					</div>
 				</div>
-				<button id="start-onboard" style="font-weight: 700;padding: 0.5rem 2rem;" class="btn btn-primary my-4">JOIN KOMUNITAS</button></div>
-        </section>
+				<button id="start-onboard" style="font-weight: 700;padding: 0.5rem 2rem;"
+					class="btn btn-primary my-4">JOIN KOMUNITAS</button>
+			</div>
+		</section>
 
 		<!-- halaman login -->
 		<section id="login-page">
-			<div class="this-page d-flex flex-column align-items-center p-4 my-4 w-100" style="position:relative;z-index:5">
-				<h1 class="text-center mb-4 fw-900" style="color: #fff;">Login</h1>
+			<div class="this-page d-flex flex-column align-items-center p-4 my-4 w-100">
+				<h3 class="text-center mb-4 fw-700">Login</h3>
 				<form id="login-form" class="w-75">
 					<div class="mb-3">
-						<label style="color:#fff;font-weight: 700;" for="Handphone" class="form-label">No Handphone</label>
-						<input type="text" class="form-control" id="OTP" required> </div>
+						<label style="color:#fff;font-weight: 700;" for="Handphone" class="form-label">No
+							Handphone</label>
+						<input type="text" class="form-control" id="OTP" required>
+					</div>
 					<div class="mb-3">
 						<label style="color:#fff;font-weight: 700;" for="OTP" class="form-label">OTP</label>
-						<input type="OTP" class="form-control" id="OTP" required> </div>
+						<input type="OTP" class="form-control" id="OTP" required>
+					</div>
 					<button type="submit" class="btn btn-primary w-100">Login</button>
 				</form>
 			</div>
@@ -297,26 +68,35 @@
 				<form id="register-form" class="w-50">
 					<div class="mb-3">
 						<label for="new-username" class="form-label">Username</label>
-						<input type="text" class="form-control" id="new-username" required> </div>
+						<input type="text" class="form-control" id="new-username" required>
+					</div>
 					<div class="mb-3">
 						<label for="new-password" class="form-label">Password</label>
-						<input type="password" class="form-control" id="new-password" required> </div>
+						<input type="password" class="form-control" id="new-password" required>
+					</div>
 					<button type="submit" class="btn btn-primary">Register</button>
 				</form>
 			</div>
 		</section>
 
 		<!-- liveness -->
-		<section id="liveness-check">
+		<section id="liveness-check" class="w-100">
 			<div class="this-page d-flex flex-column align-items-center p-4 my-4">
-				<h1 class="text-center">Apakah Kamu Manusia</h1>
+				<h3 class="text-center">Apakah Kamu Manusia</h3>
 				<span class="d-block">Ikuti Instuksi</span>
 				<div id="liveness-instruction" class="fs-4 my-3 text-center"></div>
-				<video id="liveness-preview" autoplay muted playsinline style="width: 100%; max-width: 400px; border-radius: 8px; background: #000;"></video>
+				<video id="liveness-preview" autoplay muted playsinline
+					style="width: 100%; max-width: 400px; border-radius: 8px; background: #000;"></video>
 
-				<div class="mt-3">
-				<button id="start-record" class="btn btn-primary">Mulai Rekam</button>
+				<div class="mt-3 w-100">
+					<button id="start-record" class="btn d-block btn-primary w-100 mb-2">Mulai Rekam</button>
+					<button id="skip-record" type="button" class="btn d-block btn-outline-primary w-100"
+						style="display:none;">
+						Lewati (Testing)
+					</button>
 				</div>
+
+
 
 				<div id="liveness-result" class="mt-3 text-center"></div>
 			</div>
@@ -324,27 +104,70 @@
 
 		<!-- halaman home -->
 		<section id="home-page">
-			<div class="this-page border-bottom d-flex flex-row align-items-center justify-content-between p-4 py-3 my-4">
+			<div
+				class="this-page border-bottom d-flex flex-row align-items-center justify-content-between p-4 py-3 mt-3">
 				<h2 class="d-flex text-center fs-6" style="font-weight: 400;">👋 Selamat Datang Prajogo Pangestu</h2>
-				<button id="logout-button" class="d-flex btn btn-lg p-0"><i class="fa-solid fa-power-off" style="color: dodgerblue;"></i></button>
+				<button id="logout-button" class="d-flex btn btn-lg p-0"><i class="fa-solid fa-power-off"
+						style="color: dodgerblue;"></i></button>
 			</div>
-			<div>
-				<p class="text-center" style="color: white;">Bagaimana colllective bandar bekerja?<br/> <a href="" style="color: dodgerblue;">Pelajari Lebih Lanjut</a></p>
+			<div class="this-page my-3 p-2" style="background-color: #e8ecec !important;">
+				<small class="d-block text-center mb-0">Bagaimana colllective bandar bekerja?<br /> <a href=""
+						style="color: dodgerblue;">Pelajari Lebih Lanjut</a></small>
 			</div>
 			<div class="this-page d-flex flex-column align-items-center border-bottom p-4 mb-4">
-				<h1 class="text-center mb-3 fs-5 fw-bold">Kemungkinan saham yang besok naik</h1> 
+				<h1 class="text-center mb-3 fs-5 fw-bold">Kemungkinan saham yang besok naik</h1>
 				<span class="d-block mb-3">Klik untuk vote</span>
-				<div id="emiten-list" class="w-100 d-flex flex-row align-items-center justify-content-center gap-2 mb-3    "> 
-					<a class="btn btn-lg btn-outline-primary" href="">BRPT</a> 
-					<a class="btn btn-lg btn-outline-primary" href="">BREN</a> 
-					<a class="btn btn-lg btn-outline-primary" href="">CUAN</a> 
+				<div id="emiten-list"
+					class="w-100 d-flex flex-row align-items-center justify-content-center gap-2 mb-3    ">
+					<a class="btn btn-lg btn-outline-primary" href="">BRPT</a>
+					<a class="btn btn-lg btn-outline-primary" href="">BREN</a>
+					<a class="btn btn-lg btn-outline-primary" href="">CUAN</a>
 				</div>
 				<!-- HTML countdown -->
 				<div id="countdown" style="font-size: 3rem;" class="fw-bold text-primary mb-3"></div>
 				<!-- END HTML countdown -->
-				<span class="mb-3 d-block text-center">Hasil vote akan diumumkan besok jam 09:05 WIB <br /><span style="background-color: yellow;padding: 0px 2px;font-weight: 600;text-transform:uppercase;">secara serentak</span></span>
+				<span class="mb-3 d-block text-center">Hasil vote akan diumumkan besok jam 09:05 WIB <br /><span
+						style="background-color: yellow;padding: 0px 2px;font-weight: 600;text-transform:uppercase;">secara
+						serentak</span></span>
 			</div>
-			<div class="w-100 d-flex flex-grid align-items-center justify-content-center mb-4 gap-2">
+
+			<!-- Rekomendasi dari KV -->
+			<div id="reko-section" class="this-page p-3 mb-4">
+				<div class="d-flex align-items-center justify-content-between mb-2">
+					<div>
+						<h5 class="m-0 fw-bold">Rekomendasi Terbaru</h5>
+						<small id="reko-meta" class="text-muted">Memuat…</small>
+					</div>
+
+					<div class="d-flex align-items-center gap-2">
+						<label class="me-2 small text-muted">Slot:</label>
+						<select id="reko-slot-select" class="form-select form-select-sm" style="width:auto">
+							<option value="any" selected>Terbaru</option>
+							<option value="0930">09:30</option>
+							<option value="1130">11:30</option>
+							<option value="1415">14:15</option>
+							<option value="1550">15:50</option>
+						</select>
+						<span id="reko-slot-badge" class="badge bg-light text-dark border">--:--</span>
+					</div>
+				</div>
+
+				<div class="table-responsive">
+					<table class="table table-sm table-hover align-middle mb-0" id="reko-table">
+						<thead id="reko-thead"></thead>
+						<tbody id="reko-tbody">
+							<tr>
+								<td colspan="12">
+									<div class="reko-shimmer"></div>
+								</td>
+							</tr>
+						</tbody>
+					</table>
+				</div>
+			</div>
+
+
+			<div class="d-none w-100 d-flex flex-grid align-items-center justify-content-center mb-4 gap-2">
 				<div class="emiten-info p-4 w-25">
 					<h2 class="text-center">BRPT</h2>
 				</div>
@@ -353,7 +176,7 @@
 				</div>
 				<div class="emiten-info p-4 w-25">
 					<h2 class="text-center">CUAN</h2>
-				</div>	
+				</div>
 			</div>
 		</section>
 
@@ -370,211 +193,24 @@
 	<div id="notif-container"></div>
 
 
-    <!--------------------------------->
-    <!-------- ALLL LOGIC HERE--------->
-    <!--------------------------------->
+	<!--------------------------------->
+	<!-------- ALLL LOGIC HERE--------->
+	<!--------------------------------->
 
 	<!-- jQuery INIT -->
-    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+	<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
 	<!-- Bootstrap Bundle JS INIT -->
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-    
-    <!-- jQuery in here -->
+	<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+	<!-- App JS -->
+	<script src="script.js"></script>
+
+
+	<!-- Service Worker Registration (ini nanti aja kalau udah mau jadi app) -->
 	<script>
-	$(document).ready(function() {
-		// ——————————————————————
-		// 1) Fungsi navigasi & history
-		// ——————————————————————
-		function showPageNoHistory(id) {
-			$('section').hide();
-			$('#' + id).fadeIn();
-		}
-
-		function navigate(id) {
-			if (location.hash !== '#' + id) {
-			location.hash = id;  // push history
-			} else {
-			showPageNoHistory(id);
-			}
-		}
-
-		$(window).on('hashchange', () => {
-			const page = location.hash.slice(1);
-			if ($('#' + page).length) showPageNoHistory(page);
-		});
-
-		// Inisialisasi halaman pertama
-		const first = location.hash.slice(1);
-		if (first && $('#' + first).length) {
-			showPageNoHistory(first);
-		} else {
-			navigate('splash-page');
-		}
-
-		// Hook tombol navigasi
-		$('#start-onboard').click(() => navigate('login-page'));
-		$('#login-form button').click(e => {
-			e.preventDefault();
-			navigate('liveness-check');
-		});
-		$('#logout-button').click(() => navigate('login-page'));
-
-		// ——————————————————————
-		// 2) Liveness check
-		// ——————————————————————
-		let mediaStream, mediaRecorder, recordedChunks = [];
-
-		async function initCamera() {
-			try {
-			mediaStream = await navigator.mediaDevices.getUserMedia({
-				video: { facingMode: 'user' },
-				audio: false
-			});
-			$('#liveness-preview')[0].srcObject = mediaStream;
-			} catch (err) {
-			$('#liveness-result').text('Gagal akses kamera: ' + err.message);
-			}
-		}
-
-		function setupRecorder() {
-			recordedChunks = [];
-			mediaRecorder = new MediaRecorder(mediaStream, {
-			mimeType: 'video/webm;codecs=vp8'
-			});
-			mediaRecorder.ondataavailable = e => {
-			if (e.data.size) recordedChunks.push(e.data);
-			};
-			// ← pindahkan onstop ke sini
-			mediaRecorder.onstop = async () => {
-			$('#stop-record').prop('disabled', true);
-			$('#start-record').prop('disabled', false);
-			$('#liveness-result').text('Mengirim ke server…');
-
-			const blob = new Blob(recordedChunks, { type: 'video/webm' });
-			const form = new FormData();
-			form.append('video', blob, 'liveness.webm');
-
-			try {
-				const res = await fetch('/api/liveness', { method: 'POST', body: form });
-				const data = await res.json();
-				$('#liveness-result').html(`Liveness score: <strong>${data.score}</strong>`);
-			} catch (err) {
-				$('#liveness-result').text('Gagal kirim: ' + err.message);
-			}
-
-			// setelah selesai, lanjut ke home
-			navigate('home-page');
-			};
-		}
-
-		$('#start-record').click(async function() {
-			// 1) Pastikan kamera siap
-			if (!mediaStream) await initCamera();
-			setupRecorder();
-
-			const instr = $('#liveness-instruction');
-			const wait = ms => new Promise(r => setTimeout(r, ms));
-
-			// 2) Hitung mundur 3–1
-			for (let i = 3; i >= 1; i--) {
-				instr.text(i);
-				await wait(1000);
-			}
-
-			// 3) Mulai rekam
-			recordedChunks = [];
-			mediaRecorder.start();
-
-			// 4) Tampilkan langkah-langkah:
-			instr.text('Buka mulut');
-			await wait(3000);
-
-			instr.text('Tengok kanan');
-			await wait(3000);
-
-			instr.text('Tengok kiri');
-			await wait(3000);
-
-			// 5) Selesai → stop & kirim
-			instr.text('Selesai');
-			mediaRecorder.stop();
-
-		// tombol dikendalikan di onstop
-		});
-
-		// jika langsung ke liveness page
-		if (location.hash === '#liveness-check') {
-			initCamera();
-		}
-
-		// ——————————————————————
-		// 3) Countdown timer (tetap di luar pembacaan hash)
-		// ——————————————————————
-		(function startCountdown() {
-			const now    = new Date();
-			const offset = (7*60 + now.getTimezoneOffset()) * 60000;
-			const jt     = new Date(now.getTime() + offset);
-			const t      = new Date(jt.setDate(jt.getDate()+1));
-			t.setHours(9,0,0,0);
-
-			function upd() {
-				const d = t - Date.now();
-				if (d <= 0) return $('#countdown').text("Voting ditutup!");
-				const h = String(Math.floor((d/36e5)%24)).padStart(2,'0');
-				const m = String(Math.floor((d/6e4)%60)).padStart(2,'0');
-				const s = String(Math.floor((d/1e3)%60)).padStart(2,'0');
-				$('#countdown').text(`${h} : ${m} : ${s}`);
-			}
-		upd();
-		setInterval(upd, 1000);
-		})();
-
-		// ——————————————————————
-		// 4) Nootif stacking
-		// ——————————————————————
-		function showNotif(text) {
-			const container = document.getElementById('notif-container');
-			const el = document.createElement('div');
-			el.className = 'notif';
-			el.textContent = text;
-
-			// 1) Tambah NOTIF di bawah
-			container.appendChild(el);
-
-			// 2) Kalau sudah >5, hapus notif paling atas (yang pertama)
-			if (container.children.length > 5) {
-				container.removeChild(container.firstElementChild);
-			}
-
-			// 3) Hapus elemen ini setelah 9 detik
-			setTimeout(() => {
-				if (container.contains(el)) {
-				container.removeChild(el);
-				}
-			}, 9000);
-			}
-
-			// simulasi setiap 3 detik
-			setInterval(() => {
-			const phone = '08' + Math.floor(10000000 + Math.random()*90000000);
-			const stocks = ['BRPT','BREN','CUAN','TLKM'];
-			const stock = stocks[Math.floor(Math.random()*stocks.length)];
-			showNotif(`${phone} vote ${stock}`);
-			}, 3000);
-
-
-
-
-	});
-	</script>
-
-    
-    <!-- Service Worker Registration (ini nanti aja kalau udah mau jadi app) -->
-	<script>
-	// Register service worker
-	/*if('serviceWorker' in navigator) {
-		navigator.serviceWorker.register('sw.js').then(reg => console.log('Service Worker registered', reg)).catch(err => console.error('SW registration failed', err));
-	}*/
+		// Register service worker
+		/*if('serviceWorker' in navigator) {
+			navigator.serviceWorker.register('sw.js').then(reg => console.log('Service Worker registered', reg)).catch(err => console.error('SW registration failed', err));
+		}*/
 	</script>
 </body>
 
