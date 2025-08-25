@@ -1,4 +1,13 @@
 $(function () {
+
+    // 1) Helper: panggil loadReko kalau sedang di home
+    function triggerRekoIfHome() {
+        if (location.hash.slice(1) === 'home-page') {
+            const slot = $('#reko-slot-select').val() || 'any';
+            loadReko(slot);
+        }
+    }
+
     // ——————————————————————
     // 1) Navigasi & history
     // ——————————————————————
@@ -40,12 +49,30 @@ $(function () {
     }
 
     // Hook tombol navigasi (delegated supaya aman)
-    $(document).on('click', '#start-onboard', function () { navigate('login-page'); });
+    $(document).on('click', '#start-onboard', function () { navigate('liveness-page'); });
     $(document).on('click', '#logout-button', function () { navigate('login-page'); });
-    $(document).on('click', '#login-form button', function (e) {
+    // LOGIN di SPLASH → langsung ke HOME
+    $(document).on('submit', '#splash-page #login-form', function (e) {
+        e.preventDefault();
+        navigate('home-page');
+        setTimeout(triggerRekoIfHome, 0);
+    });
+
+    // REGISTER → langsung ke LIVENESS
+    $(document).on('submit', '#register-form', function (e) {
         e.preventDefault();
         navigate('liveness-check');
     });
+
+    $(document).on('hashchange', function () {
+        triggerRekoIfHome();
+    });
+
+    // Kalau app dibuka langsung ke #home-page (refresh/deeplink)
+    if (location.hash.slice(1) === 'home-page') {
+        triggerRekoIfHome();
+    }
+
 
     // ——————————————————————
     // 2) Liveness check
@@ -177,7 +204,7 @@ $(function () {
     // ——————————————————————
     // 3) Countdown timer (contoh)
     // ——————————————————————
-    (function startCountdown() {
+    /*(function startCountdown() {
         // target: besok 09:00 WIB
         function nextTarget() {
             const now = new Date();
@@ -199,7 +226,31 @@ $(function () {
         }
         upd();
         setInterval(upd, 1000);
-    })();
+    })();*/
+
+    // Countdown berbasis string "YYYY-MM-DD HH:mm:ss" WIB dari backend
+    function initCountdown(targetStr) {
+        // targetStr contoh: "2025-08-22 09:30:00"
+        if (!targetStr) return;
+        const target = new Date(targetStr.replace(' ', 'T') + '+07:00'); // WIB
+        const $el = $('#countdown');
+
+        function tick() {
+            const s = Math.max(0, Math.floor((target - new Date()) / 1000));
+            const h = String(Math.floor(s / 3600)).padStart(2, '0');
+            const m = String(Math.floor((s % 3600) / 60)).padStart(2, '0');
+            const sec = String(s % 60).padStart(2, '0');
+            if (s > 0) {
+                $el.text(`${h} : ${m} : ${sec}`);
+            } else {
+                $el.text('SECARA SERENTAK');
+                clearInterval(timer);
+            }
+        }
+        const timer = setInterval(tick, 1000);
+        tick();
+    }
+
 
 
     // ================== Reko from KV (Cloudflare Worker) ==================
@@ -264,7 +315,7 @@ $(function () {
 
     async function loadReko(slot) {
         // loading state (colspan disesuaikan ke 5)
-        $("#reko-tbody").html(`<tr><td colspan="5"><div class="reko-shimmer"></div></td></tr>`);
+        $("#reko-tbody").html(`<tr><td colspan="6"><div class="reko-shimmer"></div></td></tr>`);
         $("#reko-meta").text("Memuat…");
         $("#reko-slot-badge").text("--:--");
 
@@ -278,8 +329,7 @@ $(function () {
             $("#reko-slot-badge").text(slotStr === "any" ? "Terbaru" : slotToLabel(slotStr));
 
             if (!rows.length) {
-                $("#reko-tbody").html(`<tr><td colspan="5" class="text-center text-muted py-3">Tidak ada data.</td></tr>`);
-                $("#reko-thead").empty();
+                $("#reko-tbody").html(`<tr><td colspan="6" class="text-center text-muted py-3">Tidak ada data.</td></tr>`); $("#reko-thead").empty();
                 return;
             }
 
@@ -287,7 +337,7 @@ $(function () {
             renderRows(rows);
         } catch (e) {
             $("#reko-meta").text("Gagal memuat.");
-            $("#reko-tbody").html(`<tr><td colspan="5" class="text-danger">Error: ${e.message || e}</td></tr>`);
+            $("#reko-tbody").html(`<tr><td colspan="6" class="text-danger">Error: ${e.message || e}</td></tr>`);
             $("#reko-thead").empty();
         }
     }
@@ -323,7 +373,7 @@ $(function () {
 
     // >>> REPLACE fungsi lama dgn ini <<<
     async function renderTopPicks() {
-        const WORKER_BASE = "https://kemalw.workers.dev"; // ganti kalau beda
+        const WORKER_BASE = "https://bpjs-reko.mkemalw.workers.dev"; // ganti kalau beda
         try {
             const res = await fetch(`${WORKER_BASE}/api/candidates`, { cache: 'no-store' });
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -405,3 +455,4 @@ $(function () {
         showNotif(phone + ' vote ' + stock);
     }, 3000);
 });
+

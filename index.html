@@ -23,22 +23,25 @@
 		<!-- halaman splash -->
 		<section id="splash-page">
 			<div class="d-none bg-overlay"></div>
-			<div class="this-page d-flex flex-column align-items-center p-4 my-4"
+			<div class="this-page w-100 d-flex flex-column align-items-center p-4 my-4"
 				style="position: relative;overflow: hidden;color: #fff;z-index:5">
-
+		
 				<h1 class="text-center" style="font-weight: 900;">SSSAHAM</h1>
 				<img src="android-chrome-192x192.png" id="splash-logo" class="img-fluid my-4">
-				<div id="manifesto">
-					<!--<div id="manifesto" class="d-grid gap-3" style="grid-template-columns: repeat(2, 1fr);">-->
-					<div class="border-bottom p-3">
-						<p class="d-block text-center" style="font-family: georgia;">
-							Satu Suara. Satu Aksi. Kolektif Melawan Oligarki.
-							<br />Dengan AI, open governance, dan transparansi.
-						</p>
+				<form id="login-form" class="w-100">
+					<div class="mb-3">
+						<label style="color:#fff;font-size:0.9rem" for="Handphone" class="form-label">No
+							Handphone</label>
+						<input type="text" class="form-control" id="OTP" required>
 					</div>
-				</div>
-				<button id="start-onboard" style="font-weight: 700;padding: 0.5rem 2rem;"
-					class="btn btn-primary my-4">JOIN KOMUNITAS</button>
+					<div class="mb-3">
+						<label style="color:#fff;font-size:0.9rem" for="OTP" class="form-label">OTP</label>
+						<input type="OTP" class="form-control" id="OTP" required>
+					</div>
+					<small class="d-block text-center m-2 p-2 mb-4" style="background-color:beige;">Versi Beta 1.0: Tulis Saja Asal Dulu</small>
+					<button type="submit" class="btn btn-primary w-100">Login</button>
+				</form>
+				<button id="start-onboard" class="btn btn-primary my-2 w-100">Join Komunitas</button>
 			</div>
 		</section>
 
@@ -106,7 +109,7 @@
 		<section id="home-page">
 			<div
 				class="this-page border-bottom d-flex flex-row align-items-center justify-content-between p-4 py-3 mt-3">
-				<h2 class="d-flex text-center fs-6" style="font-weight: 400;">👋 Selamat Datang Prajogo Pangestu</h2>
+				<h2 class="d-flex text-center fs-6" style="font-weight: 400;">👋 Hi, Quant Trader!</h2>
 				<button id="logout-button" class="d-flex btn btn-lg p-0"><i class="fa-solid fa-power-off"
 						style="color: dodgerblue;"></i></button>
 			</div>
@@ -120,19 +123,6 @@
 				<small id="top-picks-note" class="text-muted d-block text-center mt-2">
 					Ditentukan dari skor (return, volume, pace, dsb). Alasan ringkas di tiap kartu.
 				</small>
-				<span class="d-block mb-3">Klik untuk vote</span>
-				<div id="emiten-list"
-					class="w-100 d-flex flex-row align-items-center justify-content-center gap-2 mb-3    ">
-					<a class="btn btn-lg btn-outline-primary" href="">BRPT</a>
-					<a class="btn btn-lg btn-outline-primary" href="">BREN</a>
-					<a class="btn btn-lg btn-outline-primary" href="">CUAN</a>
-				</div>
-				<!-- HTML countdown -->
-				<div id="countdown" style="font-size: 3rem;" class="fw-bold text-primary mb-3"></div>
-				<!-- END HTML countdown -->
-				<span class="mb-3 d-block text-center">Hasil vote akan diumumkan besok jam 09:05 WIB <br /><span
-						style="background-color: yellow;padding: 0px 2px;font-weight: 600;text-transform:uppercase;">secara
-						serentak</span></span>
 			</div>
 
 			<!-- Rekomendasi dari KV -->
