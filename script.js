@@ -212,48 +212,45 @@ $(function () {
     function fmtF3(v) { return Number.isFinite(v) ? v.toFixed(3) : "—"; }
     function fmtN(v) { return Number.isFinite(v) ? v.toLocaleString("id-ID") : "—"; }
 
-    function buildHead(hasLastD) {
-        const cols = [
-            { k: "#", label: "#" },
-            { k: "ticker", label: "Ticker" },
-            { k: "score", label: "Score" },
-            { k: "daily_return", label: "Return" },
-            { k: "vol_pace", label: "Pace" },
-            { k: "price_at_cutoff", label: "Price @Cutoff" },
-        ];
-        if (hasLastD) cols.push({ k: "lastd", label: "LASTD O/H/L/C", cls: "reko-right reko-small" });
-        $("#reko-thead").html("<tr>" + cols.map(c => `<th class="${c.cls || ""}">${c.label}</th>`).join("") + "</tr>");
-        return cols;
+    // ====== MODIFIKASI: hanya 5 kolom (#, Ticker, Score, Return, Pace) ======
+    function buildHead() {
+        const html = `
+            <tr>
+                <th class="text-muted" style="width:52px">#</th>
+                <th>Ticker</th>
+                <th class="text-end">Score</th>
+                <th class="text-end">Return</th>
+                <th class="text-end">Pace</th>
+                <th class="text-end">Buy Below</th>
+            </tr>`;
+        $("#reko-thead").html(html);
     }
 
-    function renderRows(rows, hasLastD) {
+    function renderRows(rows) {
         const $tb = $("#reko-tbody").empty();
         rows.forEach((r, i) => {
             const ret = Number(r.daily_return);
             const pace = Number(r.vol_pace);
             const score = Number(r.score);
-            const cut = Number(r.price_at_cutoff);
+            const cut = Number(r.price_at_cutoff);   // <— ambil field ini
 
-            const lastO = Number(r.lastd_open ?? r.last_open ?? r.open);
-            const lastH = Number(r.lastd_high ?? r.last_high ?? r.high);
-            const lastL = Number(r.lastd_low ?? r.last_low ?? r.low);
-            const lastC = Number(r.lastd_close ?? r.last_close ?? r.last);
-
-            const retHTML = Number.isFinite(ret) ? `<span class="${ret >= 0 ? 'reko-pos' : 'reko-neg'}">${fmtPct(ret)}</span>` : "—";
+            const retHTML = Number.isFinite(ret)
+                ? `<span class="${ret >= 0 ? 'reko-pos' : 'reko-neg'}">${fmtPct(ret)}</span>`
+                : "—";
 
             $tb.append(`
-      <tr>
-        <td>${i + 1}</td>
-        <td><strong>${r.ticker || "-"}</strong></td>
-        <td class="reko-right">${fmtF3(score)}</td>
-        <td class="reko-right">${retHTML}</td>
-        <td class="reko-right">${fmtX(pace)}</td>
-        <td class="reko-right">${fmtN(cut)}</td>
-        ${hasLastD ? `<td class="reko-right reko-small">${[lastO, lastH, lastL, lastC].map(fmtN).join(" / ")}</td>` : ""}
-      </tr>
-    `);
+            <tr>
+                <td class="text-muted">${i + 1}</td>
+                <td><strong>${(r.ticker || "-")}</strong></td>
+                <td class="reko-right">${fmtF3(score)}</td>
+                <td class="reko-right">${retHTML}</td>
+                <td class="reko-right">${fmtX(pace)}</td>
+                <td class="reko-right">${fmtN(cut)}</td>   <!-- kolom baru -->
+            </tr>
+        `);
         });
     }
+
 
     async function fetchRekoJSON(slot) {
         // slot = "any" → pakai latest-any, selain itu latest?slot=XXXX
@@ -266,8 +263,8 @@ $(function () {
     }
 
     async function loadReko(slot) {
-        // loading state
-        $("#reko-tbody").html(`<tr><td colspan="12"><div class="reko-shimmer"></div></td></tr>`);
+        // loading state (colspan disesuaikan ke 5)
+        $("#reko-tbody").html(`<tr><td colspan="5"><div class="reko-shimmer"></div></td></tr>`);
         $("#reko-meta").text("Memuat…");
         $("#reko-slot-badge").text("--:--");
 
@@ -281,20 +278,16 @@ $(function () {
             $("#reko-slot-badge").text(slotStr === "any" ? "Terbaru" : slotToLabel(slotStr));
 
             if (!rows.length) {
-                $("#reko-tbody").html(`<tr><td colspan="12" class="text-center text-muted py-3">Tidak ada data.</td></tr>`);
+                $("#reko-tbody").html(`<tr><td colspan="5" class="text-center text-muted py-3">Tidak ada data.</td></tr>`);
                 $("#reko-thead").empty();
                 return;
             }
 
-            // deteksi kolom LASTD
-            const s = rows[0] || {};
-            const hasLastD = ["lastd_open", "lastd_high", "lastd_low", "lastd_close", "last", "open", "high", "low", "close"].some(k => k in s);
-
-            buildHead(hasLastD);
-            renderRows(rows, hasLastD);
+            buildHead();
+            renderRows(rows);
         } catch (e) {
             $("#reko-meta").text("Gagal memuat.");
-            $("#reko-tbody").html(`<tr><td colspan="12" class="text-danger">Error: ${e.message || e}</td></tr>`);
+            $("#reko-tbody").html(`<tr><td colspan="5" class="text-danger">Error: ${e.message || e}</td></tr>`);
             $("#reko-thead").empty();
         }
     }
@@ -325,6 +318,66 @@ $(function () {
         }
     }, 60000);
 
+
+
+
+    // >>> REPLACE fungsi lama dgn ini <<<
+    async function renderTopPicks() {
+        const WORKER_BASE = "https://kemalw.workers.dev"; // ganti kalau beda
+        try {
+            const res = await fetch(`${WORKER_BASE}/api/candidates`, { cache: 'no-store' });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const data = await res.json();
+
+            // 1) sinkronkan tombol vote sesuai urutan top picks
+            const $wrap = $('#emiten-list').empty();
+            (data.tickers || []).forEach(tkr => {
+                $('<a/>', {
+                    class: 'btn btn-lg btn-outline-primary',
+                    text: tkr,
+                    href: '#',
+                    click: (e) => { e.preventDefault(); handleVote?.(tkr); }
+                }).appendTo($wrap);
+            });
+
+            // 2) render kartu top picks
+            const $grid = $('#top-picks').empty();
+            (data.detail || []).forEach(item => {
+                const score = typeof item.score === 'number' ? item.score : null;
+                const pct = Math.max(0, Math.min(100, Math.round(((score ?? 0) / 10) * 100)));
+
+                const $card = $('<div/>', { class: 'pick-card' });
+                const $head = $(`
+        <div class="pick-head">
+          <span class="pick-badge"><i class="fa-solid fa-arrow-trend-up"></i> Top Pick</span>
+          <h3 class="pick-ticker mb-0">${item.ticker}.JK</h3>
+        </div>
+      `);
+                const $score = $(`<div class="pick-score">Score: ${score !== null ? score.toFixed(1) : '--'} / 10</div>`);
+                const $rail = $('<div class="score-rail"><div class="score-fill"></div></div>');
+                $rail.find('.score-fill').css('width', pct + '%');
+
+                const $ul = $('<ul class="pick-bullets"></ul>');
+                (item.reasons || []).slice(0, 3).forEach(txt => $ul.append(`<li>${txt}</li>`));
+                if (!(item.reasons || []).length) $ul.addClass('d-none');
+
+                const $cta = $('<button class="btn btn-primary pick-cta">VOTE SAHAM INI</button>')
+                    .on('click', () => handleVote?.(item.ticker));
+
+                $card.append($head, $score, $rail, $ul, $cta);
+                $grid.append($card);
+            });
+
+            // 3) countdown pakai announce_at dari backend (kalau ada)
+            if (data.announce_at) initCountdown(data.announce_at);
+
+        } catch (err) {
+            console.error('top-picks error', err);
+            $('#top-picks').html('<em class="text-muted">Gagal memuat Top Picks.</em>');
+        }
+    }
+    // panggil setelah DOM siap
+    $(function () { renderTopPicks(); });
 
 
     // ——————————————————————
