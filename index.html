@@ -27,7 +27,7 @@
 			<div class="d-none bg-overlay"></div>
 			<div class="this-page w-100 d-flex flex-column align-items-center p-4 my-4"
 				style="position: relative;overflow: hidden;color: #fff;z-index:5">
-		
+
 				<h1 class="text-center" style="font-weight: 900;">SSSAHAM</h1>
 				<img src="android-chrome-192x192.png" id="splash-logo" class="img-fluid my-4">
 				<form id="login-form" class="w-100">
@@ -38,9 +38,10 @@
 					</div>
 					<div class="mb-3">
 						<label style="color:#fff;font-size:0.9rem" for="OTP" class="form-label">OTP</label>
-						<input type="OTP" class="form-control" id="OTP" >
+						<input type="OTP" class="form-control" id="OTP">
 					</div>
-					<small class="d-block text-center m-2 p-2 mb-4" style="background-color:beige;">Versi Beta 1.0: Tulis Saja Asal Dulu</small>
+					<small class="d-block text-center m-2 p-2 mb-4" style="background-color:beige;">Versi Beta 1.0:
+						Tulis Saja Asal Dulu</small>
 					<button type="submit" class="btn btn-primary w-100">Login</button>
 				</form>
 				<button id="start-onboard" class="btn btn-outline-primary my-2 w-100">Join Komunitas</button>
@@ -120,36 +121,19 @@
 						style="color: dodgerblue;">Pelajari Lebih Lanjut</a></small>
 			</div>
 			<div class="this-page d-flex flex-column align-items-center border-bottom p-4 mb-4">
-				<h1 class="text-center mb-3 fs-5 fw-bold">Kemungkinan saham yang besok naik</h1>
+				<h1 class="text-center mb-3 fs-5 fw-bold">Markov Model Probabilty</h1>
 				<div id="top-picks" class="picks-grid mt-3"></div>
 				<small id="top-picks-note" class="text-muted d-block text-center mt-2">
-					Ditentukan dari skor (return, volume, pace, dsb). Alasan ringkas di tiap kartu.
+					Ditentukan dari skor (return, volume, pace, dsb).
 				</small>
 			</div>
 
 			<!-- Rekomendasi dari KV -->
 			<div id="reko-section" class="this-page p-3 mb-4">
-				<h5 class="mb-3 text-center fw-bold">Rekomendasi Terbaru</h5>
-				<div class="d-flex align-items-center justify-content-between mb-2">
-					<div>
-						<small id="reko-meta" class="text-muted">Memuat…</small>
-					</div>
-
-					<div class="d-flex align-items-center gap-2">
-						<label class="me-2 small text-muted">Slot:</label>
-						<select id="reko-slot-select" class="form-select form-select-sm" style="width:auto">
-							<option value="any" selected>Terbaru</option>
-							<option value="0930">09:30</option>
-							<option value="1130">11:30</option>
-							<option value="1415">14:15</option>
-							<option value="1550">15:50</option>
-						</select>
-						<span id="reko-slot-badge" class="badge bg-light text-dark border">--:--</span>
-					</div>
-				</div>
+				<h5 class="mb-3 text-center fw-bold">Feed Probabilty</h5>
 
 				<div class="table-responsive">
-					<table class="table table-sm table-hover align-middle mb-0" id="reko-table">
+					<table class="table table-sm align-middle mb-0" id="reko-table">
 						<thead id="reko-thead"></thead>
 						<tbody id="reko-tbody">
 							<tr>

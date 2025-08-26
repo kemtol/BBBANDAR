@@ -1,8 +1,8 @@
 /* =========================================================
- * Quant App – Frontend Script (final)
- * - Source: KV Cloudflare
- * - Top 3: /api/reko/latest-summary (probability) → fallback /api/reko/latest-any
- * - Tabel: /api/reko/latest?slot=... atau latest-any
+ * Quant App – Frontend Script (FINAL)
+ * - Data source: Cloudflare Worker (KV)
+ * - Top 3: /api/reko/latest-summary → fallback /api/reko/latest-any
+ * - Feed: 5 hari terakhir, per slot = satu tabel mini, dipisah per TANGGAL
  * =======================================================*/
 
 $(function () {
@@ -11,6 +11,7 @@ $(function () {
   // =========================
   const WORKER_BASE = "https://bpjs-reko.mkemalw.workers.dev";
   const SLOT_LABEL = { "0930": "09:30", "1130": "11:30", "1415": "14:15", "1550": "15:50" };
+  const SLOTS = Object.keys(SLOT_LABEL);
 
   // =========================
   // STATE (kamera; aman dari TDZ)
@@ -27,7 +28,7 @@ $(function () {
   }
   function navigate(id) {
     if (location.hash !== "#" + id) {
-      location.hash = id; // akan diproses di 'hashchange'
+      location.hash = id; // diproses di 'hashchange'
     } else {
       showPageNoHistory(id);
     }
@@ -42,7 +43,7 @@ $(function () {
         window.mediaStream?.getTracks?.().forEach((t) => t.stop());
         $("#liveness-preview").prop("srcObject", null);
         window.mediaStream = mediaStream = null;
-      } catch {}
+      } catch { }
     }
     if ($("#" + page).length) showPageNoHistory(page);
   });
@@ -117,7 +118,7 @@ $(function () {
       } catch (err) {
         $("#liveness-result").text("Gagal kirim: " + err.message);
       } finally {
-        try { window.mediaStream?.getTracks?.().forEach((t) => t.stop()); } catch {}
+        try { window.mediaStream?.getTracks?.().forEach((t) => t.stop()); } catch { }
         $("#liveness-preview").prop("srcObject", null);
         window.mediaStream = mediaStream = null;
       }
@@ -151,7 +152,7 @@ $(function () {
   $("#skip-record").toggle(!!allowBypass);
   $(document).on("click", "#skip-record", function (e) {
     e.preventDefault();
-    try { window.mediaStream?.getTracks?.().forEach((t) => t.stop()); } catch {}
+    try { window.mediaStream?.getTracks?.().forEach((t) => t.stop()); } catch { }
     $("#liveness-preview").prop("srcObject", null);
     window.mediaStream = mediaStream = null;
     localStorage.setItem("liveness_status", "bypass_ok");
@@ -194,78 +195,124 @@ $(function () {
   const fmtX = (v) => Number.isFinite(+v) ? (+v).toFixed(2) + "x" : "—";
   const fmtF3 = (v) => Number.isFinite(+v) ? (+v).toFixed(3) : "—";
 
-  // =========================
-  // TABEL “REKOMENDASI TERBARU”
-  // =========================
-  function buildHead() {
-    $("#reko-thead").html(`
-      <tr>
-        <th class="text-muted" style="width:52px">#</th>
-        <th>Ticker</th>
-        <th class="text-end">Score</th>
-        <th class="text-end">Return</th>
-        <th class="text-end">Pace</th>
-      </tr>
-    `);
-  }
-
-  function renderRows(rows) {
-    const $tb = $("#reko-tbody"); if (!$tb.length) return;
-    $tb.empty();
-    rows.forEach((r, i) => {
-      const ret = Number(r.daily_return);
-      const pace = Number(r.vol_pace);
-      const score = Number(r.score);
-      const retHTML = Number.isFinite(ret)
-        ? `<span class="${ret >= 0 ? "reko-pos" : "reko-neg"}">${fmtPct(ret)}</span>`
-        : "—";
-      $tb.append(`
-        <tr>
-          <td class="text-muted">${i + 1}</td>
-          <td><strong>${(r.ticker || "-")}</strong></td>
-          <td class="reko-right text-end">${fmtF3(score)}</td>
-          <td class="reko-right text-end">${retHTML}</td>
-          <td class="reko-right text-end">${fmtX(pace)}</td>
-        </tr>
-      `);
-    });
-  }
-
-  async function fetchRekoJSON(slot) {
-    const url = (slot === "any")
-      ? `${WORKER_BASE}/api/reko/latest-any`
-      : `${WORKER_BASE}/api/reko/latest?slot=${slot}`;
-    const r = await fetch(url, { cache: "no-store" });
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    return r.json();
-  }
-
-  async function loadReko(slot) {
-    $("#reko-tbody").html(`<tr><td colspan="5"><div class="reko-shimmer"></div></td></tr>`);
-    $("#reko-meta").text("Memuat…");
-    $("#reko-slot-badge").text("--:--");
-
+  // ======================================================
+  // FEED 5 HARI — SATU SLOT = SATU TABEL MINI (divider per tanggal)
+  // ======================================================
+  async function fetchDates() {
     try {
-      const data = await fetchRekoJSON(slot);
-      const rows = Array.isArray(data?.rows) ? data.rows : [];
-      const date = data?.date || "-";
-      const slotStr = String(data?.slot ?? (slot === "any" ? "any" : slot)).padStart(4, "0");
+      const r = await fetch(`${WORKER_BASE}/api/reko/dates`, { cache: "no-store" });
+      if (!r.ok) return [];
+      const j = await r.json();
+      return Array.isArray(j.dates) ? j.dates : [];
+    } catch { return []; }
+  }
 
-      $("#reko-meta").text(`Tanggal ${date} • ${rows.length} entri`);
-      $("#reko-slot-badge").text(slotStr === "any" ? "Terbaru" : slotToLabel(slotStr));
+  async function fetchBatchByDate(date, slot) {
+    try {
+      const r = await fetch(`${WORKER_BASE}/api/reko/by-date?date=${date}&slot=${slot}`, { cache: "no-store" });
+      if (!r.ok) return null;
+      const d = await r.json();
+      if (!d?.rows?.length) return null;
+      return { date: d.date || date, slot: d.slot || slot, rows: d.rows };
+    } catch { return null; }
+  }
 
-      if (!rows.length) {
-        $("#reko-thead").empty();
-        $("#reko-tbody").html(`<tr><td colspan="5" class="text-center text-muted py-3">Tidak ada data.</td></tr>`);
-        return;
-      }
-      buildHead();
-      renderRows(rows);
+  function slotMinutes(slot) {
+    const m = String(slot).match(/^(\d{2})(\d{2})$/);
+    return m ? (+m[1]) * 60 + (+m[2]) : -1;
+  }
+
+  async function fetchRecentBatches(days = 5) {
+    const dates = await fetchDates();
+    const lastN = dates.slice(-days); // 5 tanggal paling baru
+    const jobs = [];
+    for (const d of lastN) for (const s of SLOTS) jobs.push(fetchBatchByDate(d, s));
+    const batches = (await Promise.all(jobs)).filter(Boolean);
+
+    // urutkan: tanggal desc, slot desc (paling baru di atas)
+    batches.sort((a, b) => {
+      if (a.date !== b.date) return a.date < b.date ? 1 : -1;
+      return slotMinutes(b.slot) - slotMinutes(a.slot);
+    });
+    return batches;
+  }
+
+  function renderSlotTableBlock(batch) {
+    const { date, slot, rows } = batch; let idx = 1;
+    const trs = rows.map(r => {
+      const ret = +r.daily_return, pace = +r.vol_pace, scr = +r.score, cut = +(r.price_at_cutoff ?? r.last);
+      const retHTML = Number.isFinite(ret)
+        ? `<span class="${ret >= 0 ? "reko-pos" : "reko-neg"}">${fmtPct(ret)}</span>` : "—";
+      return `<tr>
+          <td class="text-muted">${idx++}</td>
+          <td><strong>${r.ticker || "-"}</strong></td>
+          <td class="text-end">${fmtF3(scr)}</td>
+          <td class="text-end">${retHTML}</td>
+          <td class="text-end">${fmtX(pace)}</td>
+          <td class="text-end">${Number.isFinite(cut) ? cut.toLocaleString("id-ID") : "—"}</td>
+        </tr>`;
+    }).join("");
+
+    return `
+      <div class="reko-block my-4">
+        <div class="d-flex align-items-center gap-2 mb-2">
+          <span class="d-block badge text-dark" style="background:#cef4ff">${date}</span>
+          <span class="d-block badge text-dark">Slot ${slotToLabel(slot)}</span>
+          <span class="d-block text-muted small">• ${rows.length} entri</span>
+        </div>
+        <table class="table table-sm reko-subtable">
+          <thead style="background-color:#ddd">
+            <tr>
+              <th style="width:44px">#</th>
+              <th>Ticker</th>
+              <th class="text-end">Score</th>
+              <th class="text-end">Return</th>
+              <th class="text-end">Pace</th>
+              <th class="text-end">Buy Below</th>
+            </tr>
+          </thead>
+          <tbody>${trs}</tbody>
+        </table>
+      </div>`;
+  }
+
+  function renderFeedBySlot(batches) {
+    const $thead = $("#reko-thead"), $tbody = $("#reko-tbody");
+    $thead.empty(); $tbody.empty();
+
+    if (!batches.length) {
+      $("#reko-meta").text("Tidak ada data.");
+      $tbody.html(`<tr><td><div class="text-center text-muted py-3">Tidak ada data.</div></td></tr>`);
+      $("#reko-slot-badge").text("Feed");
+      return;
+    }
+
+    let html = "", prevDate = null;
+    for (const b of batches) {
+      // sisipkan divider saat ganti tanggal
+      if (prevDate && prevDate !== b.date) html += `<tr><td style="position:relative"><hr class="my-3 reko-hr"><div class="d-flex justify-content-center align-items-center" style="position:absolute;left:0px;top:0px;right:0;bottom:0"><small class="p-2" style="background:white">EOD of ${prevDate}</small></div></td></tr>`;
+      prevDate = b.date;
+      html += `<tr><td>${renderSlotTableBlock(b)}</td></tr>`;
+    }
+    $tbody.html(html);
+
+    const newest = batches[0], oldest = batches[batches.length - 1];
+    $("#reko-meta").text(`Feed 5 hari terakhir • ${oldest.date} → ${newest.date}`);
+    $("#reko-slot-badge").text("Feed");
+  }
+
+  async function loadRekoFeed5dPerSlot() {
+    $("#reko-tbody").html(`<tr><td><div class="reko-shimmer"></div></td></tr>`);
+    $("#reko-meta").text("Memuat…");
+    $("#reko-slot-badge").text("…");
+    try {
+      const batches = await fetchRecentBatches(5);
+      renderFeedBySlot(batches);
     } catch (e) {
-      console.error("[reko] load error:", e);
+      console.error("[reko-feed-per-slot] load error:", e);
       $("#reko-meta").text("Gagal memuat.");
       $("#reko-thead").empty();
-      $("#reko-tbody").html(`<tr><td colspan="5" class="text-danger">Error: ${e?.message || e}</td></tr>`);
+      $("#reko-tbody").html(`<tr><td><div class="text-danger">Error: ${e?.message || e}</div></td></tr>`);
     }
   }
 
@@ -291,8 +338,8 @@ $(function () {
           const bar = Math.max(0, Math.min(100, (score || 0) * 10));
           const bullets = [];
           if (Number.isFinite(it.p_close)) bullets.push(`Bertahan sampai tutup <b>${(it.p_close * 100).toFixed(1)}%</b>`);
-          if (Number.isFinite(it.p_am))    bullets.push(`Naik ≥3% besok pagi <b>${(it.p_am * 100).toFixed(1)}%</b>`);
-          if (Number.isFinite(it.p_next))  bullets.push(`Lanjut naik lusa <b>${(it.p_next * 100).toFixed(1)}%</b>`);
+          if (Number.isFinite(it.p_am)) bullets.push(`Naik ≥3% besok pagi <b>${(it.p_am * 100).toFixed(1)}%</b>`);
+          if (Number.isFinite(it.p_next)) bullets.push(`Lanjut naik lusa <b>${(it.p_next * 100).toFixed(1)}%</b>`);
           if (Number.isFinite(it.p_chain)) bullets.push(`Total berantai <b>${(it.p_chain * 100).toFixed(1)}%</b>`);
 
           return `
@@ -334,9 +381,9 @@ $(function () {
         const bar = Math.max(0, Math.min(100, (score || 0) * 10));
         const ret = Number(it.daily_return), pace = Number(it.vol_pace), cs = Number(it.closing_strength ?? it.cs);
         const bullets = [];
-        if (Number.isFinite(ret))  bullets.push(`Return Hari Ini <b>${(ret * 100).toFixed(1)}%</b>`);
+        if (Number.isFinite(ret)) bullets.push(`Return Hari Ini <b>${(ret * 100).toFixed(1)}%</b>`);
         if (Number.isFinite(pace)) bullets.push(`Volume pace <b>${pace.toFixed(0)}x</b> rata-rata`);
-        if (Number.isFinite(cs))   bullets.push(`Closing strength <b>${(cs * 100).toFixed(1)}%</b>`);
+        if (Number.isFinite(cs)) bullets.push(`Closing strength <b>${(cs * 100).toFixed(1)}%</b>`);
 
         return `
           <div class="pick-card">
@@ -363,9 +410,8 @@ $(function () {
   // =========================
   function triggerIfHome() {
     if (location.hash.slice(1) === "home-page") {
-      const slot = $("#reko-slot-select").val() || "any";
-      loadReko(slot);
-      loadTop3FromKV();
+      loadRekoFeed5dPerSlot(); // feed 5 hari, per slot = satu subtable
+      loadTop3FromKV();        // tetap load Top 3
     }
   }
 
@@ -386,8 +432,8 @@ $(function () {
   $(document).on("hashchange", function () { triggerIfHome(); });
   if (location.hash.slice(1) === "home-page") { requestAnimationFrame(triggerIfHome); }
 
-  // Ganti slot
-  $(document).on("change", "#reko-slot-select", function () { triggerIfHome(); });
+  // (opsional) kalau masih ada dropdown slot di UI, biar memanggil feed yang sama
+  $(document).on("change", "#reko-slot-select", function () { loadRekoFeed5dPerSlot(); });
 
   // Auto-refresh tiap 60 detik (hanya saat di home)
   setInterval(function () {

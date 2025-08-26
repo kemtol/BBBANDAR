@@ -287,6 +287,10 @@ h6 {
     background: #fafafa;
 }
 
+#reko-tbody td{
+    border:none
+}
+
 #reko-tbody td {
     vertical-align: middle;
 }
@@ -308,6 +312,12 @@ h6 {
 .reko-small {
     font-size: 12px;
     color: #64748b;
+}
+
+#reko-tbody table thead tr th{
+    background-color: #ddd;
+    font-size: 0.9rem;
+    text-align: center!important;
 }
 ;
 /* loading shimmer */
