@@ -235,9 +235,42 @@ h6 {
   grid-template-columns: repeat(3, 1fr);
   gap: .75rem;
 }
-@media (max-width: 960px) {
-    .picks-grid { grid-template-columns: 1fr; width: 100%;} 
+
+#pickCard{
+    width: 12.5rem;
 }
+
+@media (max-width: 960px) {
+  /* scroller horizontal */
+  #picksOuter{
+    width: 100%;  
+  }
+
+  .picks-grid {
+    display: flex;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    gap: 1rem;               /* jarak antar kartu */
+    padding-bottom: .75rem;  /* ruang bawah */
+    scroll-snap-type: x mandatory;
+  }
+
+  /* lebar kartu = 50% layar */
+  .pick-card {
+    flex: 0 0 70%;
+    scroll-snap-align: start;
+  }
+
+  /* GUTTER KIRI–KANAN: ini yang bikin tidak nempel dinding */
+  .picks-grid > .pick-card:first-child { margin-left: 1rem; }
+  .picks-grid > .pick-card:last-child  { margin-right: 1rem; }
+
+  /* opsional: sembunyikan scrollbar mobile */
+  .picks-grid::-webkit-scrollbar { display: none; }
+}
+    
+
+
 
 .pick-card {
   background: var(--surface);
@@ -397,3 +430,35 @@ h6 {
         max-width: 100% !important;
     }
 }
+
+.tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: center;
+  margin: 20px 0;
+}
+
+.tag {
+  padding: 6px 14px;
+  border-radius: 20px; /* Capsule shape */
+  font-size: 14px;
+  font-weight: 500;
+  text-decoration: none;
+  color: #fff;
+  transition: 0.2s;
+}
+
+.tag:hover {
+  transform: scale(1.05);
+  opacity: 0.9;
+}
+
+/* Warna-warni capsules */
+.tag.blue   { background: #007bff; }
+.tag.green  { background: #28a745; }
+.tag.orange { background: #fd7e14; }
+.tag.purple { background: #6f42c1; }
+.tag.red    { background: #dc3545; }
+.tag.teal   { background: #20c997; }
+.tag.pink   { background: #e83e8c; }

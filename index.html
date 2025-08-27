@@ -17,7 +17,7 @@
 
 	<title>BBBANDAR SSSAHAM - Bandar Saham Kolektif Untuk Para Ritel Saham</title>
 	<!-- App CSS -->
-	<link rel="stylesheet" href="style.css">
+	<link rel="stylesheet" href="style.css?v=1.0">
 </head>
 
 <body>
@@ -30,19 +30,31 @@
 
 				<h1 class="text-center" style="font-weight: 900;">SSSAHAM</h1>
 				<img src="android-chrome-192x192.png" id="splash-logo" class="img-fluid my-4">
+				<h5>Jika anda tertarik mempelajari</h5>
+				<div class="tags my-5">
+					<a href="/modul/quant" class="tag blue">#QuantitativeTrading</a>
+					<a href="/modul/markov" class="tag green">#MarkovChain</a>
+					<a href="/modul/bsjp" class="tag orange">#BSJP</a>
+					<a href="/modul/bpjs" class="tag purple">#BPJS</a>
+					<a href="/modul/risk" class="tag red">#RiskManagement</a>
+					<a href="/modul/ml" class="tag teal">#MachineLearning</a>
+					<a href="/modul/data" class="tag pink">#DataDriven</a>
+				</div>
+
 				<form id="login-form" class="w-100">
-					<div class="mb-3">
+					<div class="mb-3 d-none">
 						<label style="color:#fff;font-size:0.9rem" for="Handphone" class="form-label">No
 							Handphone</label>
 						<input type="text" class="form-control" id="phone" class="form-control">
 					</div>
-					<div class="mb-3">
+					<div class="mb-3 d-none">
 						<label style="color:#fff;font-size:0.9rem" for="OTP" class="form-label">OTP</label>
 						<input type="OTP" class="form-control" id="OTP">
 					</div>
-					<small class="d-block text-center m-2 p-2 mb-4" style="background-color:beige;">Versi Beta 1.0:
+					<small class=" d-none d-block text-center m-2 p-2 mb-4" style="background-color:beige;">Versi Beta
+						1.0:
 						Tulis Saja Asal Dulu</small>
-					<button type="submit" class="btn btn-primary w-100">Login</button>
+					<button type="submit" class="btn btn-primary w-100">Masuk</button>
 				</form>
 				<button id="start-onboard" class="btn btn-outline-primary my-2 w-100">Join Komunitas</button>
 			</div>
@@ -52,11 +64,16 @@
 		<section id="login-page">
 			<div class="this-page d-flex flex-column align-items-center p-4 my-4 w-100">
 				<h3 class="text-center mb-4 fw-700">Login</h3>
-				<form id="login-form-main" class="w-75">
-					<div class="mb-3">
+				<small class="p-3 m-3 w-100 text-center" style="background-color: aliceblue;">We are using no fee
+					oTP</small>
+				<form id="login-form-page-main" class="w-100">
+					<div class="mb-3" id="noHp" style="position: relative;">
 						<label style="color:#fff;font-weight: 700;" for="Handphone" class="form-label">No
 							Handphone</label>
-						<input type="text" class="form-control" id="OTP" required>
+						<input type="text" class="form-control" required>
+						<a href="" class="d-block p-2"
+							style="position:absolute;bottom:0px;right: 0.125rem;background-color: #10c210;color:white;border-radius: 0px 10px 10px 0px;text-decoration: none;"><strong>Get
+								OTP <i class="fa-brands fa-whatsapp"></strong></i></a>
 					</div>
 					<div class="mb-3">
 						<label style="color:#fff;font-weight: 700;" for="OTP" class="form-label">OTP</label>
@@ -122,7 +139,9 @@
 			</div>
 			<div class="this-page d-flex flex-column align-items-center border-bottom p-4 mb-4">
 				<h1 class="text-center mb-3 fs-5 fw-bold">Markov Model Probabilty</h1>
-				<div id="top-picks" class="picks-grid mt-3"></div>
+				<div id="picksOuter" class="picks-outer mt-3">
+					<div id="top-picks" class="picks-grid"></div>
+				</div>
 				<small id="top-picks-note" class="text-muted d-block text-center mt-2">
 					Ditentukan dari skor (return, volume, pace, dsb).
 				</small>
