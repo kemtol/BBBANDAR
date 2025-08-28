@@ -397,7 +397,7 @@ $(function () {
             <li><strong>${it.rekom || "-"}</strong></li>
             ${bullets.map(b => `<li>${b}</li>`).join("")}
           </ul>
-          <button class="btn btn-primary pick-cta">VOTE SAHAM INI</button>
+          <button class="d-none btn btn-primary pick-cta">VOTE SAHAM INI</button>
         </div>`;
     };
 
