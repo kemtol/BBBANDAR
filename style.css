@@ -35,6 +35,7 @@ section{ background:transparent; }
 #splash-page,#login-page,#liveness-check{
   display:flex;align-items:center;justify-content:center;
   width:100%;height:100vh;margin:0;padding:0;overflow:hidden;
+  flex-direction:column;
 }
 
 /* ---------- 3) FLAT CARDS / SURFACES ---------- */
@@ -85,6 +86,12 @@ h1,h2,h3,h4,h5,h6{ font-weight:800; letter-spacing:-.02em; margin:0; }
 #home-page .this-page:first-of-type{ border:1px solid var(--border); }
 #home-page h2{ font-weight:600; color:var(--text); }
 #home-page i{ color:var(--primary)!important; }
+/* Embedded About Us iframe */
+#about-us-embed{
+  width:100%;
+  border:0;
+  box-shadow:#eee 0px 5px 20px 0px
+}
 
 /* ---------- 9) EMITEN LIST / INFO ---------- */
 #emiten-list{ gap:.5rem!important; }

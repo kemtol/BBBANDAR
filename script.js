@@ -501,7 +501,24 @@ $(function () {
   // Auto-refresh tiap 60 detik (hanya saat di home)
   setInterval(function () {
     if (location.hash.slice(1) === "home-page") triggerIfHome();
-  }, 60000);
+  }, 3600000);
+
+
+  // Resize About Us iframe to match its content
+  const aboutUsEmbed = document.getElementById("about-us-embed");
+  function resizeAboutEmbed() {
+    if (!aboutUsEmbed) return;
+    try {
+      aboutUsEmbed.style.height =
+        aboutUsEmbed.contentWindow.document.body.scrollHeight + 35 + "px";
+    } catch (e) {
+      /* ignore cross-origin errors */
+    }
+  }
+  if (aboutUsEmbed) {
+    aboutUsEmbed.addEventListener("load", resizeAboutEmbed);
+    window.addEventListener("resize", resizeAboutEmbed);
+  }
 
   /* =========================
    * 11) NOTIF DEMO (opsional)
