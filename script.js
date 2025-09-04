@@ -336,19 +336,8 @@
   }
 
   // Versi dengan parameter isMk eksplisit (untuk dual-render)
-  function fetchBatchByDateVariant(date, slot, isMk) {
+  function fetchBatchByDate(date, slot, isMk) {
     var mk = isMk ? "&mk=1" : "";
-    return fetch(WORKER_BASE + "/api/reko/by-date?date=" + date + "&slot=" + slot + mk, { cache: "no-store" })
-      .then(function (r) { if (!r.ok) return null; return r.json(); })
-      .then(function (d) {
-        if (!d || !d.rows || !d.rows.length) return null;
-        return { date: d.date || date, slot: d.slot || slot, rows: d.rows };
-      })
-      .catch(function () { return null; });
-  }
-
-  function fetchBatchByDate(date, slot) {
-    var mk = window.FEED_MARKOV ? "&mk=1" : "";
     return fetch(WORKER_BASE + "/api/reko/by-date?date=" + date + "&slot=" + slot + mk, { cache: "no-store" })
       .then(function (r) { if (!r.ok) return null; return r.json(); })
       .then(function (d) {
@@ -370,7 +359,12 @@
       var jobs = [];
       for (var i = 0; i < lastN.length; i++) {
         for (var j = 0; j < SLOTS.length; j++) {
-          jobs.push(fetchBatchByDate(lastN[i], SLOTS[j]));
+          if (window.DUAL_MARKOV) {
+            jobs.push(fetchBatchByDate(lastN[i], SLOTS[j], true));
+            jobs.push(fetchBatchByDate(lastN[i], SLOTS[j], false));
+          } else {
+            jobs.push(fetchBatchByDate(lastN[i], SLOTS[j], window.FEED_MARKOV));
+          }
         }
       }
       return Promise.all(jobs).then(function (arr) {
@@ -493,6 +487,111 @@
     return m ? (Number(m[1]) * 60 + Number(m[2])) : -1;
   }
 
+
+  //================== COBA DUAL-MARKOV ==================
+
+  // urutan slot untuk sort yang konsisten
+  var SLOT_ORDER = { "09:30": 1, "11:30": 2, "14:15": 3, "15:50": 4 };
+  function slotKey(s) { return (SLOT_ORDER[String(s).trim()] || 999); }
+
+  // helper: kelompokkan array batch by date
+  function groupByDate(feed) {
+    // Normalisasi ke Array
+    const arr = Array.isArray(feed) ? feed
+      : (feed && Array.isArray(feed.rows)) ? feed.rows
+        : (feed && typeof feed === 'object' && !('length' in feed)) ? Object.values(feed)
+          : [];
+
+    const map = {};
+    for (const b of arr) {
+      if (!b || !b.date) continue;
+      (map[b.date] ||= []).push(b);
+    }
+    return map;
+  }
+
+  // renderer utama: panggil ini dengan (batchesMarkov, batchesNonMarkov)
+  window.renderBlendFeed = function renderBlendFeed(markovBatches, nonMkBatches) {
+    var byMk = groupByDate(markovBatches || []);
+    var byNm = groupByDate(nonMkBatches || []);
+
+    // daftar tanggal gabungan (desc)
+    var dates = Array.from(new Set([].concat(Object.keys(byMk), Object.keys(byNm))))
+      .sort(function (a, b) { return a < b ? 1 : (a > b ? -1 : 0); });
+
+    // bungkus tabel utama (biar konsisten sama section lama)
+    var html = '<table class="table table-sm align-middle mb-0 w-100"><tbody>';
+
+    var prevDate = null;
+    dates.forEach(function (d, di) {
+      // separator EOD untuk tanggal sebelumnya (kecuali pertama)
+      if (prevDate) {
+        html += ''
+          + '<tr><td style="position:relative">'
+          + '<hr class="my-3 reko-hr">'
+          + '<div class="d-flex justify-content-center align-items-center"'
+          + ' style="position:absolute;left:0;top:0;right:0;bottom:0">'
+          + '<small class="p-2" style="background:#fff">EOD of ' + prevDate + '</small>'
+          + '</div>'
+          + '</td></tr>';
+      }
+      prevDate = d;
+
+
+
+      // 1) MARKOV dulu (jika ada)
+      var mkRows = (byMk[d] || []).slice().sort(function (a, b) {
+        return slotKey(a.slot) - slotKey(b.slot);
+      });
+      mkRows.forEach(function (b) {
+        html += '<tr><td>' + renderSlotTableBlock(b, /*isMk=*/true) + '</td></tr>';
+      });
+
+      // 2) NON-MARKOV kemudian (jika ada)
+      var nmRows = (byNm[d] || []).slice().sort(function (a, b) {
+        return slotKey(a.slot) - slotKey(b.slot);
+      });
+
+      if (typeof feed === 'string') {
+        console.warn("renderBlendFeed got STRING; did you forget to JSON.parse?", feed.slice(0, 120));
+        try { feed = JSON.parse(feed); } catch (e) {
+          console.error("Cannot parse feed string:", e);
+          return; // jangan lanjut
+        }
+      }
+
+      const map = groupByDate(feed); // aman setelah normalisasi
+
+
+      nmRows.forEach(function (b) {
+        html += '<tr><td>' + renderSlotTableBlock(b, /*isMk=*/false) + '</td></tr>';
+      });
+    });
+
+    html += '</tbody></table>';
+
+    // inject ke container BLEND
+    var $wrap = $("#reko-table-blend");
+    if ($wrap.length) $wrap.html(html);
+  };
+
+
+  //==============================================
+
+  // --- CONTOH PEMANGGILAN ---
+  // Silakan ganti variabel sumber sesuai yang kamu punya di app:
+  //   - markov feed (array batch): window.BATCHES_MK atau window.FEED_MARKOV dll
+  //   - non-markov feed (array batch): window.BATCHES atau window.FEED_NONMK dll
+  $(function () {
+    var mk = window.BATCHES_MK || window.FEED_MARKOV || window.MK_FEED || [];
+    var nm = window.BATCHES || window.FEED_NONMK || window.KV_FEED || [];
+    // kalau mau tes cepat, panggil manual:
+    try { window.renderBlendFeed(mk, nm); } catch (e) { console.error("renderBlendFeed error:", e); }
+  });
+
+
+
+
   // ============== REPLACEMENT 2 ==============
   function renderFeedBySlot(batches /*campur MK & non-MK*/) {
     // ekspektasi: array batches berisi kombinasi hasil fetch MK & NON dengan pasangan (date,slot)
@@ -592,71 +691,137 @@
   };
 
 
-
-
-
   // === DUMP START (drop-in inside an existing function) ===
-  var NUM_DATES = 3;                              // berapa tanggal terbaru
-  var DUMP_SLOTS = ["0930", "1415", "1550"];        // slot yang mau ditampilkan
-  var MK_PARAM = "mk=1";                          // param untuk markov
+  var NUM_DATES = 3;                                     // berapa tanggal terbaru
+  var DUMP_SLOTS = ["1550", "1415", "1130", "0930"];        // urutan: 15xx → 11xx → 10xx → 09xx
+  var MK_PARAM = "mk=1";                                 // param untuk markov
   var dump = document.getElementById("dump-wrap");
-  if (!dump) { /* container ga ada, skip */ } else {
+
+  if (!dump) {
+    // container ga ada → tidak apa-apa
+  } else {
     dump.innerHTML = ""; // bersihkan
 
-    function labelSlot(s) { return String(s).slice(0, 2) + ":" + String(s).slice(2); }
-    function looksMkShape(j) {
-      return j && j.rows && j.rows.length &&
-        (j.rows[0]["Kode Saham"] != null ||
-          j.rows[0]["Skor Sistem"] != null ||
-          j.rows[0]["Peluang Bertahan sampai Tutup"] != null);
-    }
-    function addDateHeader(dateStr) {
-      var dd = (String(dateStr).match(/^\d{4}-\d{2}-(\d{2})$/) || [, '??'])[1];
-      var div = document.createElement("div");
-      div.style.cssText = "font-weight:700;margin:8px 0 6px";
-      div.textContent = "• tgl " + dd + "  (" + dateStr + ")";
-      dump.appendChild(div);
-    }
-    function addBlock(mark, label, json) {
-      var pre = document.createElement("pre");
-      pre.style.cssText = "background:#fff;border:1px solid #ddd;padding:8px;margin:0 0 10px;white-space:pre-wrap;word-break:break-word;overflow:visible";
-      var badge = mark === "MK" ? "[MARKOV]" : "[NON-MARKOV]";
-      var warn = "";
-      if (mark === "MK" && json && json.rows && json.rows.length && !looksMkShape(json)) warn = "  ⚠ server returned NON-MK schema";
-      if (mark === "NON" && json && json.rows && json.rows.length && looksMkShape(json)) warn = "  ⚠ looks like MK schema";
-      pre.textContent = badge + " " + label + warn + "\n" + JSON.stringify(json, null, 2);
-      dump.appendChild(pre);
+    // ---------- helpers ----------
+    function labelHourXX(slot) { return String(slot).slice(0, 2) + "xx"; }
+    function labelSlot(slot) { return String(slot).slice(0, 2) + ":" + String(slot).slice(2); }
+    function ddFromDate(dateStr) { return (String(dateStr).match(/^\d{4}-\d{2}-(\d{2})$/) || [, "??"])[1]; }
+
+    function toRows(x) {
+      if (Array.isArray(x)) return x;
+      if (x && Array.isArray(x.rows)) return x.rows;
+      if (x && Array.isArray(x.data)) return x.data;
+      return [];
     }
 
-    // Ambil daftar tanggal
-    fetch(WORKER_BASE + "/api/reko/dates", { cache: "no-store" })
-      .then(function (r) { return r && r.ok ? r.json() : null; })
-      .then(function (j) { return (j && j.dates) ? j.dates : []; })
+    function getJSON(url) {
+      return fetch(url, { cache: "no-store" })
+        .then(r => (r && r.ok) ? r.json() : null)
+        .catch(() => null);
+    }
+
+    function addDateHeader(dateStr) {
+      var h = document.createElement("div");
+      h.style.cssText = "font-weight: 700; text-align: center; color: rgb(51, 51, 51); font-size: 0.9rem;border-top:1px solid gainsboro;padding:1rem 0;margin-top:2.5rem;margin-bottom:0";
+      h.textContent = dateStr
+      dump.appendChild(h);
+    }
+
+    function makeTable(rows) {
+      if (!rows || !rows.length) {
+        var empty = document.createElement("div");
+        empty.style.cssText = "font-style:italic;color:#666;margin:2px 0 8px 14px";
+        empty.textContent = "— (tidak ada data)";
+        return empty;
+      }
+      // Tentukan kolom dari baris pertama (auto)
+      var cols = Object.keys(rows[0] || {});
+      // Render tabel sederhana (tanpa dependensi CSS)
+      var wrap = document.createElement("div");
+      wrap.style.cssText = "overflow:auto;margin:1rem 0;border:1px solid #ddd";
+      var table = document.createElement("table");
+      table.style.cssText = "border-collapse:collapse;font-size:12px;min-width:600px;background:#fff";
+      var thead = document.createElement("thead");
+      var trh = document.createElement("tr");
+      cols.forEach(function (c) {
+        var th = document.createElement("th");
+        th.textContent = c;
+        th.style.cssText = "background:#f7f7f7;border-bottom:1px solid #ddd;border-right:1px solid #eee;padding:0.5rem 1rem;text-align:center;white-space:nowrap;font-size:0.9rem;text-transform:uppercase;";
+        trh.appendChild(th);
+      });
+      thead.appendChild(trh);
+      var tbody = document.createElement("tbody");
+      rows.forEach(function (r) {
+        var tr = document.createElement("tr");
+        cols.forEach(function (c) {
+          var td = document.createElement("td");
+          var v = r[c];
+          td.textContent = (v === null || v === undefined) ? "" : String(v);
+          td.style.cssText = "border-top:1px solid #f0f0f0;border-right:1px solid #fafafa;padding:0.5rem 1rem;vertical-align:top;white-space:nowrap;font-size:0.9rem";
+          tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+      });
+      table.appendChild(thead);
+      table.appendChild(tbody);
+      wrap.appendChild(table);
+      return wrap;
+    }
+
+    // Ganti fungsi lama addSubHeader() dengan ini:
+    function addSectionHeader(mark, slot) {
+      var div = document.createElement("div");
+      div.style.cssText = "color:#222;text-align:center;mmargin-bottom:0.25rem;font-size:0.9rem";
+      var hhmm = labelSlot(slot);    // contoh: "15:50"
+
+      // === EDIT TEKS DI SINI ===
+      // Contoh default: "-- table markov jam 15xx (15:50)"
+      var label = (mark === "MK") ? "<span style='color:green'>Markov State Prob</span>" : "Rooster Table";
+      div.innerHTML = `${label} <small>(${hhmm})</small>`;
+      // =========================
+
+      dump.appendChild(div);
+    }
+
+
+    // ---------- main flow ----------
+    getJSON(WORKER_BASE + "/api/reko/dates")
+      .then(j => (j && j.dates) ? j.dates : [])
       .then(function (dates) {
         if (!dates.length) {
           dump.textContent = "Tidak ada tanggal dari /api/reko/dates";
           return;
         }
-        var wanted = dates.slice(0, NUM_DATES);
+        var wanted = (dates || [])
+          .filter(Boolean)
+          .sort(function (a, b) { return b.localeCompare(a); }) // YYYY-MM-DD → aman untuk sort desc
+          .slice(0, NUM_DATES);
 
-        // Rantai promise agar urutan output rapi: per tanggal → per slot → MK & NON
         var seq = Promise.resolve();
+
+        // per tanggal
         for (var i = 0; i < wanted.length; i++) {
           (function (date) {
             seq = seq.then(function () {
               addDateHeader(date);
 
               var inner = Promise.resolve();
+              // per slot (15xx → 11xx → 10xx → 09xx)
               for (var s = 0; s < DUMP_SLOTS.length; s++) {
                 (function (slot) {
                   inner = inner.then(function () {
+                    var hourXX = labelHourXX(slot);
                     var urlMk = WORKER_BASE + "/api/reko/by-date?date=" + date + "&slot=" + slot + "&" + MK_PARAM;
                     var urlNon = WORKER_BASE + "/api/reko/by-date?date=" + date + "&slot=" + slot;
-                    return Promise.all([
-                      // … semua fetch MK / NON untuk beberapa tanggal & slot …
-                    ]).then(function (results) {
-                      var batches = results.filter(Boolean); // hasil campur MK & NON
-                      renderFeedBySlot(batches);             // ← ini yang baru
+
+                    return Promise.all([getJSON(urlMk), getJSON(urlNon)]).then(function ([jm, jn]) {
+                      // MARKOV
+                      addSectionHeader("MK", slot);
+                      dump.appendChild(makeTable(toRows(jm)));
+
+                      // NON-MARKOV
+                      addSectionHeader("NON", slot);
+                      dump.appendChild(makeTable(toRows(jn)));
                     });
                   });
                 })(DUMP_SLOTS[s]);
@@ -665,6 +830,7 @@
             });
           })(wanted[i]);
         }
+
         return seq;
       })
       .catch(function (err) {
@@ -673,6 +839,138 @@
       });
   }
   // === DUMP END ===
+
+
+
+  // ================= CONFIG =================
+
+  // Ganti ini ke endpoint kamu. Demo: file statis 28mk.json & 28.json utk 2025-08-28 14:15
+  async function fetchBoth(date, slot) {
+    const demo = (date === "2025-08-28" && slot === "1415");
+    const mk = demo ? await (await fetch("28mk.json")).json() : { ok: false, rows: [] };
+    const nm = demo ? await (await fetch("28.json")).json() : { ok: false, rows: [] };
+    return { mk, nm };
+
+    // Contoh ke API kamu:
+    // const mkUrl = `/api/reko/${date}/${slot}?type=mk`;
+    // const nmUrl = `/api/reko/${date}/${slot}?type=nonmk`;
+    // return { mk: await (await fetch(mkUrl)).json(),
+    //          nm: await (await fetch(nmUrl)).json() };
+  }
+
+  // ================= UTILS =================
+  function pick(o, keys, def = "") { for (const k of keys) { if (o && o[k] != null) return o[k]; } return def; }
+  function fmtPct(x) { if (x == null || isNaN(x)) return ""; return (100 * Number(x)).toFixed(1) + "%"; }
+  function fmtNum(x, d = 2) { if (x == null || isNaN(x)) return ""; return Number(x).toFixed(d); }
+
+  // ================= TABLE A (MK) =================
+  const COLS_A = [
+    { keys: ["Kode Saham", "ticker", "Kode", "kode"], label: "Kode" },
+    { keys: ["Skor Sistem", "score", "Skor"], label: "Skor" },
+    { keys: ["Kecepatan Volume", "vol_pace", "rvol20"], label: "rVol Pace", fmt: fmtNum },
+    { keys: ["Dorongan Sore", "afternoon_power"], label: "Dorongan", fmt: fmtNum },
+    { keys: ["Konsistensi Muncul", "persist_n"], label: "Konsistensi", fmt: fmtNum },
+    { keys: ["Peluang Naik ≥5% Besok", "p_star_D1_5", "Peluang Naik ≥3% Besok Pagi"], label: "P(D+1)", fmt: fmtPct },
+    { keys: ["Peluang Lanjut Naik ≥5% Lusa (Net)", "p_star_D2NET_5", "Peluang Lanjut Naik Lusa"], label: "P(D+2 net)", fmt: fmtPct },
+  ];
+  function renderTableA(rows) {
+    const thead = "<thead><tr>" + COLS_A.map(c => `<th>${c.label}</th>`).join("") + "</tr></thead>";
+    const tbody = "<tbody>" + (rows || []).map(r => {
+      const tds = COLS_A.map(c => `<td>${c.fmt ? c.fmt(pick(r, c.keys)) : pick(r, c.keys, "")}</td>`).join("");
+      return `<tr>${tds}</tr>`;
+    }).join("") + "</tbody>";
+    return `<div class="table-responsive"><table class="table table-sm table-striped table-bordered">${thead}${tbody}</table></div>`;
+  }
+
+  // ================= TABLE B (Non-MK) =================
+  const COLS_B = [
+    { keys: ["ticker", "Kode Saham", "kode"], label: "Kode" },
+    { keys: ["price_at_cutoff", "Open", "Close"], label: "Harga @cut", fmt: (x) => fmtNum(x, 0) },
+    { keys: ["daily_return"], label: "Ret Hari Ini", fmt: fmtPct },
+    { keys: ["vol_pace", "rvol20"], label: "rVol Pace", fmt: fmtNum },
+    { keys: ["vwap_delta_pct"], label: "ΔVWAP %", fmt: fmtPct },
+    { keys: ["score", "Skor Sistem"], label: "Skor", fmt: fmtNum },
+    { keys: ["last", "Close"], label: "Last", fmt: (x) => fmtNum(x, 0) },
+  ];
+  function renderTableB(rows) {
+    const thead = "<thead><tr>" + COLS_B.map(c => `<th>${c.label}</th>`).join("") + "</tr></thead>";
+    const tbody = "<tbody>" + (rows || []).map(r => {
+      const tds = COLS_B.map(c => `<td>${c.fmt ? c.fmt(pick(r, c.keys)) : pick(r, c.keys, "")}</td>`).join("");
+      return `<tr>${tds}</tr>`;
+    }).join("") + "</tbody>";
+    return `<div class="table-responsive"><table class="table table-sm table-striped table-bordered">${thead}${tbody}</table></div>`;
+  }
+
+
+  async function fetchJson(url, init) {
+    const res = await fetch(url, init);
+    const text = await res.text();
+
+    if (!res.ok) {
+      console.error("HTTP error", res.status, url, text.slice(0, 160));
+      throw new Error(`HTTP ${res.status} @ ${url}`);
+    }
+
+    try {
+      return JSON.parse(text);
+    } catch (e) {
+      console.error("JSON.parse fail", { url, preview: text.slice(0, 160) });
+      throw new Error(`Invalid JSON from ${url}`);
+    }
+  }
+
+
+
+  // ================= DRIVER (stacked) =================
+  async function renderDualByDate(dates) {
+    const $root = $("#dual-root").empty();
+    for (const date of dates) {
+      const $day = $(`<div class="mb-4"><h5 class="fw-bold mb-2">${date}</h5></div>`);
+      for (const slot of SLOTS) {
+        const { mk, nm } = await fetchBoth(date, slot);
+        const hasMk = mk && mk.ok && (mk.rows || []).length;
+        const hasNm = nm && nm.ok && (nm.rows || []).length;
+
+        const $card = $(`
+        <div class="card mb-3 shadow-sm">
+          <div class="card-header d-flex justify-content-between align-items-center">
+            <div><span class="badge bg-dark me-2">${SLOT_LABEL[slot] || slot}</span>
+                 <span class="text-muted">MK & Non-MK (stack)</span></div>
+            <div class="small text-muted">${hasMk ? "MK ✓" : "MK –"} | ${hasNm ? "Non-MK ✓" : "Non-MK –"}</div>
+          </div>
+          <div class="card-body p-2"></div>
+        </div>
+      `);
+
+        const $body = $card.find(".card-body");
+
+        // Atas: MK (jika ada)
+        if (hasMk) {
+          $body.append(`<h6 class="mb-2">Table A — Markov</h6>`);
+          $body.append(renderTableA(mk.rows));
+          $body.append(`<hr class="my-3">`);
+        } else {
+          $body.append(`<div class="text-muted small mb-2">Tidak ada data MK untuk slot ini.</div>`);
+        }
+
+        // Bawah: Non-MK (jika ada)
+        if (hasNm) {
+          $body.append(`<h6 class="mb-2">Table B — Non-Markov</h6>`);
+          $body.append(renderTableB(nm.rows));
+        } else {
+          $body.append(`<div class="text-muted small">Tidak ada data Non-MK untuk slot ini.</div>`);
+        }
+
+        $day.append($card);
+      }
+      $root.append($day);
+    }
+  }
+
+  // Demo jalankan satu tanggal (ganti sesuai kebutuhan)
+  $(async function () {
+    await renderDualByDate(["2025-08-28"]);
+  });
 
 
 
@@ -850,6 +1148,10 @@
     aboutUsEmbed.addEventListener("load", resizeAboutEmbed);
     window.addEventListener("resize", resizeAboutEmbed);
   }
+
+
+
+
 
   /* =========================
    * 12) NOTIF DEMO (opsional)
