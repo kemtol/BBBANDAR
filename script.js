@@ -495,100 +495,124 @@
     return m ? (Number(m[1]) * 60 + Number(m[2])) : -1;
   }
 
-  //==============================================
+  // Helper untuk mendeteksi apakah sebuah batch data berasal dari model Markov
+  function isMarkovBatch(batch) {
+    try {
+      var r0 = batch && batch.rows && batch.rows[0];
+      // Diasumsikan data Markov memiliki kolom 'Kode Saham' atau 'Skor Sistem'
+      return !!(r0 && (r0["Kode Saham"] != null || r0["Skor Sistem"] != null));
+    } catch (_) { return false; }
+  }
 
-  // --- CONTOH PEMANGGILAN ---
-  // Silakan ganti variabel sumber sesuai yang kamu punya di app:
-  //   - markov feed (array batch): window.BATCHES_MK atau window.FEED_MARKOV dll
-  //   - non-markov feed (array batch): window.BATCHES atau window.FEED_NONMK dll
-  $(function () {
-    var mk = window.BATCHES_MK || window.FEED_MARKOV || window.MK_FEED || [];
-    var nm = window.BATCHES || window.FEED_NONMK || window.KV_FEED || [];
-    // kalau mau tes cepat, panggil manual:
-    try { window.renderBlendFeed(mk, nm); } catch (e) { console.error("renderBlendFeed error:", e); }
-  });
+  // Fungsi untuk membuat satu blok tabel HTML untuk satu slot
+  function renderSlotTableBlock(batch) {
+    var isMk = isMarkovBatch(batch);
+    var date = batch.date || "";
+    var slot = batch.slot || "";
+    var rows = batch.rows || [];
+    var idx = 1;
 
-  // ============== REPLACEMENT 2 ==============
-  function renderFeedBySlot(batches /*campur MK & non-MK*/) {
-    // ekspektasi: array batches berisi kombinasi hasil fetch MK & NON dengan pasangan (date,slot)
-    // kita group per tanggal, lalu per slot, render MARKOV → NON-MARKOV
+    // Fungsi format helper (jika belum ada di skrip Anda)
+    function fmtPct(x) { return (isFinite(x) ? (x * 100).toFixed(2) + "%" : "—"); }
+    function fmtX(x) { return (isFinite(x) ? Number(x).toFixed(2) + "x" : "—"); }
+    function fmtF3(n) { return (isFinite(n) ? Number(n).toFixed(3) : "—"); }
 
-    var $thead = $("#reko-thead"), $tbody = $("#reko-tbody");
-    $thead.empty(); $tbody.empty();
+    var trs = rows.map(function (r) {
+      // Normalisasi data dari format Markov atau Non-Markov
+      var ticker = isMk ? (r["Kode Saham"] || "-") : (r.ticker || "-");
+      var score = isMk ? (r["Skor Sistem"]) : (r.score);
+      var daily_return = isMk ? (r["Peluang Naik ≥3% Besok Pagi"]) : (r.daily_return);
+      var vol_pace = isMk ? (r["Kecepatan Volume"]) : (r.vol_pace);
+      var price = isMk ? null : (r.price_at_cutoff != null ? r.price_at_cutoff : r.last);
 
-    if (!batches || !batches.length) {
-      $("#reko-meta").text("Tidak ada data.");
-      $tbody.html('<tr><td><div class="text-center text-muted py-3">Tidak ada data.</div></td></tr>');
-      $("#reko-slot-badge").text("Feed");
+      return `
+      <tr>
+        <td class="text-muted">${idx++}</td>
+        <td><strong>${String(ticker).replace(/.JK$/, '')}</strong></td>
+        <td class="text-end">${fmtF3(score)}</td>
+        <td class="text-end"><span class="${daily_return >= 0 ? "reko-pos" : "reko-neg"}">${fmtPct(daily_return)}</span></td>
+        <td class="text-end">${fmtX(vol_pace)}</td>
+        <td class="text-end">${isFinite(price) ? Number(price).toLocaleString("id-ID") : "—"}</td>
+      </tr>`;
+    }).join("");
+
+    var markBadge = isMk
+      ? `<span class="badge" style="background:#6f42c1;color:#fff">MARKOV</span>`
+      : `<span class="badge text-dark">NON-MARKOV</span>`;
+
+    return `
+    <div class="reko-block my-4">
+      <div class="d-flex align-items-center gap-2 mb-2">
+        <span class="d-block badge text-dark" style="background:#cef4ff">${date}</span>
+        <span class="d-block badge text-dark">Slot ${slot.slice(0, 2)}:${slot.slice(2)}</span>
+        <span class="d-block text-muted small">• ${rows.length} entri</span>
+        ${markBadge}
+      </div>
+      <table class="table table-sm reko-subtable">
+        <thead style="background-color:#ddd">
+          <tr>
+            <th style="width:44px">#</th>
+            <th>Ticker</th>
+            <th class="text-end">Score</th>
+            <th class="text-end">${isMk ? "Peluang Naik" : "Return"}</th>
+            <th class="text-end">Pace</th>
+            <th class="text-end">Buy Below</th>
+          </tr>
+        </thead>
+        <tbody>${trs}</tbody>
+      </table>
+    </div>`;
+  }
+
+  // Fungsi utama untuk me-render seluruh feed
+  function renderFeedBySlot(batches) {
+    const tbody = document.getElementById('reko-tbody');
+    if (!tbody) return;
+
+    if (!batches || batches.length === 0) {
+      tbody.innerHTML = '<tr><td><div class="text-center text-muted py-3">Tidak ada data.</div></td></tr>';
       return;
     }
 
-    // 1) group by date
-    var byDate = {};
-    for (var i = 0; i < batches.length; i++) {
-      var b = batches[i];
-      if (!b || !b.date) continue;
-      (byDate[b.date] = byDate[b.date] || []).push(b);
-    }
-
-    // 2) urutkan tanggal desc
-    var dates = Object.keys(byDate).sort(function (a, b) { return a < b ? 1 : -1; });
-
-    // 3) build HTML: per tanggal → urut slot desc → MK lalu NON
-    var html = "", prevDate = null;
-    for (var di = 0; di < dates.length; di++) {
-      var d = dates[di];
-      var list = byDate[d].slice();
-
-      // group per slot
-      var bySlot = {};
-      for (var k = 0; k < list.length; k++) {
-        var it = list[k];
-        (bySlot[it.slot] = bySlot[it.slot] || []).push(it);
+    // 1. Grouping data per tanggal
+    const byDate = {};
+    batches.forEach(b => {
+      if (b && b.date) {
+        (byDate[b.date] = byDate[b.date] || []).push(b);
       }
+    });
 
-      // slot desc
-      var slots = Object.keys(bySlot).sort(function (a, b) {
-        return _slotMinutes(b) - _slotMinutes(a);
+    // 2. Urutkan tanggal secara descending (terbaru di atas)
+    const dates = Object.keys(byDate).sort((a, b) => a < b ? 1 : -1);
+
+    // 3. Bangun HTML akhir
+    let finalHtml = '';
+    let prevDate = null;
+    dates.forEach(date => {
+      const dateBatches = byDate[date];
+
+      // Tambahkan garis pemisah antar tanggal
+      if (prevDate) {
+        finalHtml += `
+            <tr><td style="position:relative">
+              <hr class="my-3 reko-hr">
+              <div class="d-flex justify-content-center align-items-center" style="position:absolute;left:0;top:0;right:0;bottom:0">
+                <small class="p-2" style="background:#fff">EOD of ${prevDate}</small>
+              </div>
+            </td></tr>`;
+      }
+      prevDate = date;
+
+      // Urutkan slot per tanggal secara descending
+      dateBatches.sort((a, b) => _slotMinutes(b.slot) - _slotMinutes(a.slot));
+
+      // Render setiap blok tabel untuk tanggal ini
+      dateBatches.forEach(batch => {
+        finalHtml += `<tr><td>${renderSlotTableBlock(batch)}</td></tr>`;
       });
+    });
 
-      // garis EOD antar tanggal (skip di awal)
-      if (prevDate && prevDate !== d) {
-        html += ''
-          + '<tr><td style="position:relative">'
-          + '<hr class="my-3 reko-hr">'
-          + '<div class="d-flex justify-content-center align-items-center"'
-          + ' style="position:absolute;left:0;top:0;right:0;bottom:0">'
-          + '<small class="p-2" style="background:#fff">EOD of ' + prevDate + '</small>'
-          + '</div>'
-          + '</td></tr>';
-      }
-      prevDate = d;
-
-      // render tiap slot: MK lalu NON (kalau ada salah satunya saja, tampil yang ada)
-      for (var si = 0; si < slots.length; si++) {
-        var s = slots[si];
-        var arr = bySlot[s];
-
-        // pisah MK / NON
-        var mk = arr.find(function (x) { return isMarkovBatch(x); });
-        var non = arr.find(function (x) { return !isMarkovBatch(x); });
-
-        if (mk) {
-          html += '<tr><td>' + renderSlotTableBlock(mk, true) + '</td></tr>';
-        }
-        if (non) {
-          html += '<tr><td>' + renderSlotTableBlock(non, false) + '</td></tr>';
-        }
-      }
-    }
-
-    $tbody.html(html);
-
-    // meta kecil di header
-    var newest = dates[0], oldest = dates[dates.length - 1];
-    $("#reko-meta").text('Feed 5 hari terakhir • ' + oldest + ' → ' + newest);
-    $("#reko-slot-badge").text('Feed (MK + Non-MK)');
+    tbody.innerHTML = finalHtml;
   }
 
 
