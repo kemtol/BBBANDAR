@@ -156,14 +156,18 @@ h1,h2,h3,h4,h5,h6{ font-weight:800; letter-spacing:-.02em; margin:0; }
 #top-picks.is-stale .pick-card:hover{ opacity:.85; filter:none; }
 
 /* ---------- 14) REKO TABLE ---------- */
+
+#dump-wrap{ overflow-x:auto; }
+#dump-wrap > div:nth-child(2){display:none}
+
 #reko-section h5{ letter-spacing:-.01em; }
-#reko-thead th{ color:#475569; position:sticky; top:0; background:#fafafa; } /* :contentReference[oaicite:7]{index=7} */
-#reko-tbody td{ border:none; vertical-align:middle; }                          /* :contentReference[oaicite:8]{index=8} */
+#reko-thead th, #dump-wrap th{ color:#475569; position:sticky; top:0; background:#fafafa; } /* :contentReference[oaicite:7]{index=7} */
+#reko-tbody td, #dump-wrap td{ border:none; vertical-align:middle; }                          /* :contentReference[oaicite:8]{index=8} */
 .reko-right{ text-align:right; }
 .reko-pos{ color:#0a7f4f; font-weight:600; }
 .reko-neg{ color:#b71c1c; font-weight:600; }
 .reko-small{ font-size:12px; color:#64748b; }
-#reko-tbody table thead tr th{ background:#ddd; font-size:.9rem; text-align:center!important; } /* :contentReference[oaicite:9]{index=9} */
+#reko-tbody table thead tr th,#dump-wrap table thead tr th{ background:#ddd; font-size:.9rem; text-align:center!important; } /* :contentReference[oaicite:9]{index=9} */
 
 /* --- feed chips (NM/MK) --- */
 .feed-chip{

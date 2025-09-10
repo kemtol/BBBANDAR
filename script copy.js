@@ -46,11 +46,6 @@
   /* =========================
    * 3) NAVIGASI & HISTORY
    * =======================*/
-  // guard ringan: cegah TypeError bila renderBlendFeed terpanggil sebelum definisi
-  if (typeof window.renderBlendFeed !== "function") {
-    window.renderBlendFeed = function () { /* no-op */ };
-  }
-
   function showPageNoHistory(id) {
     $("section").hide();
     $("#" + id).fadeIn();
@@ -91,8 +86,6 @@
   } else {
     navigate("splash-page");
   }
-
-
 
   /* =========================
    * 4) LIVENESS CHECK (opsional, aman diabaikan jika tak dipakai)
@@ -344,7 +337,7 @@
 
   // Versi dengan parameter isMk eksplisit (untuk dual-render)
   function fetchBatchByDate(date, slot, isMk) {
-    var mk = isMk ? "&markov=1" : "";
+    var mk = isMk ? "&mk=1" : "";
     return fetch(WORKER_BASE + "/api/reko/by-date?date=" + date + "&slot=" + slot + mk, { cache: "no-store" })
       .then(function (r) { if (!r.ok) return null; return r.json(); })
       .then(function (d) {
@@ -398,7 +391,6 @@
       return !!(r0 && (r0["Kode Saham"] != null || r0["Skor Sistem"] != null));
     } catch (_) { return false; }
   }
-
   function normalizeRowsForTable(batch, isMk) {
     // output: { ticker, score, daily_return, vol_pace, price_at_cutoff/last }
     var out = [];
@@ -495,6 +487,95 @@
     return m ? (Number(m[1]) * 60 + Number(m[2])) : -1;
   }
 
+
+  //================== COBA DUAL-MARKOV ==================
+
+  // urutan slot untuk sort yang konsisten
+  var SLOT_ORDER = { "09:30": 1, "11:30": 2, "14:15": 3, "15:50": 4 };
+  function slotKey(s) { return (SLOT_ORDER[String(s).trim()] || 999); }
+
+  // helper: kelompokkan array batch by date
+  function groupByDate(feed) {
+    // Normalisasi ke Array
+    const arr = Array.isArray(feed) ? feed
+      : (feed && Array.isArray(feed.rows)) ? feed.rows
+        : (feed && typeof feed === 'object' && !('length' in feed)) ? Object.values(feed)
+          : [];
+
+    const map = {};
+    for (const b of arr) {
+      if (!b || !b.date) continue;
+      (map[b.date] ||= []).push(b);
+    }
+    return map;
+  }
+
+  // renderer utama: panggil ini dengan (batchesMarkov, batchesNonMarkov)
+  window.renderBlendFeed = function renderBlendFeed(markovBatches, nonMkBatches) {
+    var byMk = groupByDate(markovBatches || []);
+    var byNm = groupByDate(nonMkBatches || []);
+
+    // daftar tanggal gabungan (desc)
+    var dates = Array.from(new Set([].concat(Object.keys(byMk), Object.keys(byNm))))
+      .sort(function (a, b) { return a < b ? 1 : (a > b ? -1 : 0); });
+
+    // bungkus tabel utama (biar konsisten sama section lama)
+    var html = '<table class="table table-sm align-middle mb-0 w-100"><tbody>';
+
+    var prevDate = null;
+    dates.forEach(function (d, di) {
+      // separator EOD untuk tanggal sebelumnya (kecuali pertama)
+      if (prevDate) {
+        html += ''
+          + '<tr><td style="position:relative">'
+          + '<hr class="my-3 reko-hr">'
+          + '<div class="d-flex justify-content-center align-items-center"'
+          + ' style="position:absolute;left:0;top:0;right:0;bottom:0">'
+          + '<small class="p-2" style="background:#fff">EOD of ' + prevDate + '</small>'
+          + '</div>'
+          + '</td></tr>';
+      }
+      prevDate = d;
+
+
+
+      // 1) MARKOV dulu (jika ada)
+      var mkRows = (byMk[d] || []).slice().sort(function (a, b) {
+        return slotKey(a.slot) - slotKey(b.slot);
+      });
+      mkRows.forEach(function (b) {
+        html += '<tr><td>' + renderSlotTableBlock(b, /*isMk=*/true) + '</td></tr>';
+      });
+
+      // 2) NON-MARKOV kemudian (jika ada)
+      var nmRows = (byNm[d] || []).slice().sort(function (a, b) {
+        return slotKey(a.slot) - slotKey(b.slot);
+      });
+
+      if (typeof feed === 'string') {
+        console.warn("renderBlendFeed got STRING; did you forget to JSON.parse?", feed.slice(0, 120));
+        try { feed = JSON.parse(feed); } catch (e) {
+          console.error("Cannot parse feed string:", e);
+          return; // jangan lanjut
+        }
+      }
+
+      const map = groupByDate(feed); // aman setelah normalisasi
+
+
+      nmRows.forEach(function (b) {
+        html += '<tr><td>' + renderSlotTableBlock(b, /*isMk=*/false) + '</td></tr>';
+      });
+    });
+
+    html += '</tbody></table>';
+
+    // inject ke container BLEND
+    var $wrap = $("#reko-table-blend");
+    if ($wrap.length) $wrap.html(html);
+  };
+
+
   //==============================================
 
   // --- CONTOH PEMANGGILAN ---
@@ -507,6 +588,9 @@
     // kalau mau tes cepat, panggil manual:
     try { window.renderBlendFeed(mk, nm); } catch (e) { console.error("renderBlendFeed error:", e); }
   });
+
+
+
 
   // ============== REPLACEMENT 2 ==============
   function renderFeedBySlot(batches /*campur MK & non-MK*/) {
@@ -607,36 +691,23 @@
   };
 
 
+
   /* =========================
-   * 9) TOP PICKS
-   *   Urutan aman:
-   *   1) /api/reko/latest-summary?markov=1
-   *   2) /api/reko/latest-summary
-   *   3) /api/candidates?markov=1
-   *   4) /api/candidates
-   *   5) fallback: daily terakhir yang TIDAK kosong (mundur tanggal)
+   * 9) TOP PICKS (Summary → fallback latest-any)
    * =======================*/
   function loadTop3FromKV(limit, opt) {
     limit = limit || 9;
     opt = opt || { dimStale: true };
-
     var $wrap = $("#top-picks"); if (!$wrap.length) return;
-    var noteEl = document.getElementById("top-picks-note");
-    var BASE = (typeof WORKER_BASE === "string" && WORKER_BASE) ? WORKER_BASE : "";
 
-    // === util kecil di dalam blok ini (tidak mengganggu global) ==============
     function applyStaleClass(payload) {
       var now = getNowWIB();
       var ymd = inferPayloadDateYMD(payload);
       var isStale = (opt.dimStale && ymd && ymd !== now.dateYMD && now.hour < 15);
       $wrap.toggleClass("is-stale", !!isStale);
     }
-    function safeGetScoreMax(payload, rows) {
-      try { if (typeof getScoreMax === "function") return getScoreMax(payload, rows); } catch (_) { }
-      var m = 0; (rows || []).forEach(function (r) { var v = Number(r && r.score); if (isFinite(v) && v > m) m = v; });
-      return m || 10;
-    }
-    // builder “summary” (pakai medan p_close/p_am/p_next/p_chain/rekom)
+
+    // SUMMARY card
     function buildCardSummary(it, scoreMax) {
       var tkr = String(it && it.ticker ? it.ticker : "-").toUpperCase();
       var raw = Number(it && it.score != null ? it.score : NaN);
@@ -649,134 +720,101 @@
       if (isFinite(Number(it && it.p_am))) bullets.push("Naik ≥3% besok pagi <b>" + (Number(it.p_am) * 100).toFixed(1) + "%</b>");
       if (isFinite(Number(it && it.p_next))) bullets.push("Lanjut naik lusa <b>" + (Number(it.p_next) * 100).toFixed(1) + "%</b>");
       if (isFinite(Number(it && it.p_chain))) bullets.push("Total berantai <b>" + (Number(it.p_chain) * 100).toFixed(1) + "%</b>");
-      var bulletsHtml = (it && it.rekom ? ('<li><strong>' + it.rekom + '</strong></li>') : '') +
-        bullets.map(function (b) { return "<li>" + b + "</li>"; }).join("");
+      var bulletsHtml = "";
+      for (var i = 0; i < bullets.length; i++) bulletsHtml += "<li>" + bullets[i] + "</li>";
 
       return ''
         + '<div class="pick-card">'
-        + '  <div class="pick-head">'
-        + '    <span class="pick-badge"><i class="fa-solid fa-chart-line"></i> Top Pick</span>'
-        + '    <h4 class="pick-ticker">' + tkr + '</h4>'
-        + '  </div>'
-        + '  <div class="pick-score">Score: <b>' + (isFinite(score10) ? score10.toFixed(1) : "—") + '</b> / 10</div>'
-        + '  <div class="score-rail"><div class="score-fill" style="width:' + barPct + '%;background:' + barClr + '"></div></div>'
-        + '  <ul class="pick-bullets">' + bulletsHtml + '</ul>'
-        + '  <button class="d-none btn btn-primary pick-cta">VOTE SAHAM INI</button>'
+        + '<div class="pick-head">'
+        + '<span class="pick-badge"><i class="fa-solid fa-chart-line"></i> Top Pick</span>'
+        + '<h4 class="pick-ticker">' + tkr + '</h4>'
+        + '</div>'
+        + '<div class="pick-score">Score: <b>' + (isFinite(score10) ? score10.toFixed(1) : "—") + '</b> / 10</div>'
+        + '<div class="score-rail"><div class="score-fill" style="width:' + barPct + '%;background:' + barClr + '"></div></div>'
+        + '<ul class="pick-bullets">'
+        + '<li><strong>' + (it && it.rekom ? it.rekom : "-") + '</strong></li>'
+        + bulletsHtml
+        + '</ul>'
+        + '<button class="d-none btn btn-primary pick-cta">VOTE SAHAM INI</button>'
         + '</div>';
     }
-    // builder “daily” (pakai daily_return/vol_pace/closing_strength)
-    function buildCardDaily(it, scoreMax) {
-      var tkr = String((it && (it.ticker || it.code)) || "-").toUpperCase();
-      var raw = Number(it && it.score);
+
+    // latest-any card
+    function buildCardFallback(it, scoreMax) {
+      var tkr = String((it && it.ticker) ? it.ticker : "-").toUpperCase();
+      var raw = Number((it && it.score != null) ? it.score : NaN);
       var barPct = toBarPct(raw, scoreMax);
       var score10 = toScore10(raw, scoreMax);
       var barClr = getBarColor(barPct);
 
       var ret = Number(it && it.daily_return);
       var pace = Number(it && it.vol_pace);
-      var cs = Number(it && (it.closing_strength != null ? it.closing_strength : it.cs));
+      var csSrc = (it && it.closing_strength != null) ? it.closing_strength : (it ? it.cs : null);
+      var cs = Number(csSrc);
 
       var bullets = [];
-      if (isFinite(ret)) bullets.push('Return Hari Ini <b>' + (ret * 100).toFixed(1) + '%</b>');
-      if (isFinite(pace)) bullets.push('Volume pace <b>' + pace.toFixed(0) + 'x</b> rata-rata');
-      if (isFinite(cs)) bullets.push('Closing strength <b>' + (cs * 100).toFixed(1) + '%</b>');
-      var bulletsHtml = (bullets.length ? bullets : ["-"]).map(function (x) { return "<li>" + x + "</li>"; }).join("");
+      if (isFinite(ret)) bullets.push(`Return Hari Ini <b>${(ret * 100).toFixed(1)}%</b>`);
+      if (isFinite(pace)) bullets.push(`Volume pace <b>${pace.toFixed(0)}x</b> rata-rata`);
+      if (isFinite(cs)) bullets.push(`Closing strength <b>${(cs * 100).toFixed(1)}%</b>`);
+      var bulletsHtml = bullets.length ? bullets.map(function (b) { return `<li>${b}</li>`; }).join("") : "<li>-</li>";
 
-      return ''
-        + '<div class="pick-card">'
-        + '  <div class="pick-head">'
-        + '    <span class="pick-badge"><i class="fa-solid fa-chart-line"></i> Top Pick</span>'
-        + '    <h4 class="pick-ticker">' + tkr + '</h4>'
-        + '  </div>'
-        + '  <div class="pick-score">Score: <b>' + (isFinite(score10) ? score10.toFixed(1) : "—") + '</b> / 10</div>'
-        + '  <div class="score-rail"><div class="score-fill" style="width:' + barPct + '%;background:' + barClr + '"></div></div>'
-        + '  <ul class="pick-bullets">' + bulletsHtml + '</ul>'
-        + '  <button class="d-none btn btn-primary pick-cta">VOTE SAHAM INI</button>'
-        + '</div>';
-    }
-    // normalisasi “:sum” kalau field-nya pakai label panjang
-    function mapSumRow(r) {
-      return {
-        ticker: r.ticker || r["Kode Saham"] || r.code || "-",
-        score: r.score ?? r["Skor Sistem"],
-        p_close: r.p_close ?? r["Peluang Bertahan sampai Tutup"],
-        p_am: r.p_am ?? r["Peluang Naik ≥3% Besok Pagi"],
-        p_next: r.p_next ?? r["Peluang Lanjut Naik Lusa"],
-        p_chain: r.p_chain ?? r["Peluang Total Berantai"],
-        // PILIH salah satu baris di bawah ini:
-        // rekom: (r.rekom ?? r["Rekomendasi Singkat"]) || "",     // Opsi 1
-        rekom: r.rekom ?? r["Rekomendasi Singkat"] ?? ""         // Opsi 2
-      };
+      return `
+    <div class="pick-card">
+      <div class="pick-head">
+        <span class="pick-badge"><i class="fa-solid fa-chart-line"></i> Top Pick</span>
+        <h4 class="pick-ticker">${tkr}</h4>
+      </div>
+      <div class="pick-score">Score: <b>${isFinite(score10) ? score10.toFixed(1) : "—"}</b> / 10</div>
+      <div class="score-rail"><div class="score-fill" style="width:${barPct}%;background:${barClr}"></div></div>
+      <ul class="pick-bullets">${bulletsHtml}</ul>
+      <button class="btn btn-primary pick-cta">VOTE SAHAM INI</button>
+    </div>`;
     }
 
-    function renderList(rows, payload, note, builder) {
-      rows = (rows || []).slice().sort(function (a, b) { return (Number(b && b.score) || 0) - (Number(a && a.score) || 0); });
-      var max = safeGetScoreMax(payload, rows);
-      var html = rows.slice(0, limit).map(function (r) { return builder(r, max); }).join("");
-      $("#top-picks").html(html);
-      if (noteEl) noteEl.textContent = note || "";
-      setMarkovUpdatedFromPayload(payload);
-      applyStaleClass(payload);
-    }
 
-    // === pipeline berurutan ================================================
-    (async () => {
-      // 1) latest-summary?markov=1
-      try {
-        var r1 = await fetch(BASE + "/api/reko/latest-summary?markov=1", { mode: "cors", cache: "no-store", credentials: "omit" });
-        if (!r1.ok) throw new Error("HTTP " + r1.status);
-        var sum1 = await r1.json();
-        var rows1 = Array.isArray(sum1?.rows) ? sum1.rows.map(mapSumRow) : [];
-        if (rows1.length) { renderList(rows1, sum1, "Ditentukan dari summary (:sum) terbaru (Markov).", buildCardSummary); return; }
-      } catch (_) { }
-
-      // 2) latest-summary (non-Markov)
-      try {
-        var r2 = await fetch(BASE + "/api/reko/latest-summary", { mode: "cors", cache: "no-store", credentials: "omit" });
-        if (!r2.ok) throw new Error("HTTP " + r2.status);
-        var sum2 = await r2.json();
-        var rows2 = Array.isArray(sum2?.rows) ? sum2.rows.map(mapSumRow) : [];
-        if (rows2.length) { renderList(rows2, sum2, "Ditentukan dari summary (:sum) terbaru.", buildCardSummary); return; }
-      } catch (_) { }
-
-      // 3) candidates?markov=1
-      try {
-        var r3 = await fetch(BASE + "/api/candidates?markov=1", { mode: "cors", cache: "no-store", credentials: "omit" });
-        if (!r3.ok) throw new Error("HTTP " + r3.status);
-        var c1 = await r3.json(); // {detail:[{ticker,score,reasons:[]},...]}
-        var rows3 = (c1?.detail || []).map(function (d) {
-          return { ticker: d.ticker, score: d.score, rekom: (d.reasons || [])[0] || "" };
-        });
-        if (rows3.length) { renderList(rows3, c1, "Ditentukan dari skor kandidat (Markov).", buildCardSummary); return; }
-      } catch (_) { }
-
-      // 4) candidates (non-Markov)
-      try {
-        var r4 = await fetch(BASE + "/api/candidates", { mode: "cors", cache: "no-store", credentials: "omit" });
-        if (!r4.ok) throw new Error("HTTP " + r4.status);
-        var c0 = await r4.json();
-        var rows4 = (c0?.detail || []).map(function (d) {
-          return { ticker: d.ticker, score: d.score, rekom: (d.reasons || [])[0] || "" };
-        });
-        if (rows4.length) { renderList(rows4, c0, "Ditentukan dari skor kandidat.", buildCardSummary); return; }
-      } catch (_) { }
-
-      // 5) fallback: daily terakhir yang TIDAK kosong (mundur tanggal)
-      try {
-        var found = await fetchDailyLastNonEmpty(BASE, true, 21);
-        var rows5 = Array.isArray(found?.data?.rows) ? found.data.rows : [];
-        if (rows5.length) {
-          renderList(rows5, found.data, "Daily snapshot " + found.date + (found.markov ? " (Markov)" : "") + ".", buildCardDaily);
-          return;
-        }
-        throw new Error("empty daily");
-      } catch (e) {
-        console.warn("[top-picks] fallback daily-last-date error:", e);
-        $("#top-picks").empty();
-        if (noteEl) noteEl.textContent = "Belum ada Top Picks untuk saat ini.";
-      }
-    })();
+    // 1) Summary (utama)
+    fetch(WORKER_BASE + "/api/reko/latest-summary", { cache: "no-store" })
+      .then(function (rs) {
+        if (!rs.ok) throw new Error("no-summary");
+        return rs.json();
+      })
+      .then(function (sum) {
+        setMarkovUpdatedFromPayload(sum);
+        applyStaleClass(sum);
+        var rows = (sum && sum.rows && sum.rows.slice) ? sum.rows.slice() : [];
+        rows.sort(function (a, b) { return (Number(b.score) || 0) - (Number(a.score) || 0); });
+        var scoreMax = getScoreMax(sum, rows);
+        rows = rows.slice(0, limit);
+        if (!rows.length) throw new Error("empty-summary");
+        var html = '';
+        for (var i = 0; i < rows.length; i++) html += buildCardSummary(rows[i], scoreMax);
+        $("#top-picks").html(html);
+      })
+      .catch(function () {
+        // 2) Fallback: latest-any (non-Markov)
+        fetch(WORKER_BASE + "/api/reko/latest-any", { cache: "no-store" })
+          .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+          .then(function (data) {
+            setMarkovUpdatedFromPayload(data);
+            applyStaleClass(data);
+            var rows = (data && data.rows && data.rows.slice) ? data.rows.slice() : [];
+            rows.sort(function (a, b) { return (Number(b.score) || 0) - (Number(a.score) || 0); });
+            var scoreMax = getScoreMax(data, rows);
+            rows = rows.slice(0, limit);
+            var html = '';
+            for (var i = 0; i < rows.length; i++) html += buildCardFallback(rows[i], scoreMax);
+            $("#top-picks").html(html);
+          })
+          .catch(function (e) {
+            console.error("[top-picks] load error:", e);
+            $("#top-picks").empty();
+          });
+      });
   }
+
+
+
+
 
 
   /* =========================
@@ -815,6 +853,13 @@
     if (location.hash.slice(1) === "home-page") triggerIfHome();
   }, 60000);
 
+
+
+
+
+
+
+
   /* =========================
    * 11) Resize About Us iframe (opsional)
    * =======================*/
@@ -830,6 +875,10 @@
     aboutUsEmbed.addEventListener("load", resizeAboutEmbed);
     window.addEventListener("resize", resizeAboutEmbed);
   }
+
+
+
+
 
   /* =========================
    * 12) NOTIF DEMO (opsional)
@@ -850,77 +899,4 @@
     var stock = stocks[Math.floor(Math.random() * stocks.length)];
     showNotif(phone + " vote " + stock);
   }, 3000);
-
-
-  /* =========================
-   * 13) Markov Chain
-   * =======================*/
-  // ======================================================
-  // Ambil tanggal terbaru dari /api/reko/dates
-  // ======================================================
-  function fetchLatestDate() {
-    return fetch(WORKER_BASE + "/api/reko/dates", { cache: "no-store" })
-      .then(r => r.ok ? r.json() : { dates: [] })
-      .then(j => {
-        var dates = (j && j.dates && j.dates.slice) ? j.dates : [];
-        if (!dates.length) throw new Error("no_dates");
-        return dates[dates.length - 1]; // tanggal terakhir
-      });
-  }
-
-  // ======================================================
-  // Ambil data harian Markov untuk tanggal terbaru
-  // ======================================================
-  function fetchLatestDailyMarkov() {
-    return fetchLatestDate().then(latest => {
-      var url = WORKER_BASE + "/api/reko/daily?date=" + latest + "&markov=1";
-      return fetch(url, { cache: "no-store" })
-        .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); });
-    });
-  }
-
-  // ======================================================
-  // Render hasilnya ke #dump-wrap
-  // ======================================================
-  function loadLatestDailyMarkov() {
-    var wrap = document.getElementById("dump-wrap");
-    if (!wrap) return;
-
-    wrap.innerHTML = "<em>Loading latest Markov daily...</em>";
-
-    fetchLatestDailyMarkov()
-      .then(daily => {
-        // daily = { date, slots:[...], data:{...}, markov:true }
-        var html = "<div class='text-center mb-4 text-muted small' style='font-size:0.9rem'>" + daily.date + "</div>";
-
-        (daily.slots || []).slice().reverse().forEach(slot => {
-          var rows = (daily.data && daily.data[slot] && daily.data[slot].rows) || [];
-          html += "<div style='margin-bottom:1em;'>";
-          html += "<strong>Slot " + slot + "</strong>";
-          if (!rows.length) {
-            html += "<div>(no data)</div>";
-          } else {
-            html += "<table class='table table-sm reko-subtable'><thead><tr>";
-            Object.keys(rows[0]).forEach(k => { html += "<th>" + k + "</th>"; });
-            html += "</tr></thead><tbody>";
-            rows.forEach(r => {
-              html += "<tr>";
-              Object.keys(r).forEach(k => { html += "<td>" + r[k] + "</td>"; });
-              html += "</tr>";
-            });
-            html += "</tbody></table>";
-          }
-          html += "</div>";
-        });
-
-        wrap.innerHTML = html;
-      })
-      .catch(err => {
-        console.error(err);
-        wrap.innerHTML = "<span style='color:red'>Failed to load Markov daily</span>";
-      });
-  }
-
-  loadLatestDailyMarkov();
-
 })();

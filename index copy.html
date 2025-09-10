@@ -35,7 +35,7 @@
 	<meta name="twitter:image" content="https://contoh-domain-kamu.xyz/og/sssaham-1200x630.jpg">
 
 	<!-- App CSS -->
-	<link rel="stylesheet" href="style.css?v=1.3">
+	<link rel="stylesheet" href="style.css?v=1.2">
 </head>
 
 <body>
@@ -98,7 +98,7 @@
 						<label style="color:#fff;font-weight: 700;" for="Handphone" class="form-label">No
 							Handphone</label>
 						<input type="text" class="form-control" required>
-						<a href="https://wa.me/6285281757731?text=GETOTP" class="d-block p-2"
+						<a href="" class="d-block p-2"
 							style="position:absolute;bottom:0px;right: 0.125rem;background-color: #10c210;color:white;border-radius: 0px 10px 10px 0px;text-decoration: none;"><strong>Get
 								OTP <i class="fa-brands fa-whatsapp"></strong></i></a>
 					</div>
@@ -140,12 +140,14 @@
 
 				<div class="mt-3 w-100">
 					<button id="start-record" class="btn d-block btn-primary w-100 mb-2">Mulai Rekam</button>
-					<button id="stop-record" class="btn d-block btn-outline-danger w-100 mb-2">Stop Rekam</button>
 					<button id="skip-record" type="button" class="btn d-block btn-outline-primary w-100"
 						style="display:none;">
 						Lewati (Testing)
 					</button>
 				</div>
+
+
+
 				<div id="liveness-result" class="mt-3 text-center"></div>
 			</div>
 		</section>
@@ -162,8 +164,6 @@
 				<small class="d-block text-center mb-0">Bagaimana quant saham bekerja?<br /> <a href="about-us.html"
 						style="color: dodgerblue;">Pelajari Lebih Lanjut</a></small>
 			</div>
-
-			<!-- Rekomendasi dari MARKOV -->
 			<div class="this-page d-flex flex-column align-items-center border-bottom p-4 mb-4">
 				<h1 class="text-center mb-3 fs-5 fw-bold">Markov Model Probabilty</h1>
 				<div id="markov-updated" class="text-muted small">Updated in —</div>
@@ -176,16 +176,22 @@
 			</div>
 
 			<!-- Rekomendasi dari KV (MARKOV) -->
-			<div id="reko-section-mk" class="this-page p-3 mb-4">
+			<div id="reko-section-mk" class="d-none this-page p-3 mb-4">
 				<h5 class="mb-3 text-center fw-bold">
-					Latest Markov Daily
+					Feed Probabilty
 				</h5>
 				<div id="dump-wrap" style="font-size: small;"></div>
 			</div>
 
+			<div id="reko-dual-bydate" class="this-page p-3 mb-4">
+  <h5 class="mb-3 text-center fw-bold">Feed Per Jam (MK & Non-MK — atas/bawah)</h5>
+  <div id="dual-root"></div>
+</div>
+
+
 			<!-- Rekomendasi dari KV -->
 			<div id="reko-section" class="this-page p-3 mb-4">
-				<h5 class="mb-3 text-center fw-bold">Feed Recomendation</h5>
+				<h5 class="mb-3 text-center fw-bold">Feed Probabilty</h5>
 
 				<div class="table-responsive">
 					<table class="table table-sm align-middle mb-0" id="reko-table">
@@ -228,71 +234,6 @@
 	<script src="script.js?v=1.3"></script>
 
 
-	<script>
-		function simplifyDumpTable(opts, table) {
-			const keep = opts.keep || ["Kode Saham", "Skor Sistem", "Peluang Lanjut Naik Lusa"];
-			const rename = Object.assign({
-				"Kode Saham": "Ticker",
-				"Skor Sistem": "Skor",
-				"Peluang Lanjut Naik Lusa": "Prob Lanjut Lusa"
-			}, opts.rename || {});
-
-			const headers = Array.from(table.querySelectorAll("thead th")).map(th => th.textContent.trim());
-			const keepIdx = keep.map(k => headers.findIndex(h => h.toLowerCase() === k.toLowerCase())).filter(i => i >= 0);
-			if (!keepIdx.length) return false;
-
-			// rebuild thead
-			const newTheadRow = document.createElement("tr");
-			keepIdx.forEach(i => {
-				const th = document.createElement("th");
-				th.textContent = rename[headers[i]] || headers[i];
-				newTheadRow.appendChild(th);
-			});
-			const thead = table.querySelector("thead");
-			if (thead) {
-				thead.innerHTML = "";
-				thead.appendChild(newTheadRow);
-			}
-
-			// rebuild tbody
-			const tbody = table.querySelector("tbody");
-			if (tbody) {
-				const newTbody = document.createElement("tbody");
-				tbody.querySelectorAll("tr").forEach(tr => {
-					const cells = tr.querySelectorAll("td,th");
-					if (!cells.length) return;
-					const newRow = document.createElement("tr");
-					keepIdx.forEach(i => {
-						newRow.appendChild(cells[i].cloneNode(true));
-					});
-					newTbody.appendChild(newRow);
-				});
-				tbody.replaceWith(newTbody);
-			}
-			return true;
-		}
-
-		document.addEventListener("DOMContentLoaded", () => {
-			const timer = setInterval(() => {
-				const tables = document.querySelectorAll("#dump-wrap table");
-				if (tables.length) {
-					tables.forEach(tbl => simplifyDumpTable({
-						keep: ["Kode Saham", "Skor Sistem", "Peluang Lanjut Naik Lusa"],
-						rename: {
-							"Kode Saham": "Ticker",
-							"Skor Sistem": "Skor",
-							"Peluang Lanjut Naik Lusa": "Prob Lanjut Lusa"
-						}
-					}, tbl));
-					clearInterval(timer);
-				}
-			}, 300);
-		});
-	</script>
-
-
-
-
 	<!-- Service Worker Registration (ini nanti aja kalau udah mau jadi app) -->
 	<script>
 		// Register service worker
@@ -300,7 +241,6 @@
 			navigator.serviceWorker.register('sw.js').then(reg => console.log('Service Worker registered', reg)).catch(err => console.error('SW registration failed', err));
 		}*/
 	</script>
-
 </body>
 
 </html>
