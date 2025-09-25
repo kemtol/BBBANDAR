@@ -1,0 +1,38 @@
+.
+├── about-us.html
+├── android-chrome-192x192.png
+├── android-chrome-512x512.png
+├── apple-touch-icon.png
+├── BAK
+│   ├── 1000382915.png
+│   ├── 1000385428.png
+│   ├── output(1).png
+│   ├── output(2).png
+│   ├── output(4).png
+│   └── output(6).png
+├── CNAME
+├── favicon-16x16.png
+├── favicon-32x32.png
+├── favicon.ico
+├── ignore
+├── img
+│   ├── kemla.jpeg
+│   ├── rani.jpg
+│   └── rani.png
+├── index copy.html
+├── index.html
+├── manifest.json
+├── performance-report.html
+├── project-structure.txt
+├── README.md
+├── script copy.js
+├── script.js
+├── service-monitoring.html
+├── site.webmanifest
+├── splash-logo.png
+├── splash-screen.jpg
+├── style.css
+├── sw.js
+└── verification.html
+
+3 directories, 33 files
