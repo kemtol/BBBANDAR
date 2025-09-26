@@ -10,6 +10,8 @@
 │   ├── output(2).png
 │   ├── output(4).png
 │   └── output(6).png
+├── berita
+│   └── tesis-investasi-saham-semeseter-2-2025.html
 ├── CNAME
 ├── favicon-16x16.png
 ├── favicon-32x32.png
@@ -35,4 +37,4 @@
 ├── sw.js
 └── verification.html
 
-3 directories, 33 files
+4 directories, 34 files
