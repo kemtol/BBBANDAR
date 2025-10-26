@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="id">
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="theme-color" content="#ffffff">
+    <link rel="manifest" href="/site.webmanifest">
+    <title>Berita — BBBANDAR</title>
+    <!-- Bootstrap + Font Awesome (match homepage) -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css" rel="stylesheet">
+    <!-- Use root stylesheet so berita pages visually match the homepage -->
+    <link rel="stylesheet" href="/style.css?v=1.4">
+</head>
+
+<body>
+    <!-- header / nav can go here or be added by /script.js if homepage injects a header -->
+    <main id="article-root" class="container my-4">
+        <div class="this-page p-4 text-center">
+            <div id="app" class="container">
+                <div class="this-page p-4 my-4">
+                    <p class="muted">Memuat artikel...</p>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <footer class="py-4 text-center">
+        <small>© BBBANDAR</small>
+    </footer>
+
+    <!-- scripts (match homepage) -->
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // Simple client-side template loader for berita fragments.
+        (function () {
+            function qs(name) {
+                var params = new URLSearchParams(window.location.search);
+                return params.get(name);
+            }
+            var src = qs('src') || qs('page') || 'tesis-investasi-saham-semeseter-2-2025.html';
+            // Sanitize basic: disallow path traversal
+            src = src.replace(/\.\./g, '');
+            var url = '/berita/' + src;
+
+            fetch(url).then(function (res) {
+                if (!res.ok) throw new Error('Tidak dapat memuat artikel: ' + res.status);
+                return res.text();
+            }).then(function (html) {
+                var root = document.getElementById('article-root');
+                    // Wrap fetched fragment with the same container/surface the site expects
+                    root.innerHTML = '<div id="app" class="container">' +
+                                     '<div class="this-page p-4 my-4">' + html + '</div></div>';
+                // Set document title from first H1 (if present)
+                var h1 = root.querySelector('h1');
+                if (h1 && h1.textContent) document.title = h1.textContent + ' — BBBANDAR';
+                // Optionally, run a short init if /script.js expects a DOM-ready event
+                if (window.initPage) try { window.initPage(); } catch (e) { }
+            }).catch(function (err) {
+                var root = document.getElementById('article-root');
+                root.innerHTML = '<div class="this-page p-4 text-danger">Gagal memuat artikel.<br>' + (err.message || '') + '</div>';
+                console.error(err);
+            });
+        })();
+    </script>
+    <script src="/script.js?v=1.5"></script>
+</body>
+
+</html>
