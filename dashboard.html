@@ -22,6 +22,66 @@
 </head>
 <body>
   <div class="container-fluid">
+    <!-- Tabs: Content (CMS) and Service Monitoring -->
+    <ul class="nav nav-tabs mb-3" id="dashboardTabs" role="tablist">
+      <li class="nav-item" role="presentation">
+        <button class="nav-link" id="tab-content-btn" data-bs-toggle="tab" data-bs-target="#tab-content" type="button" role="tab" aria-controls="tab-content" aria-selected="false">Content</button>
+      </li>
+      <li class="nav-item" role="presentation">
+        <button class="nav-link active" id="tab-monitoring-btn" data-bs-toggle="tab" data-bs-target="#tab-monitoring" type="button" role="tab" aria-controls="tab-monitoring" aria-selected="true">Service Monitoring</button>
+      </li>
+    </ul>
+
+    <div class="tab-content">
+      <div class="tab-pane fade" id="tab-content" role="tabpanel" aria-labelledby="tab-content-btn">
+        <!-- CMS simple editor -->
+        <div class="card mb-3">
+          <div class="card-body">
+            <h2 class="h6">CMS — Create file (client-side)</h2>
+            <div class="mb-2 row">
+              <label class="col-sm-2 col-form-label">File name</label>
+              <div class="col-sm-10">
+                <input id="cms-filename" class="form-control" placeholder="e.g. berita-2025-10-27-demo.html" />
+              </div>
+            </div>
+            <div class="mb-2">
+              <textarea id="cms-body" class="form-control" rows="12" placeholder="Tulis konten HTML di sini..."></textarea>
+            </div>
+
+            <div class="d-flex gap-2">
+              <button id="btn-save-download" class="btn btn-primary">Save (download)</button>
+              <button id="btn-save-fs" class="btn btn-outline-primary">Write to folder (File System Access)</button>
+              <div id="cms-status" class="ms-3 text-muted align-self-center small"></div>
+            </div>
+
+            <hr />
+
+            <div class="mb-2">
+              <label class="form-label small">Publish via Cloudflare Worker (server-side)</label>
+              <div class="input-group mb-2">
+                <span class="input-group-text">Endpoint</span>
+                <input id="cms-cf-endpoint" class="form-control" placeholder="https://your-worker.your-domain.workers.dev/publish" />
+              </div>
+              <div class="input-group">
+                <span class="input-group-text">Bearer token</span>
+                <input id="cms-cf-token" type="password" class="form-control" placeholder="worker secret / API key (not stored)" />
+              </div>
+              <div class="form-text small text-muted">The worker endpoint should accept POST JSON: { filename, content, commitMessage? } and authenticate via Bearer token.
+              </div>
+            </div>
+
+            <div class="d-flex gap-2">
+              <button id="btn-publish-cf" class="btn btn-success">Publish (Cloudflare Worker)</button>
+            </div>
+
+            <div class="mt-3 small text-secondary">
+              <strong>Note:</strong> Browsers cannot modify files on the server without an API. Use the Cloudflare Worker to perform server-side commits (example worker included in /scripts/). The worker may write to GitHub via its API or store files in R2/KV depending on your setup.
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="tab-pane fade show active" id="tab-monitoring" role="tabpanel" aria-labelledby="tab-monitoring-btn">
     <div class="d-flex align-items-center gap-2 flex-wrap mb-3">
       <h1 class="h5 mb-0">Service Monitoring — Grid Harian</h1>
       <div class="vr"></div>
@@ -71,7 +131,7 @@
       </table>
     </div>
 
-    <div class="offcanvas offcanvas-end" tabindex="-1" id="drawer">
+  <div class="offcanvas offcanvas-end" tabindex="-1" id="drawer">
       <div class="offcanvas-header">
         <h5 class="offcanvas-title" id="drawerTitle">Detail Run</h5>
         <button type="button" class="btn-close" data-bs-dismiss="offcanvas"></button>
@@ -370,6 +430,88 @@
       // --- Inisialisasi ---
       $inpDate.val(fmtDateInput(new Date()));
       load();
+
+      // --- CMS handlers (Content tab) ---
+      function sanitizeFilename(name){
+        if(!name) return '';
+        return name.replace(/[^a-z0-9A-Z._-]/g, '-');
+      }
+
+      function defaultFilename(){
+        const now = new Date();
+        const pad = n => String(n).padStart(2,'0');
+        return `berita-${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}.html`;
+      }
+
+      $('#cms-filename').on('focus', function(){ if(!$(this).val()) $(this).val(defaultFilename()); });
+
+      // Save by downloading a file (works everywhere)
+      $('#btn-save-download').on('click', function(){
+        const fname = sanitizeFilename($('#cms-filename').val() || defaultFilename());
+        const content = $('#cms-body').val() || '';
+        const blob = new Blob([content], {type: 'text/html;charset=utf-8'});
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = fname; document.body.appendChild(a); a.click(); a.remove();
+        URL.revokeObjectURL(url);
+        $('#cms-status').text('Download started: ' + fname);
+      });
+
+      // Save using File System Access API (if available)
+      let directoryHandle = null;
+      $('#btn-save-fs').on('click', async function(){
+        if(!window.showDirectoryPicker){
+          $('#cms-status').text('File System Access API not supported in this browser.');
+          return;
+        }
+        try{
+          if(!directoryHandle){
+            directoryHandle = await window.showDirectoryPicker();
+          }
+          const fname = sanitizeFilename($('#cms-filename').val() || defaultFilename());
+          const content = $('#cms-body').val() || '';
+          const fileHandle = await directoryHandle.getFileHandle(fname, { create: true });
+          const writable = await fileHandle.createWritable();
+          await writable.write(content);
+          await writable.close();
+          $('#cms-status').text('Wrote file to folder: ' + fname);
+        }catch(err){
+          console.error(err);
+          $('#cms-status').text('Gagal menulis file: ' + (err.message||err));
+        }
+      });
+
+      // Publish via Cloudflare Worker
+      $('#btn-publish-cf').on('click', async function(){
+        const endpoint = ($('#cms-cf-endpoint').val() || '').trim();
+        const token = ($('#cms-cf-token').val() || '').trim();
+        if(!endpoint){ $('#cms-status').text('Masukkan endpoint Worker terlebih dahulu.'); return; }
+        if(!token){ $('#cms-status').text('Masukkan token/secret terlebih dahulu.'); return; }
+        const fname = sanitizeFilename($('#cms-filename').val() || defaultFilename());
+        const content = $('#cms-body').val() || '';
+        const path = `berita/${fname}`;
+        $('#cms-status').text('Publishing...');
+        try{
+          const resp = await fetch(endpoint, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer ' + token
+            },
+            body: JSON.stringify({ path, content, commitMessage: `Add ${fname}`, updateList: true })
+          });
+          const j = await resp.json().catch(()=>null);
+          if(!resp.ok){
+            $('#cms-status').text('Publish failed: ' + (j && j.error ? j.error : resp.statusText));
+            console.error('publish error', j);
+          } else {
+            $('#cms-status').text('Published: ' + fname);
+          }
+        }catch(err){
+          console.error(err);
+          $('#cms-status').text('Error: ' + (err.message||err));
+        }
+      });
     });
   </script>
 </body>

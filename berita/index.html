@@ -16,62 +16,13 @@
 
     <h1 class="mb-4">Berita & Analisis</h1>
 
-    <div class="row g-4">
-      <div class="col-12 col-md-6">
-        <article class="card h-100 shadow-sm">
-          <a href="/berita/view.html?src=tesis-investasi-saham-semeseter-2-2025.html" class="text-decoration-none text-body">
-            <img src="/img/kemla.jpeg" class="card-img-top" alt="thumbnail">
-            <div class="card-body">
-              <h5 class="card-title">Menavigasi Garda Baru: Tesis Investasi — Semester II 2025</h5>
-              <p class="card-text text-muted small">18 Oktober 2025 • Oleh Redaksi</p>
-              <p class="card-text">Analisis tentang pergeseran kekuatan dari investor asing ke modal domestik dan strategi alokasi sektoral.</p>
-            </div>
-          </a>
-        </article>
-      </div>
-
-      <div class="col-12 col-md-6">
-        <article class="card h-100 shadow-sm">
-          <a href="/berita/view.html?src=tesis-investasi-saham-semeseter-2-2025.html" class="text-decoration-none text-body">
-            <img src="/img/rani.jpg" class="card-img-top" alt="thumbnail">
-            <div class="card-body">
-              <h5 class="card-title">Bagaimana Kebijakan Moneter Memengaruhi IHSG</h5>
-              <p class="card-text text-muted small">12 Oktober 2025 • Oleh Tim Riset</p>
-              <p class="card-text">Ringkasan perubahan kebijakan moneter global dan dampaknya terhadap pasar domestik.</p>
-            </div>
-          </a>
-        </article>
-      </div>
-
-      <div class="col-12 col-md-6">
-        <article class="card h-100 shadow-sm">
-          <a href="/berita/view.html?src=tesis-investasi-saham-semeseter-2-2025.html" class="text-decoration-none text-body">
-            <img src="/img/kemla.jpeg" class="card-img-top" alt="thumbnail">
-            <div class="card-body">
-              <h5 class="card-title">Strategi Sektor: Energi Terbarukan & Teknologi</h5>
-              <p class="card-text text-muted small">5 Oktober 2025 • Oleh Analis</p>
-              <p class="card-text">Mengapa energi terbarukan dan infrastruktur digital menjadi pemenang pada siklus saat ini.</p>
-            </div>
-          </a>
-        </article>
-      </div>
-
-      <div class="col-12 col-md-6">
-        <article class="card h-100 shadow-sm">
-          <a href="/berita/view.html?src=tesis-investasi-saham-semeseter-2-2025.html" class="text-decoration-none text-body">
-            <img src="/img/rani.jpg" class="card-img-top" alt="thumbnail">
-            <div class="card-body">
-              <h5 class="card-title">Risiko Konsentrasi & Lindung Nilai</h5>
-              <p class="card-text text-muted small">1 Oktober 2025 • Oleh Tim Strategi</p>
-              <p class="card-text">Diskusi tentang mitigasi risiko ketika pasar didominasi oleh beberapa konglomerat besar.</p>
-            </div>
-          </a>
-        </article>
-      </div>
+    <div id="berita-list">
+      <div id="berita-loading" class="text-center py-4 text-muted">Memuat daftar artikel…</div>
+      <ul id="berita-items" class="list-unstyled" style="display:none"></ul>
     </div>
 
     <div class="text-center mt-4">
-      <a href="/berita/view.html?src=tesis-investasi-saham-semeseter-2-2025.html" class="btn btn-outline-primary">Muat lebih banyak</a>
+      <span class="text-muted">Menampilkan semua artikel di folder /berita/</span>
     </div>
 
   </div>
@@ -79,5 +30,58 @@
   <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
   <script src="/script.js?v=1.5"></script>
+  <script>
+    // Client-side indexer: loads /berita/list.json, fetches each article file,
+    // extracts the first <h1> and first <p> as an excerpt, then renders a list.
+    // This keeps everything purely static — no Node needed. Uses jQuery as requested.
+    (function($){
+      var manifestUrl = '/berita/list.json';
+
+      function safeText(el){ return (el && el.text()) ? el.text().trim() : ''; }
+
+      $.getJSON(manifestUrl).done(function(list){
+        if(!Array.isArray(list) || list.length===0){
+          $('#berita-loading').text('Tidak ada artikel.');
+          return;
+        }
+
+        var $items = $('#berita-items');
+        var remaining = list.length;
+
+        list.forEach(function(fname){
+          var url = '/berita/' + fname;
+          // Fetch the article file (same-origin)
+          $.get(url).done(function(data){
+            // Parse returned HTML and extract the first h1 and first paragraph
+            var $wrap = $('<div>').append($.parseHTML(data));
+            var title = safeText($wrap.find('h1').first()) || fname;
+            var excerpt = safeText($wrap.find('p').first()) || '';
+
+            var $li = $('<li>').addClass('mb-3');
+            var $a = $('<a>').attr('href', url).addClass('text-decoration-none');
+            $a.append($('<strong>').text(title));
+            if(excerpt) $a.append($('<div>').addClass('text-muted small').text(excerpt));
+            $li.append($a);
+            $items.append($li);
+          }).fail(function(){
+            // If fetch fails, still create a link so user can try
+            var $li = $('<li>').addClass('mb-3');
+            var $a = $('<a>').attr('href', url).addClass('text-decoration-none');
+            $a.append($('<strong>').text(fname));
+            $li.append($a);
+            $items.append($li);
+          }).always(function(){
+            remaining -= 1;
+            if(remaining<=0){
+              $('#berita-loading').hide();
+              $items.show();
+            }
+          });
+        });
+      }).fail(function(){
+        $('#berita-loading').text('Gagal memuat daftar (/berita/list.json tidak ditemukan).');
+      });
+    })(jQuery);
+  </script>
 </body>
 </html>
