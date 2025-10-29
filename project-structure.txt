@@ -11,16 +11,20 @@
 │   ├── output(4).png
 │   └── output(6).png
 ├── berita
-│   └── tesis-investasi-saham-semeseter-2-2025.html
+│   ├── dummy-artikel-1.html
+│   ├── index.html
+│   ├── list.json
+│   ├── tesis-investasi-saham-semeseter-2-2025.html
+│   └── view.html
 ├── CNAME
+├── dashboard.html
 ├── favicon-16x16.png
 ├── favicon-32x32.png
 ├── favicon.ico
 ├── ignore
 ├── img
 │   ├── kemla.jpeg
-│   ├── rani.jpg
-│   └── rani.png
+│   └── rani.jpg
 ├── index copy.html
 ├── index.html
 ├── manifest.json
@@ -29,12 +33,27 @@
 ├── README.md
 ├── script copy.js
 ├── script.js
-├── service-monitoring.html
+├── scripts
+│   ├── cf-worker-github-publish.js
+│   ├── cf-worker-stripe-checkout.js
+│   ├── generate-berita-index.js
+│   └── pull-worker.sh
 ├── site.webmanifest
 ├── splash-logo.png
-├── splash-screen.jpg
+├── src
+│   └── index.js
 ├── style.css
 ├── sw.js
-└── verification.html
+├── training-quant-finance-saham
+│   ├── index.html
+│   └── success.html
+├── verification.html
+├── workers
+│   └── otp-worker
+│       ├── index.js
+│       ├── otp-do.js
+│       ├── README.md
+│       └── wrangler.toml
+└── wrangler.toml
 
-4 directories, 34 files
+9 directories, 48 files

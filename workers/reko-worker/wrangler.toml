@@ -1,0 +1,17 @@
+name = "bpjs-reko"
+account_id = "5a6c75ee2f334a79233aeebffda06de5"
+compatibility_date = "2025-10-29"
+main = "src/index.js"
+
+[[kv_namespaces]]
+binding = "REKO_KV"
+id = "89337288d9564a449eb99664973aa3cb"
+
+[[r2_buckets]]
+binding = "REKO_R2"
+bucket_name = "my-reko-r2-bucket"
+
+[vars]
+WORKER_BASE = "https://bpjs-reko.mkemalw.workers.dev"
+
+# Notes: run `wrangler publish` from this folder to deploy the reko worker.
