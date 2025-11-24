@@ -225,3 +225,10 @@ h1,h2,h3,h4,h5,h6{ font-weight:800; letter-spacing:-.02em; margin:0; }
 .tag.red{ background:#dc3545; }
 .tag.teal{ background:#20c997; }
 .tag.pink{ background:#e83e8c; }
+
+.icon-btn {
+    text-decoration: none !important;
+}
+.icon-btn i {
+    text-decoration: none !important;
+}

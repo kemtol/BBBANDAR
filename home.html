@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="id">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#ffffff" />
+    <!-- keep a single manifest file reference -->
+    <link rel="manifest" href="/site.webmanifest">
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+    <link rel="manifest" href="/site.webmanifest">
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+
+    <title>BBBANDAR SSSAHAM - Bandar Saham Kolektif Untuk Para Ritel Saham</title>
+    <!-- Open Graph for WhatsApp / Link Previews -->
+    <meta property="og:title" content="SSSAHAM — Bandar Saham Kolektif">
+    <meta property="og:description"
+        content="Pantau rekomendasi saham berbasis data: skor, probabilitas Markov, dan feed real-time yang mudah dibaca.">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://contoh-domain-kamu.xyz/">
+    <meta property="og:site_name" content="SSSAHAM">
+    <meta property="og:image" content="https://contoh-domain-kamu.xyz/og/sssaham-1200x630.jpg">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">
+
+    <!-- Optional: Twitter (aman buat platform lain) -->
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="SSSAHAM — Bandar Saham Kolektif">
+    <meta name="twitter:description"
+        content="Pantau rekomendasi saham berbasis data: skor, probabilitas Markov, dan feed real-time.">
+    <meta name="twitter:image" content="https://contoh-domain-kamu.xyz/og/sssaham-1200x630.jpg">
+
+    <!-- App CSS -->
+    <link rel="stylesheet" href="style.css?v=1.4">
+</head>
+
+<body>
+    <div id="app" class="container">
+        <!-- halaman home -->
+        <section id="home-page">
+            <div
+                class="this-page border-bottom d-flex flex-row align-items-center justify-content-between p-4 py-3 mt-3">
+                <h2 class="d-flex text-center fs-6" style="font-weight: 400;">👋 Hi, Quant Trader!</h2>
+
+                <div class="d-flex align-items-center gap-3">
+                    <a href="performance-report.html" id="performance-report" class="icon-btn d-flex p-0">
+                        <i class="fa-solid fa-pie-chart" style="font-size:1.35rem; color:dodgerblue;"></i>
+                    </a>
+                    <a href="login.html" id="login-button" class="d-flex p-0 icon-btn ">
+                        <i class="fa-solid fa-right-to-bracket" style="font-size:1.35rem; color:dodgerblue;"></i>
+                    </a>
+                </div>
+
+            </div>
+            <div class="this-page my-3 p-2" style="background-color: #e8ecec !important;">
+                <small class="d-block text-center mb-0">Bagaimana quant saham bekerja?<br /> <a href="about-us.html"
+                        style="color: dodgerblue;">Pelajari Lebih Lanjut</a></small>
+            </div>
+
+            <!-- Rekomendasi dari MARKOV -->
+            <div class="this-page d-flex flex-column align-items-center border-bottom p-4 mb-4">
+                <h1 class="text-center mb-3 fs-5 fw-bold">Markov Model Probabilty</h1>
+                <div id="markov-updated" class="text-muted small">Updated in —</div>
+                <div id="picksOuter" class="picks-outer mt-3">
+                    <div id="top-picks" class="picks-grid"></div>
+                </div>
+                <small id="top-picks-note" class="text-muted d-block text-center mt-2">
+                    Ditentukan dari skor (return, volume, pace, dsb).
+                </small>
+            </div>
+
+            <!-- Rekomendasi dari KV (MARKOV) -->
+            <div id="reko-section-mk" class="this-page p-3 mb-4">
+                <h5 class="mb-3 text-center fw-bold">
+                    Latest Markov Daily
+                </h5>
+                <div id="dump-wrap" style="font-size: small;"></div>
+            </div>
+
+            <!-- Rekomendasi dari KV -->
+            <div id="reko-section" class="this-page p-3 mb-4">
+                <h5 class="mb-3 text-center fw-bold">Feed Recomendation</h5>
+
+                <div class="table-responsive">
+                    <table class="table table-sm align-middle mb-0" id="reko-table">
+                        <thead id="reko-thead"></thead>
+                        <tbody id="reko-tbody">
+                            <tr>
+                                <td colspan="12">
+                                    <div class="reko-shimmer"></div>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+        </section>
+
+        <!-- halaman error -->
+        <section id="error-page" style="display: none;">
+            <div class="this-page d-flex flex-column align-items-center border-bottom p-4 my-4">
+                <h1 class="text-center">Error</h1>
+                <p class="text-center">An error occurred. Please try again later.</p>
+            </div>
+        </section>
+    </div>
+
+    <!-- notification container -->
+    <div id="notif-container" class="d-none"></div>
+
+    <!-- device & browser footprint (populated by JS) -->
+    <div id="device-footprint" class="this-page p-3 small text-muted"
+        style="white-space:pre-wrap;font-family:monospace;display:none;">
+        <!-- populated by script -->
+    </div>
+
+
+    <!-- jQuery INIT -->
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+
+    <!-- Bootstrap Bundle JS INIT -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+
+    <!-- App JS -->
+    <script src="home.js"></script>
+
+    <!-- Optional: Argon2 WASM for stronger client-side KDF. We load it if available and
+     prefer it over PBKDF2 for deriveKey. Loading it is optional; code falls back
+     to PBKDF2 when the library isn't present or fails to load. -->
+    <script src="https://cdn.jsdelivr.net/npm/argon2-browser/dist/argon2.min.js"></script>
+
+    <!-- Service Worker Registration (ini nanti aja kalau udah mau jadi app) -->
+    <script>
+        // Register service worker
+        /*if('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('sw.js').then(reg => console.log('Service Worker registered', reg)).catch(err => console.error('SW registration failed', err));
+        }*/
+    </script>
+
+    <!-- Device / Browser footprint collector -->
+    <script>
+        (async function () {
+
+            function getWebGLRenderer() {
+                try {
+                    const canvas = document.createElement("canvas");
+                    const gl = canvas.getContext("webgl");
+                    if (!gl) return "";
+                    const ext = gl.getExtension("WEBGL_debug_renderer_info");
+                    return ext
+                        ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL)
+                        : gl.getParameter(gl.RENDERER);
+                } catch (e) {
+                    return "";
+                }
+            }
+
+            async function generateDeviceFingerprint() {
+                const fp = {
+                    ua: navigator.userAgent || "",
+                    platform: navigator.platform || "",
+                    cores: navigator.hardwareConcurrency || null,
+                    mem: navigator.deviceMemory || null,
+                    screen: `${screen.width}x${screen.height}`,
+                    tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
+                    gpu: getWebGLRenderer()
+                };
+
+                // Hash SHA-256
+                const text = JSON.stringify(fp);
+                const enc = new TextEncoder().encode(text);
+                const digest = await crypto.subtle.digest("SHA-256", enc);
+                const b64 = btoa(String.fromCharCode(...new Uint8Array(digest)));
+
+                return { fp, deviceId: b64 };
+            }
+
+            document.addEventListener("DOMContentLoaded", async () => {
+                const { fp, deviceId } = await generateDeviceFingerprint();
+
+                const el = document.getElementById("device-footprint");
+                if (el) {
+                    el.style.display = "block";
+                    el.style.whiteSpace = "pre-wrap";
+                    el.style.fontFamily = "monospace";
+
+                    el.innerText =
+                        "=== DEVICE FINGERPRINT ===\n" +
+                        JSON.stringify(fp, null, 2) +
+                        "\n\nDeviceID (SHA256 Base64):\n" +
+                        deviceId;
+                }
+
+                // Expose globally (optional)
+                window._deviceId = deviceId;
+                window._deviceFp = fp;
+            });
+
+        })();
+    </script>
+
+
+
+</body>
+
+</html>

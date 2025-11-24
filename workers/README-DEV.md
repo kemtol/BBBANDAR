@@ -4,7 +4,7 @@ Running multiple Workers locally
 This repo contains two Cloudflare Workers projects:
 
 - root worker (configured by `wrangler.toml` in repo root) — your `WORKER_BASE` (`bpjs-reko`).
-- OTP worker in `workers/otp-worker` — your `WORKER_BASE_UUID` (`bpjs-uid-3380`).
+- OTP worker in `workers/otp-worker` — your `WORKER_BASE_UUID` (`bpks-uid-3380`).
 
 Quick start (one-command)
 

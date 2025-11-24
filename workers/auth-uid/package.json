@@ -1,0 +1,15 @@
+{
+  "name": "auth-uid",
+  "version": "1.0.0",
+  "description": "This folder contains a Cloudflare Worker prototype that implements a single-use OTP provider using:",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "jose": "^6.1.1"
+  }
+}

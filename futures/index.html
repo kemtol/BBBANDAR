@@ -1,0 +1,1007 @@
+<!DOCTYPE html>
+<html lang="id">
+<!--
+SSSAHAM Futures Wizard (Chat Style)
+Version: v1.7.0
+Changelog:
+- Render analysis result as TABLE-based segments (lebih rapi, ga “jelek banget”).
+- Mock fetch JSON from ./dummy-response.json (sejajar dengan index.html).
+- Remove unused step variable.
+- Fix quick-replies hover jadi biru (override kalau style.css nabrak).
+- Keep single-page scroll + fixed composer + full-width upload bubble.
+-->
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#ffffff" />
+
+    <link rel="manifest" href="../site.webmanifest" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
+
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css" rel="stylesheet" />
+
+    <title>SSSAHAM Futures Wizard (Chat Style)</title>
+    <link rel="stylesheet" href="../style.css?v=1.4" />
+
+    <style>
+        /* ===============================
+       CHAT LAYOUT (single page scroll)
+       =============================== */
+        #app.container,
+        .chat-wrapper {
+            max-width: 720px;
+            margin: 0 auto;
+        }
+
+        #futures-wizard {
+            display: block;
+            border: none !important;
+            background-color: transparent !important;
+        }
+
+        #futures-wizard-wrap {
+            display: block;
+        }
+
+        .chat-wrapper {
+            display: block;
+            position: relative;
+            border: none !important;
+            background: transparent !important;
+        }
+
+        /* chat area (NO internal scroll) */
+        .chat-shell {
+            background: transparent;
+            border: none;
+            border-radius: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .msg-row {
+            display: flex;
+            width: 100%;
+        }
+
+        .msg-row.assistant {
+            justify-content: flex-start;
+        }
+
+        .msg-row.user {
+            justify-content: flex-end;
+        }
+
+        /* base bubble (assistant default white) */
+        .bubble {
+            max-width: 85%;
+            padding: 10px 12px;
+            border-radius: 14px;
+            line-height: 1.45;
+            font-size: 0.95rem;
+            white-space: pre-wrap;
+            word-break: break-word;
+            background: #fff;
+            color: #111;
+            border: 1px solid rgba(0, 0, 0, 0.07);
+            box-shadow: 0 1px 1px rgba(0, 0, 0, 0.02);
+        }
+
+        .assistant .bubble {
+            border-top-left-radius: 2px;
+        }
+
+        /* ✅ user bubble */
+        .user .bubble {
+            border-top-right-radius: 2px;
+            background-color: cornflowerblue;
+            color: white;
+            border: none;
+        }
+
+        /* ===============================
+       Upload bubble full width
+       =============================== */
+        .assistant .bubble.upload-bubble {
+            max-width: 100% !important;
+            width: 100% !important;
+            text-align: center;
+            padding: 14px !important;
+        }
+
+        /* analysis bubble full width */
+        .assistant .bubble.analysis-bubble {
+            max-width: 100% !important;
+            width: 100% !important;
+            padding: 14px !important;
+        }
+
+        /* small pills */
+        .pill {
+            display: inline-block;
+            border-radius: 999px;
+            padding: 2px 8px;
+            font-size: 0.8rem;
+            border: 1px solid rgba(0, 0, 0, 0.08);
+            background: #f8f9fa;
+            margin-right: 6px;
+            margin-bottom: 6px;
+        }
+
+        .section-title {
+            font-weight: 600;
+            font-size: 0.95rem;
+            margin-top: 12px;
+            margin-bottom: 6px;
+        }
+
+        /* ===============================
+       Quick replies (hover biru)
+       =============================== */
+        .quick-replies {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 8px;
+        }
+
+        .quick-replies .btn {
+            border-radius: 999px;
+            padding: 6px 14px;
+            font-size: 0.9rem;
+        }
+
+        /* override hover kalau style.css nabrak */
+        .quick-replies .btn.btn-outline-primary:hover,
+        .quick-replies .btn.btn-outline-primary:focus {
+            background: #0d6efd !important;
+            border-color: #0d6efd !important;
+            color: #fff !important;
+        }
+
+        /* ===============================
+       File drop box
+       =============================== */
+        .file-drop-box {
+            border: 1px dashed rgba(108, 117, 125, 0.4);
+            border-radius: 10px;
+            padding: 14px;
+            text-align: center;
+            background: #fff;
+            cursor: pointer;
+            min-height: 12rem;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            gap: 6px;
+            position: relative;
+        }
+
+        .file-drop-box:hover {
+            background: #f8f9fa;
+        }
+
+        .file-drop-box .cloud-icon {
+            color: #6c757d;
+            font-size: 32px;
+        }
+
+        .file-drop-box .hint {
+            color: #6c757d;
+            font-size: 0.92rem;
+        }
+
+        .file-drop-box.drag-over {
+            background: #eef6ff;
+            border-color: rgba(13, 110, 253, 0.4);
+        }
+
+        .preview-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+            gap: 8px;
+            width: 100%;
+            margin-top: 8px;
+        }
+
+        .preview-grid img {
+            width: 100%;
+            height: 110px;
+            object-fit: contain;
+            border-radius: 8px;
+            background: #fff;
+            border: 1px solid rgba(0, 0, 0, 0.06);
+            padding: 4px;
+        }
+
+        /* ===============================
+       Table styling
+       =============================== */
+        .analysis-table {
+            font-size: 0.9rem;
+            margin-bottom: 0;
+        }
+
+        .analysis-table td,
+        .analysis-table th {
+            vertical-align: top;
+            padding: 6px 8px;
+        }
+
+        .analysis-table th {
+            width: 140px;
+            color: #6c757d;
+            font-weight: 600;
+            background: #f8f9fa;
+        }
+
+        /* === PATCH v1.7.0 === */
+
+        /* Hilangin gap karena <p> default margin di bubble */
+
+        .bubble ul,
+        .bubble ol {
+            margin: 0 !important;
+            padding-left: 1.1rem;
+        }
+
+        /* Quick replies hover harus biru */
+        .quick-replies .btn {
+            border-radius: 999px;
+            padding: 6px 14px;
+            font-size: .9rem;
+            transition: .12s ease-in-out;
+        }
+
+        .quick-replies .btn:hover,
+        .quick-replies .btn:focus {
+            background: #0d6efd !important;
+            border-color: #0d6efd !important;
+            color: #fff !important;
+        }
+
+        /* Table look lebih rapi di analysis bubble */
+        .analysis-bubble .table {
+            font-size: .9rem;
+        }
+
+        .analysis-bubble .table td {
+            vertical-align: top;
+        }
+
+
+        /* ===============================
+       Composer FIXED bottom
+       =============================== */
+        .chat-composer {
+            position: fixed;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            margin: 0 auto;
+            width: min(720px, calc(100% - 2rem));
+            z-index: 999;
+            background: rgba(255, 255, 255, 0.98);
+            border: 1px solid rgba(0, 0, 0, 0.12);
+            padding: 8px;
+            border-radius: 12px 12px 0 0;
+            backdrop-filter: blur(4px);
+            box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.06);
+        }
+
+        .chat-composer.disabled {
+            pointer-events: none;
+            opacity: 0.6;
+        }
+
+        .chat-composer textarea {
+            resize: none;
+            max-height: 120px;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="app" class="container">
+        <section id="home-page">
+            <div
+                class="this-page border-bottom d-flex flex-row align-items-center justify-content-between p-4 py-3 mt-3">
+                <h2 class="d-flex text-center fs-6" style="font-weight: 400;">👋 Hi, Quant Trader!</h2>
+                <a href="performance-report.html" id="performance-report" class="d-flex btn btn-lg p-0">
+                    <i class="fa-solid fa fa-pie-chart" style="color: dodgerblue;"></i>
+                </a>
+            </div>
+
+            <div class="this-page my-3 p-2" style="background-color: #e8ecec !important;">
+                <small class="d-block text-center mb-0">
+                    Dapatkan rekomendasi Agentic AI. <a href="about-us.html" style="color: dodgerblue;">Pelajari Lebih
+                        Lanjut</a>
+                </small>
+            </div>
+
+            <!-- Futures Wizard -->
+            <div id="futures-wizard" class="mb-4">
+                <div id="futures-wizard-wrap"></div>
+                <div id="futures-wizard-alert-wrap" class="mt-2" aria-live="polite"></div>
+            </div>
+        </section>
+    </div>
+
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+
+    <script>
+        function stripWhitespaceNodes($el) {
+            $el.contents().filter(function () {
+                return this.nodeType === 3 && !this.textContent.trim();
+            }).remove();
+        }
+
+        function showWarning(message) {
+            const warningDiv = $("<div class='alert alert-danger mt-2' role='alert'></div>").text(message);
+            const alertContainer = $("#futures-wizard-alert-wrap");
+            alertContainer.prepend(warningDiv);
+            const alerts = alertContainer.children('.alert');
+            if (alerts.length > 3) alerts.last().remove();
+            setTimeout(() => warningDiv.fadeOut(() => warningDiv.remove()), 2600);
+        }
+
+        $(document).ready(function () {
+            // ---------------------------
+            // State
+            // ---------------------------
+            let wizardState = {
+                pair: null,      // "gold" | "nasdaq"
+                style: null,     // "intraday" | "swing"
+                charts: [],
+                macro: [],
+                acceptedTrade: null
+            };
+
+            // ---------------------------
+            // UI setup (chat + composer)
+            // ---------------------------
+            const wrap = $("#futures-wizard-wrap");
+
+            const wrapper = $(`
+        <div class="chat-wrapper" id="chat-wrapper">
+          <div class="chat-shell" id="chat-shell"></div>
+
+          <div class="chat-composer disabled" id="chat-composer">
+            <div class="input-group">
+              <textarea id="composer-input" class="form-control" rows="1"
+                placeholder="Composer akan aktif setelah rekomendasi keluar..." disabled></textarea>
+              <button class="btn btn-primary" id="composer-send" disabled>
+                <i class="fa-solid fa-paper-plane"></i>
+              </button>
+            </div>
+            <div class="small text-muted mt-1 text-center" id="composer-hint">
+              <small>Composer akan nyala setelah rekomendasi (JSON) muncul.</small>
+            </div>
+          </div>
+        </div>
+      `);
+
+            wrap.append(wrapper);
+            const chat = $("#chat-shell");
+            const chatWrapper = $("#chat-wrapper");
+
+            // reserve padding-bottom dynamically to avoid overlap
+            function syncComposerReserve() {
+                const h = $("#chat-composer").outerHeight() || 0;
+                chatWrapper.css("padding-bottom", (h + 16) + "px");
+            }
+            syncComposerReserve();
+            $(window).on("resize", syncComposerReserve);
+
+            function scrollToBottom() {
+                window.scrollTo(0, document.body.scrollHeight);
+            }
+
+            function addMessage(role, html) {
+                const row = $(`<div class="msg-row ${role}"></div>`);
+                const bubble = $(`<div class="bubble"></div>`);
+                bubble.append(html);
+                stripWhitespaceNodes(bubble);
+                row.append(bubble);
+                chat.append(row);
+                syncComposerReserve();
+                scrollToBottom();
+                return bubble;
+            }
+
+            function addAssistantText(text) {
+                return addMessage("assistant", `<div>${text}</div>`);
+            }
+            function addUserText(text) {
+                return addMessage("user", `<div>${text}</div>`);
+            }
+
+            function requiredCharts() {
+                return wizardState.style === "swing"
+                    ? ["4H Chart", "15M Chart", "5M Chart"]
+                    : ["15M Chart", "5M Chart", "1M Chart"];
+            }
+
+            // ---------------------------
+            // Quick replies helper
+            // ---------------------------
+            function addQuickReplies(bubble, options) {
+                const qr = $(`<div class="quick-replies mt-2"></div>`);
+                options.forEach(opt => {
+                    const btn = $(`<button class="btn btn-outline-primary btn-sm"></button>`);
+                    btn.text(opt.label);
+                    btn.on("click", opt.onClick);
+                    qr.append(btn);
+                });
+                bubble.append(qr);
+            }
+
+            // ---------------------------
+            // Composer enable/disable
+            // ---------------------------
+            function enableComposer() {
+                $("#chat-composer").removeClass("disabled");
+                $("#composer-input, #composer-send").prop("disabled", false);
+                $("#composer-hint").addClass("d-none");
+                $("#composer-input").attr("placeholder", "Ketik respon kamu di sini...");
+                syncComposerReserve();
+                scrollToBottom();
+            }
+            function disableComposer() {
+                $("#chat-composer").addClass("disabled");
+                $("#composer-input, #composer-send").prop("disabled", true);
+                $("#composer-input").val("").attr("placeholder", "Composer akan aktif setelah rekomendasi keluar...");
+                $("#composer-hint").removeClass("d-none");
+                syncComposerReserve();
+            }
+
+            $("#composer-send").on("click", function () {
+                const val = $("#composer-input").val().trim();
+                if (!val) return;
+                addUserText(val);
+                $("#composer-input").val("");
+            });
+
+            $("#composer-input").on("keydown", function (e) {
+                if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    $("#composer-send").click();
+                }
+            });
+
+            // ---------------------------
+            // Upload bubble helper
+            // ---------------------------
+            function addUploadBubble({ title, hint, onFiles }) {
+                const bubble = addMessage("assistant", "");
+                bubble.addClass("upload-bubble");
+
+                const titleEl = $("<div></div>")
+                    .addClass("fw-semibold mb-1")
+                    .text(title);
+
+                const hintEl = $("<div></div>")
+                    .addClass("text-muted small mb-2")
+                    .text(hint);
+
+                const box = $(`
+          <div class="file-drop-box my-3" tabindex="0">
+            <i class="fa-solid fa-cloud-arrow-up cloud-icon"></i>
+            <div class="hint">Tap / drop semua gambar sekaligus</div>
+
+            <!-- overlay input (opacity 0) supaya multi upload pasti kebuka -->
+            <input type="file" class="uploader" multiple accept="image/*"
+              style="position:absolute; inset:0; width:100%; height:100%; opacity:0; cursor:pointer;" />
+
+            <div class="preview-grid d-none"></div>
+          </div>
+        `);
+
+                const input = box.find("input.uploader");
+                const preview = box.find(".preview-grid");
+
+                function handleFiles(fileList) {
+                    const files = [...fileList].filter(f => f.type.startsWith("image/"));
+                    if (!files.length) { showWarning("File harus berupa gambar."); return; }
+
+                    preview.empty().removeClass("d-none");
+
+                    const readers = files.map(file => new Promise(resolve => {
+                        const r = new FileReader();
+                        r.onload = (ev) => {
+                            preview.append(`<img src="${ev.target.result}" alt="preview">`);
+                            resolve(ev.target.result);
+                        };
+                        r.readAsDataURL(file);
+                    }));
+
+                    Promise.all(readers).then(imgs => onFiles(imgs));
+                }
+
+                // keyboard fallback
+                box.on("keydown", (e) => {
+                    if (e.key === "Enter" || e.key === " ") input[0].click();
+                });
+
+                input.on("change", (e) => {
+                    if (!e.target.files?.length) return;
+                    handleFiles(e.target.files);
+                });
+
+                // drag drop
+                box.on("dragover", (e) => {
+                    e.preventDefault();
+                    e.originalEvent.dataTransfer.dropEffect = "copy";
+                    box.addClass("drag-over");
+                });
+                box.on("dragleave drop", (e) => {
+                    e.preventDefault();
+                    box.removeClass("drag-over");
+                });
+                box.on("drop", (e) => {
+                    e.preventDefault();
+                    const dt = (e.originalEvent || e).dataTransfer;
+                    if (!dt?.files?.length) return;
+                    handleFiles(dt.files);
+                });
+
+                bubble.append(titleEl, hintEl, box);
+                scrollToBottom();
+            }
+
+            // ---------------------------
+            // Analysis bubble (TABLE-BASED)
+            // ---------------------------
+            function valOrTbd(v) {
+                if (v === null || v === undefined || v === "" || (Array.isArray(v) && !v.length)) return "TBD";
+                return v;
+            }
+
+            function listToHtml(arr) {
+                if (!arr || !arr.length) return "TBD";
+                return `<ul class="mb-0 ps-3">${arr.map(x => `<li>${x}</li>`).join("")}</ul>`;
+            }
+
+            function renderEvidenceTable(title, arr) {
+                const wrap = $("<div></div>").addClass("mb-2");
+                wrap.append($("<div></div>").addClass("small fw-semibold text-muted mb-1").text(title));
+
+                if (!arr || !arr.length) {
+                    wrap.append($("<div></div>").addClass("small text-muted").text("Tidak ada data."));
+                    return wrap;
+                }
+
+                const table = $(`
+          <div class="table-responsive">
+            <table class="table table-sm table-bordered analysis-table mb-0">
+              <thead>
+                <tr>
+                  <th style="width:160px">Item</th>
+                  <th style="width:120px">State</th>
+                  <th>Note</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        `);
+
+                const tbody = table.find("tbody");
+                arr.forEach(x => {
+                    tbody.append(`
+            <tr>
+              <td><strong>${x.item}</strong></td>
+              <td>${valOrTbd(x.state)}</td>
+              <td>${valOrTbd(x.note)}</td>
+            </tr>
+          `);
+                });
+
+                wrap.append(table);
+                return wrap;
+            }
+
+            // ---------------------------
+            // Render analysis bubble (TABLE view)
+            // v1.7.0
+            // ---------------------------
+            function renderAnalysisBubble(jsonObj) {
+                const bubble = addMessage("assistant", "");
+                bubble.addClass("analysis-bubble");
+
+                const assetType = jsonObj.asset_type || "TBD";
+                const md = jsonObj.macro_dashboard || {};
+                const bias = jsonObj.market_bias || {};
+                const lm = jsonObj.liquidity_map || {};
+                const td = jsonObj.trade_direction || {};
+                const tp = jsonObj.trade_plan || {};
+                const seOut = jsonObj.citadel_multi_asset_scoring_engine?.output || {};
+
+                // helper safe text
+                const safe = (v, fallback = "TBD") => (v === null || v === undefined || v === "" ? fallback : v);
+                const joinBr = (arr) => (arr && arr.length) ? arr.join("<br>") : "TBD";
+
+                // ===== Header =====
+                const header = $(`
+    <div class="mb-2">
+      <div class="d-flex flex-column gap-1">
+        <h5 class="fw-semibold mb-0">Rekomendasi ${assetType} (${safe(md.macro_to_asset_bias)})</h5>
+        <div class="small">
+          <span class="pill">Regime: ${safe(md.macro_regime)}</span>
+          <span class="pill">Confidence: ${safe(md.confidence_pct)}%</span>
+          <span class="pill">Knowledge: ${safe(jsonObj.knowledge_file_reference, "-")}</span>
+        </div>
+      </div>
+    </div>
+  `);
+                bubble.append(header);
+
+                // ===== Macro Dashboard Tables =====
+                bubble.append(`<div class="section-title">Macro Dashboard</div>`);
+
+                function macroTable(title, rows) {
+                    if (!rows || !rows.length) {
+                        return $(`
+        <div class="mb-2">
+          <div class="small fw-semibold text-muted mb-1">${title}</div>
+          <div class="small text-muted">Tidak ada data.</div>
+        </div>
+      `);
+                    }
+                    const table = $(`
+      <div class="mb-2">
+        <div class="small fw-semibold text-muted mb-1">${title}</div>
+        <div class="table-responsive">
+          <table class="table table-sm table-bordered align-middle mb-0">
+            <thead class="table-light">
+              <tr>
+                <th style="width:25%">Item</th>
+                <th style="width:15%">State</th>
+                <th>Note</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    `);
+                    const tbody = table.find("tbody");
+                    rows.forEach(r => {
+                        tbody.append(`
+        <tr>
+          <td><strong>${safe(r.item)}</strong></td>
+          <td>${safe(r.state)}</td>
+          <td>${safe(r.note, "")}</td>
+        </tr>
+      `);
+                    });
+                    return table;
+                }
+
+                bubble.append(
+                    macroTable("Common Evidence", md.common_evidence),
+                    macroTable("Gold Specific", md.gold_specific),
+                    macroTable("Nasdaq Specific", md.nasdaq_specific),
+                );
+
+                // ===== Market Bias Tables =====
+                bubble.append(`<div class="section-title">Market Bias</div>`);
+
+                const tfKeys = Object.keys(bias).filter(tf => bias[tf]); // skip null tf
+                if (!tfKeys.length) {
+                    bubble.append(`<div class="small text-muted mb-2">Tidak ada data market bias.</div>`);
+                } else {
+                    tfKeys.forEach(tf => {
+                        const b = bias[tf];
+                        const keyLevels = (b.key_levels && b.key_levels.length) ? b.key_levels.join(", ") : "TBD";
+                        const intLiq = joinBr(b.liquidity?.internal);
+                        const extLiq = joinBr(b.liquidity?.external);
+                        const fvg = joinBr(b.imbalances_fvg);
+
+                        bubble.append(`
+        <div class="small fw-semibold text-muted mb-1">${tf}</div>
+        <div class="table-responsive mb-2">
+          <table class="table table-sm table-bordered mb-0">
+            <tbody>
+              <tr><td style="width:28%"><strong>Summary</strong></td><td>${safe(b.summary)}</td></tr>
+              <tr><td><strong>Trend</strong></td><td>${safe(b.trend)}</td></tr>
+              <tr><td><strong>Structure</strong></td><td>${safe(b.structure)}</td></tr>
+              <tr><td><strong>Momentum</strong></td><td>${safe(b.momentum)}</td></tr>
+              <tr><td><strong>Volatility</strong></td><td>${safe(b.volatility)}</td></tr>
+              <tr><td><strong>Key Levels</strong></td><td>${keyLevels}</td></tr>
+              <tr><td><strong>Internal Liquidity</strong></td><td>${intLiq}</td></tr>
+              <tr><td><strong>External Liquidity</strong></td><td>${extLiq}</td></tr>
+              <tr><td><strong>FVG/Imbalances</strong></td><td>${fvg}</td></tr>
+              <tr><td><strong>Trigger</strong></td><td>${safe(b.trigger)}</td></tr>
+              <tr><td><strong>Confidence</strong></td><td>${safe(b.confidence_pct)}%</td></tr>
+            </tbody>
+          </table>
+        </div>
+      `);
+                    });
+                }
+
+                // ===== Liquidity Map =====
+                bubble.append(`<div class="section-title">Liquidity Map</div>`);
+                bubble.append(`
+    <div class="table-responsive mb-2">
+      <table class="table table-sm table-bordered mb-0">
+        <tbody>
+          <tr><td style="width:28%"><strong>Internal</strong></td><td>${joinBr(lm.internal_liquidity)}</td></tr>
+          <tr><td><strong>External</strong></td><td>${joinBr(lm.external_liquidity)}</td></tr>
+          <tr><td><strong>Sweep Expectation</strong></td><td>${safe(lm.sweep_expectation)}</td></tr>
+          <tr><td><strong>Imbalance/FVG Zones</strong></td><td>${joinBr(lm.imbalance_fvg_zones)}</td></tr>
+        </tbody>
+      </table>
+    </div>
+  `);
+
+                // ===== Trade Direction =====
+                bubble.append(`<div class="section-title">Trade Direction</div>`);
+                bubble.append(`
+    <div class="table-responsive mb-2">
+      <table class="table table-sm table-bordered mb-0">
+        <tbody>
+          <tr><td style="width:28%"><strong>Choice</strong></td><td>${safe(td.choice)}</td></tr>
+          <tr><td><strong>Rationale</strong></td><td>${safe(td.rationale)}</td></tr>
+        </tbody>
+      </table>
+    </div>
+  `);
+
+                // ===== Trade Plan =====
+                bubble.append(`<div class="section-title">Trade Plan</div>`);
+
+                const targets = (tp.targets || []).map(t => {
+                    const k = Object.keys(t).find(x => x.startsWith("T")) || "T?";
+                    return `${k}: ${t[k]} — ${t.action || ""}`;
+                }).join("<br>") || "TBD";
+
+                bubble.append(`
+    <div class="table-responsive mb-2">
+      <table class="table table-sm table-bordered mb-0">
+        <tbody>
+          <tr><td style="width:28%"><strong>Context Confluence</strong></td><td>${joinBr(tp.context_confluence)}</td></tr>
+          <tr><td><strong>Entry</strong></td><td>${safe(tp.entry?.type)} @ ${(tp.entry?.zone || []).join("–") || "TBD"}<br><span class="text-muted">${safe(tp.entry?.trigger, "")}</span></td></tr>
+          <tr><td><strong>Invalidation</strong></td><td>SL ${safe(tp.invalidation?.hard_stop)}<br><span class="text-muted">${safe(tp.invalidation?.condition, "")}</span></td></tr>
+          <tr><td><strong>Targets</strong></td><td>${targets}</td></tr>
+          <tr><td><strong>Risk</strong></td><td>max risk ${safe(tp.risk?.max_account_risk_pct)}% | ${safe(tp.risk?.notes)}</td></tr>
+          <tr><td><strong>No-Trade</strong></td><td>${joinBr(tp.no_trade_conditions)}</td></tr>
+        </tbody>
+      </table>
+    </div>
+  `);
+
+                // ===== Scoring Engine =====
+                bubble.append(`<div class="section-title">Citadel Scoring Engine</div>`);
+                bubble.append(`
+    <div class="table-responsive mb-2">
+      <table class="table table-sm table-bordered mb-0">
+        <tbody>
+          <tr><td style="width:28%"><strong>Detected Asset</strong></td><td>${safe(seOut.detected_asset)}</td></tr>
+          <tr><td><strong>Regime</strong></td><td>${safe(seOut.regime)}</td></tr>
+          <tr><td><strong>Scores</strong></td>
+              <td>macro ${safe(seOut.macro_score)} | technical ${safe(seOut.technical_score)} | liquidity ${safe(seOut.liquidity_score)} | event ${safe(seOut.event_score)}</td></tr>
+          <tr><td><strong>Final Confidence</strong></td><td>${safe(seOut.final_confidence_pct)}%</td></tr>
+        </tbody>
+      </table>
+    </div>
+  `);
+
+                // ===== Raw JSON collapsible =====
+                const rawWrap = $(`
+    <div class="mt-2">
+      <button class="btn btn-sm btn-outline-secondary w-100" type="button" data-bs-toggle="collapse" data-bs-target="#raw-json">
+        Lihat / Copy JSON mentah
+      </button>
+      <div id="raw-json" class="collapse mt-2"></div>
+    </div>
+  `);
+                const rawCode = $("<code></code>").addClass("json small").text(JSON.stringify(jsonObj, null, 2));
+                rawWrap.find("#raw-json").append(rawCode);
+                bubble.append(rawWrap);
+
+                scrollToBottom();
+            }
+
+
+            // ---------------------------
+            // Steps (chat style)
+            // ---------------------------
+            function step1_pair() {
+                const b = addAssistantText("<p>Pair apa yang mau dianalisa? Pilih salah satu:</p>");
+                addQuickReplies(b, [
+                    { label: "Gold", onClick: () => choosePair("gold") },
+                    { label: "Nasdaq", onClick: () => choosePair("nasdaq") }
+                ]);
+            }
+
+            function choosePair(pair) {
+                wizardState.pair = pair;
+                addUserText("👌 " + pair.toUpperCase());
+                step2_style();
+            }
+
+            function step2_style() {
+                const b = addAssistantText("<p>Trading style kamu Intraday atau Swing?</p>");
+                addQuickReplies(b, [
+                    { label: "Intraday", onClick: () => chooseStyle("intraday") },
+                    { label: "Swing", onClick: () => chooseStyle("swing") }
+                ]);
+            }
+
+            function chooseStyle(style) {
+                wizardState.style = style;
+                addUserText("👍 " + style.toUpperCase());
+                step3_uploadCharts();
+            }
+
+            function step3_uploadCharts() {
+                const req = requiredCharts();
+                addAssistantText(
+                    `<p>Oke. Sekarang upload chart berikut sekaligus dalam 1 kali kirim:</p><p>• ${req.join("<br/>• ")}</p>`
+                );
+
+                addUploadBubble({
+                    title: "Upload Chart Screenshots",
+                    hint: `Wajib minimal ${req.length} gambar sesuai list di atas.`,
+                    onFiles: (imgs) => {
+                        if (imgs.length < req.length) {
+                            showWarning(`Minimal ${req.length} chart ya (${req.join(", ")})`);
+                            return;
+                        }
+                        wizardState.charts = imgs;
+                        addUserText(`✅ Charts di-upload (${imgs.length} file).`);
+                        step4_uploadMacro();
+                    }
+                });
+            }
+
+            function step4_uploadMacro() {
+                addAssistantText(
+                    `<p>Sekarang upload screenshot macro sekaligus (boleh lebih dari 2 file):</p><p>• VIX<br>• US10Y<br>• DXY<br>• Yield curve / macro dashboard lain</p>`
+                );
+
+                addUploadBubble({
+                    title: "Upload Macro Screenshots",
+                    hint: "Drop/tap untuk upload semua macro metrics",
+                    onFiles: (imgs) => {
+                        wizardState.macro = imgs;
+                        addUserText(`✅ Macro di-upload (${imgs.length} file).`);
+                        step5_confirmAndAnalyze();
+                    }
+                });
+            }
+
+            function step5_confirmAndAnalyze() {
+                const req = requiredCharts();
+                const b = addAssistantText(
+                    `<p>Sebelum analisa, kita confirm dulu:</p><p><strong>Pair:</strong> ${wizardState.pair.toUpperCase()}
+<strong>Style:</strong> ${wizardState.style.toUpperCase()}
+<strong>Required charts:</strong> ${req.join(", ")}
+<strong>Charts uploaded:</strong> ${wizardState.charts.length}
+<strong>Macro uploaded:</strong> ${wizardState.macro.length}<br>
+Klik "Analisa Sekarang" untuk generate rekomendasi (JSON).</p>`
+                );
+
+                addQuickReplies(b, [
+                    { label: "Analisa Sekarang", onClick: () => generateJsonResponse() },
+                    { label: "Ulang Upload Charts", onClick: () => restartFromCharts() },
+                    { label: "Ulang Upload Macro", onClick: () => restartFromMacro() }
+                ]);
+            }
+
+            function restartFromCharts() {
+                addUserText("Ulang upload charts.");
+                wizardState.charts = [];
+                step3_uploadCharts();
+            }
+
+            function restartFromMacro() {
+                addUserText("Ulang upload macro.");
+                wizardState.macro = [];
+                step4_uploadMacro();
+            }
+
+            // ---- PATCH v1.7.0: load mock JSON from file ----
+            async function generateJsonResponse() {
+                addUserText("Analisa sekarang.");
+
+                let jsonObj = null;
+
+                try {
+                    // file sejajar dengan index.html
+                    const res = await fetch("./dummy-response.json", { cache: "no-store" });
+                    if (!res.ok) throw new Error("dummy-response.json not found");
+                    jsonObj = await res.json();
+                } catch (err) {
+                    console.warn("Mock fetch failed, fallback to dummy builder:", err);
+
+                    // fallback minimal kalau file ga kebaca
+                    const isGold = wizardState.pair === "gold";
+                    const isSwing = wizardState.style === "swing";
+
+                    jsonObj = {
+                        asset_type: isGold ? "GOLD" : "NASDAQ",
+                        knowledge_file_reference: isGold ? "KNOWLEDGE_FILE_GOLD_V1" : "KNOWLEDGE_FILE_NASDAQ_V1",
+                        macro_dashboard: {
+                            common_evidence: [
+                                { item: "DXY", state: "TBD", note: "TBD from macro screenshots" },
+                                { item: "The_Fed_Rate_Path", state: "TBD", note: "TBD from macro screenshots" },
+                                { item: "Global_Growth", state: "TBD", note: "TBD from macro screenshots" },
+                                { item: "Event_Risk", state: "TBD", note: "TBD from macro screenshots" }
+                            ],
+                            gold_specific: isGold ? [{ item: "Real_Yield_US10Y_vs_TIP", state: "TBD", note: "TBD" }] : [],
+                            nasdaq_specific: !isGold ? [{ item: "US10Y", state: "TBD", note: "TBD" }] : [],
+                            macro_regime: "TBD",
+                            macro_to_asset_bias: "TBD",
+                            confidence_pct: null
+                        },
+                        market_bias: {
+                            "4H": isSwing ? { summary: "TBD", trend: "TBD", structure: "TBD", momentum: "TBD", volatility: "TBD", key_levels: [], liquidity: { internal: [], external: [] }, imbalances_fvg: [], trigger: "TBD", confidence_pct: null } : null,
+                            "15M": { summary: "TBD", trend: "TBD", structure: "TBD", momentum: "TBD", volatility: "TBD", key_levels: [], liquidity: { internal: [], external: [] }, imbalances_fvg: [], trigger: "TBD", confidence_pct: null },
+                            "5M": { summary: "TBD", trend: "TBD", structure: "TBD", momentum: "TBD", volatility: "TBD", key_levels: [], liquidity: { internal: [], external: [] }, imbalances_fvg: [], trigger: "TBD", confidence_pct: null },
+                            "1M": !isSwing ? { summary: "TBD", trend: "TBD", structure: "TBD", momentum: "TBD", volatility: "TBD", key_levels: [], liquidity: { internal: [], external: [] }, imbalances_fvg: [], trigger: "TBD", confidence_pct: null } : null
+                        },
+                        liquidity_map: { internal_liquidity: [], external_liquidity: [], sweep_expectation: "TBD", imbalance_fvg_zones: [] },
+                        trade_direction: { choice: "TBD", rationale: "TBD" },
+                        trade_plan: { context_confluence: ["TBD"], entry: { type: "TBD", zone: [], trigger: "TBD" }, invalidation: { hard_stop: null, condition: "TBD" }, targets: [{ T1: null, action: "TBD" }, { T2: null, action: "TBD" }], risk: { max_account_risk_pct: 1.0, notes: "TBD" }, no_trade_conditions: ["TBD"] },
+                        citadel_multi_asset_scoring_engine: { output: { detected_asset: isGold ? "GOLD" : "NASDAQ", regime: "TBD", macro_score: null, technical_score: null, liquidity_score: null, event_score: null, final_confidence_pct: null } }
+                    };
+                }
+
+                // tampilkan TABLE bubble
+                renderAnalysisBubble(jsonObj);
+
+                enableComposer();
+
+                const b = addAssistantText("Apakah anda ingin melakukan trading ini? (akan disimpan ke pair story)");
+                addQuickReplies(b, [
+                    { label: "Ya, lakukan & simpan", onClick: () => acceptTrade(true, jsonObj) },
+                    { label: "Tidak", onClick: () => acceptTrade(false, jsonObj) }
+                ]);
+            }
+
+            function acceptTrade(isYes, jsonObj) {
+                wizardState.acceptedTrade = isYes;
+                addUserText(isYes ? "Ya, lakukan." : "Tidak.");
+
+                if (isYes) {
+                    console.log("SAVE TO PAIR STORY:", jsonObj);
+                    addAssistantText("✅ Oke, rencana trading disimpan ke Pair Story kamu. Semoga eksekusinya lancar!");
+                } else {
+                    addAssistantText("👍 Siap. Tidak disimpan. Kalau mau analisa ulang, refresh halaman atau mulai wizard lagi.");
+                }
+
+                const b = addAssistantText("Mau mulai analisa baru?");
+                addQuickReplies(b, [
+                    { label: "Mulai lagi", onClick: () => resetAll() }
+                ]);
+            }
+
+            function resetAll() {
+                addUserText("Mulai lagi.");
+                wizardState = { pair: null, style: null, charts: [], macro: [], acceptedTrade: null };
+                disableComposer();
+                step1_pair();
+            }
+
+            // ---------------------------
+            // Init chat
+            // ---------------------------
+            disableComposer();
+            addAssistantText("<p>Halo! Aku bandarAI, kita mulai ya!</p>");
+            step1_pair();
+        });
+    </script>
+</body>
+
+</html>

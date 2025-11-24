@@ -17,8 +17,8 @@ echo "Starting reko worker (bpjs-reko) on port 8787..."
 sleep 1
 echo "Root worker started (logs: $LOG_DIR/reko-dev.log)"
 
-echo "Starting otp worker (bpjs-uid) on port 8788..."
-(cd "$ROOT_DIR/workers/otp-worker" && wrangler dev --port 8788 > "$LOG_DIR/otp-dev.log" 2>&1 & echo $! > "$TMP_DIR/otp.pid")
+echo "Starting otp worker (bpks-uid-3380) on port 8788..."
+(cd "$ROOT_DIR/workers/bpks-uid-3380" && wrangler dev --port 8788 > "$LOG_DIR/otp-dev.log" 2>&1 & echo $! > "$TMP_DIR/otp.pid")
 sleep 1
 echo "OTP worker started (logs: $LOG_DIR/otp-dev.log)"
 
