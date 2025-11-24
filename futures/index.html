@@ -2,7 +2,7 @@
 <html lang="id">
 <!--
 SSSAHAM Futures Wizard (Chat Style)
-Version: v1.7.0
+Version: v1.7.3
 Changelog:
 - Render analysis result as TABLE-based segments (lebih rapi, ga “jelek banget”).
 - Mock fetch JSON from ./dummy-response.json (sejajar dengan index.html).
@@ -25,9 +25,27 @@ Changelog:
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css" rel="stylesheet" />
 
     <title>SSSAHAM Futures Wizard (Chat Style)</title>
-    <link rel="stylesheet" href="../style.css?v=1.4" />
+    <link rel="stylesheet" href="../theme.css?v=1.7.1" />
 
     <style>
+        .capitalize-first {
+            display: inline-block;
+            /* penting biar ::first-letter apply */
+        }
+
+        .capitalize-first::first-letter {
+            text-transform: uppercase;
+        }
+
+        .capitalize-first.sentence {
+            display: inline-block;
+            text-transform: lowercase;
+        }
+
+        .capitalize-first.sentence::first-letter {
+            text-transform: uppercase;
+        }
+
         /* ===============================
        CHAT LAYOUT (single page scroll)
        =============================== */
@@ -103,6 +121,7 @@ Changelog:
             background-color: cornflowerblue;
             color: white;
             border: none;
+            margin-bottom: 1rem;
         }
 
         /* ===============================
@@ -122,23 +141,32 @@ Changelog:
             padding: 14px !important;
         }
 
+        /* analysis bubble jangan ikut pre-wrap */
+        .analysis-bubble {
+            white-space: normal !important;
+        }
+
+        /* kalau ada code/pre mau tetap rapih */
+        .analysis-bubble pre,
+        .analysis-bubble code {
+            white-space: pre-wrap;
+        }
+
+
         /* small pills */
         .pill {
             display: inline-block;
             border-radius: 999px;
-            padding: 2px 8px;
-            font-size: 0.8rem;
             border: 1px solid rgba(0, 0, 0, 0.08);
             background: #f8f9fa;
             margin-right: 6px;
             margin-bottom: 6px;
+            padding: 6px 14px;
+            font-size: .9rem;
         }
 
         .section-title {
             font-weight: 600;
-            font-size: 0.95rem;
-            margin-top: 12px;
-            margin-bottom: 6px;
         }
 
         /* ===============================
@@ -338,11 +366,37 @@ Changelog:
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 
     <script>
-        function stripWhitespaceNodes($el) {
-            $el.contents().filter(function () {
+
+        // ---------------------------
+        // Global helper functions
+        // ---------------------------
+        function humanizeLabel(v) {
+            if (v === null || v === undefined) return "TBD";
+            const s = String(v).trim();
+            if (!s) return "TBD";
+
+            // ganti _ jadi spasi
+            const withSpaces = s.replace(/_/g, " ");
+
+            // Title Case tiap kata
+            return withSpaces.replace(/\w\S*/g, (w) =>
+                w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()
+            );
+        }
+
+        function pretty(v) {
+            if (v === null || v === undefined || v === "") return "TBD";
+            const s = String(v);
+            return s.includes("_") ? humanizeLabel(s) : s;
+        }
+
+
+        function stripWhitespaceNodes($root) {
+            $root.find("*").addBack().contents().filter(function () {
                 return this.nodeType === 3 && !this.textContent.trim();
             }).remove();
         }
+
 
         function showWarning(message) {
             const warningDiv = $("<div class='alert alert-danger mt-2' role='alert'></div>").text(message);
@@ -434,7 +488,7 @@ Changelog:
             // Quick replies helper
             // ---------------------------
             function addQuickReplies(bubble, options) {
-                const qr = $(`<div class="quick-replies mt-2"></div>`);
+                const qr = $(`<div class="quick-replies mb-3"></div>`);
                 options.forEach(opt => {
                     const btn = $(`<button class="btn btn-outline-primary btn-sm"></button>`);
                     btn.text(opt.label);
@@ -632,65 +686,66 @@ Changelog:
                 // ===== Header =====
                 const header = $(`
     <div class="mb-2">
-      <div class="d-flex flex-column gap-1">
-        <h5 class="fw-semibold mb-0">Rekomendasi ${assetType} (${safe(md.macro_to_asset_bias)})</h5>
-        <div class="small">
-          <span class="pill">Regime: ${safe(md.macro_regime)}</span>
-          <span class="pill">Confidence: ${safe(md.confidence_pct)}%</span>
-          <span class="pill">Knowledge: ${safe(jsonObj.knowledge_file_reference, "-")}</span>
-        </div>
+        <div class="d-flex flex-column gap-1">
+        <h5 class="fw-semibold">Rekomendasi ${assetType}</h5>
+        <span>${humanizeLabel(safe(md.macro_to_asset_bias))}</span>
+        <div class="mt-2 mb-4"><span class="pill">Regime: ${humanizeLabel(safe(md.macro_regime))}</span><span class="pill">Confidence: ${humanizeLabel(safe(md.confidence_pct))}%</span></div>
       </div>
     </div>
   `);
+                stripWhitespaceNodes(header);
                 bubble.append(header);
 
                 // ===== Macro Dashboard Tables =====
-                bubble.append(`<div class="section-title">Macro Dashboard</div>`);
+
+                bubble.append(`<h6 class="section-title mb-4">Macro Dashboard</h6>`);
 
                 function macroTable(title, rows) {
                     if (!rows || !rows.length) {
-                        return $(`
-        <div class="mb-2">
-          <div class="small fw-semibold text-muted mb-1">${title}</div>
-          <div class="small text-muted">Tidak ada data.</div>
-        </div>
-      `);
+                        return $(`<div class="small text-muted mb-2">Tidak ada data.</div>`);
                     }
+
                     const table = $(`
-      <div class="mb-2">
-        <div class="small fw-semibold text-muted mb-1">${title}</div>
-        <div class="table-responsive">
-          <table class="table table-sm table-bordered align-middle mb-0">
-            <thead class="table-light">
-              <tr>
-                <th style="width:25%">Item</th>
-                <th style="width:15%">State</th>
-                <th>Note</th>
-              </tr>
-            </thead>
-            <tbody></tbody>
-          </table>
-        </div>
+      <div class="table-responsive mb-2">
+        <table class="table table-sm table-borderless align-middle mb-0 macro-2col">
+          <tbody></tbody>
+        </table>
       </div>
     `);
+
                     const tbody = table.find("tbody");
+
                     rows.forEach(r => {
+                        const itemTxt = pretty(r.item);
+                        const stateTxt = pretty(r.state);
+                        const noteTxt = pretty(r.note);
+
                         tbody.append(`
-        <tr>
-          <td><strong>${safe(r.item)}</strong></td>
-          <td>${safe(r.state)}</td>
-          <td>${safe(r.note, "")}</td>
-        </tr>
-      `);
+          <tr>
+            <td style="width:35%" class="px-0">
+              <strong>${itemTxt} is <span style="text-transform:lowercase">${stateTxt}</span></strong>
+            </td>
+            <td class="pl-0"><span class="capitalize-first sentence">${noteTxt}</span></td>
+          </tr>
+        `);
                     });
+
                     return table;
                 }
 
-                bubble.append(
-                    macroTable("Common Evidence", md.common_evidence),
-                    macroTable("Gold Specific", md.gold_specific),
-                    macroTable("Nasdaq Specific", md.nasdaq_specific),
-                );
+
+                // ===== Macro Dashboard Tables (MERGED, 2 COL) =====
+                const assetUpper = String(assetType).toUpperCase();
+
+                const mergedMacroRows = [
+                    ...(md.common_evidence || []),
+                    ...((assetUpper === "GOLD") ? (md.gold_specific || []) : []),
+                    ...((assetUpper === "NASDAQ") ? (md.nasdaq_specific || []) : [])
+                ];
+
+                bubble.append(macroTable("Macro View", mergedMacroRows));
+
+
 
                 // ===== Market Bias Tables =====
                 bubble.append(`<div class="section-title">Market Bias</div>`);
@@ -711,17 +766,17 @@ Changelog:
         <div class="table-responsive mb-2">
           <table class="table table-sm table-bordered mb-0">
             <tbody>
-              <tr><td style="width:28%"><strong>Summary</strong></td><td>${safe(b.summary)}</td></tr>
-              <tr><td><strong>Trend</strong></td><td>${safe(b.trend)}</td></tr>
-              <tr><td><strong>Structure</strong></td><td>${safe(b.structure)}</td></tr>
-              <tr><td><strong>Momentum</strong></td><td>${safe(b.momentum)}</td></tr>
-              <tr><td><strong>Volatility</strong></td><td>${safe(b.volatility)}</td></tr>
+              <tr><td style="width:28%"><strong>Summary</strong></td><td>${pretty(b.summary)}</td></tr>
+              <tr><td><strong>Trend</strong></td><td>${pretty(b.trend)}</td></tr>
+              <tr><td><strong>Structure</strong></td><td>${pretty(b.structure)}</td></tr>
+              <tr><td><strong>Momentum</strong></td><td>${pretty(b.momentum)}</td></tr>
+              <tr><td><strong>Volatility</strong></td><td>${pretty(b.volatility)}</td></tr>
               <tr><td><strong>Key Levels</strong></td><td>${keyLevels}</td></tr>
               <tr><td><strong>Internal Liquidity</strong></td><td>${intLiq}</td></tr>
               <tr><td><strong>External Liquidity</strong></td><td>${extLiq}</td></tr>
               <tr><td><strong>FVG/Imbalances</strong></td><td>${fvg}</td></tr>
-              <tr><td><strong>Trigger</strong></td><td>${safe(b.trigger)}</td></tr>
-              <tr><td><strong>Confidence</strong></td><td>${safe(b.confidence_pct)}%</td></tr>
+              <tr><td><strong>Trigger</strong></td><td>${pretty(b.trigger)}</td></tr>
+              <tr><td><strong>Confidence</strong></td><td>${pretty(b.confidence_pct)}%</td></tr>
             </tbody>
           </table>
         </div>
@@ -798,7 +853,7 @@ Changelog:
 
                 // ===== Raw JSON collapsible =====
                 const rawWrap = $(`
-    <div class="mt-2">
+    <div class="mt-2 d-none">
       <button class="btn btn-sm btn-outline-secondary w-100" type="button" data-bs-toggle="collapse" data-bs-target="#raw-json">
         Lihat / Copy JSON mentah
       </button>
