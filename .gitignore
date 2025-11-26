@@ -1,11 +1,18 @@
-logs/
-tmp/
 # =========================
 # Secrets / env
 # =========================
 .env
 .env.*
 *.env
+
+# =========================
+# Config (TOML / Workers)
+# =========================
+# Jangan pernah commit file konfigurasi yang bisa berisi API key / secret
+wrangler.toml
+**/wrangler.toml
+*.toml
+**/*.toml
 
 # =========================
 # Dependencies (Node / Workers)
