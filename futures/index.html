@@ -2,30 +2,29 @@
 <html lang="id">
 <!--
 SSSAHAM Futures Wizard (Chat Style)
-Version: v1.7.3
+Version: v1.9.0
 Changelog:
-- Render analysis result as TABLE-based segments (lebih rapi, ga “jelek banget”).
-- Mock fetch JSON from ./dummy-response.json (sejajar dengan index.html).
-- Remove unused step variable.
-- Fix quick-replies hover jadi biru (override kalau style.css nabrak).
-- Keep single-page scroll + fixed composer + full-width upload bubble.
+- Full client-side image harvesting (FileReader + localStorage).
+- Single POST ke Worker di stage "Analisa Sekarang".
+- Global Ctrl+V → kirim ke upload bubble aktif (charts/macro).
 -->
+
 
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#ffffff" />
 
-    <link rel="manifest" href="../site.webmanifest" />
-    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
-    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
-    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
+    <link rel="manifest" href="img/site.webmanifest" />
+    <link rel="apple-touch-icon" sizes="180x180" href="img/apple-touch-icon.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="img//favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="img//favicon-16x16.png">
 
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css" rel="stylesheet" />
 
-    <title>SSSAHAM Futures Wizard (Chat Style)</title>
-    <link rel="stylesheet" href="../theme.css?v=1.7.1" />
+    <title>QUANTA: Free LLM and GPT Agentic AI Tools for Futures and Forex.</title>
+    <link rel="stylesheet" href="https://static.mkemalw.workers.dev/" />
 
     <style>
         .capitalize-first {
@@ -102,7 +101,7 @@ Changelog:
             padding: 10px 12px;
             border-radius: 14px;
             line-height: 1.45;
-            font-size: 0.95rem;
+            /*font-size: 0.95rem;*/
             white-space: pre-wrap;
             word-break: break-word;
             background: #fff;
@@ -124,9 +123,30 @@ Changelog:
             margin-bottom: 1rem;
         }
 
+        /* =============== 
+        Sticker Bubble (avatar)
+        =============== */
+        .bubble.sticker-bubble {
+            background: transparent !important;
+            border: none !important;
+            box-shadow: none !important;
+            padding: 0;
+            /* biar nempel kayak stiker */
+            max-width: 40%;
+            /* bebas, bisa diatur lagi */
+        }
+
+        .bubble.sticker-bubble img {
+            display: block;
+            max-width: 120px;
+            /* ukuran stiker */
+            height: auto;
+        }
+
+
         /* ===============================
-       Upload bubble full width
-       =============================== */
+        Upload bubble full width
+        =============================== */
         .assistant .bubble.upload-bubble {
             max-width: 100% !important;
             width: 100% !important;
@@ -231,6 +251,7 @@ Changelog:
             border-color: rgba(13, 110, 253, 0.4);
         }
 
+        /* Grid preview tetap */
         .preview-grid {
             display: grid;
             grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
@@ -239,15 +260,119 @@ Changelog:
             margin-top: 8px;
         }
 
-        .preview-grid img {
+        /* Bungkus tiap item biar X nempel di dalam gambar */
+        .preview-item {
+            position: relative;
+            border-radius: 10px;
+            overflow: hidden;
+            background: #ffffff;
+            box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+            white-space: wrap;
+        }
+
+        /* Override img di dalam preview-item */
+        .preview-item img {
+            display: block;
             width: 100%;
             height: 110px;
             object-fit: contain;
-            border-radius: 8px;
-            background: #fff;
-            border: 1px solid rgba(0, 0, 0, 0.06);
             padding: 4px;
         }
+
+        /* Tombol close kecil bulat di pojok kanan atas */
+        .preview-item .preview-remove {
+            position: absolute;
+            top: 4px;
+            right: 4px;
+            border: none;
+            width: 20px;
+            height: 20px;
+            border-radius: 999px;
+            background: rgba(15, 23, 42, 0.8);
+            color: #fff;
+            font-size: 0.8rem;
+            line-height: 20px;
+            text-align: center;
+            cursor: pointer;
+            padding: 0;
+        }
+
+        /* Quick reply Confirm di kanan, tidak "gelambir" */
+        .quick-replies.upload-confirm {
+            justify-content: flex-start;
+        }
+
+        .quick-replies.upload-confirm .confirm-upload-btn {
+            border-radius: 999px;
+            padding: 6px 18px;
+            font-size: 0.9rem;
+            white-space: initial;
+        }
+
+
+
+        /* ===============================
+   Upload actions (Galeri / Kamera)
+   =============================== */
+        .upload-controls {
+            margin-top: 12px;
+            display: flex;
+            justify-content: center;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .upload-btn {
+            border-radius: 999px;
+            padding: 6px 18px;
+            font-size: 0.9rem;
+            border: 1px solid #d0d7e2;
+            background: #ffffff;
+            box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .upload-btn i {
+            font-size: 0.95rem;
+        }
+
+        /* varian Galeri (netral) */
+        .upload-btn-gallery {
+            color: #111827;
+        }
+
+        /* varian Kamera (primary outline) */
+        .upload-btn-camera {
+            border-color: #0d6efd;
+            color: #0d6efd;
+            background: #f5f8ff;
+        }
+
+        .upload-btn:hover,
+        .upload-btn:focus {
+            background: #f3f4f6;
+        }
+
+        .upload-btn-camera:hover,
+        .upload-btn-camera:focus {
+            background: #e5f0ff;
+        }
+
+        /* mobile: full width biar rapi */
+        @media (max-width: 480px) {
+            .upload-controls {
+                flex-direction: column;
+                align-items: stretch;
+            }
+
+            .upload-btn {
+                width: 100%;
+                justify-content: center;
+            }
+        }
+
 
         /* ===============================
        Table styling
@@ -326,7 +451,10 @@ Changelog:
 
         .chat-composer.disabled {
             pointer-events: none;
-            opacity: 0.6;
+        }
+
+        .chat-composer.disabled .input-group {
+            opacity: 0.3;
         }
 
         .chat-composer textarea {
@@ -341,17 +469,17 @@ Changelog:
         <section id="home-page">
             <div
                 class="this-page border-bottom d-flex flex-row align-items-center justify-content-between p-4 py-3 mt-3">
-                <h2 class="d-flex text-center fs-6" style="font-weight: 400;">👋 Hi, Quant Trader!</h2>
+                <h2 class="d-flex text-center fs-6" style="font-weight: 500;">👋 Hi, Quant Trader!</h2>
                 <a href="performance-report.html" id="performance-report" class="d-flex btn btn-lg p-0">
                     <i class="fa-solid fa fa-pie-chart" style="color: dodgerblue;"></i>
                 </a>
             </div>
 
             <div class="this-page my-3 p-2" style="background-color: #e8ecec !important;">
-                <small class="d-block text-center mb-0">
+                <p class="d-block text-center mb-0">
                     Dapatkan rekomendasi Agentic AI. <a href="about-us.html" style="color: dodgerblue;">Pelajari Lebih
                         Lanjut</a>
-                </small>
+                </p>
             </div>
 
             <!-- Futures Wizard -->
@@ -370,6 +498,41 @@ Changelog:
         // ---------------------------
         // Global helper functions
         // ---------------------------
+
+        // otomatis deteksi development vs production
+        const isMobileDevice = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+        const isLocal = location.hostname === "localhost" || location.hostname === "127.0.0.1";
+        const WORKER_URL = isLocal
+            ? "http://127.0.0.1:8789/pass-imgs"              // URL worker di local wrangler dev
+            : "https://gold-router.example.workers.dev/pass-imgs"; // URL deploy
+
+        // ===== Local storage helper =====
+        const STORAGE_KEYS = {
+            charts: "fw_charts_v1",
+            macro: "fw_macro_v1",
+        };
+
+        function saveImagesToStorage(storageKey, filesArr) {
+            try {
+                localStorage.setItem(storageKey, JSON.stringify(filesArr));
+            } catch (err) {
+                console.warn("Failed to save images to localStorage:", err);
+            }
+        }
+
+        function loadImagesFromStorage(storageKey) {
+            try {
+                const raw = localStorage.getItem(storageKey);
+                if (!raw) return [];
+                const parsed = JSON.parse(raw);
+                return Array.isArray(parsed) ? parsed : [];
+            } catch (err) {
+                console.warn("Failed to load images from localStorage:", err);
+                return [];
+            }
+        }
+
+
         function humanizeLabel(v) {
             if (v === null || v === undefined) return "TBD";
             const s = String(v).trim();
@@ -407,6 +570,8 @@ Changelog:
             setTimeout(() => warningDiv.fadeOut(() => warningDiv.remove()), 2600);
         }
 
+        let activeUploadCtx = null;
+
         $(document).ready(function () {
             // ---------------------------
             // State
@@ -433,11 +598,11 @@ Changelog:
               <textarea id="composer-input" class="form-control" rows="1"
                 placeholder="Composer akan aktif setelah rekomendasi keluar..." disabled></textarea>
               <button class="btn btn-primary" id="composer-send" disabled>
-                <i class="fa-solid fa-paper-plane"></i>
+                <i class="fa-solid fa-paper-plane" style="color:white!important"></i>
               </button>
             </div>
             <div class="small text-muted mt-1 text-center" id="composer-hint">
-              <small>Composer akan nyala setelah rekomendasi (JSON) muncul.</small>
+              <small style="visibility:hidden">Composer akan nyala setelah rekomendasi (JSON) muncul.</small>
             </div>
           </div>
         </div>
@@ -531,10 +696,40 @@ Changelog:
                 }
             });
 
+            // Global handler: kalau ada image di clipboard, kirim ke upload bubble aktif
+            $(document).on("paste", function (e) {
+                if (!activeUploadCtx) return;
+
+                // Jangan ganggu kalau user lagi ngetik di input / textarea / contenteditable
+                const target = e.target;
+                if ($(target).is("input, textarea, [contenteditable=true]")) {
+                    return;
+                }
+
+                const evt = e.originalEvent || e;
+                const clipboardData = evt.clipboardData || window.clipboardData;
+                if (!clipboardData || !clipboardData.items) return;
+
+                const files = [];
+                for (let i = 0; i < clipboardData.items.length; i++) {
+                    const item = clipboardData.items[i];
+                    if (item.kind === "file" && item.type.startsWith("image/")) {
+                        const f = item.getAsFile();
+                        if (f) files.push(f);
+                    }
+                }
+
+                if (!files.length) return; // tidak ada image di clipboard
+
+                e.preventDefault(); // cegah paste teks random ke halaman
+                activeUploadCtx.appendFiles(files);  // pakai fungsi dari bubble aktif
+            });
+
+
             // ---------------------------
-            // Upload bubble helper
+            // Upload bubble (HARVEST + localStorage, TANPA POST)
             // ---------------------------
-            function addUploadBubble({ title, hint, onFiles }) {
+            function addUploadBubble({ title, hint, onFiles, storageKey }) {
                 const bubble = addMessage("assistant", "");
                 bubble.addClass("upload-bubble");
 
@@ -546,70 +741,195 @@ Changelog:
                     .addClass("text-muted small mb-2")
                     .text(hint);
 
+                // Dropzone utama
                 const box = $(`
-          <div class="file-drop-box my-3" tabindex="0">
-            <i class="fa-solid fa-cloud-arrow-up cloud-icon"></i>
-            <div class="hint">Tap / drop semua gambar sekaligus</div>
+      <div class="file-drop-box my-3" tabindex="0">
+        <i class="fa-solid fa-cloud-arrow-up cloud-icon"></i>
+        <div class="hint">Tap / drop semua gambar sekaligus</div>
 
-            <!-- overlay input (opacity 0) supaya multi upload pasti kebuka -->
-            <input type="file" class="uploader" multiple accept="image/*"
-              style="position:absolute; inset:0; width:100%; height:100%; opacity:0; cursor:pointer;" />
+        <input type="file" class="uploader" multiple accept="image/*"
+          style="position:absolute; inset:0; width:100%; height:100%; opacity:0; cursor:pointer;" />
 
-            <div class="preview-grid d-none"></div>
-          </div>
-        `);
+        <div class="preview-grid d-none"></div>
+      </div>
+    `);
 
                 const input = box.find("input.uploader");
                 const preview = box.find(".preview-grid");
 
-                function handleFiles(fileList) {
-                    const files = [...fileList].filter(f => f.type.startsWith("image/"));
-                    if (!files.length) { showWarning("File harus berupa gambar."); return; }
+                // Kontrol ekstra (mobile only)
+                const controls = $(`
+      <div class="upload-controls">
+        <button type="button"
+          class="btn btn-sm upload-btn upload-btn-gallery pick-gallery-btn">
+          <i class="fa-regular fa-image"></i>
+          <span>Galeri</span>
+        </button>
+        <button type="button"
+          class="btn btn-sm upload-btn upload-btn-camera camera-btn">
+          <i class="fa-solid fa-camera"></i>
+          <span>Kamera</span>
+        </button>
+        <input type="file" class="camera-input d-none"
+          accept="image/*" capture="environment" />
+      </div>
+    `);
+                const cameraInput = controls.find(".camera-input");
 
-                    preview.empty().removeClass("d-none");
+                // Quick reply Confirm
+                const confirmWrap = $(`
+      <div class="quick-replies upload-confirm mt-2 mb-3 d-none">
+        <button type="button" class="btn btn-outline-primary btn-sm confirm-upload-btn">
+          Confirm
+        </button>
+      </div>
+    `);
+                const confirmBtn = confirmWrap.find(".confirm-upload-btn");
 
-                    const readers = files.map(file => new Promise(resolve => {
-                        const r = new FileReader();
-                        r.onload = (ev) => {
-                            preview.append(`<img src="${ev.target.result}" alt="preview">`);
-                            resolve(ev.target.result);
-                        };
-                        r.readAsDataURL(file);
-                    }));
+                // Staging gambar sebelum di-confirm
+                let staged = [];
 
-                    Promise.all(readers).then(imgs => onFiles(imgs));
+                function renderPreview() {
+                    preview.empty();
+
+                    if (!staged.length) {
+                        preview.addClass("d-none");
+                        confirmWrap.addClass("d-none");
+                        return;
+                    }
+
+                    preview.removeClass("d-none");
+                    confirmWrap.removeClass("d-none");
+
+                    staged.forEach((f, idx) => {
+                        preview.append(`
+              <div class="preview-item" data-index="${idx}">
+                <button type="button" class="preview-remove" aria-label="Hapus gambar">&times;</button>
+                <img src="${f.data}" alt="preview">
+              </div>
+            `);
+                    });
                 }
 
-                // keyboard fallback
-                box.on("keydown", (e) => {
-                    if (e.key === "Enter" || e.key === " ") input[0].click();
+                async function appendFiles(fileList) {
+                    const files = [...fileList].filter(f => f.type.startsWith("image/"));
+                    if (!files.length) {
+                        showWarning("File harus berupa gambar.");
+                        return;
+                    }
+
+                    const newItems = await Promise.all(
+                        files.map(
+                            file =>
+                                new Promise(resolve => {
+                                    const reader = new FileReader();
+                                    reader.onload = e => {
+                                        resolve({ name: file.name, data: e.target.result });
+                                    };
+                                    reader.readAsDataURL(file);
+                                })
+                        )
+                    );
+
+                    staged = staged.concat(newItems);
+                    renderPreview();
+                }
+
+                activeUploadCtx = {
+                    appendFiles,  // refer ke fungsi di bubble ini
+                };
+
+                // === Confirm: SIMPAN ke localStorage + teruskan ke wizard, TANPA fetch ===
+                function confirmUpload() {
+                    if (!staged.length) return;
+
+                    const base64Arr = staged.map(f => ({ name: f.name, data: f.data }));
+
+                    // optional: simpan ke localStorage supaya bisa diambil lagi di Analisa Sekarang
+                    if (storageKey) {
+                        saveImagesToStorage(storageKey, base64Arr);
+                    }
+
+                    // Beri tahu wizard (simpannya di wizardState + lanjut step)
+                    onFiles(base64Arr.map(f => f.data));
+
+                    // Kunci uploader
+                    input.prop("disabled", true).css("pointer-events", "none");
+                    if (isMobileDevice) {
+                        controls.find("button").prop("disabled", true);
+                        cameraInput.prop("disabled", true);
+                    }
+                    confirmBtn.text("Confirmed").prop("disabled", true);
+                    activeUploadCtx = null; // bubble ini sudah selesai, jangan tampung paste lagi
+                }
+
+                // === EVENTS ===
+                // keyboard
+                box.on("keydown", e => {
+                    if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        input[0].click();
+                    }
                 });
 
-                input.on("change", (e) => {
+                // file via input utama
+                input.on("change", e => {
                     if (!e.target.files?.length) return;
-                    handleFiles(e.target.files);
+                    appendFiles(e.target.files);
+                    e.target.value = "";
                 });
 
-                // drag drop
-                box.on("dragover", (e) => {
+                // drag & drop
+                box.on("dragover", e => {
                     e.preventDefault();
                     e.originalEvent.dataTransfer.dropEffect = "copy";
                     box.addClass("drag-over");
                 });
-                box.on("dragleave drop", (e) => {
+                box.on("dragleave drop", e => {
                     e.preventDefault();
                     box.removeClass("drag-over");
                 });
-                box.on("drop", (e) => {
+                box.on("drop", e => {
                     e.preventDefault();
                     const dt = (e.originalEvent || e).dataTransfer;
                     if (!dt?.files?.length) return;
-                    handleFiles(dt.files);
+                    appendFiles(dt.files);
                 });
 
-                bubble.append(titleEl, hintEl, box);
+                // hapus per gambar
+                preview.on("click", ".preview-remove", function () {
+                    const idx = $(this).closest(".preview-item").data("index");
+                    staged.splice(idx, 1);
+                    renderPreview();
+                });
+
+                // Confirm
+                confirmBtn.on("click", e => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    confirmUpload();
+                });
+
+                // Mobile only: Galeri / Kamera
+                if (isMobileDevice) {
+                    controls.find(".pick-gallery-btn").on("click", () => input[0].click());
+                    controls.find(".camera-btn").on("click", () => cameraInput[0].click());
+
+                    cameraInput.on("change", e => {
+                        if (!e.target.files?.length) return;
+                        appendFiles(e.target.files);
+                        e.target.value = "";
+                    });
+
+                    bubble.append(titleEl, hintEl, box, controls, confirmWrap);
+                } else {
+                    // Desktop: hanya dropzone + Confirm
+                    bubble.append(titleEl, hintEl, box, confirmWrap);
+                }
+
                 scrollToBottom();
             }
+
 
             // ---------------------------
             // Analysis bubble (TABLE-BASED)
@@ -872,7 +1192,7 @@ Changelog:
             // Steps (chat style)
             // ---------------------------
             function step1_pair() {
-                const b = addAssistantText("<p>Pair apa yang mau dianalisa? Pilih salah satu:</p>");
+                const b = addAssistantText("<p>Pair apa yang mau kamu analisa? Pilih salah satu:</p>");
                 addQuickReplies(b, [
                     { label: "Gold", onClick: () => choosePair("gold") },
                     { label: "Nasdaq", onClick: () => choosePair("nasdaq") }
@@ -908,12 +1228,13 @@ Changelog:
                 addUploadBubble({
                     title: "Upload Chart Screenshots",
                     hint: `Wajib minimal ${req.length} gambar sesuai list di atas.`,
+                    storageKey: STORAGE_KEYS.charts,          // ⬅️ simpan di localStorage
                     onFiles: (imgs) => {
                         if (imgs.length < req.length) {
                             showWarning(`Minimal ${req.length} chart ya (${req.join(", ")})`);
                             return;
                         }
-                        wizardState.charts = imgs;
+                        wizardState.charts = imgs;            // simpan juga di memory
                         addUserText(`✅ Charts di-upload (${imgs.length} file).`);
                         step4_uploadMacro();
                     }
@@ -928,6 +1249,7 @@ Changelog:
                 addUploadBubble({
                     title: "Upload Macro Screenshots",
                     hint: "Drop/tap untuk upload semua macro metrics",
+                    storageKey: STORAGE_KEYS.macro,           // ⬅️ simpan di localStorage
                     onFiles: (imgs) => {
                         wizardState.macro = imgs;
                         addUserText(`✅ Macro di-upload (${imgs.length} file).`);
@@ -935,6 +1257,7 @@ Changelog:
                     }
                 });
             }
+
 
             function step5_confirmAndAnalyze() {
                 const req = requiredCharts();
@@ -966,51 +1289,42 @@ Klik "Analisa Sekarang" untuk generate rekomendasi (JSON).</p>`
                 step4_uploadMacro();
             }
 
-            // ---- PATCH v1.7.0: load mock JSON from file ----
             async function generateJsonResponse() {
                 addUserText("Analisa sekarang.");
+
+                // Ambil semua gambar dari localStorage (hasil Confirm sebelumnya)
+                const chartsPayload = loadImagesFromStorage(STORAGE_KEYS.charts);
+                const macroPayload = loadImagesFromStorage(STORAGE_KEYS.macro);
 
                 let jsonObj = null;
 
                 try {
-                    // file sejajar dengan index.html
-                    const res = await fetch("./dummy-response.json", { cache: "no-store" });
-                    if (!res.ok) throw new Error("dummy-response.json not found");
-                    jsonObj = await res.json();
+                    // === panggilan ke Cloudflare Worker kamu ===
+                    const resp = await fetch(WORKER_URL, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            pair: wizardState.pair,
+                            style: wizardState.style,
+                            charts: chartsPayload,   // array {name, data}
+                            macro: macroPayload      // array {name, data}
+                        })
+                    });
+
+                    if (!resp.ok) throw new Error("Worker error " + resp.status);
+                    jsonObj = await resp.json();
                 } catch (err) {
-                    console.warn("Mock fetch failed, fallback to dummy builder:", err);
+                    console.warn("Worker error, fallback ke dummy-response.json:", err);
 
-                    // fallback minimal kalau file ga kebaca
-                    const isGold = wizardState.pair === "gold";
-                    const isSwing = wizardState.style === "swing";
-
-                    jsonObj = {
-                        asset_type: isGold ? "GOLD" : "NASDAQ",
-                        knowledge_file_reference: isGold ? "KNOWLEDGE_FILE_GOLD_V1" : "KNOWLEDGE_FILE_NASDAQ_V1",
-                        macro_dashboard: {
-                            common_evidence: [
-                                { item: "DXY", state: "TBD", note: "TBD from macro screenshots" },
-                                { item: "The_Fed_Rate_Path", state: "TBD", note: "TBD from macro screenshots" },
-                                { item: "Global_Growth", state: "TBD", note: "TBD from macro screenshots" },
-                                { item: "Event_Risk", state: "TBD", note: "TBD from macro screenshots" }
-                            ],
-                            gold_specific: isGold ? [{ item: "Real_Yield_US10Y_vs_TIP", state: "TBD", note: "TBD" }] : [],
-                            nasdaq_specific: !isGold ? [{ item: "US10Y", state: "TBD", note: "TBD" }] : [],
-                            macro_regime: "TBD",
-                            macro_to_asset_bias: "TBD",
-                            confidence_pct: null
-                        },
-                        market_bias: {
-                            "4H": isSwing ? { summary: "TBD", trend: "TBD", structure: "TBD", momentum: "TBD", volatility: "TBD", key_levels: [], liquidity: { internal: [], external: [] }, imbalances_fvg: [], trigger: "TBD", confidence_pct: null } : null,
-                            "15M": { summary: "TBD", trend: "TBD", structure: "TBD", momentum: "TBD", volatility: "TBD", key_levels: [], liquidity: { internal: [], external: [] }, imbalances_fvg: [], trigger: "TBD", confidence_pct: null },
-                            "5M": { summary: "TBD", trend: "TBD", structure: "TBD", momentum: "TBD", volatility: "TBD", key_levels: [], liquidity: { internal: [], external: [] }, imbalances_fvg: [], trigger: "TBD", confidence_pct: null },
-                            "1M": !isSwing ? { summary: "TBD", trend: "TBD", structure: "TBD", momentum: "TBD", volatility: "TBD", key_levels: [], liquidity: { internal: [], external: [] }, imbalances_fvg: [], trigger: "TBD", confidence_pct: null } : null
-                        },
-                        liquidity_map: { internal_liquidity: [], external_liquidity: [], sweep_expectation: "TBD", imbalance_fvg_zones: [] },
-                        trade_direction: { choice: "TBD", rationale: "TBD" },
-                        trade_plan: { context_confluence: ["TBD"], entry: { type: "TBD", zone: [], trigger: "TBD" }, invalidation: { hard_stop: null, condition: "TBD" }, targets: [{ T1: null, action: "TBD" }, { T2: null, action: "TBD" }], risk: { max_account_risk_pct: 1.0, notes: "TBD" }, no_trade_conditions: ["TBD"] },
-                        citadel_multi_asset_scoring_engine: { output: { detected_asset: isGold ? "GOLD" : "NASDAQ", regime: "TBD", macro_score: null, technical_score: null, liquidity_score: null, event_score: null, final_confidence_pct: null } }
-                    };
+                    try {
+                        const res = await fetch("./dummy-response.json", { cache: "no-store" });
+                        if (!res.ok) throw new Error("dummy-response.json not found");
+                        jsonObj = await res.json();
+                    } catch (err2) {
+                        console.warn("Gagal load dummy-response.json:", err2);
+                        showWarning("Gagal mengambil rekomendasi dari server.");
+                        return;
+                    }
                 }
 
                 // tampilkan TABLE bubble
@@ -1024,6 +1338,7 @@ Klik "Analisa Sekarang" untuk generate rekomendasi (JSON).</p>`
                     { label: "Tidak", onClick: () => acceptTrade(false, jsonObj) }
                 ]);
             }
+
 
             function acceptTrade(isYes, jsonObj) {
                 wizardState.acceptedTrade = isYes;
@@ -1044,17 +1359,35 @@ Klik "Analisa Sekarang" untuk generate rekomendasi (JSON).</p>`
 
             function resetAll() {
                 addUserText("Mulai lagi.");
+
                 wizardState = { pair: null, style: null, charts: [], macro: [], acceptedTrade: null };
+
+                // bersihkan staging di localStorage
+                localStorage.removeItem(STORAGE_KEYS.charts);
+                localStorage.removeItem(STORAGE_KEYS.macro);
+
                 disableComposer();
                 step1_pair();
             }
+
 
             // ---------------------------
             // Init chat
             // ---------------------------
             disableComposer();
-            addAssistantText("<p>Halo! Aku bandarAI, kita mulai ya!</p>");
+
+            // bubble teks
+            addAssistantText('<p>Daftar untuk medapatkan full access, <a href="">login</a> sekarang!</p>');
+
+            // bubble sticker avatar tepat di bawahnya
+            const stickerBubble = addMessage(
+                "assistant",
+                '<img src="img/avatar.png" alt="Avatar" />'
+            );
+            stickerBubble.addClass("sticker-bubble");
+
             step1_pair();
+
         });
     </script>
 </body>
