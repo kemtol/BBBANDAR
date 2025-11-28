@@ -2,7 +2,7 @@
 <html lang="id">
 <!--
 SSSAHAM Futures Wizard (Chat Style)
-Version: v1.9.0
+Version: v1.9.2
 Changelog:
 - Full client-side image harvesting (FileReader + localStorage).
 - Single POST ke Worker di stage "Analisa Sekarang".
@@ -98,10 +98,9 @@ Changelog:
         /* base bubble (assistant default white) */
         .bubble {
             max-width: 85%;
-            padding: 10px 12px;
+            padding: 1rem 1.2rem;
             border-radius: 14px;
             line-height: 1.45;
-            /*font-size: 0.95rem;*/
             white-space: pre-wrap;
             word-break: break-word;
             background: #fff;
@@ -151,14 +150,12 @@ Changelog:
             max-width: 100% !important;
             width: 100% !important;
             text-align: center;
-            padding: 14px !important;
         }
 
         /* analysis bubble full width */
         .assistant .bubble.analysis-bubble {
             max-width: 100% !important;
             width: 100% !important;
-            padding: 14px !important;
         }
 
         /* analysis bubble jangan ikut pre-wrap */
@@ -219,7 +216,7 @@ Changelog:
         .file-drop-box {
             border: 1px dashed rgba(108, 117, 125, 0.4);
             border-radius: 10px;
-            padding: 14px;
+            padding: 2rem 1rem;
             text-align: center;
             background: #fff;
             cursor: pointer;
@@ -267,7 +264,7 @@ Changelog:
             overflow: hidden;
             background: #ffffff;
             box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
-            white-space: wrap;
+            white-space: normal;
         }
 
         /* Override img di dalam preview-item */
@@ -300,6 +297,7 @@ Changelog:
         /* Quick reply Confirm di kanan, tidak "gelambir" */
         .quick-replies.upload-confirm {
             justify-content: flex-start;
+            align-items: center;
         }
 
         .quick-replies.upload-confirm .confirm-upload-btn {
@@ -309,7 +307,14 @@ Changelog:
             white-space: initial;
         }
 
-
+        .quick-replies.upload-confirm .remaining-hint {
+            display: inline-flex;
+            /* biar bisa di-center juga */
+            align-items: center;
+            line-height: 1.2;
+            margin-top: 0;
+            /* jaga-jaga kalau kepengaruh margin default */
+        }
 
         /* ===============================
    Upload actions (Galeri / Kamera)
@@ -467,11 +472,11 @@ Changelog:
 <body>
     <div id="app" class="container">
         <section id="home-page">
-            <div
-                class="this-page border-bottom d-flex flex-row align-items-center justify-content-between p-4 py-3 mt-3">
+            <div class="this-page border-bottom d-flex flex-row align-items-center justify-content-between px-3 py-1 mt-4"
+                style="background: transparent !important;border: none!important;">
                 <h2 class="d-flex text-center fs-6" style="font-weight: 500;">👋 Hi, Quant Trader!</h2>
                 <a href="performance-report.html" id="performance-report" class="d-flex btn btn-lg p-0">
-                    <i class="fa-solid fa fa-pie-chart" style="color: dodgerblue;"></i>
+                    <img src="img/pie-chart.png" style="width: 24px;">
                 </a>
             </div>
 
@@ -729,12 +734,12 @@ Changelog:
             // ---------------------------
             // Upload bubble (HARVEST + localStorage, TANPA POST)
             // ---------------------------
-            function addUploadBubble({ title, hint, onFiles, storageKey }) {
+            function addUploadBubble({ title, hint, onFiles, storageKey, minCount = 1 }) {
                 const bubble = addMessage("assistant", "");
                 bubble.addClass("upload-bubble");
 
                 const titleEl = $("<div></div>")
-                    .addClass("fw-semibold mb-1")
+                    .addClass("fw-semibold mt-2 mb-1")
                     .text(title);
 
                 const hintEl = $("<div></div>")
@@ -743,48 +748,52 @@ Changelog:
 
                 // Dropzone utama
                 const box = $(`
-      <div class="file-drop-box my-3" tabindex="0">
-        <i class="fa-solid fa-cloud-arrow-up cloud-icon"></i>
-        <div class="hint">Tap / drop semua gambar sekaligus</div>
+                    <div class="file-drop-box my-3" tabindex="0">
+                        <i class="fa-solid fa-cloud-arrow-up cloud-icon"></i>
+                        <div class="hint mb-3">Tap / drop semua gambar sekaligus</div>
 
-        <input type="file" class="uploader" multiple accept="image/*"
-          style="position:absolute; inset:0; width:100%; height:100%; opacity:0; cursor:pointer;" />
+                        <input type="file" class="uploader" multiple accept="image/*"
+                        style="position:absolute; inset:0; width:100%; height:100%; opacity:0; cursor:pointer;" />
 
-        <div class="preview-grid d-none"></div>
-      </div>
-    `);
+                        <div class="preview-grid d-none"></div>
+                    </div>
+                    `);
 
                 const input = box.find("input.uploader");
                 const preview = box.find(".preview-grid");
 
                 // Kontrol ekstra (mobile only)
                 const controls = $(`
-      <div class="upload-controls">
-        <button type="button"
-          class="btn btn-sm upload-btn upload-btn-gallery pick-gallery-btn">
-          <i class="fa-regular fa-image"></i>
-          <span>Galeri</span>
-        </button>
-        <button type="button"
-          class="btn btn-sm upload-btn upload-btn-camera camera-btn">
-          <i class="fa-solid fa-camera"></i>
-          <span>Kamera</span>
-        </button>
-        <input type="file" class="camera-input d-none"
-          accept="image/*" capture="environment" />
-      </div>
-    `);
+                    <div class="upload-controls">
+                        <button type="button"
+                        class="btn btn-sm upload-btn upload-btn-gallery pick-gallery-btn">
+                        <i class="fa-regular fa-image"></i>
+                        <span>Galeri</span>
+                        </button>
+                        <button type="button"
+                        class="btn btn-sm upload-btn upload-btn-camera camera-btn">
+                        <i class="fa-solid fa-camera"></i>
+                        <span>Kamera</span>
+                        </button>
+                        <input type="file" class="camera-input d-none"
+                        accept="image/*" capture="environment" />
+                    </div>
+                    `);
                 const cameraInput = controls.find(".camera-input");
 
-                // Quick reply Confirm
+
                 const confirmWrap = $(`
-      <div class="quick-replies upload-confirm mt-2 mb-3 d-none">
-        <button type="button" class="btn btn-outline-primary btn-sm confirm-upload-btn">
-          Confirm
-        </button>
-      </div>
-    `);
+                    <div class="quick-replies upload-confirm mt-2 mb-3 d-none">
+                        <button type="button" class="btn btn-outline-primary btn-sm confirm-upload-btn">
+                        Confirm
+                        </button>
+                        <small class="remaining-hint ms-2"
+                        style="color:orange; font-size:0.8rem; display:none;"></small>
+                    </div>
+                    `);
+
                 const confirmBtn = confirmWrap.find(".confirm-upload-btn");
+                const remainingHint = confirmWrap.find(".remaining-hint");
 
                 // Staging gambar sebelum di-confirm
                 let staged = [];
@@ -795,6 +804,7 @@ Changelog:
                     if (!staged.length) {
                         preview.addClass("d-none");
                         confirmWrap.addClass("d-none");
+                        remainingHint.hide(); // ga ada gambar, ga usah nunjukin
                         return;
                     }
 
@@ -803,13 +813,35 @@ Changelog:
 
                     staged.forEach((f, idx) => {
                         preview.append(`
-              <div class="preview-item" data-index="${idx}">
-                <button type="button" class="preview-remove" aria-label="Hapus gambar">&times;</button>
-                <img src="${f.data}" alt="preview">
-              </div>
-            `);
+                        <div class="preview-item" data-index="${idx}">
+                            <button type="button" class="preview-remove" aria-label="Hapus gambar">&times;</button>
+                            <img src="${f.data}" alt="preview">
+                        </div>
+                        `);
                     });
+
+                    // 🔐 Atur tombol Confirm + hint “berapa lagi”
+                    if (staged.length < minCount) {
+                        const remaining = minCount - staged.length;
+
+                        confirmBtn.prop("disabled", true);
+                        confirmBtn.text(`Confirm (${staged.length}/${minCount})`);
+
+                        // kalau minCount > 1 baru masuk akal kasih hint
+                        if (minCount > 1) {
+                            remainingHint
+                                .text(`${remaining} screenshot lagi!`)
+                                .show();
+                        } else {
+                            remainingHint.hide();
+                        }
+                    } else {
+                        confirmBtn.prop("disabled", false);
+                        confirmBtn.text("Confirm");
+                        remainingHint.hide();
+                    }
                 }
+
 
                 async function appendFiles(fileList) {
                     const files = [...fileList].filter(f => f.type.startsWith("image/"));
@@ -839,28 +871,25 @@ Changelog:
                     appendFiles,  // refer ke fungsi di bubble ini
                 };
 
-                // === Confirm: SIMPAN ke localStorage + teruskan ke wizard, TANPA fetch ===
                 function confirmUpload() {
-                    if (!staged.length) return;
+                    if (!staged.length || staged.length < minCount) return; // safety
 
                     const base64Arr = staged.map(f => ({ name: f.name, data: f.data }));
 
-                    // optional: simpan ke localStorage supaya bisa diambil lagi di Analisa Sekarang
                     if (storageKey) {
                         saveImagesToStorage(storageKey, base64Arr);
                     }
 
-                    // Beri tahu wizard (simpannya di wizardState + lanjut step)
                     onFiles(base64Arr.map(f => f.data));
 
-                    // Kunci uploader
                     input.prop("disabled", true).css("pointer-events", "none");
                     if (isMobileDevice) {
                         controls.find("button").prop("disabled", true);
                         cameraInput.prop("disabled", true);
                     }
                     confirmBtn.text("Confirmed").prop("disabled", true);
-                    activeUploadCtx = null; // bubble ini sudah selesai, jangan tampung paste lagi
+                    remainingHint.hide();
+                    activeUploadCtx = null;
                 }
 
                 // === EVENTS ===
@@ -1107,30 +1136,30 @@ Changelog:
                 // ===== Liquidity Map =====
                 bubble.append(`<div class="section-title">Liquidity Map</div>`);
                 bubble.append(`
-    <div class="table-responsive mb-2">
-      <table class="table table-sm table-bordered mb-0">
-        <tbody>
-          <tr><td style="width:28%"><strong>Internal</strong></td><td>${joinBr(lm.internal_liquidity)}</td></tr>
-          <tr><td><strong>External</strong></td><td>${joinBr(lm.external_liquidity)}</td></tr>
-          <tr><td><strong>Sweep Expectation</strong></td><td>${safe(lm.sweep_expectation)}</td></tr>
-          <tr><td><strong>Imbalance/FVG Zones</strong></td><td>${joinBr(lm.imbalance_fvg_zones)}</td></tr>
-        </tbody>
-      </table>
-    </div>
-  `);
+                    <div class="table-responsive mb-2">
+                        <table class="table table-sm table-bordered mb-0">
+                            <tbody>
+                            <tr><td style="width:28%"><strong>Internal</strong></td><td>${joinBr(lm.internal_liquidity)}</td></tr>
+                            <tr><td><strong>External</strong></td><td>${joinBr(lm.external_liquidity)}</td></tr>
+                            <tr><td><strong>Sweep Expectation</strong></td><td>${safe(lm.sweep_expectation)}</td></tr>
+                            <tr><td><strong>Imbalance/FVG Zones</strong></td><td>${joinBr(lm.imbalance_fvg_zones)}</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                `);
 
                 // ===== Trade Direction =====
                 bubble.append(`<div class="section-title">Trade Direction</div>`);
                 bubble.append(`
-    <div class="table-responsive mb-2">
-      <table class="table table-sm table-bordered mb-0">
-        <tbody>
-          <tr><td style="width:28%"><strong>Choice</strong></td><td>${safe(td.choice)}</td></tr>
-          <tr><td><strong>Rationale</strong></td><td>${safe(td.rationale)}</td></tr>
-        </tbody>
-      </table>
-    </div>
-  `);
+                    <div class="table-responsive mb-2">
+                        <table class="table table-sm table-bordered mb-0">
+                            <tbody>
+                            <tr><td style="width:28%"><strong>Choice</strong></td><td>${safe(td.choice)}</td></tr>
+                            <tr><td><strong>Rationale</strong></td><td>${safe(td.rationale)}</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                `);
 
                 // ===== Trade Plan =====
                 bubble.append(`<div class="section-title">Trade Plan</div>`);
@@ -1141,52 +1170,51 @@ Changelog:
                 }).join("<br>") || "TBD";
 
                 bubble.append(`
-    <div class="table-responsive mb-2">
-      <table class="table table-sm table-bordered mb-0">
-        <tbody>
-          <tr><td style="width:28%"><strong>Context Confluence</strong></td><td>${joinBr(tp.context_confluence)}</td></tr>
-          <tr><td><strong>Entry</strong></td><td>${safe(tp.entry?.type)} @ ${(tp.entry?.zone || []).join("–") || "TBD"}<br><span class="text-muted">${safe(tp.entry?.trigger, "")}</span></td></tr>
-          <tr><td><strong>Invalidation</strong></td><td>SL ${safe(tp.invalidation?.hard_stop)}<br><span class="text-muted">${safe(tp.invalidation?.condition, "")}</span></td></tr>
-          <tr><td><strong>Targets</strong></td><td>${targets}</td></tr>
-          <tr><td><strong>Risk</strong></td><td>max risk ${safe(tp.risk?.max_account_risk_pct)}% | ${safe(tp.risk?.notes)}</td></tr>
-          <tr><td><strong>No-Trade</strong></td><td>${joinBr(tp.no_trade_conditions)}</td></tr>
-        </tbody>
-      </table>
-    </div>
-  `);
+                    <div class="table-responsive mb-2">
+                        <table class="table table-sm table-bordered mb-0">
+                            <tbody>
+                            <tr><td style="width:28%"><strong>Context Confluence</strong></td><td>${joinBr(tp.context_confluence)}</td></tr>
+                            <tr><td><strong>Entry</strong></td><td>${safe(tp.entry?.type)} @ ${(tp.entry?.zone || []).join("–") || "TBD"}<br><span class="text-muted">${safe(tp.entry?.trigger, "")}</span></td></tr>
+                            <tr><td><strong>Invalidation</strong></td><td>SL ${safe(tp.invalidation?.hard_stop)}<br><span class="text-muted">${safe(tp.invalidation?.condition, "")}</span></td></tr>
+                            <tr><td><strong>Targets</strong></td><td>${targets}</td></tr>
+                            <tr><td><strong>Risk</strong></td><td>max risk ${safe(tp.risk?.max_account_risk_pct)}% | ${safe(tp.risk?.notes)}</td></tr>
+                            <tr><td><strong>No-Trade</strong></td><td>${joinBr(tp.no_trade_conditions)}</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+            `);
 
                 // ===== Scoring Engine =====
                 bubble.append(`<div class="section-title">Citadel Scoring Engine</div>`);
                 bubble.append(`
-    <div class="table-responsive mb-2">
-      <table class="table table-sm table-bordered mb-0">
-        <tbody>
-          <tr><td style="width:28%"><strong>Detected Asset</strong></td><td>${safe(seOut.detected_asset)}</td></tr>
-          <tr><td><strong>Regime</strong></td><td>${safe(seOut.regime)}</td></tr>
-          <tr><td><strong>Scores</strong></td>
-              <td>macro ${safe(seOut.macro_score)} | technical ${safe(seOut.technical_score)} | liquidity ${safe(seOut.liquidity_score)} | event ${safe(seOut.event_score)}</td></tr>
-          <tr><td><strong>Final Confidence</strong></td><td>${safe(seOut.final_confidence_pct)}%</td></tr>
-        </tbody>
-      </table>
-    </div>
-  `);
+                    <div class="table-responsive mb-2">
+                        <table class="table table-sm table-bordered mb-0">
+                            <tbody>
+                            <tr><td style="width:28%"><strong>Detected Asset</strong></td><td>${safe(seOut.detected_asset)}</td></tr>
+                            <tr><td><strong>Regime</strong></td><td>${safe(seOut.regime)}</td></tr>
+                            <tr><td><strong>Scores</strong></td>
+                                <td>macro ${safe(seOut.macro_score)} | technical ${safe(seOut.technical_score)} | liquidity ${safe(seOut.liquidity_score)} | event ${safe(seOut.event_score)}</td></tr>
+                            <tr><td><strong>Final Confidence</strong></td><td>${safe(seOut.final_confidence_pct)}%</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                `);
 
                 // ===== Raw JSON collapsible =====
                 const rawWrap = $(`
-    <div class="mt-2 d-none">
-      <button class="btn btn-sm btn-outline-secondary w-100" type="button" data-bs-toggle="collapse" data-bs-target="#raw-json">
-        Lihat / Copy JSON mentah
-      </button>
-      <div id="raw-json" class="collapse mt-2"></div>
-    </div>
-  `);
+                    <div class="mt-2 d-none">
+                        <button class="btn btn-sm btn-outline-secondary w-100" type="button" data-bs-toggle="collapse" data-bs-target="#raw-json">
+                            Lihat / Copy JSON mentah
+                        </button>
+                        <div id="raw-json" class="collapse mt-2"></div>
+                    </div>
+                `);
                 const rawCode = $("<code></code>").addClass("json small").text(JSON.stringify(jsonObj, null, 2));
                 rawWrap.find("#raw-json").append(rawCode);
                 bubble.append(rawWrap);
 
                 scrollToBottom();
             }
-
 
             // ---------------------------
             // Steps (chat style)
@@ -1222,19 +1250,20 @@ Changelog:
             function step3_uploadCharts() {
                 const req = requiredCharts();
                 addAssistantText(
-                    `<p>Oke. Sekarang upload chart berikut sekaligus dalam 1 kali kirim:</p><p>• ${req.join("<br/>• ")}</p>`
+                    `<p class="mb-2">Oke. Sekarang upload chart berikut sekaligus dalam 1 kali kirim:</p><p>• ${req.join("<br/>• ")}</p>`
                 );
 
                 addUploadBubble({
                     title: "Upload Chart Screenshots",
                     hint: `Wajib minimal ${req.length} gambar sesuai list di atas.`,
-                    storageKey: STORAGE_KEYS.charts,          // ⬅️ simpan di localStorage
+                    storageKey: STORAGE_KEYS.charts,
+                    minCount: req.length,                // ⬅️ WAJIB 3 untuk swing / intraday
                     onFiles: (imgs) => {
                         if (imgs.length < req.length) {
                             showWarning(`Minimal ${req.length} chart ya (${req.join(", ")})`);
                             return;
                         }
-                        wizardState.charts = imgs;            // simpan juga di memory
+                        wizardState.charts = imgs;
                         addUserText(`✅ Charts di-upload (${imgs.length} file).`);
                         step4_uploadMacro();
                     }
@@ -1243,13 +1272,14 @@ Changelog:
 
             function step4_uploadMacro() {
                 addAssistantText(
-                    `<p>Sekarang upload screenshot macro sekaligus (boleh lebih dari 2 file):</p><p>• VIX<br>• US10Y<br>• DXY<br>• Yield curve / macro dashboard lain</p>`
+                    `<p class="mb-2">Sekarang upload screenshot macro sekaligus (boleh lebih dari 2 file):</p><p>• VIX<br>• US10Y<br>• DXY<br>• Yield curve / macro dashboard lain</p>`
                 );
 
                 addUploadBubble({
                     title: "Upload Macro Screenshots",
-                    hint: "Drop/tap untuk upload semua macro metrics",
-                    storageKey: STORAGE_KEYS.macro,           // ⬅️ simpan di localStorage
+                    hint: "Drop/tap untuk upload semua macro metrics (minimal 2 gambar).",
+                    storageKey: STORAGE_KEYS.macro,
+                    minCount: 2,                          // ⬅️ bebas: 1 / 2 / 3 sesuai mau kamu
                     onFiles: (imgs) => {
                         wizardState.macro = imgs;
                         addUserText(`✅ Macro di-upload (${imgs.length} file).`);
@@ -1257,7 +1287,6 @@ Changelog:
                     }
                 });
             }
-
 
             function step5_confirmAndAnalyze() {
                 const req = requiredCharts();
@@ -1292,23 +1321,51 @@ Klik "Analisa Sekarang" untuk generate rekomendasi (JSON).</p>`
             async function generateJsonResponse() {
                 addUserText("Analisa sekarang.");
 
-                // Ambil semua gambar dari localStorage (hasil Confirm sebelumnya)
-                const chartsPayload = loadImagesFromStorage(STORAGE_KEYS.charts);
-                const macroPayload = loadImagesFromStorage(STORAGE_KEYS.macro);
+                const chartsRaw = loadImagesFromStorage(STORAGE_KEYS.charts); // [{name,data}]
+                const macroRaw = loadImagesFromStorage(STORAGE_KEYS.macro);  // [{name,data}]
+                const reqCharts = requiredCharts(); // ["15M Chart", "5M Chart", "1M Chart"] / dst
+
+                const chartsPayload = chartsRaw.map((obj, idx) => ({
+                    slot: reqCharts[idx] || null,     // info slot: "4H Chart", "15M Chart", ...
+                    index: idx,
+                    name: obj.name || `chart_${idx + 1}.png`,
+                    data: obj.data                    // data URL base64
+                }));
+
+                const macroPayload = macroRaw.map((obj, idx) => ({
+                    slot: null,                       // kalau nanti mau ditag "DXY", "VIX", dll bisa diisi
+                    index: idx,
+                    name: obj.name || `macro_${idx + 1}.png`,
+                    data: obj.data
+                }));
+
+                const payload = {
+                    wizard_version: "1.9.2",
+                    pair: wizardState.pair,                    // "gold"/"nasdaq"
+                    style: wizardState.style,                  // "intraday"/"swing"
+                    analysis_mode: wizardState.style === "intraday"
+                        ? "INTRADAY"
+                        : "SWING",
+                    screenshot_counts: {
+                        charts: chartsPayload.length,
+                        macro: macroPayload.length
+                    },
+                    screenshots: {
+                        charts: chartsPayload,
+                        macro: macroPayload
+                    }
+                };
+
+                // 🔍 Step 1: cek dulu di console
+                console.log("[FW] payload to router:", payload);
 
                 let jsonObj = null;
 
                 try {
-                    // === panggilan ke Cloudflare Worker kamu ===
                     const resp = await fetch(WORKER_URL, {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({
-                            pair: wizardState.pair,
-                            style: wizardState.style,
-                            charts: chartsPayload,   // array {name, data}
-                            macro: macroPayload      // array {name, data}
-                        })
+                        body: JSON.stringify(payload)
                     });
 
                     if (!resp.ok) throw new Error("Worker error " + resp.status);
@@ -1327,18 +1384,17 @@ Klik "Analisa Sekarang" untuk generate rekomendasi (JSON).</p>`
                     }
                 }
 
-                // tampilkan TABLE bubble
                 renderAnalysisBubble(jsonObj);
-
                 enableComposer();
 
-                const b = addAssistantText("Apakah anda ingin melakukan trading ini? (akan disimpan ke pair story)");
+                const b = addAssistantText(
+                    "Apakah anda ingin melakukan trading ini? (akan disimpan ke pair story)"
+                );
                 addQuickReplies(b, [
                     { label: "Ya, lakukan & simpan", onClick: () => acceptTrade(true, jsonObj) },
                     { label: "Tidak", onClick: () => acceptTrade(false, jsonObj) }
                 ]);
             }
-
 
             function acceptTrade(isYes, jsonObj) {
                 wizardState.acceptedTrade = isYes;
@@ -1384,7 +1440,7 @@ Klik "Analisa Sekarang" untuk generate rekomendasi (JSON).</p>`
                 "assistant",
                 '<img src="img/avatar.png" alt="Avatar" />'
             );
-            stickerBubble.addClass("sticker-bubble");
+            stickerBubble.addClass("sticker-bubble my-2");
 
             step1_pair();
 
