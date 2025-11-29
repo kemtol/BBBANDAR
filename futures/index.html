@@ -506,10 +506,10 @@ Changelog:
 
         // otomatis deteksi development vs production
         const isMobileDevice = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-        const isLocal = location.hostname === "localhost" || location.hostname === "127.0.0.1";
         const WORKER_URL = isLocal
-            ? "http://127.0.0.1:8789/pass-imgs"              // URL worker di local wrangler dev
-            : "https://asset-router.workers.dev/pass-imgs"; // URL deploy
+        ? "http://127.0.0.1:8789/pass-imgs"
+        : "https://asset-router.mkemalw.workers.dev/pass-imgs";
+
 
         // ===== Local storage helper =====
         const STORAGE_KEYS = {

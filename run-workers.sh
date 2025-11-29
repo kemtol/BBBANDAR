@@ -3,10 +3,11 @@
 ###############################
 # How to use this script:
 ###############################
-#./run-workers.sh start
-#./run-workers.sh stop
-#./run-workers.sh status
-#./run-workers.sh restart
+# ./run-workers.sh start
+# ./run-workers.sh stop
+# ./run-workers.sh status
+# ./run-workers.sh restart
+###############################
 
 set -euo pipefail
 
@@ -24,7 +25,7 @@ start_worker() {
   local pid_file="$PID_DIR/${name}.pid"
   local log_file="$LOG_DIR/${name}.log"
 
-  # kalau sudah ada PID dan proses masih hidup + listen, skip
+  # Kalau sudah ada PID dan proses masih hidup + listen, skip
   if [[ -f "$pid_file" ]]; then
     local old_pid
     old_pid="$(cat "$pid_file" || true)"
@@ -39,14 +40,25 @@ start_worker() {
   echo "[$name] start di port $port ..."
   (
     cd "$dir"
-    wrangler dev --port "$port"
+
+    case "$name" in
+      asset-router)
+        # Router pakai env "local" → PREPROCESS_URL / ANALYZER_URL = localhost
+        wrangler dev --env local --port "$port"
+        ;;
+      *)
+        # Worker lain cukup wrangler dev biasa
+        wrangler dev --port "$port"
+        ;;
+    esac
+
   ) >"$log_file" 2>&1 &
 
   local pid=$!
   echo "$pid" > "$pid_file"
   echo "[$name] pid=$pid  log=$log_file"
 
-  # tunggu sampai listening atau fail
+  # Tunggu sampai listening atau fail
   wait_for_port "$name" "$port" "$log_file"
 }
 
@@ -62,7 +74,7 @@ wait_for_port() {
       return 0
     fi
 
-    # kalau proses sudah mati sebelum listen
+    # Kalau proses sudah mati sebelum listen
     local pid_file="$PID_DIR/${name}.pid"
     if [[ -f "$pid_file" ]]; then
       local pid
@@ -132,14 +144,14 @@ status_worker() {
 
 case "${1:-start}" in
   start)
-    echo "== START GOLD WORKERS =="
+    echo "== START ASSET WORKERS =="
     start_worker "asset-preprocess" "$ROOT_DIR/workers/asset-preprocess" 8787
     start_worker "asset-analyzer"   "$ROOT_DIR/workers/asset-analyzer"   8788
     start_worker "asset-router"     "$ROOT_DIR/workers/asset-router"     8789
     echo "Done. Cek status dengan: $0 status"
     ;;
   stop)
-    echo "== STOP GOLD WORKERS =="
+    echo "== STOP ASSET WORKERS =="
     stop_worker "asset-router"
     stop_worker "asset-analyzer"
     stop_worker "asset-preprocess"
@@ -150,7 +162,7 @@ case "${1:-start}" in
     "$0" start
     ;;
   status)
-    echo "== STATUS GOLD WORKERS =="
+    echo "== STATUS ASSET WORKERS =="
     status_worker "asset-preprocess" 8787
     status_worker "asset-analyzer"   8788
     status_worker "asset-router"     8789

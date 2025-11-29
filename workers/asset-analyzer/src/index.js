@@ -1,9 +1,26 @@
 // workers/asset-analyzer/src/index.js
 
 import { GOLD_PROMPT } from "./gold-prompt.js";
+import { NASDAQ_PROMPT } from "./nasdaq-prompt.js";
 
 const OPENAI_CHAT_URL = "https://api.openai.com/v1/chat/completions";
 const ANALYZER_MODEL = "gpt-5.1"; // reasoning model
+
+function getPromptForAsset(rawAsset) {
+  const asset = String(rawAsset || "GOLD").toUpperCase().trim();
+
+  // mapping alias → prompt
+  if (["GOLD", "XAUUSD"].includes(asset)) {
+    return { label: "GOLD", prompt: GOLD_PROMPT };
+  }
+
+  if (["NASDAQ", "NAS100", "NAS", "NQ", "MNQ"].includes(asset)) {
+    return { label: "NASDAQ", prompt: NASDAQ_PROMPT };
+  }
+
+  // fallback: pakai GOLD_PROMPT tapi label tetap asset aslinya
+  return { label: asset, prompt: GOLD_PROMPT };
+}
 
 export default {
   async fetch(request, env) {
@@ -22,7 +39,7 @@ export default {
         });
       }
 
-      // 2) SANITY CHECK (manual prompt, buat ngetes gpt-5.1-thinking)
+      // 2) SANITY CHECK (manual prompt)
       if (method === "POST" && path === "/sanity") {
         if (!env.OPENAI_API_KEY) {
           return json(
@@ -36,7 +53,7 @@ export default {
           return json(
             {
               ok: false,
-              error: "Use application/json with { \"prompt\": \"...\" }"
+              error: 'Use application/json dengan body { "prompt": "..." }'
             },
             400
           );
@@ -47,7 +64,7 @@ export default {
 
         if (!prompt) {
           return json(
-            { ok: false, error: "Field `prompt` is required in JSON body." },
+            { ok: false, error: "Field `prompt` wajib diisi di JSON body." },
             400
           );
         }
@@ -79,7 +96,7 @@ export default {
         });
       }
 
-      // 3) ENDPOINT UTAMA: dipanggil oleh router → analyze GOLD
+      // 3) ENDPOINT UTAMA: dipanggil router → analyze asset (gold / nasdaq / dst)
       if (method === "POST" && path === "/") {
         if (!env.OPENAI_API_KEY) {
           return json(
@@ -94,7 +111,7 @@ export default {
             {
               ok: false,
               error:
-                "Analyzer expects application/json body from preprocess worker."
+                "Analyzer expects application/json body dari preprocess worker."
             },
             400
           );
@@ -102,21 +119,28 @@ export default {
 
         const preprocessPayload = await request.json();
 
-        // Panggil model thinking dengan GOLD_PROMPT + payload preprocess
+        // Wizard kamu kirim { pair: "gold" | "nasdaq", ... }
+        const rawAsset =
+          (preprocessPayload && (preprocessPayload.pair || preprocessPayload.asset_type)) ||
+          "GOLD";
+
+        const { label: assetLabel, prompt: systemPrompt } =
+          getPromptForAsset(rawAsset);
+
         const rawContent = await callThinkingModel(
           env.OPENAI_API_KEY,
           [
             {
               role: "system",
-              content: GOLD_PROMPT
+              content: systemPrompt
             },
             {
               role: "user",
               content:
-                "Here is the preprocessed GOLD screenshot analysis JSON. " +
-                "Use it as hard input evidence and generate the FINAL GOLD ANALYSIS JSON " +
+                `Here is the preprocessed ${assetLabel} screenshot analysis JSON. ` +
+                "Use it as hard input evidence and generate the FINAL ANALYSIS JSON " +
                 "strictly following the schema in the instructions.\n\n" +
-                "Preprocess JSON:\n```json\n" +
+                `Preprocess JSON for ${assetLabel}:\n\`\`\`json\n` +
                 JSON.stringify(preprocessPayload, null, 2) +
                 "\n```"
             }
@@ -126,12 +150,10 @@ export default {
           }
         );
 
-        // rawContent seharusnya string JSON
         let parsed;
         try {
           parsed = JSON.parse(rawContent);
         } catch (e) {
-          // Kalau gagal parse, kirim raw content supaya bisa di-debug
           return json(
             {
               ok: false,
@@ -147,7 +169,8 @@ export default {
           {
             ok: true,
             model: ANALYZER_MODEL,
-            gold_json: parsed
+            asset: assetLabel,
+            analysis_json: parsed
           },
           200
         );
@@ -158,7 +181,7 @@ export default {
         {
           ok: false,
           error:
-            "Unsupported route. Use GET /health, POST /sanity, or POST / (from router)."
+            "Unsupported route. Gunakan GET /health, POST /sanity, atau POST / (dari router)."
         },
         404
       );
@@ -184,7 +207,7 @@ function json(obj, status = 200) {
 }
 
 /**
- * Wrapper untuk panggil gpt-5.1-thinking via /v1/chat/completions
+ * Wrapper untuk panggil gpt-5.1 via /v1/chat/completions
  * Bisa dipakai untuk:
  *  - mode biasa (teks bebas)
  *  - JSON mode (response_format: json_object)
@@ -194,7 +217,7 @@ async function callThinkingModel(apiKey, messages, options = {}) {
 
   const body = {
     model: "gpt-5.1",
-    messages: messages,
+    messages,
     reasoning_effort: "medium"
   };
 
