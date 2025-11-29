@@ -1,4 +1,36 @@
-// workers/gold-preprocess/src/index.js
+//==============================================
+// workers/asset-preprocess/src/index.js
+//==============================================
+/*.
+├── auth-uid
+│   ├── migrations
+│   ├── node_modules
+│   ├── package.json
+│   ├── package-lock.json
+│   ├── README.md
+│   ├── src
+│   └── wrangler.toml
+├── asset-analyzer
+│   ├── node_modules
+│   ├── src
+│   └── wrangler.toml
+├── asset-preprocess
+│   ├── node_modules
+│   ├── src
+│   └── wrangler.toml
+├── asset-router
+│   ├── node_modules
+│   ├── src
+│   └── wrangler.toml
+├── README-DEV.md
+├── reko-worker
+│   ├── node_modules
+│   ├── src
+│   └── wrangler.toml
+└── workers-structure.txt
+*/
+
+
 import { PREPROCESS_SYSTEM_PROMPT } from "./preprocess-prompt.js";
 
 const OPENAI_URL = "https://api.openai.com/v1/chat/completions";
@@ -13,7 +45,7 @@ export default {
     try {
       // 1) HEALTH CHECK
       if (method === "GET" && path === "/health") {
-        return json({ ok: true, worker: "gold-preprocess", status: "healthy" });
+        return json({ ok: true, worker: "asset-preprocess", status: "healthy" });
       }
 
       // 2) SANITY CHECK (prompt bebas, bukan preprocess logic)
@@ -114,7 +146,8 @@ export default {
 
         // "Bahan mentah" dari router (nanti bisa berisi hasil vision/ocr)
         const raw_input = await request.json();
-
+        console.log("[asset-preprocess] raw_input:", JSON.stringify(raw_input, null, 2));
+        
         const openaiResp = await fetch(OPENAI_URL, {
           method: "POST",
           headers: {
@@ -197,7 +230,7 @@ export default {
 
         return json({
           ok: true,
-          worker: "gold-preprocess",
+          worker: "asset-preprocess",
           message: "gambar diterima",
           file_count: fileInfos.length,
           files: fileInfos

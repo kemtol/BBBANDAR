@@ -133,16 +133,16 @@ status_worker() {
 case "${1:-start}" in
   start)
     echo "== START GOLD WORKERS =="
-    start_worker "gold-preprocess" "$ROOT_DIR/workers/gold-preprocess" 8787
-    start_worker "gold-analyzer"   "$ROOT_DIR/workers/gold-analyzer"   8788
-    start_worker "gold-router"     "$ROOT_DIR/workers/gold-router"     8789
+    start_worker "asset-preprocess" "$ROOT_DIR/workers/asset-preprocess" 8787
+    start_worker "asset-analyzer"   "$ROOT_DIR/workers/asset-analyzer"   8788
+    start_worker "asset-router"     "$ROOT_DIR/workers/asset-router"     8789
     echo "Done. Cek status dengan: $0 status"
     ;;
   stop)
     echo "== STOP GOLD WORKERS =="
-    stop_worker "gold-router"
-    stop_worker "gold-analyzer"
-    stop_worker "gold-preprocess"
+    stop_worker "asset-router"
+    stop_worker "asset-analyzer"
+    stop_worker "asset-preprocess"
     echo "Done."
     ;;
   restart)
@@ -151,9 +151,9 @@ case "${1:-start}" in
     ;;
   status)
     echo "== STATUS GOLD WORKERS =="
-    status_worker "gold-preprocess" 8787
-    status_worker "gold-analyzer"   8788
-    status_worker "gold-router"     8789
+    status_worker "asset-preprocess" 8787
+    status_worker "asset-analyzer"   8788
+    status_worker "asset-router"     8789
     ;;
   *)
     echo "Usage: $0 {start|stop|restart|status}"

@@ -509,7 +509,7 @@ Changelog:
         const isLocal = location.hostname === "localhost" || location.hostname === "127.0.0.1";
         const WORKER_URL = isLocal
             ? "http://127.0.0.1:8789/pass-imgs"              // URL worker di local wrangler dev
-            : "https://gold-router.example.workers.dev/pass-imgs"; // URL deploy
+            : "https://asset-router.workers.dev/pass-imgs"; // URL deploy
 
         // ===== Local storage helper =====
         const STORAGE_KEYS = {
@@ -1020,6 +1020,7 @@ Changelog:
                 const bubble = addMessage("assistant", "");
                 bubble.addClass("analysis-bubble");
 
+                const uniqueId = "raw-json-" + Date.now() + "-" + Math.floor(Math.random() * 9999);
                 const assetType = jsonObj.asset_type || "TBD";
                 const md = jsonObj.macro_dashboard || {};
                 const bias = jsonObj.market_bias || {};
@@ -1074,7 +1075,7 @@ Changelog:
             <td style="width:35%" class="px-0">
               <strong>${itemTxt} is <span style="text-transform:lowercase">${stateTxt}</span></strong>
             </td>
-            <td class="pl-0"><span class="capitalize-first sentence">${noteTxt}</span></td>
+            <td class="ps-0"><span class="capitalize-first sentence">${noteTxt}</span></td>
           </tr>
         `);
                     });
@@ -1203,14 +1204,15 @@ Changelog:
                 // ===== Raw JSON collapsible =====
                 const rawWrap = $(`
                     <div class="mt-2 d-none">
-                        <button class="btn btn-sm btn-outline-secondary w-100" type="button" data-bs-toggle="collapse" data-bs-target="#raw-json">
+                        <button class="btn btn-sm btn-outline-secondary w-100" type="button"
+                        data-bs-toggle="collapse" data-bs-target="#${uniqueId}">
                             Lihat / Copy JSON mentah
                         </button>
-                        <div id="raw-json" class="collapse mt-2"></div>
+                        <div id="${uniqueId}" class="collapse mt-2"></div>
                     </div>
                 `);
                 const rawCode = $("<code></code>").addClass("json small").text(JSON.stringify(jsonObj, null, 2));
-                rawWrap.find("#raw-json").append(rawCode);
+                rawWrap.find("#" + uniqueId).append(rawCode);
                 bubble.append(rawWrap);
 
                 scrollToBottom();
@@ -1372,7 +1374,7 @@ Klik "Analisa Sekarang" untuk generate rekomendasi (JSON).</p>`
                     jsonObj = await resp.json();
                 } catch (err) {
                     console.warn("Worker error, fallback ke dummy-response.json:", err);
-
+                    alert("Worker gagal: " + err);   // sementara, biar kelihatan jelas
                     try {
                         const res = await fetch("./dummy-response.json", { cache: "no-store" });
                         if (!res.ok) throw new Error("dummy-response.json not found");

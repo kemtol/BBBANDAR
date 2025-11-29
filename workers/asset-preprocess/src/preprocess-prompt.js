@@ -1,4 +1,4 @@
-// workers/gold-preprocess/src/preprocess-prompt.js
+// workers/asset-preprocess/src/preprocess-prompt.js
 
 export const PREPROCESS_SYSTEM_PROMPT = `
 You are the GOLD PREPROCESS worker in the BBBANDAR pipeline.

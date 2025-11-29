@@ -4,7 +4,7 @@ set -euo pipefail
 HOST="127.0.0.1"
 
 ports=(8787 8788 8789)
-names=("gold-preprocess" "gold-analyzer" "gold-router")
+names=("asset-preprocess" "asset-analyzer" "asset-router")
 
 SANITY_PROMPT="${1:-Apa ibu kota Indonesia, (tanpa text format, tanpa markdown, tanpa format bold/italic).?}"
 

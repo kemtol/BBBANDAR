@@ -1,4 +1,4 @@
-// workers/gold-analyzer/src/index.js
+// workers/asset-analyzer/src/index.js
 
 import { GOLD_PROMPT } from "./gold-prompt.js";
 
@@ -16,7 +16,7 @@ export default {
       if (method === "GET" && path === "/health") {
         return json({
           ok: true,
-          worker: "gold-analyzer",
+          worker: "asset-analyzer",
           status: "healthy",
           model: ANALYZER_MODEL
         });
