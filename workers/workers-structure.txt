@@ -1,10 +1,8 @@
 .
-├── auth-uid
-│   ├── migrations
-│   ├── node_modules
-│   ├── package.json
-│   ├── package-lock.json
-│   ├── README.md
+├── app-orderflow
+│   ├── src
+│   └── wrangler.toml
+├── app-qqquanta
 │   ├── src
 │   └── wrangler.toml
 ├── asset-analyzer
@@ -19,11 +17,45 @@
 │   ├── node_modules
 │   ├── src
 │   └── wrangler.toml
-├── README-DEV.md
+├── auth-uid
+│   ├── migrations
+│   ├── node_modules
+│   ├── package.json
+│   ├── package-lock.json
+│   ├── README.md
+│   ├── src
+│   └── wrangler.toml
+├── deploy.sh
+├── livetrade-dashboard-api
+│   ├── src
+│   └── wrangler.jsonc
+├── livetrade-state-engine
+│   ├── src
+│   └── wrangler.jsonc
+├── livetrade-taping
+│   ├── node_modules
+│   ├── package.json
+│   ├── package-lock.json
+│   ├── src
+│   ├── tree
+│   └── wrangler.jsonc
+├── livetrade-taping-agregator
+│   ├── node_modules
+│   ├── package.json
+│   ├── package-lock.json
+│   ├── src
+│   └── wrangler.jsonc
+├── multi-agent
+│   ├── node_modules
+│   ├── package.json
+│   ├── package-lock.json
+│   ├── src
+│   ├── test.json
+│   └── wrangler.toml
 ├── reko-worker
 │   ├── node_modules
 │   ├── src
 │   └── wrangler.toml
 └── workers-structure.txt
 
-17 directories, 10 files
+34 directories, 25 files

@@ -1,0 +1,592 @@
+<!-- 
+ https://runningtrade.sssaham.com?kode=KODE&mode=TYPE
+ Version: 1.0.0
+    TYPE: swing | intraday
+-->
+<!DOCTYPE html>
+<html lang="id">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#ffffff" />
+
+    <title>Bandar Radar – Detail Emiten</title>
+
+    <!-- (opsional) samain dengan index.html -->
+    <link rel="manifest" href="img/site.webmanifest" />
+    <link rel="apple-touch-icon" sizes="180x180" href="img/apple-touch-icon.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="img/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="img/favicon-16x16.png">
+
+    <!-- Bootstrap & Font Awesome -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css" rel="stylesheet" />
+
+    <style>
+        #app.container,
+        .container,
+        .chat-wrapper {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        body {
+            font-size: 1rem;
+        }
+
+        .navbar {
+            background-color: #ffffff;
+        }
+
+        .navbar i.fa-chevron-left {
+            font-size: 1rem;
+        }
+
+        .page-title {
+            font-weight: 600;
+            font-size: 1.1rem;
+        }
+
+        .card-swing {
+            border-radius: 12px;
+            border: none;
+        }
+
+        .card-swing-header {
+            background: #f9fafb;
+            border-bottom: 1px solid rgba(148, 163, 184, 0.4);
+            border-radius: 12px 12px 0 0;
+            padding: 0.5rem 0.75rem;
+        }
+
+        .quadrant-badge {
+            min-width: 28px;
+            text-align: center;
+            border-radius: 999px;
+            font-size: 0.8rem;
+        }
+
+        .stat-label {
+            font-size: 0.8rem;
+            color: #6b7280;
+        }
+
+        .stat-value {
+            font-size: 1rem;
+            font-weight: 600;
+        }
+
+        #timeseries-table td,
+        #timeseries-table th {
+            vertical-align: middle;
+            font-size: 0.9rem;
+            text-align: center;
+        }
+
+
+        @media (max-width: 576px) {
+            .page-title {
+                font-size: 1rem;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <!-- NAVBAR -->
+    <nav class="navbar navbar-light sticky-top border-bottom bg-white">
+        <div class="container d-flex align-items-center py-2" style="max-width: 1200px;">
+            <a href="swing.html" class="d-flex align-items-center text-decoration-none me-2">
+                <i class="fa-solid fa-chevron-left me-1"></i>
+                <span class="small d-none">Kembali</span>
+            </a>
+            <div class="flex-grow-1 text-center">
+                <span class="fw-semibold" id="nav-kode">Detail Emiten</span>
+            </div>
+            <div style="width:72px;"></div>
+        </div>
+    </nav>
+
+    <div id="app" class="container my-3">
+        <!-- HEADER EMITEN -->
+        <div class="mb-3 d-none">
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <div class="page-title" id="title-kode">-</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- SNAPSHOT STATS -->
+        <div class="row g-3 mb-1 text-center">
+            <div class="col-6 col-md-3">
+                <div class="stat-label">Close</div>
+                <div class="stat-value" id="stat-close">-</div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="stat-label">Range (L–H)</div>
+                <div class="stat-value" id="stat-range">-</div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="stat-label">Vol / Net</div>
+                <div class="stat-value" id="stat-vol-net">-</div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="stat-label">%Haka · Mom%</div>
+                <div class="stat-value" id="stat-haka-mom">-</div>
+            </div>
+        </div>
+
+        <!-- FOOTPRINT CHART -->
+        <div class="card card-swing mb-4">
+            <div class="card-body" style="height:55vh;">
+                <canvas id="footprintChart"></canvas>
+            </div>
+        </div>
+
+        <!-- TIME SERIES TABLE -->
+        <div class="card card-swing mb-4">
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-sm mb-0" id="timeseries-table">
+                        <thead class="table-light">
+                            <tr>
+                                <th class="text-center">Jam</th>
+                                <th class="text-end">Harga</th>
+                                <th class="text-end">Δ Harga</th>
+                                <th class="text-end">Mom %</th>
+                                <th class="text-end">Absorb</th>
+                                <th class="text-end">Value (cum)</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- RAW DETAIL (OPTIONAL) -->
+        <div class="card card-swing mb-4 d-none">
+            <div class="card-swing-header">
+                <div class="small text-muted">Detail Snapshot</div>
+            </div>
+            <div class="card-body small">
+                <pre id="raw-json" class="mb-0"
+                    style="max-height: 260px; overflow:auto; white-space: pre-wrap; font-size: 0.8rem;"></pre>
+            </div>
+        </div>
+    </div>
+
+    <!-- SCRIPTS -->
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0"></script>
+
+    <script>
+        Chart.register(ChartDataLabels);
+
+        const isLocal = location.hostname === "localhost" || location.hostname === "127.0.0.1";
+        const API_BASE = isLocal
+            ? "http://127.0.0.1:8787"
+            : "https://api-bandar.sssaham.com";
+
+        let footprintChart = null;
+
+        // Garis silang 4 kuadran
+        const quadrantLinesPlugin = {
+            id: "quadrantLines",
+            afterDraw(chart) {
+                const { ctx, chartArea, scales } = chart;
+                const xScale = scales.x;
+                const yScale = scales.y;
+                const xZero = xScale.getPixelForValue(0);
+                const yZero = yScale.getPixelForValue(0);
+
+                ctx.save();
+                ctx.strokeStyle = "rgba(148,163,184,0.9)";
+                ctx.lineWidth = 1;
+                ctx.setLineDash([4, 3]);
+
+                ctx.beginPath();
+                ctx.moveTo(xZero, chartArea.top);
+                ctx.lineTo(xZero, chartArea.bottom);
+                ctx.stroke();
+
+                ctx.beginPath();
+                ctx.moveTo(chartArea.left, yZero);
+                ctx.lineTo(chartArea.right, yZero);
+                ctx.stroke();
+
+                ctx.restore();
+            }
+        };
+
+        function formatNum(n) {
+            if (n === null || n === undefined || isNaN(n)) return "-";
+            return n.toLocaleString("id-ID");
+        }
+
+        function getKodeFromURL() {
+            const params = new URLSearchParams(location.search);
+            return params.get("kode") || "BBCA";
+        }
+
+        function getModeFromURL() {
+            const params = new URLSearchParams(location.search);
+            return params.get("mode") || "swing";
+        }
+
+        function updateQuadrantBadge(q) {
+            const badge = document.getElementById("badge-quadrant");
+            if (!badge) return; // ⬅️ kalau belum ada badge di HTML, jangan bikin error
+
+            badge.textContent = q ? `Q${q}` : "Q-";
+            badge.className = "quadrant-badge";
+
+            if (q === 1) badge.classList.add("bg-success", "text-white");
+            else if (q === 2) badge.classList.add("bg-info", "text-dark");
+            else if (q === 3) badge.classList.add("bg-danger", "text-white");
+            else if (q === 4) badge.classList.add("bg-warning", "text-dark");
+            else badge.classList.add("bg-secondary", "text-white");
+        }
+
+
+        // Header + angka snapshot
+        function renderSnapshot(kode, mode, snapshot, state) {
+            $("#nav-kode").text(kode);
+            $("#title-kode").text(`${kode} · Swing Footprint`);
+            $("#subtitle-mode").text(`Mode: ${mode}`);
+
+            const { close, high, low, vol, net_vol, haka_pct, fluktuasi } = snapshot || {};
+
+            $("#stat-close").text(formatNum(close));
+            $("#stat-range").text(`${formatNum(low)} – ${formatNum(high)}`);
+            $("#stat-vol-net").text(`${formatNum(vol)} · ${formatNum(net_vol)}`);
+            $("#stat-haka-mom").text(
+                `${haka_pct != null ? Number(haka_pct).toFixed(0) : "-"}% · ${fluktuasi != null ? Number(fluktuasi).toFixed(2) : "-"}%`
+            );
+
+            updateQuadrantBadge(state?.quadrant);
+
+            const rawCombined = {
+                kode,
+                mode,
+                snapshot,
+                state,
+            };
+            $("#raw-json").text(JSON.stringify(rawCombined, null, 2));
+        }
+
+        function renderFootprintTrailFromHistory(kode, snapshot, history) {
+            const canvas = document.getElementById("footprintChart");
+            if (!canvas) return;
+
+            if (!history || !history.length) {
+                if (footprintChart) {
+                    footprintChart.destroy();
+                    footprintChart = null;
+                }
+                $("#footprint-count").text("0 titik");
+                return;
+            }
+
+            // sort by jam "HH:MM"
+            const sorted = [...history].sort((a, b) => {
+                if (!a.t || !b.t) return 0;
+                return a.t.localeCompare(b.t);
+            });
+
+            $("#footprint-count").text(`${sorted.length} titik`);
+
+            // Y = momentum
+            const momVals = sorted.map(h => (typeof h.m === "number" ? h.m : 0));
+
+            // X = money (pakai x dari backend kalau ada, fallback ke 0)
+            const moneyVals = sorted.map(h => {
+                if (typeof h.x === "number") return h.x; // sudah (%Haka - 50)
+                return 0;
+            });
+
+            // Radius: berdasarkan delta terhadap value (cum) terakhir
+            const lastVal = sorted[sorted.length - 1].v || 0;
+            const deltaVals = sorted.map(h => Math.abs((h.v || 0) - lastVal));
+
+            const minMom = Math.min(...momVals);
+            const maxMom = Math.max(...momVals);
+            const minX = Math.min(...moneyVals);
+            const maxX = Math.max(...moneyVals);
+
+            const minDelta = Math.min(...deltaVals);
+            const maxDelta = Math.max(...deltaVals);
+            const deltaRange = Math.max(1, maxDelta - minDelta);
+
+            const xPad = 5;
+            const xMin = minX - xPad;
+            const xMax = maxX + xPad;
+            const yMin = minMom - Math.abs(minMom) * 0.25 - 1;
+            const yMax = maxMom + Math.abs(maxMom) * 0.25 + 1;
+
+            const n = sorted.length;
+
+            const points = sorted.map((h, idx) => {
+                const money = moneyVals[idx];
+                const mom = momVals[idx];
+                const delta = deltaVals[idx];
+
+                // radius 6–24 px berdasarkan delta value vs last
+                let r = 10;
+                if (deltaRange > 0) {
+                    const deltaNorm = (delta - minDelta) / deltaRange;
+                    r = 6 + deltaNorm * 18;
+                }
+
+                // opacity: paling awal transparan, makin baru makin tebal
+                const t = n === 1 ? 1 : idx / (n - 1);
+                const alpha = 0.15 + 0.85 * t;
+
+                const bg = `rgba(59,130,246,${alpha})`;
+                const border = `rgba(37,99,235,${Math.min(alpha + 0.1, 1)})`;
+
+                return {
+                    x: money,
+                    y: mom,
+                    r,
+                    bg,
+                    border,
+                    labelTime: h.t || "",
+                };
+            });
+
+            const data = {
+                datasets: [
+                    {
+                        label: "Footprint",
+                        data: points,
+                        backgroundColor: points.map(p => p.bg),
+                        borderColor: points.map(p => p.border),
+                        borderWidth: 1,
+                    },
+                ],
+            };
+
+            const options = {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            label: (ctx) => {
+                                const d = ctx.raw;
+                                return `${d.labelTime} · Money: ${d.x.toFixed(1)} · Mom: ${d.y.toFixed(2)}%`;
+                            },
+                        },
+                    },
+                    datalabels: {
+                        align: "top",
+                        anchor: "end",
+                        color: "#0f172a",
+                        font: { size: 9, weight: "500" },
+                        formatter: (v, ctx) => {
+                            // label = JAM, bukan kode
+                            return v.labelTime || "";
+                        },
+                        offset: 4,
+                        clip: false,
+                    },
+                },
+                scales: {
+                    x: {
+                        title: {
+                            display: true,
+                            text: "Money ( %Haka - 50 )",
+                        },
+                        min: xMin,
+                        max: xMax,
+                        grid: {
+                            color: "rgba(226,232,240,0.7)",
+                            lineWidth: 1,
+                        },
+                    },
+                    y: {
+                        title: {
+                            display: true,
+                            text: "Momentum (Fluktuasi %)",
+                        },
+                        min: yMin,
+                        max: yMax,
+                        grid: {
+                            color: "rgba(226,232,240,0.7)",
+                            lineWidth: 1,
+                        },
+                    },
+                },
+            };
+
+            if (footprintChart) {
+                footprintChart.destroy();
+            }
+
+            footprintChart = new Chart(canvas, {
+                type: "bubble",
+                data,
+                options,
+                plugins: [quadrantLinesPlugin],
+            });
+        }
+
+
+        // Tabel time series (opsional – butuh <table id="timeseries-table"> di HTML)
+        function renderTimeSeriesTable(snapshot, history) {
+            const tbody = document.querySelector("#timeseries-table tbody");
+            if (!tbody) return;
+
+            tbody.innerHTML = "";
+
+            if (!history || !history.length) {
+                const tr = document.createElement("tr");
+                const td = document.createElement("td");
+                td.colSpan = 6;
+                td.className = "text-center text-muted py-3";
+                td.textContent = "Belum ada data history 5 menit.";
+                tr.appendChild(td);
+                tbody.appendChild(tr);
+                return;
+            }
+
+            // VWAP sementara: pakai snapshot.vwap kalau ada, kalau tidak pakai close
+            const vwap = (typeof snapshot.vwap === "number" && snapshot.vwap > 0)
+                ? snapshot.vwap
+                : snapshot.close || 0;
+
+            const sorted = [...history].sort((a, b) => {
+                if (!a.t || !b.t) return 0;
+                return a.t.localeCompare(b.t);
+            });
+
+            let prevPrice = null;
+
+            sorted.forEach((h) => {
+                const tr = document.createElement("tr");
+
+                const t = h.t || "-";
+                const price = h.p || 0;
+                const mom = (typeof h.m === "number") ? h.m : 0;
+                const absorb = (typeof h.a === "number") ? h.a : 0;
+                const val = h.v || 0;
+
+                let priceClass = "";
+                let deltaText = "-";
+
+                if (prevPrice !== null) {
+                    const diff = price - prevPrice;
+                    if (diff > 0) {
+                        priceClass = "text-success fw-semibold";
+                        deltaText = `+${diff}`;
+                    } else if (diff < 0) {
+                        priceClass = "text-danger fw-semibold";
+                        deltaText = `${diff}`;
+                    } else {
+                        // harga sama dengan bucket sebelumnya → cek VWAP
+                        if (vwap && price >= vwap) {
+                            priceClass = "text-success fw-semibold";
+                        } else {
+                            priceClass = "text-danger fw-semibold";
+                        }
+                        deltaText = "0";
+                    }
+                }
+
+                const tdTime = document.createElement("td");
+                tdTime.textContent = t;
+
+                const tdPrice = document.createElement("td");
+                tdPrice.textContent = formatNum(price);
+                tdPrice.className = "text-end";
+                if (priceClass) tdPrice.classList.add(...priceClass.split(" "));
+
+                const tdDelta = document.createElement("td");
+                tdDelta.textContent = deltaText;
+                tdDelta.className = "text-end";
+                if (priceClass) tdDelta.classList.add(...priceClass.split(" "));
+
+                const tdMom = document.createElement("td");
+                tdMom.textContent = `${mom.toFixed(2)}%`;
+                tdMom.className = "text-end";
+
+                const tdAbs = document.createElement("td");
+                tdAbs.textContent = absorb.toLocaleString("id-ID", {
+                    minimumFractionDigits: 1,
+                    maximumFractionDigits: 1,
+                });
+                tdAbs.className = "text-end";
+
+                const tdVal = document.createElement("td");
+                tdVal.textContent = val.toLocaleString("id-ID");
+                tdVal.className = "text-end";
+
+                tr.appendChild(tdTime);
+                tr.appendChild(tdPrice);
+                tr.appendChild(tdDelta);
+                tr.appendChild(tdMom);
+                tr.appendChild(tdAbs);
+                tr.appendChild(tdVal);
+
+                tbody.appendChild(tr);
+                prevPrice = price;
+            });
+        }
+
+        // Satu call ke /symbol: snapshot + history
+        function loadSnapshotAndHistory() {
+            const kode = getKodeFromURL();
+            const mode = getModeFromURL();
+
+            $.getJSON(
+                `${API_BASE}/symbol?kode=${encodeURIComponent(kode)}&mode=${encodeURIComponent(mode)}`,
+                function (resp) {
+                    const snapshot = resp.snapshot || {};
+                    const state = resp.state || null;
+                    const history = snapshot.history || [];
+
+                    // derive haka_pct & fluktuasi kalau belum ada
+                    let haka = snapshot.haka_pct;
+                    if ((haka === undefined || haka === null) && typeof snapshot.money_flow === "number") {
+                        haka = Math.round((snapshot.money_flow + 1) * 50);
+                    }
+                    if (haka === undefined || haka === null || Number.isNaN(haka)) haka = 50;
+
+                    let fluk = snapshot.fluktuasi;
+                    if ((fluk === undefined || fluk === null) && typeof snapshot.momentum === "number") {
+                        // snapshot.momentum sudah persen
+                        fluk = Number(snapshot.momentum.toFixed(2));
+                    }
+                    if (fluk === undefined || fluk === null || Number.isNaN(fluk)) fluk = 0;
+
+                    const enrichedSnapshot = {
+                        ...snapshot,
+                        haka_pct: haka,
+                        fluktuasi: fluk,
+                    };
+
+                    renderSnapshot(kode, mode, enrichedSnapshot, state);
+                    renderFootprintTrailFromHistory(kode, enrichedSnapshot, history);
+                    renderTimeSeriesTable(enrichedSnapshot, history);
+                }
+            ).fail(function (xhr) {
+                console.error("Failed load /symbol:", xhr.status, xhr.responseText);
+                renderFootprintTrailFromHistory(getKodeFromURL(), {}, []);
+                renderTimeSeriesTable({}, []);
+            });
+        }
+
+        $(function () {
+            loadSnapshotAndHistory();
+        });
+    </script>
+
+</body>
+
+</html>

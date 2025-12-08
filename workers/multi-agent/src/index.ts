@@ -212,6 +212,16 @@ async function handleMain(
   }
 
   const analyzerInput = normalizeToAnalyzerInput(body);
+  const traceId = (body && body.trace_id) || "no-trace";
+
+  console.log("[multi-agent:index] analyzerInput", traceId, {
+    analysis_mode: analyzerInput.analysis_mode,
+    asset_type: analyzerInput.asset_type,
+    asset_symbol: analyzerInput.asset_symbol,
+    charts_len: analyzerInput.charts?.length ?? 0,
+    has_macro: !!analyzerInput.macro_dashboard,
+    has_news: !!analyzerInput.news_set
+  });
 
   // Default ke localhost untuk dev, bisa di-override via Env di prod
   const analyzerUrl =

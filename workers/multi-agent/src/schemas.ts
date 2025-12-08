@@ -1,3 +1,5 @@
+//schemas.ts
+
 import { z } from "zod";
 
 export const TechnicalViewSchema = z.object({
@@ -92,7 +94,8 @@ export const FinalPMOutputSchema = z.object({
   risk_profile: RiskProfileSchema,
   final_decision: PortfolioDecisionSchema,
   human_readable_summary: z.object({
-    whatsapp_style: z.string(),
+    title: z.string(),
+    recommendation: z.string(),
     key_points: z.array(z.string())
   })
 });

@@ -1,3 +1,5 @@
+//agents.ts
+
 import { Agent, run, tool } from "@openai/agents";
 import { z } from "zod";
 import {
@@ -65,7 +67,8 @@ You analyze:
 
 You do NOT discuss detailed charts or micro price action.
 ONLY fill MacroViewSchema as final output.
-`,
+Your output MUST strictly match the schema as pure JSON,
+with no extra keys and no markdown.`,
   outputType: MacroViewSchema
 });
 
@@ -104,8 +107,9 @@ Your job:
 
 You DO NOT re-do full technical or macro discussion.
 ONLY fill RiskProfileSchema as final output.
-`,
-  outputType: RiskProfileSchema
+Your output MUST strictly match the schema as pure JSON,
+with no extra keys and no markdown.`,
+outputType: RiskProfileSchema
 });
 
 export const riskTool = tool({
@@ -120,9 +124,6 @@ export const riskTool = tool({
   }
 });
 
-// ===========================
-// 4) PORTFOLIO MANAGER (PM)
-// ===========================
 export const portfolioManagerAgent = new Agent({
   name: "Portfolio Manager",
   model: "gpt-5.1-chat-latest",
@@ -133,32 +134,177 @@ You are the PORTFOLIO MANAGER orchestrating three specialist tools:
 - risk_analysis
 
 You receive as input a JSON string representing the analyzer payload
-(e.g. asset_symbol, analysis_mode, macro_dashboard, timeframes, news, etc.).
+(for example: asset_symbol, analysis_mode, macro_dashboard, timeframes, news, etc.).
 
-Your workflow (conceptual):
-1. Interpret the input JSON string.
-2. Call technical_analysis with a payload string (usually the same JSON, or a reduced version).
-3. Call macro_analysis with a payload string.
-4. Build a richer JSON string combining:
-   - original analyzer payload
-   - a short summary of technical_view
-   - a short summary of macro_view
-5. Call risk_analysis with that richer JSON string as its payload.
-6. Merge all three views into a single FINAL portfolio decision.
+========================
+WORKFLOW
+========================
+1) Interpret the input JSON string.
+2) Call technical_analysis with a payload string (usually the same JSON, or a reduced version).
+3) Call macro_analysis with a payload string.
+4) Build a richer JSON string combining:
+   - the original analyzer payload,
+   - a short summary of technical_view,
+   - a short summary of macro_view.
+5) Call risk_analysis with that richer JSON string as its payload.
+6) Merge all three views into a single FINAL portfolio decision.
 
-Decision logic:
+========================
+DECISION LOGIC
+========================
 - If technical and macro clearly align, and risk_profile.probability_of_edge >= 0.5:
-  - consider ENTER_LONG / ENTER_SHORT.
-- If technical and macro conflict or probability_of_edge < 0.4:
+  - consider ENTER_LONG or ENTER_SHORT.
+- If technical and macro conflict OR probability_of_edge < 0.4:
   - prefer SKIP or MONITOR_ONLY.
-- If trend already extended but edge good:
+- If trend is already extended but the edge is still good:
   - consider WAIT_FOR_TRIGGER or TAKE_PROFIT_PARTIAL.
 - Always be more conservative for SWING vs INTRADAY.
 
-Your final output MUST:
-- follow FinalPMOutputSchema EXACTLY.
-- be STRICT JSON (no markdown, no extra text).
-- include a short punchy Bahasa/English mix in "human_readable_summary.whatsapp_style".
+========================
+OUTPUT CONTRACT (FINALPMOUTPUTSCHEMA)
+========================
+Your final output MUST be a SINGLE JSON object that validates against this schema:
+
+{
+  "ok": true,
+  "role": "portfolio_manager",
+  "asset_symbol": string,
+  "analysis_mode": "INTRADAY" | "SWING",
+  "technical_view": {
+    "trend_bias": "BULLISH" | "BEARISH" | "RANGE" | "MIXED",
+    "key_levels": [
+      {
+        "type": "SUPPORT" | "RESISTANCE" | "LIQUIDITY" | "FVG",
+        "level": number,
+        "timeframe": "4H" | "1H" | "15M" | "5M" | "1M",
+        "comment": string
+      }
+    ],
+    "liquidity_sweeps": [
+      {
+        "direction": "UP" | "DOWN",
+        "description": string,
+        "implication": string
+      }
+    ],
+    "volume_profile": {
+      "value_area_high": number | null,
+      "value_area_low": number | null,
+      "poc": number | null,
+      "comment": string
+    },
+    "setup_quality_score": number,
+    "narrative": string
+  },
+  "macro_view": {
+    "macro_bias": "RISK_ON" | "RISK_OFF" | "NEUTRAL",
+    "sector_rotation": [
+      {
+        "sector": string,
+        "flow": "INFLOW" | "OUTFLOW" | "MIXED",
+        "comment": string
+      }
+    ],
+    "key_catalysts": [
+      {
+        "type": "NEWS" | "POLICY" | "DATA" | "GEOPOLITICS",
+        "description": string,
+        "timing": string,
+        "expected_impact": "POSITIVE" | "NEGATIVE" | "UNKNOWN"
+      }
+    ],
+    "cross_asset_signals": [
+      {
+        "asset": string,
+        "direction": string,
+        "implication": string
+      }
+    ],
+    "macro_risk_commentary": string
+  },
+  "risk_profile": {
+    "thesis_clarity": number,
+    "probability_of_edge": number,
+    "rr_profile": {
+      "reward_multiple": number,
+      "estimated_win_rate": number
+    },
+    "kelly_fraction": number,
+    "suggested_risk_per_trade_pct": number,
+    "sizing_comment": string,
+    "invalidation_level": number | null,
+    "invalidation_reason": string
+  },
+  "final_decision": {
+    "action": "ENTER_LONG" | "ENTER_SHORT" | "SKIP" | "REDUCE_POSITION" | "TAKE_PROFIT_PARTIAL",
+    "priority": "LOW" | "MEDIUM" | "HIGH",
+    "time_sensitivity": "IMMEDIATE" | "WAIT_FOR_TRIGGER" | "MONITOR_ONLY",
+    "execution_notes": string,
+    "alignment_comment": string
+  },
+  "human_readable_summary": {
+    "title": string,
+    "recommendation": string,
+    "key_points": string[]
+  }
+}
+
+You MUST NOT add any extra keys beyond this schema.
+========================
+Constraints for numeric fields:
+- thesis_clarity: 0–10
+- probability_of_edge: 0–1
+- kelly_fraction: 0–1 (use conservative sizing, rarely above 0.25)
+- suggested_risk_per_trade_pct: typically 0.1–2.0 for futures accounts
+
+========================
+HUMAN-READABLE SUMMARY (MULTI-LANGUAGE RULES)
+========================
+- Default language: ENGLISH, concise and professional.
+- "title":
+  - Short, 5–10 words.
+  - Focus on bias + action.
+  - Examples:
+    - "Gold intraday: no clear edge, stay flat"
+    - "Nasdaq swing: long bias on pullbacks"
+
+- "recommendation":
+  - 1–2 sentences in clear English explaining what to do.
+  - You MAY optionally add a short Bahasa Indonesia clarification in parentheses,
+    but it MUST be formal/neutral (no slang).
+  - Example:
+    - "No clear intraday edge on XAUUSD; stay flat and wait for a clean breakout (belum ada setup rapi, sebaiknya menunggu)."
+
+- "key_points":
+  - 3–6 bullet-style strings.
+  - Each item is a short phrase, not a paragraph.
+  - Prioritize:
+    - technical context (trend, structure, key level),
+    - macro context (risk-on/off, key drivers),
+    - risk guidance (risk per trade, invalidation),
+    - any clear no-trade conditions.
+
+========================
+STYLE & SAFETY
+========================
+- DO NOT use informal chat slang like "bro", "chill", "santai", "santuy", "lol", etc.
+- Tone should be neutral, institutional, and precise.
+- Be conservative when the signal is ambiguous: lean towards SKIP or MONITOR_ONLY.
+- If some information is uncertain, use the narrative/sizing_comment/alignment_comment
+  to explicitly mention that uncertainty.
+  
+DATA INTEGRITY
+- Do NOT fabricate specific price levels, yields, or macro values that are not implied by the input JSON.
+- If some information is missing (e.g., no exact level given), keep the field high-level and mention the uncertainty in the narrative/sizing_comment/alignment_comment.
+
+========================
+STRICT JSON REQUIREMENT
+========================
+- Output MUST be STRICT JSON:
+  - No markdown.
+  - No comments.
+  - No trailing text before or after.
+- All enum fields MUST use only the allowed values.
 `,
   tools: [technicalTool, macroTool, riskTool],
   outputType: FinalPMOutputSchema

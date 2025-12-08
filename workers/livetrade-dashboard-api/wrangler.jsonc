@@ -1,0 +1,33 @@
+// workers/livetrade-dashboard-api/wrangler.jsonc
+{
+  "name": "livetrade-dashboard-api",
+  "main": "src/index.js",
+  "compatibility_date": "2025-12-06",
+  "compatibility_flags": ["nodejs_compat"],
+
+  "routes": [
+    "api-bandar.sssaham.com/*"
+  ],
+
+  "workers_dev": true,
+
+  "r2_buckets": [
+    {
+      "binding": "DATA_LAKE",
+      "bucket_name": "tape-data-saham"
+    }
+  ],
+
+  "kv_namespaces": [],
+
+  "vars": {
+    "PROJECT_NAME": "BBBandar",
+    "ENGINE_ROLE": "DASHBOARD_API",
+    "DEFAULT_REFRESH_MS": "3000",
+    "DEFAULT_MODE": "SCALP"
+  },
+
+  "observability": {
+    "enabled": true
+  }
+}

@@ -1,0 +1,653 @@
+<!DOCTYPE html>
+<html lang="id">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#ffffff" />
+
+    <title>Bandar Radar – Swing Orderflow Scanner</title>
+
+    <!-- (opsional) samain dengan index.html -->
+    <link rel="manifest" href="img/site.webmanifest" />
+    <link rel="apple-touch-icon" sizes="180x180" href="img/apple-touch-icon.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="img/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="img/favicon-16x16.png">
+
+    <!-- Bootstrap & Font Awesome -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css" rel="stylesheet" />
+
+    <style>
+        /* Biar konsisten dengan index.html / QQQUANTA */
+        #app.container,
+        .container,
+        .chat-wrapper {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        body {
+            font-size: 1rem;
+        }
+
+        .navbar {
+            background-color: #ffffff;
+        }
+
+        .navbar i.fa-chevron-left {
+            font-size: 1rem;
+        }
+
+        .page-title {
+            font-weight: 600;
+            font-size: 1rem;
+        }
+
+        .card-swing {
+            border-radius: 12px;
+            border: none;
+        }
+
+        .card-swing-header {
+            background: transparent;
+            border-bottom: 1px solid rgba(148, 163, 184, 0.4);
+            border-radius: 12px 12px 0 0;
+            padding: 0.5rem 0.75rem;
+        }
+
+        .table-orderflow {
+            font-size: 0.9rem;
+            white-space: nowrap;
+        }
+
+        .table-orderflow thead th {
+            text-transform: uppercase;
+            font-size: 0.9rem;
+            color: #6b7280;
+            border-bottom-color: #e5e7eb;
+        }
+
+        .table-orderflow tbody tr {
+            cursor: pointer;
+        }
+
+        .table-orderflow tbody tr:hover {
+            background-color: #f1f5f9;
+        }
+
+        .table-orderflow thead th.sortable {
+            position: relative;
+            padding-right: 14px;
+            /* ruang untuk icon */
+        }
+
+        .sort-icon {
+            position: absolute;
+            right: 2px;
+            top: 50%;
+            transform: translateY(-50%);
+        }
+
+        .sort-icon.active {
+            opacity: 1;
+        }
+
+
+
+        .quadrant-badge {
+            min-width: 24px;
+            text-align: center;
+            border-radius: 999px;
+            font-size: 0.75rem;
+        }
+
+        .stat-pill {
+            font-size: 0.7rem;
+            border-radius: 999px;
+            padding: 2px 8px;
+        }
+
+        .quad-legend {
+            font-size: 0.7rem;
+            color: #6b7280;
+        }
+
+        @media (max-width: 576px) {
+            .page-title {
+                font-size: 0.95rem;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <!-- NAVBAR (iOS-style back only) -->
+    <nav class="navbar navbar-light sticky-top border-bottom bg-white">
+        <div class="container d-flex align-items-center py-2" style="max-width: 1200px;">
+            <a href="https://sssaham.com" class="d-flex align-items-center text-decoration-none me-2">
+                <i class="fa-solid fa-chevron-left me-1"></i>
+                <span class="small d-none">Bandar Radar</span>
+            </a>
+            <div class="flex-grow-1 text-center">
+                <span class="fw-semibold">Swing Scanner</span>
+            </div>
+            <!-- dummy spacer biar title tetap center -->
+            <div style="width:72px;"></div>
+        </div>
+    </nav>
+
+    <div id="app" class="container mb-3">
+        <!-- INFO BANNER -->
+        <div class="alert alert-light border small mb-3 d-none">
+            <strong>Swing Orderflow Scanner (Skeleton).</strong><br />
+            Halaman ini membaca snapshot dari livetrade-taping untuk mode <em>swing</em>.
+            Nanti dihubungkan ke Worker: <code>/summary?mode=swing</code> dan <code>/symbol</code>.
+        </div>
+
+        <!-- 4-QUADRANT HEATMAP (Chart.js) -->
+        <div class="mb-3">
+            <div style="height:50vh;">
+                <canvas id="quadChart"></canvas>
+            </div>
+        </div>
+
+        <!-- HEADER + FILTER -->
+        <div class="d-flex flex-wrap justify-content-between align-items-center mb-3 gap-2 d-none">
+            <div>
+                <div class="page-title">Daftar Emiten – Swing Bias</div>
+            </div>
+            <div class="d-flex flex-wrap gap-2 align-items-center">
+                <div class="d-flex align-items-center gap-2">
+                    <label for="date-input" class="small text-muted mb-0">Tanggal</label>
+                    <input type="date" id="date-input" class="form-control form-control-sm" />
+                </div>
+                <button id="btn-refresh" class="btn btn-sm btn-outline-primary">
+                    <i class="fa-solid fa-rotate-right me-1"></i> Refresh
+                </button>
+            </div>
+        </div>
+
+
+
+
+
+        <!-- TABLE CARD -->
+        <div class="card card-swing mb-5">
+            <div class="card-swing-header d-flex justify-content-between align-items-center">
+                <div class="small text-muted" style="visibility: hidden;">
+                    Top emiten by value
+                </div>
+                <div class="small text-muted" id="last-updated"  style="visibility: hidden;">Last update: -</div>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0 table-orderflow align-middle">
+                        <thead>
+                            <tr>
+                                <th class="text-center">#</th>
+
+                                <th class="sortable" data-sort="kode">
+                                    Kode <span class="sort-icon">↕</span>
+                                </th>
+                                <th class="text-end sortable" data-sort="close">
+                                    Close <span class="sort-icon">↕</span>
+                                </th>
+                                <th class="text-end sortable" data-sort="high">
+                                    High <span class="sort-icon">↕</span>
+                                </th>
+                                <th class="text-end sortable" data-sort="low">
+                                    Low <span class="sort-icon">↕</span>
+                                </th>
+                                <th class="text-end sortable" data-sort="vol">
+                                    Vol <span class="sort-icon">↕</span>
+                                </th>
+                                <th class="text-end sortable" data-sort="net_vol">
+                                    Net Vol <span class="sort-icon">↕</span>
+                                </th>
+                                <th class="text-end sortable" data-sort="haka_pct">
+                                    % Haka <span class="sort-icon">↕</span>
+                                </th>
+                                <th class="text-end sortable" data-sort="fluktuasi">
+                                    Fluktuasi <span class="sort-icon">↕</span>
+                                </th>
+                                <th class="text-center sortable" data-sort="quadrant">
+                                    Q <span class="sort-icon">↕</span>
+                                </th>
+                            </tr>
+                        </thead>
+                        <tbody id="tbody-swing">
+                            <!-- rows via jQuery -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- DETAIL PANEL -->
+        <div class="card card-swing mb-4" id="detail-card" style="display:none;">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <div>
+                        <div class="text-muted small">Detail Emiten</div>
+                        <div class="h6 mb-0" id="detail-kode">-</div>
+                    </div>
+                    <span id="detail-quadrant" class="quadrant-badge bg-secondary text-white">-</span>
+                </div>
+                <div id="detail-body" class="small text-muted">
+                    <!-- detail text -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- SCRIPTS -->
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0"></script>
+
+    <script>
+        Chart.register(ChartDataLabels);
+        const isLocal = location.hostname === "localhost" || location.hostname === "127.0.0.1";
+        const API_BASE = isLocal
+            ? "http://127.0.0.1:8787"
+            : "https://api-bandar.sssaham.com";   // domain worker ini
+
+        let quadChartInstance = null;
+        let currentRows = [];              // ✅ penting
+
+        // plugin untuk gambar garis silang (sumbu X=0, Y=0)
+        const quadrantLinesPlugin = {
+            id: "quadrantLines",
+            afterDraw(chart) {
+                const { ctx, chartArea, scales } = chart;
+                const xScale = scales.x;
+                const yScale = scales.y;
+
+                const xZero = xScale.getPixelForValue(0);
+                const yZero = yScale.getPixelForValue(0);
+
+                ctx.save();
+                ctx.strokeStyle = "rgba(148,163,184,0.9)";
+                ctx.lineWidth = 1;
+                ctx.setLineDash([4, 3]);
+
+                // vertical
+                ctx.beginPath();
+                ctx.moveTo(xZero, chartArea.top);
+                ctx.lineTo(xZero, chartArea.bottom);
+                ctx.stroke();
+
+                // horizontal
+                ctx.beginPath();
+                ctx.moveTo(chartArea.left, yZero);
+                ctx.lineTo(chartArea.right, yZero);
+                ctx.stroke();
+
+                ctx.restore();
+            }
+        };
+
+        $(function () {
+            const todayStr = new Date().toISOString().slice(0, 10);
+            $("#date-input").val(todayStr);
+
+            // ==== DUMMY DATA SEMENTARA ====
+            const dummyData = [
+                { kode: "ADRO", close: 2640, high: 2680, low: 2600, vol: 1234567, net_vol: 800000, haka_pct: 65, fluktuasi: 3.1, quadrant: 1 },
+                { kode: "BBCA", close: 9400, high: 9450, low: 9300, vol: 2345678, net_vol: -500000, haka_pct: 42, fluktuasi: 1.6, quadrant: 3 },
+                { kode: "BMRI", close: 5850, high: 5900, low: 5750, vol: 1450000, net_vol: 300000, haka_pct: 58, fluktuasi: 2.6, quadrant: 4 },
+                { kode: "BRIS", close: 3120, high: 3180, low: 3080, vol: 980000, net_vol: 600000, haka_pct: 70, fluktuasi: 3.8, quadrant: 1 },
+                { kode: "TLKM", close: 3820, high: 3860, low: 3780, vol: 2000000, net_vol: -800000, haka_pct: 40, fluktuasi: 2.2, quadrant: 2 }
+            ];
+
+            let currentSort = { key: null, dir: 'desc' }; // default: desc
+
+            function formatNum(n) {
+                if (n === null || n === undefined || isNaN(n)) return "-";
+                return n.toLocaleString("id-ID");
+            }
+
+
+            function renderQuadrantChart(rows) {
+                const canvas = document.getElementById("quadChart");
+                if (!canvas) return;
+
+                if (!rows || !rows.length) {
+                    if (quadChartInstance) {
+                        quadChartInstance.destroy();
+                        quadChartInstance = null;
+                    }
+                    return;
+                }
+
+                // --- normalisasi volume → radius 8–30 px ---
+                const vols = rows.map(r => r.vol || 0);
+                const minVol = Math.min(...vols);
+                const maxVol = Math.max(...vols);
+                const volRange = Math.max(1, maxVol - minVol);
+
+                const points = rows.map(row => {
+                    const x = row.money;
+                    const y = row.momentum;
+                    const volNorm = ((row.vol || 0) - minVol) / volRange;
+                    const r = 8 + volNorm * 22;
+
+                    return {
+                        x,
+                        y,
+                        r,
+                        kode: row.kode,
+                        quadrant: row.quadrant
+                    };
+                });
+
+
+                const xVals = points.map(p => p.x);
+                const yVals = points.map(p => p.y);
+
+                const xRange = Math.max(...xVals) - Math.min(...xVals);
+                const yRange = Math.max(...yVals) - Math.min(...yVals);
+
+                const xMin = Math.min(...xVals) - xRange * 0.15;
+                const xMax = Math.max(...xVals) + xRange * 0.15;
+
+                const yMin = Math.min(...yVals) - yRange * 0.20;
+                const yMax = Math.max(...yVals) + yRange * 0.20;
+
+
+                const colorByQuadrant = (q) => {
+                    if (q === 1) return "rgba(34,197,94,0.7)";
+                    if (q === 2) return "rgba(59,130,246,0.7)";
+                    if (q === 3) return "rgba(239,68,68,0.7)";
+                    if (q === 4) return "rgba(234,179,8,0.8)";
+                    return "rgba(148,163,184,0.7)";
+                };
+
+                const borderByQuadrant = (q) => {
+                    if (q === 1) return "rgba(22,163,74,1)";
+                    if (q === 2) return "rgba(37,99,235,1)";
+                    if (q === 3) return "rgba(220,38,38,1)";
+                    if (q === 4) return "rgba(202,138,4,1)";
+                    return "rgba(100,116,139,1)";
+                };
+
+                const data = {
+                    datasets: [{
+                        label: "Emiten",
+                        data: points,
+                        backgroundColor: points.map(p => colorByQuadrant(p.quadrant)),
+                        borderColor: points.map(p => borderByQuadrant(p.quadrant)),
+                        borderWidth: 1
+                    }]
+                };
+
+                const options = {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            callbacks: {
+                                label: (ctx) => {
+                                    const d = ctx.raw;
+                                    return `${d.kode} · Q${d.quadrant} · Money: ${d.x.toFixed(1)} · Mom: ${d.y.toFixed(2)}%`;
+                                }
+                            }
+                        },
+                        datalabels: {
+                            align: "top",
+                            anchor: "end",
+                            color: "#475569",
+                            font: { size: 10, weight: "600" },
+                            formatter: (v) => v.kode,
+                            offset: 6,
+                            clip: false
+                        }
+                    },
+                    scales: {
+                        x: {
+                            title: {
+                                display: true,
+                                text: "Money ( %Haka - 50 )"
+                            },
+                            min: xMin,
+                            max: xMax,
+                            grid: {
+                                color: "rgba(226,232,240,0.7)",
+                                lineWidth: 1
+                            }
+                        },
+                        y: {
+                            title: {
+                                display: true,
+                                text: "Momentum (Fluktuasi %)"
+                            },
+                            min: yMin,
+                            max: yMax,
+                            grid: {
+                                color: "rgba(226,232,240,0.7)",
+                                lineWidth: 1
+                            }
+                        }
+                    }
+                };
+
+                if (quadChartInstance) {
+                    quadChartInstance.destroy();
+                }
+
+                quadChartInstance = new Chart(canvas, {
+                    type: "bubble",
+                    data,
+                    options,
+                    plugins: [quadrantLinesPlugin]
+                });
+            }
+
+
+            function renderTable(rows) {
+                const $tbody = $("#tbody-swing");
+                $tbody.empty();
+
+                rows.forEach((s, idx) => {
+                    const netClass = s.net_vol > 0 ? "text-success" : s.net_vol < 0 ? "text-danger" : "";
+                    const quadClass =
+                        s.quadrant === 1 ? "bg-success text-white" :
+                            s.quadrant === 2 ? "bg-info text-dark" :
+                                s.quadrant === 3 ? "bg-danger text-white" :
+                                    s.quadrant === 4 ? "bg-warning text-dark" : "bg-secondary text-white";
+
+                    const $tr = $(`
+            <tr data-kode="${s.kode}">
+                <td class="text-center text-muted">${idx + 1}</td>
+                <td>
+                    <a href="/emiten?kode=${encodeURIComponent(s.kode)}&mode=swing" class="text-decoration-none fw-semibold">${s.kode}</a>
+                </td>
+                <td class="text-end">${formatNum(s.close)}</td>
+                <td class="text-end">${formatNum(s.high)}</td>
+                <td class="text-end">${formatNum(s.low)}</td>
+                <td class="text-end">${formatNum(s.vol)}</td>
+                <td class="text-end ${netClass}">${formatNum(s.net_vol)}</td>
+                <td class="text-end">
+                    ${s.haka_pct != null ? Number(s.haka_pct).toFixed(0) : "-"}%
+                </td>
+                <td class="text-end">
+                    ${s.fluktuasi != null ? Number(s.fluktuasi).toFixed(2) : "-"}%
+                </td>
+                <td class="text-center">
+                    <span class="quadrant-badge ${quadClass}">${s.quadrant || "-"}</span>
+                </td>
+            </tr>
+        `);
+                    $tbody.append($tr);
+                });
+
+                $("#stat-count").text(rows.length);
+                $("#last-updated").text("Last update: dummy · nanti diisi dari API");
+            }
+
+
+            function renderDetail(row) {
+                if (!row) {
+                    $("#detail-card").hide();
+                    return;
+                }
+
+                $("#detail-kode").text(row.kode);
+
+                const $qb = $("#detail-quadrant");
+                $qb
+                    .text(row.quadrant || "-")
+                    .removeClass("bg-success bg-info bg-danger bg-warning bg-secondary text-dark text-white");
+
+                if (row.quadrant === 1) $qb.addClass("bg-success text-white");
+                else if (row.quadrant === 2) $qb.addClass("bg-info text-dark");
+                else if (row.quadrant === 3) $qb.addClass("bg-danger text-white");
+                else if (row.quadrant === 4) $qb.addClass("bg-warning text-dark");
+                else $qb.addClass("bg-secondary text-white");
+
+                $("#detail-body").html(`
+          <div>Close: <strong>${formatNum(row.close)}</strong></div>
+          <div>Volume: <strong>${formatNum(row.vol)}</strong> · Net: <strong>${formatNum(row.net_vol)}</strong> (${row.haka_pct}% Haka)</div>
+          <div>Range: <strong>${formatNum(row.low)}</strong> – <strong>${formatNum(row.high)}</strong> (${row.fluktuasi}% fluktuasi)</div>
+          <div class="mt-2 text-muted">
+            Nanti di sini bisa diisi narasi singkat dari state engine:
+            money side (haka/haki), momentum, dan pergerakan kuadran terakhir.
+          </div>
+        `);
+
+                $("#detail-card").show();
+            }
+
+            $("#tbody-swing").on("click", "tr", function () {
+                const kode = $(this).data("kode");
+                const row = currentRows.find(r => r.kode === kode);
+                renderDetail(row);
+            });
+
+            function computeQuadrant(money, momentum) {
+                if (money >= 0 && momentum >= 0) return 1; // kanan atas
+                if (money < 0 && momentum >= 0) return 2; // kiri atas
+                if (money < 0 && momentum < 0) return 3; // kiri bawah
+                return 4;                                  // kanan bawah
+            }
+
+            function sortRows(key) {
+                if (!key) return;
+
+                if (currentSort.key === key) {
+                    // klik kolom yang sama → toggle asc/desc
+                    currentSort.dir = currentSort.dir === 'asc' ? 'desc' : 'asc';
+                } else {
+                    currentSort.key = key;
+                    currentSort.dir = 'desc'; // default pertama kali klik: terbesar dulu
+                }
+
+                const factor = currentSort.dir === 'asc' ? 1 : -1;
+                $(".sort-icon").removeClass("active").text("↕");
+
+                const th = $(`th[data-sort='${key}'] .sort-icon`);
+                th.addClass("active");
+
+                if (currentSort.dir === "asc") th.text("↑");
+                else th.text("↓");
+
+
+                currentRows.sort((a, b) => {
+                    let va = a[key];
+                    let vb = b[key];
+
+                    // khusus index → pakai urutan asli (via _index)
+                    if (key === 'index') {
+                        va = a._index;
+                        vb = b._index;
+                    }
+
+                    // string vs number
+                    if (typeof va === 'string' || typeof vb === 'string') {
+                        return va.toString().localeCompare(vb.toString()) * factor;
+                    }
+
+                    va = (va === null || va === undefined || isNaN(va)) ? 0 : Number(va);
+                    vb = (vb === null || vb === undefined || isNaN(vb)) ? 0 : Number(vb);
+
+                    if (va === vb) return 0;
+                    return va > vb ? factor : -factor;
+                });
+
+                renderTable(currentRows);
+            }
+
+
+            function loadData() {
+                $.getJSON(`${API_BASE}/summary?mode=swing`, function (resp) {
+                    const rawRows = resp.items || [];
+
+                    currentRows = rawRows.map((row, idx) => {
+                        // --- 1) pastikan ada haka_pct ---
+                        let haka = row.haka_pct;
+                        if (haka === undefined || haka === null) {
+                            if (typeof row.money_flow === "number") {
+                                haka = Math.round((row.money_flow + 1) * 50);
+                            }
+                        }
+                        if (haka === undefined || haka === null || Number.isNaN(haka)) {
+                            haka = 50;
+                        }
+
+                        // --- 2) fluktuasi (% range) ---
+                        let fluk = row.fluktuasi;
+                        if (fluk === undefined || fluk === null) {
+                            if (typeof row.momentum === "number") {
+                                fluk = Number((row.momentum * 100).toFixed(2));
+                            }
+                        }
+                        if (fluk === undefined || fluk === null || Number.isNaN(fluk)) {
+                            fluk = 0;
+                        }
+
+                        // --- 3) hitung money & momentum ---
+                        const money = haka - 50;
+                        const mom = fluk;
+                        const quadrant = computeQuadrant(money, mom);
+
+                        // ⬇⬇⬇ INI BAGIAN PALING PENTING UNTUK SORTING
+                        return {
+                            _index: idx,  // <---- simpan urutan asli dari API
+                            ...row,
+                            haka_pct: haka,
+                            fluktuasi: fluk,
+                            money,
+                            momentum: mom,
+                            quadrant,
+                        };
+                    });
+
+
+                    renderTable(currentRows);
+                    renderQuadrantChart(currentRows);
+                }).fail(function (xhr) {
+                    console.error("Failed load summary:", xhr.status, xhr.responseText);
+                });
+            }
+
+            $(".table-orderflow thead").on("click", "th.sortable", function () {
+                const key = $(this).data("sort");
+                sortRows(key);
+            });
+
+
+            $("#btn-refresh").on("click", function () {
+                loadData();
+            });
+
+            // init
+            loadData();
+        });
+    </script>
+</body>
+
+</html>

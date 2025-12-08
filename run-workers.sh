@@ -102,28 +102,46 @@ stop_worker() {
   local name="$1"
   local pid_file="$PID_DIR/${name}.pid"
 
-  if [[ ! -f "$pid_file" ]]; then
-    echo "[$name] tidak ada PID file, mungkin sudah mati."
-    return
-  fi
+  # mapping name → port (biar bisa kill via lsof kalau PID file ga ada)
+  local port=""
+  case "$name" in
+    auth-uid)        port=8786 ;;
+    asset-preprocess) port=8787 ;;
+    asset-analyzer)   port=8788 ;;
+    asset-router)     port=8789 ;;
+    multi-agent)      port=8790 ;;
+    *) port="" ;;
+  esac
 
-  local pid
-  pid="$(cat "$pid_file" || true)"
-  if [[ -z "${pid:-}" ]]; then
-    echo "[$name] PID kosong."
+
+  if [[ -f "$pid_file" ]]; then
+    local pid
+    pid="$(cat "$pid_file" || true)"
+
+    if [[ -n "${pid:-}" ]] && kill -0 "$pid" 2>/dev/null; then
+      echo "[$name] stop pid=$pid ..."
+      kill "$pid" 2>/dev/null || true
+    else
+      echo "[$name] PID file ada tapi prosesnya sudah tidak hidup."
+    fi
+
     rm -f "$pid_file"
-    return
-  fi
-
-  if kill -0 "$pid" 2>/dev/null; then
-    echo "[$name] stop pid=$pid ..."
-    kill "$pid" 2>/dev/null || true
   else
-    echo "[$name] proses pid=$pid sudah tidak hidup."
+    echo "[$name] tidak ada PID file."
   fi
 
-  rm -f "$pid_file"
+  # Fallback: kalau masih ada proses yang listen di port, kill via lsof
+  if [[ -n "$port" ]]; then
+    local pids_from_port
+    pids_from_port="$(lsof -ti ":$port" 2>/dev/null || true)"
+    if [[ -n "$pids_from_port" ]]; then
+      echo "[$name] force kill via port :$port (pids: $pids_from_port)"
+      # shellcheck disable=SC2086
+      kill $pids_from_port 2>/dev/null || true
+    fi
+  fi
 }
+
 
 status_worker() {
   local name="$1"
@@ -144,17 +162,21 @@ status_worker() {
 
 case "${1:-start}" in
   start)
-    echo "== START ASSET WORKERS =="
+    echo "== START ASSET + SERVICE WORKERS =="
+    start_worker "auth-uid"        "$ROOT_DIR/workers/auth-uid"        8786
     start_worker "asset-preprocess" "$ROOT_DIR/workers/asset-preprocess" 8787
     start_worker "asset-analyzer"   "$ROOT_DIR/workers/asset-analyzer"   8788
     start_worker "asset-router"     "$ROOT_DIR/workers/asset-router"     8789
+    start_worker "multi-agent"      "$ROOT_DIR/workers/multi-agent"      8790
     echo "Done. Cek status dengan: $0 status"
     ;;
   stop)
-    echo "== STOP ASSET WORKERS =="
+    echo "== STOP ASSET + SERVICE WORKERS =="
+    stop_worker "multi-agent"
     stop_worker "asset-router"
     stop_worker "asset-analyzer"
     stop_worker "asset-preprocess"
+    stop_worker "auth-uid"
     echo "Done."
     ;;
   restart)
@@ -162,13 +184,16 @@ case "${1:-start}" in
     "$0" start
     ;;
   status)
-    echo "== STATUS ASSET WORKERS =="
+    echo "== STATUS ASSET + SERVICE WORKERS =="
+    status_worker "auth-uid"         8786
     status_worker "asset-preprocess" 8787
     status_worker "asset-analyzer"   8788
     status_worker "asset-router"     8789
+    status_worker "multi-agent"      8790
     ;;
   *)
     echo "Usage: $0 {start|stop|restart|status}"
     exit 1
     ;;
 esac
+
