@@ -1,5 +1,25 @@
 import { DurableObject } from "cloudflare:workers";
 
+// 🔧 Helper: build watchlist dari env
+function buildWatchList(env) {
+  const parse = (val) =>
+    String(val || "")
+      .split(",")
+      .map((s) => s.trim().toUpperCase())
+      .filter(Boolean);
+
+  const lq45 = parse(env.WATCHLIST_LQ45);
+  const idx30 = parse(env.WATCHLIST_IDX30);
+
+  const merged = [...new Set([...lq45, ...idx30])];
+
+  // fallback kalau env kosong
+  if (merged.length === 0) return ["GOTO"];
+
+  return merged;
+}
+
+
 export default {
   async fetch(request, env, ctx) {
     const id = env.TRADE_INGESTOR.idFromName("MAIN_INGESTOR");
@@ -14,26 +34,32 @@ export class TradeIngestor extends DurableObject {
     this.ctx = ctx;
     this.env = env;
 
-    // Default Token (Bisa kosong, nanti diisi via CLI)
+    // Default Token
     this.currentSession = "";
 
     // Config
     this.BATCH_SIZE = 100;
     this.FLUSH_INTERVAL_MS = 3000;
 
-    this.buffer = [];   // Buffer untuk Live Trade (LT)
-    this.bufferOB = []; // --- [BARU] Buffer khusus Orderbook (OB2)
+    this.buffer = [];     // LT
+    this.bufferOB = [];   // OB2 semua kode
 
     this.ws = null;
-    this.lastFlush = Date.now();
+    this.lastFlushLT = Date.now();
     this.lastFlushOB = Date.now();
 
-    // Load token terakhir dari storage (agar tahan banting kalau restart)
+    // 🟢 watchlist unik (LQ45 + IDX30, tanpa duplikat)
+    this.watchList = buildWatchList(env);
+    console.log("[OB] Watchlist aktif:", this.watchList.join(", "));
+
     this.ctx.blockConcurrencyWhile(async () => {
-      let storedToken = await this.ctx.storage.get("session_token");
+      const storedToken = await this.ctx.storage.get("session_token");
       if (storedToken) {
         this.currentSession = storedToken;
-        console.log("Token dimuat dari storage:", this.currentSession.substr(0, 10) + "...");
+        console.log(
+          "Token dimuat dari storage:",
+          this.currentSession.substr(0, 10) + "..."
+        );
       }
     });
 
@@ -43,23 +69,46 @@ export class TradeIngestor extends DurableObject {
   async fetch(request) {
     const url = new URL(request.url);
 
-    // === FITUR BARU: UPDATE TOKEN VIA URL ===
-    // Cara pakai: curl "https://worker-anda.dev/update?token=TOKEN_BARU"
+    // 1) API watchlist internal
+    if (url.pathname === "/watchlist") {
+      return new Response(
+        JSON.stringify(
+          {
+            symbols: this.watchList,         // array ["BBRI","BBCA",...]
+            counts: {
+              total: this.watchList.length,
+            },
+          },
+          null,
+          2
+        ),
+        { headers: { "Content-Type": "application/json" } }
+      );
+    }
+
+    // 2) Update token
     if (url.pathname === "/update") {
       return this.handleUpdateToken(url);
     }
 
-    // Status Page
+    // 3) Status Page default
     let status = "Mati";
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) status = "CONNECTED (Live Trade + OB GOTO)";
+    if (this.ws && this.ws.readyState === WebSocket.OPEN)
+      status = "CONNECTED (LT + OB watchlist)";
 
-    return new Response(JSON.stringify({
-      status: status,
-      currentSession: this.currentSession ? "Terisi" : "KOSONG",
-      bufferSizeLT: this.buffer.length,
-      bufferSizeOB: this.bufferOB.length, // --- [BARU] Info buffer OB
-      lastFlush: new Date(this.lastFlush).toISOString()
-    }, null, 2));
+    return new Response(
+      JSON.stringify(
+        {
+          status: status,
+          currentSession: this.currentSession ? "Terisi" : "KOSONG",
+          bufferSizeLT: this.buffer.length,
+          bufferSizeOB: this.bufferOB.length,
+          lastFlush: new Date(this.lastFlushLT).toISOString(),
+        },
+        null,
+        2
+      )
+    );
   }
 
   // Logic ganti token tanpa restart worker
@@ -123,35 +172,55 @@ export class TradeIngestor extends DurableObject {
       this.ws.addEventListener("open", () => {
         console.log("[WS] Connected! Handshaking...");
 
-        this.ws.send(JSON.stringify({ "event": "#handshake", "data": { "authToken": null }, "cid": 1 }));
+        this.ws.send(
+          JSON.stringify({
+            event: "#handshake",
+            data: { authToken: null },
+            cid: 1,
+          })
+        );
 
         setTimeout(() => {
-          // 1. SUBSCRIBE EXISTING (Live Trade Global)
+          // 1) Live Trade global
           console.log("[WS] Subscribe Live Trade (LT)...");
           const subLT = {
-            "event": "cmd",
-            "data": {
-              "cmdid": 999,
-              "param": { "cmd": "subscribe", "service": "mi", "rtype": "LT", "code": "*", "subsid": "livetrade_worker" }
+            event: "cmd",
+            data: {
+              cmdid: 999,
+              param: {
+                cmd: "subscribe",
+                service: "mi",
+                rtype: "LT",
+                code: "*",
+                subsid: "livetrade_worker",
+              },
             },
-            "cid": 2
+            cid: 2,
           };
           this.ws.send(JSON.stringify(subLT));
 
-          // --- [BARU] 2. SUBSCRIBE ORDERBOOK (Khusus GOTO) ---
-          console.log("[WS] Subscribe Orderbook GOTO...");
-          const subOB = {
-            "event": "cmd",
-            "data": {
-              "cmdid": 1000, // ID beda dikit biar aman
-              "param": { "cmd": "subscribe", "service": "mi", "rtype": "OB2", "code": "GOTO", "subsid": "ob_goto_sniper" }
-            },
-            "cid": 3
-          };
-          this.ws.send(JSON.stringify(subOB));
-
+          // 2) OB2 untuk setiap kode unik
+          console.log("[WS] Subscribe Orderbook (OB2) untuk watchlist...");
+          this.watchList.forEach((kode, idx) => {
+            const subOB = {
+              event: "cmd",
+              data: {
+                cmdid: 1000 + idx,
+                param: {
+                  cmd: "subscribe",
+                  service: "mi",
+                  rtype: "OB2",
+                  code: kode,                        // 🟢 contoh: TLKM
+                  subsid: `ob_${kode}_sniper`,
+                },
+              },
+              cid: 1000 + idx,
+            };
+            this.ws.send(JSON.stringify(subOB));
+          });
         }, 1000);
       });
+
 
       this.ws.addEventListener("message", async (event) => {
         const rawMsg = event.data;
@@ -170,16 +239,26 @@ export class TradeIngestor extends DurableObject {
 
             // === [BARU] NEW LOGIC (Orderbook GOTO) ===
             else if (rtype === "OB2") {
-              // Ambil raw stringnya (recinfo)
-              // Struktur data OB2 biasanya ada di parsed.data.data.recinfo (string pipe)
-              const obData = parsed.data?.data?.recinfo || parsed.data?.recinfo || parsed.data;
+              // kode bisa ada di parsed.code atau parsed.data.code
+              const kode =
+                (parsed.data && parsed.data.code) ||
+                parsed.code ||
+                "UNKNOWN";
 
-              // Kita simpan mentahannya saja biar enteng
-              this.bufferOB.push({ raw: obData, ts: Date.now() });
+              const obRaw = parsed.data || parsed; // simpan event lengkap (ada .data)
 
-              // Batch size untuk OB bisa disamakan atau dikecilkan
-              if (this.bufferOB.length >= 50) await this.flushOBToR2();
+              this.bufferOB.push({
+                kode,
+                raw: obRaw,
+                ts: Date.now(),
+              });
+
+              if (this.bufferOB.length >= 50) {
+                await this.flushOBToR2();
+              }
             }
+
+
           }
         } catch (e) { }
       });
@@ -207,24 +286,41 @@ export class TradeIngestor extends DurableObject {
   }
 
   // --- [BARU] Fungsi Flush Khusus Orderbook ---
+  // --- Fungsi Flush Khusus Orderbook (multi-kode) ---
   async flushOBToR2() {
     if (this.bufferOB.length === 0) return;
+
     const dataToWrite = [...this.bufferOB];
     this.bufferOB = [];
-    this.lastFlushOB = Date.now(); // <--- Update Timer OB Saja
+    this.lastFlushOB = Date.now();
 
-    const fileContent = dataToWrite.map(JSON.stringify).join("\n");
     const now = new Date();
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, "0");
+    const d = String(now.getDate()).padStart(2, "0");
+    const H = String(now.getHours()).padStart(2, "0");
 
-    // Path BEDA: raw_ob/GOTO/... (Biar rapi)
-    const path = `raw_ob/GOTO/${now.getFullYear()}/${(now.getMonth() + 1).toString().padStart(2, '0')}/${now.getDate().toString().padStart(2, '0')}/${now.getHours().toString().padStart(2, '0')}`;
-    const filename = `${path}/${Date.now()}.json`;
+    // 🟢 group per kode: supaya TLKM, BBRI, GOTO dll masing-masing 1 file
+    const byKode = {};
+    for (const row of dataToWrite) {
+      const kode = (row.kode || "UNKNOWN").toUpperCase();
+      if (!byKode[kode]) byKode[kode] = [];
+      byKode[kode].push(row);
+    }
 
-    try {
-      await this.env.DATA_LAKE.put(filename, fileContent);
-      console.log(`[OB] Saved ${dataToWrite.length} snapshots GOTO.`);
-    } catch (err) {
-      console.error("[R2] Fail OB:", err);
+    for (const [kode, rows] of Object.entries(byKode)) {
+      const path = `raw_ob/${kode}/${y}/${m}/${d}/${H}`;
+      const filename = `${path}/${Date.now()}_${kode}.json`;
+      const fileContent = rows.map(JSON.stringify).join("\n");
+
+      try {
+        await this.env.DATA_LAKE.put(filename, fileContent);
+        console.log(`[OB] Saved ${rows.length} snapshots for ${kode}.`);
+      } catch (err) {
+        console.error("[R2] Fail OB for", kode, err);
+      }
     }
   }
+
+
 }

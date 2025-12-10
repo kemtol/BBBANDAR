@@ -1,5 +1,5 @@
 <!-- 
- https://runningtrade.sssaham.com?kode=KODE&mode=TYPE
+ https://buy.sssaham.com?kode=KODE&mode=TYPE
  Version: 1.0.0
     TYPE: swing | intraday
 -->
@@ -133,8 +133,8 @@
                 <div class="stat-value" id="stat-vol-net">-</div>
             </div>
             <div class="col-6 col-md-3">
-                <div class="stat-label">%Haka · Mom%</div>
-                <div class="stat-value" id="stat-haka-mom">-</div>
+                <div class="stat-label">%Haka / Mom%</div>
+                <div class="stat-value" id="stat-haka-mom">/</div>
             </div>
         </div>
 
@@ -145,6 +145,15 @@
             </div>
         </div>
 
+        <!-- RAW DETAIL (OPTIONAL) -->
+        <div class="card card-swing mb-4 d-none">
+            <div class="card-swing-header">
+                <div class="small text-muted">Detail Snapshot</div>
+            </div>
+            <div class="card-body">
+                <pre id="raw-json" class="mb-0"></pre>
+            </div>
+        </div>
         <!-- TIME SERIES TABLE -->
         <div class="card card-swing mb-4">
             <div class="card-body p-0">
@@ -155,7 +164,7 @@
                                 <th class="text-center">Jam</th>
                                 <th class="text-end">Harga</th>
                                 <th class="text-end">Δ Harga</th>
-                                <th class="text-end">Mom %</th>
+                                <th class="text-end">Moment %</th>
                                 <th class="text-end">Absorb</th>
                                 <th class="text-end">Value (cum)</th>
                             </tr>
@@ -163,17 +172,6 @@
                         <tbody></tbody>
                     </table>
                 </div>
-            </div>
-        </div>
-
-        <!-- RAW DETAIL (OPTIONAL) -->
-        <div class="card card-swing mb-4 d-none">
-            <div class="card-swing-header">
-                <div class="small text-muted">Detail Snapshot</div>
-            </div>
-            <div class="card-body small">
-                <pre id="raw-json" class="mb-0"
-                    style="max-height: 260px; overflow:auto; white-space: pre-wrap; font-size: 0.8rem;"></pre>
             </div>
         </div>
     </div>
@@ -263,9 +261,9 @@
 
             $("#stat-close").text(formatNum(close));
             $("#stat-range").text(`${formatNum(low)} – ${formatNum(high)}`);
-            $("#stat-vol-net").text(`${formatNum(vol)} · ${formatNum(net_vol)}`);
+            $("#stat-vol-net").text(`${formatNum(vol)} / ${formatNum(net_vol)}`);
             $("#stat-haka-mom").text(
-                `${haka_pct != null ? Number(haka_pct).toFixed(0) : "-"}% · ${fluktuasi != null ? Number(fluktuasi).toFixed(2) : "-"}%`
+                `${haka_pct != null ? Number(haka_pct).toFixed(0) : "-"}% / ${fluktuasi != null ? Number(fluktuasi).toFixed(2) : "-"}%`
             );
 
             updateQuadrantBadge(state?.quadrant);

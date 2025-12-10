@@ -10,7 +10,6 @@
 	<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
 	<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
 	<link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
-	<link rel="manifest" href="/site.webmanifest">
 	<!-- Bootstrap CSS -->
 	<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
 	<link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css" rel="stylesheet">
@@ -46,9 +45,16 @@
 		<section id="splash-page" style="height: max-content;">
 			<div class="d-none bg-overlay"></div>
 			<div style="background: #463CFF;width: 100%;height: 75vh;position: absolute;top: 0px;">
-				<span style="width:200px;height:200px;position: absolute;background: cyan;font-style: italic;top: 59px;left: 50%;border-radius: 999px;text-align: center;font-family: inheritgeorgia !important;font-size: 117px !important;color: yellow;"></span>
-				<h1 style="position: absolute;display: block;color: white;top: 53%;width: 760px;text-align: center;left: 50%;margin-left: -380px;font-weight: 400;font-variant: small-caps;margin-top: -239px;">Leading <strong>AI Based</strong> <br> Indonesia Quant Platform</h1>
-				<img alt="Banner promosi di aplikasi trading Pluang" src="https://image-cdn.pluang.com/web/compressed/homeHeroDesktop.webp" loading="lazy" width="100%" height="auto" style="top: 60%;position: relative;margin-top: -25vh;left: 50%;margin-left: -130px;width: 275px !important;" class="">
+				<span
+					style="width:200px;height:200px;position: absolute;background: cyan;font-style: italic;top: 59px;left: 50%;border-radius: 999px;text-align: center;font-family: inheritgeorgia !important;font-size: 117px !important;color: yellow;"></span>
+				<h1
+					style="position: absolute;display: block;color: white;top: 53%;width: 760px;text-align: center;left: 50%;margin-left: -380px;font-weight: 400;font-variant: small-caps;margin-top: -239px;">
+					Leading <strong>AI Based</strong> <br> Indonesia Quant Platform</h1>
+				<img alt="Banner promosi di aplikasi trading Pluang"
+					src="https://image-cdn.pluang.com/web/compressed/homeHeroDesktop.webp" loading="lazy" width="100%"
+					height="auto"
+					style="top: 60%;position: relative;margin-top: -25vh;left: 50%;margin-left: -130px;width: 275px !important;"
+					class="">
 			</div>
 			<div class="this-page w-100 d-flex flex-column align-items-center p-4 my-4"
 				style="position: relative;margin-top: 50vh!important;overflow: hidden;color: #fff;z-index:5;border: #fff;">
@@ -60,7 +66,7 @@
 				</div>
 				<div class="p-1 my-1 w-100 text-center">
 					<a href="https://buy.sssaham.com">AI Recommendation ⟶</a>
-					<p class="mb-1">Rekomendasi saham berbasis LSTM (Long Term Short Memory) Machine Learning.</p>
+					<p class="mb-1">Rekomendasi saham berbasis LSTM (Long Short-Term Memory) Machine Learning.</p>
 				</div>
 				<div class="p-1 my-1 w-100 text-center">
 					<a href="https://ai.sssaham.com">AI Broker Summary Analysis ⟶</a>
@@ -86,7 +92,7 @@
 					</div>
 					<div class="mb-3 d-none">
 						<label style="color:#fff;font-size:0.9rem" for="OTP" class="form-label">OTP</label>
-						<input type="OTP" class="form-control" id="OTP">
+						<input type="text" class="form-control" id="OTP">
 					</div>
 					<small class=" d-none d-block text-center m-2 p-2 mb-4" style="background-color:beige;">Versi Beta
 						1.0:
@@ -186,12 +192,6 @@
 
 	<!-- notification container -->
 	<div id="notif-container" class="d-none"></div>
-
-	<!-- device & browser footprint (populated by JS) -->
-	<div id="device-footprint" class="this-page p-3 small text-muted"
-		style="white-space:pre-wrap;font-family:monospace;display:none;">
-		<!-- populated by script -->
-	</div>
 
 
 	<!--------------------------------->
@@ -495,6 +495,77 @@
 	<script>
 		(function () {
 			try {
+				// daftar section yang dianggap "halaman"
+				var PAGES = ['splash-page', 'login-page', 'register-page', 'liveness-check', 'error-page'];
+
+				function getSections() {
+					var app = document.getElementById('app');
+					if (!app) return [];
+					return Array.prototype.slice.call(app.querySelectorAll('section'));
+				}
+
+				function cacheDefaultDisplay() {
+					getSections().forEach(function (sec) {
+						if (!sec.id) return;
+						if (!sec.dataset.defaultDisplay) {
+							var cs = window.getComputedStyle(sec);
+							// kalau sudah hidden (none), fallback ke block
+							sec.dataset.defaultDisplay = (cs && cs.display && cs.display !== 'none') ? cs.display : 'block';
+						}
+					});
+				}
+
+				function showPage(id) {
+					cacheDefaultDisplay();
+
+					getSections().forEach(function (sec) {
+						if (!sec.id) return;
+
+						if (sec.id === id) {
+							// kembalikan ke display awal (block / flex / dll)
+							sec.style.display = sec.dataset.defaultDisplay || 'block';
+						} else {
+							sec.style.display = 'none';
+						}
+					});
+
+					// update hash + scroll ke atas
+					if (id) {
+						var newHash = '#' + id;
+						if (location.hash !== newHash) {
+							history.replaceState(null, '', newHash);
+						}
+					}
+					window.scrollTo(0, 0);
+				}
+
+				// expose global supaya bisa dipakai script lain
+				window.navigate = showPage;
+
+				// initial load – pilih halaman dari hash, default splash-page
+				document.addEventListener('DOMContentLoaded', function () {
+					cacheDefaultDisplay();
+
+					var hash = (location.hash || '').replace('#', '');
+					var target = PAGES.indexOf(hash) !== -1 ? hash : 'splash-page';
+
+					// tampilkan hanya halaman target
+					getSections().forEach(function (sec) {
+						if (!sec.id) return;
+						if (sec.id === target) {
+							sec.style.display = sec.dataset.defaultDisplay || 'block';
+						} else {
+							sec.style.display = 'none';
+						}
+					});
+				});
+
+				// handle back/forward browser ketika hash berubah
+				window.addEventListener('hashchange', function () {
+					var hash = (location.hash || '').replace('#', '');
+					var target = PAGES.indexOf(hash) !== -1 ? hash : 'splash-page';
+					showPage(target);
+				});
 				var start = document.getElementById('start-onboard');
 				if (!start) return;
 				start.addEventListener('click', function (e) {

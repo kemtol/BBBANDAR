@@ -1,11 +1,12 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "livetrade-taping-aggregator", // <--- Pastikan nama ini BENAR (Aggregator)
+  "name": "livetrade-taping-agregator", // <--- Pastikan nama ini BENAR (Aggregator)
   "main": "src/index.js",
   "compatibility_date": "2025-12-06",
-  "compatibility_flags": ["nodejs_compat"],
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
   "workers_dev": true,
-
   // Binding ke R2 (Tempat data mentah & snapshot)
   "r2_buckets": [
     {
@@ -13,25 +14,26 @@
       "bucket_name": "tape-data-saham"
     }
   ],
-
   // Binding ke Durable Object (PENTING)
   "durable_objects": {
     "bindings": [
       {
         "name": "STATE_ENGINE",
         "class_name": "StateEngine",
-        
         // 🔥 INI KUNCINYA: script_name memberitahu bahwa DO ada di worker LAIN
         // Tanpa baris ini, worker akan error mencari class di dalam dirinya sendiri
-        "script_name": "livetrade-state-engine" 
+        "script_name": "livetrade-state-engine"
       }
     ]
   },
-
+  "triggers": {
+    "crons": [
+      "* * * * *"
+    ] // <--- tiap menit, sesuaikan kalau mau
+  },
   // ❌ HAPUS BLOK "migrations" DI SINI
   // Aggregator hanya "Penelepon" (Client), dia tidak butuh migrasi database.
   // Migrasi hanya ada di wranger.jsonc milik "livetrade-state-engine".
-
   "observability": {
     "enabled": true
   }

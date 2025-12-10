@@ -20,7 +20,7 @@
 
     <style>
         body {
-            background-color: #fff;
+            background-color: #f6f8fb;
         }
 
         .nav-brand-mini {
@@ -30,10 +30,12 @@
             text-transform: uppercase;
         }
 
+        .wrapper,
         .chat-wrapper {
-            max-width: 960px;
+            max-width: 460px;
             margin: 0 auto;
             position: relative;
+            background: #fff;
         }
 
         .chat-shell {
@@ -90,7 +92,7 @@
             right: 0;
             bottom: 0;
             margin: 0 auto;
-            width: min(960px, calc(100% - 2rem));
+            width: min(460px, calc(100% - 2rem));
             z-index: 50;
             background: #ffffff;
             border-radius: 12px 12px 0 0;
@@ -121,10 +123,10 @@
             font-size: 1rem;
             padding: 0.5rem 1rem;
             margin-top: 1rem;
-            margin-bottom: 1rem;        
+            margin-bottom: 1rem;
         }
 
-        @media (max-width: 960px) {
+        @media (max-width: 460px) {
             .chat-composer {
                 width: calc(100% - 1.5rem);
             }
@@ -133,12 +135,37 @@
 </head>
 
 <body>
-
+    <div style="background: #463CFF;width: 100%;height: 20rem;position: absolute;top: 0px;">
+        <span
+            style="width:200px;height:200px;position: absolute;background: cyan;font-style: italic;top: -14px;left: 50%;border-radius: 999px;text-align: center;font-family: inheritgeorgia !important;font-size: 117px !important;color: yellow;"></span>
+        <h1 style="position: absolute;display: block;color: white;top: 50%;width: 760px;text-align: center;left: 50%;margin-left: -380px;font-weight: 400;font-variant: small-caps;margin-top: -130px;font-size: 1.5rem;">
+            <strong>Stock Market</strong> Almanac<br> Just Like<br><strong>Back to The Future</strong>
+        </h1>
+    </div>
     <!-- CHAT WIZARD SKELETON -->
-    <main class="container mt-4 mb-4">
-        <div class="chat-wrapper">
+    <main class="container mb-4" style="margin-top: 9rem;position: relative;">
+        <div class="wrapper p-4 text-center" style="border-radius: 1rem 1rem 0 0;">
+            <h3 class="text-center mb-3 mt-4" style="font-weight: 900">How it works?!</h3>
+            <img src="img/crystal.gif" style="width: 7rem;">
+            <p class="text-center">We analyze market data tick-by-tick to predict prices 15 minutes ahead.</p><p class="text-center">The system instantly compares its predictions with reality, learning from every movement.</p><p class="text-center">This means our AI gets smarter and more accurate with every passing second.</p>
+        </div>
+        <div class="chat-wrapper p-3">
+            <hr class="mt-0">
+            <h3 style="font-weight: 900" class="text-center mb-4 mt-4">Try It Now!</h3>
+            <div id="chat-shell" class="chat-shell">
+                <div class="msg-row assistant">
+                    <div class="bubble"><div>👋 Hai, trader! are you swinger or day trader?</strong>.</div></div>
+                </div>
+                <div class="msg-row assistant" style="justify-content:flex-end">
+                    <div class="bubble"><div>Swing traders hold their positions for a few days (usually 1 to 5). Day traders, on the other hand, close everything out within 24 hours.</div></div>
+                </div>
+                <div class="msg-row assistant">
+                    <div class="bubble"><div>You can try and discover it anyway..</div><div class="quick-replies"><a href="swing.html" class="btn btn-outline-primary btn-sm">Swing Scanner</a><a href="intraday.html" class="btn btn-outline-primary btn-sm">Intraday</a></div></div>
+                </div>
+            </div>
+        </div>
+        <div class="chat-wrapper p-3 d-none">
             <div id="chat-shell" class="chat-shell"></div>
-
             <!-- Composer (untuk sekarang boleh dimatikan dulu / dummy) -->
             <div id="chat-composer" class="chat-composer disabled">
                 <div class="d-flex align-items-end gap-2">
@@ -161,7 +188,7 @@
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 
-    <script>
+    <!--<script>
         $(function () {
             $("#year").text(new Date().getFullYear());
 
@@ -208,7 +235,7 @@
 
             // TODO: next versi → enable composer + flow tanya jawab ala QQQUANTA
         });
-    </script>
+    </script>-->
 </body>
 
 </html>

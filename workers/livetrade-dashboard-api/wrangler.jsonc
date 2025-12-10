@@ -3,30 +3,37 @@
   "name": "livetrade-dashboard-api",
   "main": "src/index.js",
   "compatibility_date": "2025-12-06",
-  "compatibility_flags": ["nodejs_compat"],
-
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
   "routes": [
     "api-bandar.sssaham.com/*"
   ],
-
   "workers_dev": true,
-
   "r2_buckets": [
     {
       "binding": "DATA_LAKE",
       "bucket_name": "tape-data-saham"
     }
   ],
-
   "kv_namespaces": [],
-
+  // ⬇️⬇️ TAMBAHAN PENTING
+  "services": [
+    {
+      "binding": "TAPING",
+      "service": "livetrade-taping"
+    },
+    {
+      "binding": "AGGREGATOR",
+      "service": "livetrade-taping-agregator"
+    }
+  ],
   "vars": {
     "PROJECT_NAME": "BBBandar",
     "ENGINE_ROLE": "DASHBOARD_API",
     "DEFAULT_REFRESH_MS": "3000",
     "DEFAULT_MODE": "SCALP"
   },
-
   "observability": {
     "enabled": true
   }
