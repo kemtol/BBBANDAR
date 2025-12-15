@@ -35,8 +35,8 @@
 	<meta name="twitter:image" content="https://contoh-domain-kamu.xyz/og/sssaham-1200x630.jpg">
 
 	<!-- App CSS -->
-	<link rel="stylesheet" href="theme.css?v=1.7.2">
-	<link rel="stylesheet" href="style.css?v=1.7.2">
+	<link rel="stylesheet" href="theme.css?v=1.7.1">
+	<link rel="stylesheet" href="style.css?v=1.7.1">
 </head>
 
 <body>
@@ -110,7 +110,6 @@
 				<iframe id="about-us-embed" src="about-us.html#model" loading="lazy"></iframe>
 			</div>
 		</section>
-
 		<!-- Login Page -->
 		<section id="login-page">
 			<div class="this-page d-flex flex-column align-items-center p-4 my-4 w-100">
@@ -513,9 +512,9 @@
 
 						if (sec.id === id) {
 							// kembalikan ke display awal (block / flex / dll)
-							sec.style.setProperty('display', sec.dataset.defaultDisplay || 'block', 'important');
+							sec.style.display = sec.dataset.defaultDisplay || 'block';
 						} else {
-							sec.style.setProperty('display', 'none', 'important');
+							sec.style.display = 'none';
 						}
 					});
 
@@ -543,9 +542,9 @@
 					getSections().forEach(function (sec) {
 						if (!sec.id) return;
 						if (sec.id === target) {
-							sec.style.setProperty('display', sec.dataset.defaultDisplay || 'block', 'important');
+							sec.style.display = sec.dataset.defaultDisplay || 'block';
 						} else {
-							sec.style.setProperty('display', 'none', 'important');
+							sec.style.display = 'none';
 						}
 					});
 				});
