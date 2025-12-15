@@ -16,7 +16,6 @@
 	<script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
 
 	<title>BBBANDAR SSSAHAM - Bandar Saham Kolektif Untuk Para Ritel Saham</title>
-
 	<!-- Open Graph for WhatsApp / Link Previews -->
 	<meta property="og:title" content="SSSAHAM — Bandar Saham Kolektif">
 	<meta property="og:description"
@@ -28,7 +27,7 @@
 	<meta property="og:image:width" content="1200">
 	<meta property="og:image:height" content="630">
 
-	<!-- Optional: Twitter -->
+	<!-- Optional: Twitter (aman buat platform lain) -->
 	<meta name="twitter:card" content="summary_large_image">
 	<meta name="twitter:title" content="SSSAHAM — Bandar Saham Kolektif">
 	<meta name="twitter:description"
@@ -38,51 +37,42 @@
 	<!-- App CSS -->
 	<link rel="stylesheet" href="theme.css?v=1.7.1">
 	<link rel="stylesheet" href="style.css?v=1.7.1">
-
-	<!-- Page-only cleanup CSS (moves former inline styles here) -->
-	<style>
-	</style>
 </head>
 
 <body>
 	<div id="app" class="container">
-
 		<!-- halaman splash -->
-		<section id="splash-page">
+		<section id="splash-page" style="height: max-content;">
 			<div class="d-none bg-overlay"></div>
-
-			<div class="splash-hero">
-				<span class="hero-mark"></span>
-
-				<h1 class="hero-title">
-					Leading <strong>AI Based</strong> <br> Indonesia Quant Platform
-				</h1>
-
+			<div style="background: #463CFF;width: 100%;height: 75vh;position: absolute;top: 0px;">
+				<span
+					style="width:200px;height:200px;position: absolute;background: cyan;font-style: italic;top: 59px;left: 50%;border-radius: 999px;text-align: center;font-family: inheritgeorgia !important;font-size: 117px !important;color: yellow;"></span>
+				<h1
+					style="position: absolute;display: block;color: white;top: 53%;width: 760px;text-align: center;left: 50%;margin-left: -380px;font-weight: 400;font-variant: small-caps;margin-top: -239px;">
+					Leading <strong>AI Based</strong> <br> Indonesia Quant Platform</h1>
 				<img alt="Banner promosi di aplikasi trading Pluang"
 					src="https://image-cdn.pluang.com/web/compressed/homeHeroDesktop.webp" loading="lazy" width="100%"
-					height="auto" class="hero-img">
+					height="auto"
+					style="top: 60%;position: relative;margin-top: -25vh;left: 50%;margin-left: -130px;width: 275px !important;"
+					class="">
 			</div>
-
-			<div class="this-page w-100 d-flex flex-column align-items-center p-4 my-4 splash-panel">
-				<h3 class="text-center mb-3 mt-4 fw-900">Solusi dan Data</h3>
-
+			<div class="this-page w-100 d-flex flex-column align-items-center p-4 my-4"
+				style="position: relative;margin-top: 50vh!important;overflow: hidden;color: #fff;z-index:5;border: #fff;">
+				<h3 class="text-center mb-3 mt-4" style="font-weight: 900">Solusi dan Data</h3>
+				<!--<img src="android-chrome-192x192.png" id="splash-logo" class="img-fluid my-4">-->
 				<div class="p-1 my-1 w-100 text-center">
 					<a href="https://api.sssaham.com">Real Time API ⟶</a>
 					<p class="mb-1">Single API data pasar saham secara real-time untuk integrasi sistem anda.</p>
 				</div>
-
 				<div class="p-1 my-1 w-100 text-center">
 					<a href="https://buy.sssaham.com">AI Recommendation ⟶</a>
 					<p class="mb-1">Rekomendasi saham berbasis LSTM (Long Short-Term Memory) Machine Learning.</p>
 				</div>
-
 				<div class="p-1 my-1 w-100 text-center">
 					<a href="https://ai.sssaham.com">AI Broker Summary Analysis ⟶</a>
 					<p class="mb-1">Analisis ringkasan broker berbasis AI untuk mengetahui pergerakan bandar.</p>
 				</div>
-
-				<hr class="my-4 divider">
-
+				<hr style="border: 1px solid #ccc;height: 1px;width: 100%;" class="my-4">
 				<h3>Training dan Sillabus</h3>
 				<div class="tags my-5">
 					<a href="/training-quant-finance-saham/index.html" class="tag blue">#QuantitativeTrading</a>
@@ -96,31 +86,31 @@
 
 				<form id="login-form" class="w-100">
 					<div class="mb-3 d-none">
-						<label class="form-label label-white-sm" for="phone">No Handphone</label>
-						<input type="text" class="form-control" id="phone">
+						<label style="color:#fff;font-size:0.9rem" for="Handphone" class="form-label">No
+							Handphone</label>
+						<input type="text" class="form-control" id="phone" class="form-control">
 					</div>
 					<div class="mb-3 d-none">
-						<label class="form-label label-white-sm" for="otp-splash">OTP</label>
-						<input type="text" class="form-control" id="otp-splash">
+						<label style="color:#fff;font-size:0.9rem" for="OTP" class="form-label">OTP</label>
+						<input type="text" class="form-control" id="OTP">
 					</div>
-					<small class="d-none d-block text-center m-2 p-2 mb-4 note-beta">
-						Versi Beta 1.0: Tulis Saja Asal Dulu
-					</small>
+					<small class=" d-none d-block text-center m-2 p-2 mb-4" style="background-color:beige;">Versi Beta
+						1.0:
+						Tulis Saja Asal Dulu</small>
 					<button type="submit" class="btn btn-primary w-100">Masuk</button>
 				</form>
-
 				<!-- Join Komunitas: default fallback goes to register section, JS will route to login if user appears registered -->
 				<a href="#register-page" id="start-onboard" class="btn btn-outline-primary my-2 w-100">Join
 					Komunitas</a>
 			</div>
-
-			<h2 class="text-center my-4 mb-2 fw-700" style="font-size: larger;">
-				Bagaimana SSSAHAM Bekerja?
+			<h2 style="font-size: larger;font-weight: 700;" class="text-center my-4 mb-2">Bagaimana SSSAHAM Bekerja?
 			</h2>
 			<p class="text-center">SSSAHAM Menggunakan Pendekatan Machine Learning dan AI yang Auditable</p>
-
-			<div class="this-page w-100 d-flex flex-column my-4 mt-2 embed-wrap">
-				<iframe id="about-us-embed" src="about-us.html#model" loading="lazy"></iframe>
+			<div class="this-page w-100 d-flex flex-column  my-4 mt-2"
+				style="box-shadow: none !important;border: none;border-radius: 30px;overflow: hidden;">
+				<!--<iframe id="about-us-embed" src="about-us.html#model" loading="lazy">-->
+				<iframe id="about-us-embed" style="box-shadow: none !important;" src="about-us.html#model"
+					loading="lazy"></iframe>
 			</div>
 		</section>
 
@@ -130,22 +120,20 @@
 				<h3 class="text-center mb-4 fw-700">Login</h3>
 				<small class="p-3 m-3 w-100 text-center" style="background-color: aliceblue;">We are using no fee
 					oTP</small>
-
 				<form id="login-form-page-main" class="w-100">
-					<div class="mb-3 position-relative" id="noHp">
-						<label class="form-label label-white-bold" for="phone-login">No Handphone</label>
-						<input id="phone-login" type="text" class="form-control" required>
-
-						<a href="https://wa.me/6285281757731?text=GETOTP" class="d-block p-2 otp-link">
+					<div class="mb-3" id="noHp" style="position: relative;">
+						<label style="color:#fff;font-weight: 700;" for="Handphone" class="form-label">No
+							Handphone</label>
+						<input type="text" class="form-control" required>
+						<a href="https://wa.me/6285281757731?text=GETOTP" class="d-block p-2"
+							style="position:absolute;bottom:0px;right: 0.125rem;background-color: #10c210;color:white;border-radius: 0px 10px 10px 0px;text-decoration: none;">
 							<strong>Get OTP <i class="fa-brands fa-whatsapp"></i></strong>
 						</a>
 					</div>
-
 					<div class="mb-3">
-						<label class="form-label label-white-bold" for="otp-login">OTP</label>
-						<input type="text" class="form-control" id="otp-login" required>
+						<label style="color:#fff;font-weight: 700;" for="OTP" class="form-label">OTP</label>
+						<input type="OTP" class="form-control" id="OTP" required>
 					</div>
-
 					<button type="submit" class="btn btn-primary w-100">Login</button>
 				</form>
 			</div>
@@ -154,23 +142,19 @@
 		<!-- register page -->
 		<section id="register-page" class="d-flex align-items-center justify-content-center min-vh-100">
 			<div class="this-page d-flex flex-column align-items-center border-bottom p-4 my-0 w-100">
-				<h2 class="text-center my-4 mb-4 section-title">Register</h2>
-
-				<form id="register-form" class="w-100 form-max-480">
+				<h2 style="font-size: 24px;font-weight: 700;" class="text-center my-4 mb-4">Register</h2>
+				<form id="register-form" class="w-100" style="max-width:480px;">
 					<div class="mb-3">
 						<label for="new-name" class="form-label">Nama Lengkap</label>
 						<input type="text" class="form-control tbe" id="new-name" required placeholder="Nama Anda">
 					</div>
-
 					<div class="mb-3">
 						<label for="new-phone" class="form-label">Nomor Handphone</label>
 						<input type="tel" pattern="[0-9+ ]{6,20}" class="form-control tbe" id="new-phone" required
 							placeholder="08xxxx...">
 					</div>
-
 					<div id="device-footprint"></div>
 					<div id="device-footprint-encrypted"></div>
-
 					<button type="submit" class="btn btn-primary">Register</button>
 				</form>
 			</div>
@@ -181,19 +165,18 @@
 			<div class="this-page d-flex flex-column align-items-center p-4 my-4">
 				<h3 class="text-center">Apakah Kamu Manusia</h3>
 				<span class="d-block">Ikuti Instuksi</span>
-
 				<div id="liveness-instruction" class="fs-4 my-3 text-center"></div>
-
-				<video id="liveness-preview" autoplay muted playsinline></video>
+				<video id="liveness-preview" autoplay muted playsinline
+					style="width: 100%; max-width: 400px; border-radius: 8px; background: #000;"></video>
 
 				<div class="mt-3 w-100">
 					<button id="start-record" class="btn d-block btn-primary w-100 mb-2">Mulai Rekam</button>
 					<button id="stop-record" class="btn d-block btn-outline-danger w-100 mb-2">Stop Rekam</button>
-					<button id="skip-record" type="button" class="btn d-block btn-outline-primary w-100 d-none">
+					<button id="skip-record" type="button" class="btn d-block btn-outline-primary w-100"
+						style="display:none;">
 						Lewati (Testing)
 					</button>
 				</div>
-
 				<div id="liveness-result" class="mt-3 text-center"></div>
 			</div>
 		</section>
@@ -210,6 +193,7 @@
 	<!-- notification container -->
 	<div id="notif-container" class="d-none"></div>
 
+
 	<!--------------------------------->
 	<!-------- ALLL LOGIC HERE--------->
 	<!--------------------------------->
@@ -221,8 +205,11 @@
 	<!-- App JS -->
 	<script src="script.js?v=1.5"></script>
 
-	<!-- Optional: Argon2 WASM -->
+	<!-- Optional: Argon2 WASM for stronger client-side KDF. We load it if available and
+     prefer it over PBKDF2 for deriveKey. Loading it is optional; code falls back
+     to PBKDF2 when the library isn't present or fails to load. -->
 	<script src="https://cdn.jsdelivr.net/npm/argon2-browser/dist/argon2.min.js"></script>
+
 
 	<script>
 		function simplifyDumpTable(opts, table) {
@@ -289,7 +276,7 @@
 	<!-- Service Worker Registration (ini nanti aja kalau udah mau jadi app) -->
 	<script>
 		// Register service worker
-		/*if ('serviceWorker' in navigator) {
+		/*if('serviceWorker' in navigator) {
 			navigator.serviceWorker.register('sw.js').then(reg => console.log('Service Worker registered', reg)).catch(err => console.error('SW registration failed', err));
 		}*/
 	</script>
@@ -371,35 +358,41 @@
 				// Fallback to PBKDF2 (Web Crypto) when Argon2 not available.
 				try {
 					if (window.argon2 && typeof window.argon2.hash === 'function') {
+						// argon2-browser accepts salt as Uint8Array or string. We'll pass Uint8Array.
 						var saltArr = (saltBuf && saltBuf.buffer) ? new Uint8Array(saltBuf) : (new TextEncoder().encode(String(saltBuf || '')));
+						// Use moderate parameters for browser: time (iterations) and memory (KB).
+						// Adjust memory/time to taste; too-large values may fail on low-memory devices.
 						var opts = {
 							pass: pass,
 							salt: saltArr,
-							time: 3,
-							mem: 65536,
+							time: 3,                // iterations
+							mem: 65536,             // memory in KB (64 MB) — reduce if too heavy
 							parallelism: 1,
-							hashLen: 32,
+							hashLen: 32,            // 32 bytes => 256-bit key
 							type: window.argon2.ArgonType.Argon2id
 						};
 
 						var res = await window.argon2.hash(opts);
-
+						// res.hash may be ArrayBuffer/Uint8Array or hex string depending on build.
 						var keyBytes;
 						if (res && res.hash) {
 							if (res.hash instanceof ArrayBuffer) keyBytes = new Uint8Array(res.hash);
 							else if (Array.isArray(res.hash)) keyBytes = new Uint8Array(res.hash);
 							else if (typeof res.hash === 'string') {
+								// hex string -> convert
 								var hex = res.hash.replace(/^0x/, '');
 								keyBytes = new Uint8Array(hex.length / 2);
 								for (var i = 0; i < hex.length; i += 2) keyBytes[i / 2] = parseInt(hex.substr(i, 2), 16);
 							}
 						}
-
 						if (keyBytes && keyBytes.byteLength >= 16) {
+							// import raw derived key as AES-GCM key
 							return crypto.subtle.importKey('raw', keyBytes.buffer.slice(0, 32), { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
 						}
+						// if Argon2 failed to produce usable bytes, fall through to PBKDF2
 					}
 				} catch (e) {
+					// Argon2 not available or failed — we'll fallback to PBKDF2 below
 					console.warn('Argon2 deriveKey failed, falling back to PBKDF2', e);
 				}
 
@@ -416,8 +409,9 @@
 				}, baseKey, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
 			}
 
+			// encryptData now generates a random salt and includes it (salt||iv||ciphertext) in base64 output
 			async function encryptData(plainText, pass) {
-				var salt = crypto.getRandomValues(new Uint8Array(16));
+				var salt = crypto.getRandomValues(new Uint8Array(16)); // 16-byte salt
 				var key = await deriveKey(pass, salt);
 				var iv = crypto.getRandomValues(new Uint8Array(12));
 				var enc = new TextEncoder();
@@ -430,6 +424,7 @@
 				return bufToBase64(combined.buffer);
 			}
 
+			// decryptData expects base64(salt||iv||ciphertext) and the passphrase
 			async function decryptData(b64, pass) {
 				var combined = base64ToBuf(b64);
 				var salt = combined.slice(0, 16);
@@ -443,7 +438,7 @@
 
 			function renderFootprint(el, fp) {
 				if (!el) return;
-
+				// Show as pretty JSON plus a short summary
 				var lines = [];
 				lines.push('User Agent: ' + (fp.userAgent || '-'));
 				if (fp.userAgentData) lines.push('UserAgentData: ' + JSON.stringify(fp.userAgentData));
@@ -463,18 +458,20 @@
 				if (fp.mimeTypes) lines.push('Mime types: ' + fp.mimeTypes);
 				if (fp.timezone) lines.push('Timezone: ' + fp.timezone);
 
+				// compact JSON below for copy
 				var pretty = lines.join('\n');
 				var json = JSON.stringify(fp, null, 2);
 
 				el.style.display = 'block';
-				el.innerHTML =
-					'<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:8px">' +
-					'<strong>Device footprint</strong>' +
-					'</div>' +
-					'<pre style="margin:0;">' + escapeHtml(pretty) + '</pre>' +
-					'<details style="margin-top:8px"><summary>Raw JSON</summary><pre style="white-space:pre-wrap;">' + escapeHtml(json) + '</pre></details>';
+				el.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:8px">'
+					+ '<strong>Device footprint</strong>'
+					+ '</div>'
+					+ '<pre style="margin:0;">' + escapeHtml(pretty) + '</pre>'
+					+ '<details style="margin-top:8px"><summary>Raw JSON</summary><pre style="white-space:pre-wrap;">' + escapeHtml(json) + '</pre></details>';
 
+				// expose decrypt helper to console for testing: window._deviceFpDecrypt(base64, pass)
 				window._deviceFpDecrypt = decryptData;
+				// expose encrypt & collector helpers so other scripts (e.g., register submit) can use them
 				window._deviceFpEncrypt = encryptData;
 				window._collectDeviceFootprint = collectFootprint;
 			}
@@ -498,6 +495,7 @@
 	<script>
 		(function () {
 			try {
+				// daftar section yang dianggap "halaman"
 				var PAGES = ['splash-page', 'login-page', 'register-page', 'liveness-check', 'error-page'];
 
 				function getSections() {
@@ -511,6 +509,7 @@
 						if (!sec.id) return;
 						if (!sec.dataset.defaultDisplay) {
 							var cs = window.getComputedStyle(sec);
+							// kalau sudah hidden (none), fallback ke block
 							sec.dataset.defaultDisplay = (cs && cs.display && cs.display !== 'none') ? cs.display : 'block';
 						}
 					});
@@ -523,12 +522,14 @@
 						if (!sec.id) return;
 
 						if (sec.id === id) {
+							// kembalikan ke display awal (block / flex / dll)
 							sec.style.display = sec.dataset.defaultDisplay || 'block';
 						} else {
 							sec.style.display = 'none';
 						}
 					});
 
+					// update hash + scroll ke atas
 					if (id) {
 						var newHash = '#' + id;
 						if (location.hash !== newHash) {
@@ -538,14 +539,17 @@
 					window.scrollTo(0, 0);
 				}
 
+				// expose global supaya bisa dipakai script lain
 				window.navigate = showPage;
 
+				// initial load – pilih halaman dari hash, default splash-page
 				document.addEventListener('DOMContentLoaded', function () {
 					cacheDefaultDisplay();
 
 					var hash = (location.hash || '').replace('#', '');
 					var target = PAGES.indexOf(hash) !== -1 ? hash : 'splash-page';
 
+					// tampilkan hanya halaman target
 					getSections().forEach(function (sec) {
 						if (!sec.id) return;
 						if (sec.id === target) {
@@ -556,24 +560,27 @@
 					});
 				});
 
+				// handle back/forward browser ketika hash berubah
 				window.addEventListener('hashchange', function () {
 					var hash = (location.hash || '').replace('#', '');
 					var target = PAGES.indexOf(hash) !== -1 ? hash : 'splash-page';
 					showPage(target);
 				});
-
 				var start = document.getElementById('start-onboard');
 				if (!start) return;
 				start.addEventListener('click', function (e) {
+					// Lightweight heuristic for 'already registered' — adjust if you have a proper session flag
 					var registered = false;
 					try {
 						registered = !!(localStorage.getItem('username') || localStorage.getItem('session_token') || localStorage.getItem('liveness_status'));
 					} catch (err) { registered = false; }
 
+					// Prefer single-page navigation if available
 					if (typeof navigate === 'function') {
 						e.preventDefault();
 						if (registered) navigate('login-page'); else navigate('register-page');
 					} else {
+						// Fallback: anchor href goes to #register-page; override to #login-page when registered
 						if (registered) {
 							e.preventDefault();
 							location.hash = 'login-page';
@@ -599,11 +606,16 @@
 						if (name) localStorage.setItem('username', name);
 						if (phone) localStorage.setItem('phone', phone);
 
+						// Build passphrase from all inputs marked with class="tbe" (DOM order).
+						// This concatenation is used as the encryption passphrase. If no .tbe
+						// inputs have values, fall back to using the phone value.
 						try {
 							var fpCipherEl = document.getElementById('device-footprint-encrypted');
 							var fpObj = (window._collectDeviceFootprint) ? window._collectDeviceFootprint() : null;
 							var fpJson = fpObj ? JSON.stringify(fpObj) : null;
 
+							// collect .tbe inputs in DOM order inside the register form
+							// join using '#' as separator so passphrase = name#phone
 							var passphrase = '';
 							try {
 								var tbeEls = reg.querySelectorAll('.tbe');
@@ -612,10 +624,11 @@
 									try {
 										var v = inp && inp.value ? String(inp.value).trim().toLowerCase() : '';
 										if (v) parts.push(v);
-									} catch (e) { }
+									} catch (e) { /* ignore input read errors */ }
 								});
 								if (parts.length) passphrase = parts.join('#');
 							} catch (e) {
+								// if anything goes wrong, keep passphrase empty so we fall back to phone
 								passphrase = '';
 							}
 
@@ -623,7 +636,9 @@
 
 							if (passphrase && fpJson && window._deviceFpEncrypt) {
 								var cipher = await window._deviceFpEncrypt(fpJson, passphrase);
-								if (fpCipherEl) fpCipherEl.textContent = cipher;
+								if (fpCipherEl) {
+									fpCipherEl.textContent = cipher;
+								}
 								try { localStorage.setItem('device_fp_cipher', cipher); } catch (_) { }
 							}
 						} catch (errEnc) { console.warn('device footprint encrypt error', errEnc); }
@@ -632,6 +647,7 @@
 
 					// Send simple registration to OTP worker for testing (stores name+phone in KV)
 					try {
+						// avoid full page submit/navigation during the AJAX test
 						try { e.preventDefault(); } catch (_) { }
 						var regStatusEl = document.getElementById('device-footprint-encrypted');
 						var workerUrl = 'https://bpks-uid-3380.mkemalw.workers.dev/do_register';
@@ -657,6 +673,8 @@
 							}
 						})();
 					} catch (e) { console.warn('register submit error', e); }
+
+					// allow other handlers (like navigate to liveness) to run
 				});
 			} catch (e) { console.warn('register-form handler error', e); }
 		})();
