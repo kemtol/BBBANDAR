@@ -1,10 +1,11 @@
 /* ---------- SECTION VISIBILITY (prevent FOUC) ---------- */
 /* Hide all pages except splash by default; JS will show the correct one */
+/* Using !important to override Bootstrap utility classes like d-flex */
 #login-page,
 #register-page,
 #liveness-check,
 #error-page {
-  display: none;
+  display: none !important;
 }
 
 /* ---------- SPLASH PAGE ---------- */
