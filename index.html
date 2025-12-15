@@ -41,25 +41,23 @@
 
 <body>
 	<div id="app" class="container">
-		<!-- halaman splash -->
-		<section id="splash-page" style="height: max-content;">
-			<div class="d-none bg-overlay"></div>
-			<div style="background: #463CFF;width: 100%;height: 75vh;position: absolute;top: 0px;">
-				<span
-					style="width:200px;height:200px;position: absolute;background: cyan;font-style: italic;top: 59px;left: 50%;border-radius: 999px;text-align: center;font-family: inheritgeorgia !important;font-size: 117px !important;color: yellow;"></span>
-				<h1
-					style="position: absolute;display: block;color: white;top: 53%;width: 760px;text-align: center;left: 50%;margin-left: -380px;font-weight: 400;font-variant: small-caps;margin-top: -239px;">
-					Leading <strong>AI Based</strong> <br> Indonesia Quant Platform</h1>
-				<img alt="Banner promosi di aplikasi trading Pluang"
-					src="https://image-cdn.pluang.com/web/compressed/homeHeroDesktop.webp" loading="lazy" width="100%"
-					height="auto"
-					style="top: 60%;position: relative;margin-top: -25vh;left: 50%;margin-left: -130px;width: 275px !important;"
-					class="">
+		<!-- Splash Page -->
+		<section id="splash-page">
+			<!-- Hero Banner -->
+			<div class="hero-banner-main">
+				<span class="decorative-orb"></span>
+				<h1 class="hero-headline">
+					Leading <strong>AI Based</strong><br>Indonesia Quant Platform
+				</h1>
+				<img src="https://image-cdn.pluang.com/web/compressed/homeHeroDesktop.webp"
+					alt="Trading Platform Preview" class="hero-image" loading="lazy">
 			</div>
-			<div class="this-page w-100 d-flex flex-column align-items-center p-4 my-4"
-				style="position: relative;margin-top: 50vh!important;overflow: hidden;color: #fff;z-index:5;border: #fff;">
-				<h3 class="text-center mb-3 mt-4" style="font-weight: 900">Solusi dan Data</h3>
-				<!--<img src="android-chrome-192x192.png" id="splash-logo" class="img-fluid my-4">-->
+
+			<!-- Splash Content -->
+			<div class="this-page splash-content w-100 d-flex flex-column align-items-center p-4 my-4">
+				<h3 class="text-center mb-3 mt-4 section-title">Solusi dan Data</h3>
+
+				<!-- API Links -->
 				<div class="p-1 my-1 w-100 text-center">
 					<a href="https://api.sssaham.com">Real Time API ⟶</a>
 					<p class="mb-1">Single API data pasar saham secara real-time untuk integrasi sistem anda.</p>
@@ -72,7 +70,10 @@
 					<a href="https://ai.sssaham.com">AI Broker Summary Analysis ⟶</a>
 					<p class="mb-1">Analisis ringkasan broker berbasis AI untuk mengetahui pergerakan bandar.</p>
 				</div>
-				<hr style="border: 1px solid #ccc;height: 1px;width: 100%;" class="my-4">
+
+				<hr class="divider my-4">
+
+				<!-- Training Tags -->
 				<h3>Training dan Sillabus</h3>
 				<div class="tags my-5">
 					<a href="/training-quant-finance-saham/index.html" class="tag blue">#QuantitativeTrading</a>
@@ -84,66 +85,59 @@
 					<a href="/training-quant-finance-saham/index.html" class="tag pink">#DataDriven</a>
 				</div>
 
-				<form id="login-form" class="w-100">
-					<div class="mb-3 d-none">
-						<label style="color:#fff;font-size:0.9rem" for="Handphone" class="form-label">No
-							Handphone</label>
-						<input type="text" class="form-control" id="phone" class="form-control">
+				<!-- Login Form (Hidden) -->
+				<form id="login-form" class="w-100 d-none">
+					<div class="mb-3">
+						<label for="phone" class="form-label form-label-white">No Handphone</label>
+						<input type="text" class="form-control" id="phone">
 					</div>
-					<div class="mb-3 d-none">
-						<label style="color:#fff;font-size:0.9rem" for="OTP" class="form-label">OTP</label>
+					<div class="mb-3">
+						<label for="OTP" class="form-label form-label-white">OTP</label>
 						<input type="text" class="form-control" id="OTP">
 					</div>
-					<small class=" d-none d-block text-center m-2 p-2 mb-4" style="background-color:beige;">Versi Beta
-						1.0:
-						Tulis Saja Asal Dulu</small>
 					<button type="submit" class="btn btn-primary w-100">Masuk</button>
 				</form>
-				<!-- Join Komunitas: default fallback goes to register section, JS will route to login if user appears registered -->
+
+				<!-- Join Button -->
 				<a href="#register-page" id="start-onboard" class="btn btn-outline-primary my-2 w-100">Join
 					Komunitas</a>
 			</div>
-			<h2 style="font-size: larger;font-weight: 700;" class="text-center my-4 mb-2">Bagaimana SSSAHAM Bekerja?
-			</h2>
+
+			<!-- How It Works Section -->
+			<h2 class="section-heading text-center my-4 mb-2">Bagaimana SSSAHAM Bekerja?</h2>
 			<p class="text-center">SSSAHAM Menggunakan Pendekatan Machine Learning dan AI yang Auditable</p>
-			<div class="this-page w-100 d-flex flex-column  my-4 mt-2"
-				style="box-shadow: none !important;border: none;border-radius: 30px;overflow: hidden;">
-				<!--<iframe id="about-us-embed" src="about-us.html#model" loading="lazy">-->
-				<iframe id="about-us-embed" style="box-shadow: none !important;" src="about-us.html#model"
-					loading="lazy"></iframe>
+			<div class="this-page about-embed-wrapper w-100 d-flex flex-column my-4 mt-2">
+				<iframe id="about-us-embed" src="about-us.html#model" loading="lazy"></iframe>
 			</div>
 		</section>
 
-		<!-- halaman login -->
+		<!-- Login Page -->
 		<section id="login-page">
 			<div class="this-page d-flex flex-column align-items-center p-4 my-4 w-100">
 				<h3 class="text-center mb-4 fw-700">Login</h3>
-				<small class="p-3 m-3 w-100 text-center" style="background-color: aliceblue;">We are using no fee
-					oTP</small>
+				<small class="p-3 m-3 w-100 text-center info-box-light">We are using no fee OTP</small>
 				<form id="login-form-page-main" class="w-100">
-					<div class="mb-3" id="noHp" style="position: relative;">
-						<label style="color:#fff;font-weight: 700;" for="Handphone" class="form-label">No
-							Handphone</label>
-						<input type="text" class="form-control" required>
-						<a href="https://wa.me/6285281757731?text=GETOTP" class="d-block p-2"
-							style="position:absolute;bottom:0px;right: 0.125rem;background-color: #10c210;color:white;border-radius: 0px 10px 10px 0px;text-decoration: none;">
+					<div class="mb-3 input-with-button" id="noHp">
+						<label for="login-phone" class="form-label form-label-white-bold">No Handphone</label>
+						<input type="text" class="form-control" id="login-phone" required>
+						<a href="https://wa.me/6285281757731?text=GETOTP" class="d-block p-2 otp-button">
 							<strong>Get OTP <i class="fa-brands fa-whatsapp"></i></strong>
 						</a>
 					</div>
 					<div class="mb-3">
-						<label style="color:#fff;font-weight: 700;" for="OTP" class="form-label">OTP</label>
-						<input type="OTP" class="form-control" id="OTP" required>
+						<label for="login-otp" class="form-label form-label-white-bold">OTP</label>
+						<input type="text" class="form-control" id="login-otp" required>
 					</div>
 					<button type="submit" class="btn btn-primary w-100">Login</button>
 				</form>
 			</div>
 		</section>
 
-		<!-- register page -->
+		<!-- Register Page -->
 		<section id="register-page" class="d-flex align-items-center justify-content-center min-vh-100">
 			<div class="this-page d-flex flex-column align-items-center border-bottom p-4 my-0 w-100">
-				<h2 style="font-size: 24px;font-weight: 700;" class="text-center my-4 mb-4">Register</h2>
-				<form id="register-form" class="w-100" style="max-width:480px;">
+				<h2 class="register-title text-center my-4 mb-4">Register</h2>
+				<form id="register-form" class="w-100 register-form">
 					<div class="mb-3">
 						<label for="new-name" class="form-label">Nama Lengkap</label>
 						<input type="text" class="form-control tbe" id="new-name" required placeholder="Nama Anda">
@@ -160,28 +154,24 @@
 			</div>
 		</section>
 
-		<!-- liveness -->
+		<!-- Liveness Check -->
 		<section id="liveness-check" class="w-100">
 			<div class="this-page d-flex flex-column align-items-center p-4 my-4">
 				<h3 class="text-center">Apakah Kamu Manusia</h3>
-				<span class="d-block">Ikuti Instuksi</span>
+				<span class="d-block">Ikuti Instruksi</span>
 				<div id="liveness-instruction" class="fs-4 my-3 text-center"></div>
-				<video id="liveness-preview" autoplay muted playsinline
-					style="width: 100%; max-width: 400px; border-radius: 8px; background: #000;"></video>
-
+				<video id="liveness-preview" class="liveness-video" autoplay muted playsinline></video>
 				<div class="mt-3 w-100">
 					<button id="start-record" class="btn d-block btn-primary w-100 mb-2">Mulai Rekam</button>
 					<button id="stop-record" class="btn d-block btn-outline-danger w-100 mb-2">Stop Rekam</button>
-					<button id="skip-record" type="button" class="btn d-block btn-outline-primary w-100"
-						style="display:none;">
-						Lewati (Testing)
-					</button>
+					<button id="skip-record" type="button" class="btn d-block btn-outline-primary w-100 d-none">Lewati
+						(Testing)</button>
 				</div>
 				<div id="liveness-result" class="mt-3 text-center"></div>
 			</div>
 		</section>
 
-		<!-- halaman error -->
+		<!-- Error Page -->
 		<section id="error-page">
 			<div class="this-page d-flex flex-column align-items-center border-bottom p-4 my-4">
 				<h1 class="text-center">Error</h1>
@@ -679,7 +669,6 @@
 			} catch (e) { console.warn('register-form handler error', e); }
 		})();
 	</script>
-
 </body>
 
 </html>
