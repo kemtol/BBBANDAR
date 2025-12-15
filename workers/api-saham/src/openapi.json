@@ -1,0 +1,271 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "SSSAHAM API",
+    "description": "Real-time Indonesian stock microstructure API",
+    "version": "1.0.0"
+  },
+  "servers": [
+    {
+      "url": "https://api-saham.mkemalw.workers.dev",
+      "description": "Dev"
+    },
+    {
+      "url": "https://api.sssaham.com",
+      "description": "Production"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "ApiKeyAuth": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-API-KEY",
+        "description": "Gunakan API key yang diberikan oleh BBBANDAR"
+      }
+    },
+    "schemas": {
+      "ErrorUnauthorized": {
+        "type": "object",
+        "properties": {
+          "error": { "type": "string", "example": "Unauthorized" },
+          "message": { "type": "string", "example": "Missing/invalid X-API-KEY" }
+        },
+        "required": ["error", "message"]
+      },
+      "HealthResponse": {
+        "type": "object",
+        "properties": {
+          "ok": { "type": "boolean", "example": true },
+          "service": { "type": "string", "example": "api-saham" },
+          "ts": { "type": "string", "example": "2025-12-14T10:00:00.000Z" }
+        },
+        "required": ["ok", "service", "ts"]
+      },
+      "MeResponse": {
+        "type": "object",
+        "properties": {
+          "authorized": { "type": "boolean", "example": true },
+          "plan": { "type": "string", "example": "dev" }
+        },
+        "required": ["authorized", "plan"]
+      },
+      "RosterResponse": {
+        "type": "object",
+        "properties": {
+          "count": { "type": "integer", "example": 5 },
+          "items": {
+            "type": "array",
+            "items": { "type": "string", "example": "BBCA" }
+          }
+        },
+        "required": ["count", "items"]
+      },
+      "SummaryItem": {
+        "type": "object",
+        "properties": {
+          "kode": { "type": "string", "example": "ADRO" },
+          "signal_side": {
+            "type": "string",
+            "enum": ["BUY", "SELL", "NONE"],
+            "example": "SELL"
+          },
+          "last": { "type": "number", "example": 1840 }
+        },
+        "required": ["kode", "signal_side", "last"]
+      },
+      "SummaryResponse": {
+        "type": "object",
+        "properties": {
+          "mode": { "type": "string", "example": "intraday" },
+          "count": { "type": "integer", "example": 2 },
+          "items": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/SummaryItem" }
+          }
+        },
+        "required": ["mode", "count", "items"]
+      },
+      "SignalResponse": {
+        "type": "object",
+        "properties": {
+          "kode": { "type": "string", "example": "ADRO" },
+          "mode": { "type": "string", "example": "intraday" },
+          "signal_side": {
+            "type": "string",
+            "enum": ["BUY", "SELL", "NONE"],
+            "example": "NONE"
+          },
+          "confidence": { "type": "number", "example": 0.5 },
+          "last": { "type": "number", "example": 0 }
+        },
+        "required": ["kode", "mode", "signal_side", "confidence", "last"]
+      }
+    }
+  },
+  "tags": [
+    { "name": "System", "description": "Service health & meta" },
+    { "name": "Market", "description": "Market-wide endpoints" },
+    { "name": "Signals", "description": "Per-ticker signals" }
+  ],
+  "security": [
+    {
+      "ApiKeyAuth": []
+    }
+  ],
+  "paths": {
+    "/health": {
+      "get": {
+        "tags": ["System"],
+        "summary": "Health check",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HealthResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/me": {
+      "get": {
+        "tags": ["System"],
+        "summary": "Auth check",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/MeResponse" }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorUnauthorized" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/market/roster": {
+      "get": {
+        "tags": ["Market"],
+        "summary": "Active ticker roster",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/RosterResponse" },
+                "example": { "count": 5, "items": ["BBCA", "BBRI", "BMRI", "ADRO", "TLKM"] }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorUnauthorized" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/summary": {
+      "get": {
+        "tags": ["Market"],
+        "summary": "Market summary",
+        "description": "Ringkasan sinyal saham berbasis microstructure.",
+        "parameters": [
+          {
+            "name": "mode",
+            "in": "query",
+            "description": "Mode analisis",
+            "schema": {
+              "type": "string",
+              "enum": ["intraday", "swing"],
+              "default": "intraday"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SummaryResponse" },
+                "example": {
+                  "mode": "intraday",
+                  "count": 2,
+                  "items": [
+                    { "kode": "ADRO", "signal_side": "SELL", "last": 1840 },
+                    { "kode": "BBCA", "signal_side": "BUY", "last": 9450 }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorUnauthorized" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/signal/{kode}": {
+      "get": {
+        "tags": ["Signals"],
+        "summary": "Signal by ticker",
+        "parameters": [
+          {
+            "name": "kode",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Ticker code (e.g., ADRO, BBCA)"
+          },
+          {
+            "name": "mode",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": ["intraday", "swing"],
+              "default": "intraday"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SignalResponse" }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorUnauthorized" }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

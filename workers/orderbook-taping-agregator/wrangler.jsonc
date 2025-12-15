@@ -1,0 +1,35 @@
+// workers/orderbook-taping-agregator/wrangler.jsonc
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "orderbook-taping-agregator", // <--- NAMA BARU
+  "main": "src/index.js",
+  "compatibility_date": "2025-12-06",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "workers_dev": true,
+
+  // R2 tempat raw_ob & ob_hist
+  "r2_buckets": [
+    {
+      "binding": "DATA_LAKE",
+      "bucket_name": "tape-data-saham"
+    }
+  ],
+
+  // ⬇️ OB aggregator versi simple: belum perlu Durable Object
+  // Kalau nanti mau simpan state khusus di DO, baru tambahin lagi.
+  // "durable_objects": { ... }  <-- DIHAPUS DULU
+
+  "triggers": {
+    "crons": [
+      "*/5 * * * *"
+      // contoh: tiap 5 menit, kamu bisa ganti kalau mau
+      // atau pakai jam market aja: "*/5 2-9 * * 1-5"
+    ]
+  },
+
+  "observability": {
+    "enabled": true
+  }
+}

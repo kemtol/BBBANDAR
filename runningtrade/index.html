@@ -2,48 +2,102 @@
 <html lang="id">
 
 <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#ffffff" />
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#463CFF">
 
     <title>Bandar Radar – Orderflow Profiler</title>
 
-    <!-- (opsional) favicon & manifest, samain nanti dengan project utama -->
-    <link rel="manifest" href="img/site.webmanifest" />
+    <!-- Favicon & Manifest -->
+    <link rel="manifest" href="img/site.webmanifest">
     <link rel="apple-touch-icon" sizes="180x180" href="img/apple-touch-icon.png">
     <link rel="icon" type="image/png" sizes="32x32" href="img/favicon-32x32.png">
     <link rel="icon" type="image/png" sizes="16x16" href="img/favicon-16x16.png">
 
     <!-- Bootstrap & Font Awesome -->
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css" rel="stylesheet" />
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css" rel="stylesheet">
 
     <style>
+        /* ========================================
+           BASE STYLES
+           ======================================== */
         body {
             background-color: #f6f8fb;
         }
 
-        .nav-brand-mini {
-            font-weight: 600;
-            letter-spacing: 0.03em;
-            font-size: 0.9rem;
-            text-transform: uppercase;
+        /* ========================================
+           HERO BANNER
+           ======================================== */
+        .hero-banner {
+            background: #463CFF;
+            width: 100%;
+            height: 10rem;
+            position: absolute;
+            top: 0;
         }
 
+        .hero-banner .decorative-circle {
+            width: 200px;
+            height: 200px;
+            position: absolute;
+            top: -14px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: cyan;
+            border-radius: 50%;
+        }
+
+        .hero-banner .hero-title {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 100%;
+            max-width: 760px;
+            margin-top: -80px;
+            color: white;
+            text-align: center;
+            font-weight: 400;
+            font-variant: small-caps;
+            font-size: 1.5rem;
+        }
+
+        /* ========================================
+           MAIN CONTENT
+           ======================================== */
+        .main-content {
+            position: relative;
+        }
+
+        /* ========================================
+           WRAPPER & CARDS
+           ======================================== */
         .wrapper,
         .chat-wrapper {
             max-width: 460px;
             margin: 0 auto;
             position: relative;
             background: #fff;
+            border-radius: 1rem;
         }
 
+        .section-title {
+            font-weight: 900;
+        }
+
+        .crystal-img {
+            width: 7rem;
+        }
+
+        /* ========================================
+           CHAT COMPONENTS
+           ======================================== */
         .chat-shell {
             display: flex;
             flex-direction: column;
             gap: 10px;
             padding-bottom: 80px;
-            /* reserve for composer */
         }
 
         .msg-row {
@@ -55,10 +109,14 @@
             justify-content: flex-start;
         }
 
-        .msg-row.user {
+        .msg-row.user,
+        .msg-row.reply-right {
             justify-content: flex-end;
         }
 
+        /* ========================================
+           CHAT BUBBLES
+           ======================================== */
         .bubble {
             max-width: 85%;
             padding: 1rem;
@@ -70,9 +128,8 @@
             color: #111827;
             border: 1px solid #e5e7eb;
             font-size: 1rem;
-            box-shadow: 0px 0px 10px aliceblue;
-            margin-top: 0.35rem;
-            margin-bottom: 0.35rem;
+            box-shadow: 0 0 10px aliceblue;
+            margin: 0.35rem 0;
         }
 
         .assistant .bubble {
@@ -86,6 +143,25 @@
             border: none;
         }
 
+        /* ========================================
+           QUICK REPLIES
+           ======================================== */
+        .quick-replies {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+        }
+
+        .quick-replies .btn {
+            border-radius: 999px;
+            font-size: 1rem;
+            padding: 0.5rem 1rem;
+            margin: 1rem 0;
+        }
+
+        /* ========================================
+           CHAT COMPOSER
+           ======================================== */
         .chat-composer {
             position: fixed;
             left: 0;
@@ -112,20 +188,9 @@
             max-height: 100px;
         }
 
-        .quick-replies {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 6px;
-        }
-
-        .quick-replies .btn {
-            border-radius: 999px;
-            font-size: 1rem;
-            padding: 0.5rem 1rem;
-            margin-top: 1rem;
-            margin-bottom: 1rem;
-        }
-
+        /* ========================================
+           RESPONSIVE
+           ======================================== */
         @media (max-width: 460px) {
             .chat-composer {
                 width: calc(100% - 1.5rem);
@@ -135,38 +200,62 @@
 </head>
 
 <body>
-    <div style="background: #463CFF;width: 100%;height: 20rem;position: absolute;top: 0px;">
-        <span
-            style="width:200px;height:200px;position: absolute;background: cyan;font-style: italic;top: -14px;left: 50%;border-radius: 999px;text-align: center;font-family: inheritgeorgia !important;font-size: 117px !important;color: yellow;"></span>
-        <h1 style="position: absolute;display: block;color: white;top: 50%;width: 760px;text-align: center;left: 50%;margin-left: -380px;font-weight: 400;font-variant: small-caps;margin-top: -130px;font-size: 1.5rem;">
-            <strong>Stock Market</strong> Almanac<br> Just Like<br><strong>Back to The Future</strong>
+    <!-- Hero Banner -->
+    <div class="hero-banner">
+        <span class="decorative-circle"></span>
+        <h1 class="d-none hero-title">
+            <strong>Stock Market</strong> Almanac<br>
+            Just Like<br>
+            <strong>Back to The Future</strong>
         </h1>
     </div>
-    <!-- CHAT WIZARD SKELETON -->
-    <main class="container mb-4" style="margin-top: 9rem;position: relative;">
-        <div class="wrapper p-4 text-center" style="border-radius: 1rem 1rem 0 0;">
-            <h3 class="text-center mb-3 mt-4" style="font-weight: 900">How it works?!</h3>
-            <img src="img/crystal.gif" style="width: 7rem;">
-            <p class="text-center">We analyze market data tick-by-tick to predict prices 15 minutes ahead.</p><p class="text-center">The system instantly compares its predictions with reality, learning from every movement.</p><p class="text-center">This means our AI gets smarter and more accurate with every passing second.</p>
-        </div>
-        <div class="chat-wrapper p-3">
-            <hr class="mt-0">
-            <h3 style="font-weight: 900" class="text-center mb-4 mt-4">Try It Now!</h3>
-            <div id="chat-shell" class="chat-shell">
+
+    <!-- Main Content -->
+    <main class="container my-4 main-content">
+        <!-- How It Works Section -->
+        <section class="wrapper p-4 text-center mb-4">
+            <h3 class="section-title mb-3 mt-4">How it works?!</h3>
+            <img src="img/crystal.gif" alt="Crystal Ball" class="crystal-img">
+            <p>We analyze market data tick-by-tick to predict prices 15 minutes ahead.</p>
+            <p>The system instantly compares its predictions with reality, learning from every movement.</p>
+            <p>This means our AI gets smarter and more accurate with every passing second.</p>
+        </section>
+
+        <!-- Try It Now Section -->
+        <section class="chat-wrapper p-3 mb-4">
+            <h3 class="section-title text-center mb-4 mt-4">Try It Now!</h3>
+            <div class="chat-shell">
+                <!-- Message 1 -->
                 <div class="msg-row assistant">
-                    <div class="bubble"><div>👋 Hai, trader! are you swinger or day trader?</strong>.</div></div>
+                    <div class="bubble">
+                        <div>👋 Hai, trader! Are you a swinger or day trader?</div>
+                    </div>
                 </div>
-                <div class="msg-row assistant" style="justify-content:flex-end">
-                    <div class="bubble"><div>Swing traders hold their positions for a few days (usually 1 to 5). Day traders, on the other hand, close everything out within 24 hours.</div></div>
+
+                <!-- Message 2 -->
+                <div class="msg-row assistant reply-right">
+                    <div class="bubble">
+                        <div>Swing traders hold their positions for a few days (usually 1 to 5). Day traders, on the
+                            other hand, close everything out within 24 hours.</div>
+                    </div>
                 </div>
+
+                <!-- Message 3 with Quick Replies -->
                 <div class="msg-row assistant">
-                    <div class="bubble"><div>You can try and discover it anyway..</div><div class="quick-replies"><a href="swing.html" class="btn btn-outline-primary btn-sm">Swing Scanner</a><a href="intraday.html" class="btn btn-outline-primary btn-sm">Intraday</a></div></div>
+                    <div class="bubble">
+                        <div>You can try and discover it anyway..</div>
+                        <div class="quick-replies">
+                            <a href="swing.html" class="btn btn-outline-primary btn-sm">Swing Scanner</a>
+                            <a href="intraday.html" class="btn btn-outline-primary btn-sm">Intraday</a>
+                        </div>
+                    </div>
                 </div>
             </div>
-        </div>
-        <div class="chat-wrapper p-3 d-none">
-            <div id="chat-shell" class="chat-shell"></div>
-            <!-- Composer (untuk sekarang boleh dimatikan dulu / dummy) -->
+        </section>
+
+        <!-- Future Composer (Hidden) -->
+        <section class="chat-wrapper p-3 d-none">
+            <div class="chat-shell"></div>
             <div id="chat-composer" class="chat-composer disabled">
                 <div class="d-flex align-items-end gap-2">
                     <div class="flex-grow-1">
@@ -181,61 +270,12 @@
                     Versi ini masih skeleton. Nanti diisi pertanyaan profil seperti time horizon, modal, dan gaya entry.
                 </div>
             </div>
-        </div>
+        </section>
     </main>
 
-    <!-- SCRIPTS -->
+    <!-- Scripts -->
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-
-    <!--<script>
-        $(function () {
-            $("#year").text(new Date().getFullYear());
-
-            const $chat = $("#chat-shell");
-
-            function addMessage(role, html) {
-                const $row = $("<div>").addClass("msg-row " + role);
-                const $bubble = $("<div>").addClass("bubble").html(html);
-                $row.append($bubble);
-                $chat.append($row);
-                window.scrollTo(0, document.body.scrollHeight);
-                return $bubble;
-            }
-
-            function addAssistant(text) {
-                return addMessage("assistant", `<div>${text}</div>`);
-            }
-
-            function addQuickReplies($bubble, options) {
-                const $wrap = $("<div>").addClass("quick-replies");
-                options.forEach(opt => {
-                    const $btn = $("<button>")
-                        .addClass("btn btn-outline-primary btn-sm")
-                        .text(opt.label)
-                        .on("click", function () {
-                            // lock cluster
-                            $wrap.find("button").prop("disabled", true);
-                            if (typeof opt.onClick === "function") opt.onClick();
-                        });
-                    $wrap.append($btn);
-                });
-                $bubble.append($wrap);
-            }
-
-            // SKELETON SCRIPT: 2–3 bubble dummy supaya layout kerasa
-            const b1 = addAssistant("👋 Hai, trader! Selamat datang di <strong>Bandar Radar – Orderflow Profiler</strong>.");
-            const b2 = addAssistant("Nantinya di sini aku bakal tanya beberapa hal seputar gaya trading kamu (swing vs scalping, modal, jam aktif, dsb).");
-
-            const b3 = addAssistant("Untuk sekarang, kamu bisa langsung coba halaman:");
-            addQuickReplies(b3, [
-                { label: "Swing Scanner", onClick: () => window.location.href = "swing.html" },
-                { label: "Scalping Signal", onClick: () => window.location.href = "scalping.html" }
-            ]);
-
-            // TODO: next versi → enable composer + flow tanya jawab ala QQQUANTA
-        });
-    </script>-->
 </body>
 
 </html>

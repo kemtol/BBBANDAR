@@ -1,3 +1,4 @@
+// workers/livetrade-taping-agregator/wrangler.jsonc
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "livetrade-taping-agregator", // <--- Pastikan nama ini BENAR (Aggregator)
@@ -12,6 +13,12 @@
     {
       "binding": "DATA_LAKE",
       "bucket_name": "tape-data-saham"
+    }
+  ],
+  "services": [
+    {
+      "binding": "ORDERBOOK_AGG",
+      "service": "orderbook-taping-agregator"
     }
   ],
   // Binding ke Durable Object (PENTING)
