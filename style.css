@@ -1,34 +1,51 @@
-#about-us-embed {
+/* ==========================================================================
+   SSSAHAM UI — Cleaned & Restructured (no behavior change)
+   - Reordered by section
+   - Deduped #about-us-embed (kept the “shadow” version, but still override inline)
+   - Grouped utilities
+   ========================================================================== */
+
+/* =========================
+   0) UTILITIES / HELPERS
+   ========================= */
+.fw-900 {
+  font-weight: 900;
+}
+
+.fw-700 {
+  font-weight: 700;
+}
+
+.section-title {
+  font-size: 24px;
+  font-weight: 700;
+}
+
+.form-max-480 {
+  max-width: 480px;
+}
+
+.divider {
   width: 100%;
-  border: 0;
-  box-shadow: #eee 0px 5px 20px 0px
+  height: 1px;
+  border: 1px solid #ccc;
 }
 
-/* ---------- 9) EMITEN LIST / INFO ---------- */
-#emiten-list {
-  gap: .5rem !important;
+.note-beta {
+  background-color: beige;
 }
 
-#emiten-list a {
-  text-decoration: none;
-  width: auto;
-  min-width: 30%;
+.label-white-sm {
+  color: #fff;
+  font-size: 0.9rem;
 }
 
-.emiten-info {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
+.label-white-bold {
+  color: #fff;
+  font-weight: 700;
 }
 
-/* ---------- 10) COUNTDOWN ---------- */
-#countdown {
-  font-size: 3rem;
-  font-weight: 800;
-  color: var(--primary) !important;
-}
-
-/* ---------- 11) LINKS ---------- */
+/* Links inside .text-center blocks */
 .text-center a {
   color: var(--primary) !important;
   text-decoration: none;
@@ -38,22 +55,258 @@
   text-decoration: underline;
 }
 
-/* ---------- 12) TOP PICKS – GRID & CARDS ---------- */
-/* 3 kolom di desktop (sesuai file lama) */
-/* :contentReference[oaicite:2]{index=2} */
+/* =========================
+   1) SPLASH / HERO
+   ========================= */
+#splash-page {
+  position: relative;
+}
+
+.splash-hero {
+  position: absolute;
+  top: 0;
+  left: 0;
+
+  width: 100%;
+  height: 75vh;
+  background: var(--primary, #463CFF);
+}
+
+/* centered decorative mark */
+.hero-mark {
+  position: absolute;
+  top: 59px;
+  left: 50%;
+  transform: translateX(-50%);
+
+  width: 200px;
+  height: 200px;
+
+  background: cyan;
+  border-radius: 999px;
+
+  text-align: center;
+  font-family: Georgia, serif;
+  font-style: italic;
+  font-size: 117px;
+  color: yellow;
+}
+
+.hero-title {
+  position: absolute;
+  left: 50%;
+  top: 53%;
+  transform: translate(-50%, -50%);
+
+  width: min(760px, 92vw);
+  text-align: center;
+
+  color: #fff;
+  font-weight: 400;
+  font-variant: small-caps;
+}
+
+.hero-img {
+  position: absolute;
+  left: 50%;
+  top: 60%;
+  transform: translate(-50%, -50%);
+
+  width: 275px;
+  max-width: 80vw;
+  height: auto;
+}
+
+/* content panel that overlaps the hero */
+.splash-panel {
+  position: relative;
+  z-index: 5;
+
+  margin-top: 50vh !important;
+  overflow: hidden;
+
+  color: #fff;
+  border: 1px solid #fff;
+  border-radius: 18px;
+}
+
+/* =========================
+   2) ABOUT US EMBED
+   ========================= */
+.embed-wrap {
+  border: none;
+  border-radius: 30px;
+  overflow: hidden;
+  box-shadow: none !important;
+}
+
+/* Deduped: keep final intention = width full, no border, but still allow shadow.
+   If you want ZERO shadow, change box-shadow to 'none'. */
+#about-us-embed {
+  width: 100%;
+  border: 0;
+  box-shadow: #eee 0px 5px 20px 0px;
+}
+
+/* =========================
+   3) LOGIN — OTP BUTTON
+   ========================= */
+.otp-link {
+  position: absolute;
+  right: 0.125rem;
+  bottom: 0;
+
+  background-color: #10c210;
+  color: #fff;
+  text-decoration: none;
+  border-radius: 0 10px 10px 0;
+}
+
+/* =========================
+   4) LIVENESS
+   ========================= */
+#liveness-preview {
+  width: 100%;
+  max-width: 400px;
+  border-radius: 8px;
+  background: #000;
+}
+
+/* =========================
+   5) EMITEN LIST / INFO
+   ========================= */
+#emiten-list {
+  gap: 0.5rem !important;
+}
+
+#emiten-list a {
+  width: auto;
+  min-width: 30%;
+  text-decoration: none;
+}
+
+.emiten-info {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+/* =========================
+   6) COUNTDOWN
+   ========================= */
+#countdown {
+  font-size: 3rem;
+  font-weight: 800;
+  color: var(--primary) !important;
+}
+
+/* =========================
+   7) TOP PICKS — GRID & CARDS
+   ========================= */
 .picks-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: .75rem;
+  gap: 0.75rem;
 }
 
 #pickCard {
   width: 12.5rem;
 }
 
-/* Mobile: jadi scroller horizontal dengan snap */
-/* :contentReference[oaicite:3]{index=3} */
-@media (max-width:960px) {
+#top-picks .pick-card {
+  position: relative;
+}
+
+.pick-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1rem;
+}
+
+.pick-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.25rem;
+}
+
+.pick-ticker {
+  margin: 0;
+  letter-spacing: -0.02em;
+}
+
+.pick-score {
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+/* Progress bar */
+.score-rail {
+  width: 100%;
+  height: 10px;
+  margin: 0.35rem 0 0.5rem;
+
+  background: #edf2f7;
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.score-fill {
+  height: 100%;
+  transition: width 0.25s ease, background 0.25s ease;
+}
+
+/* Bullets & badge */
+.pick-bullets {
+  width: 14rem;
+  min-height: 150px;
+  margin: 0;
+  padding-left: 1.1rem;
+}
+
+.pick-bullets li {
+  margin: 0.15rem 0;
+}
+
+.pick-bullets li>strong {
+  color: #007bff;
+  text-transform: uppercase;
+}
+
+.pick-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+
+  padding: 0.25rem 0.5rem;
+  border-radius: 999px;
+
+  background: #eaf4ff;
+  color: var(--primary);
+
+  font-size: 0.8rem;
+}
+
+.pick-cta {
+  width: 100%;
+  margin-top: 0.75rem;
+}
+
+/* Stale dimming (when #top-picks has .is-stale) */
+#top-picks.is-stale .pick-card {
+  opacity: 0.55;
+  filter: grayscale(40%) saturate(85%);
+  transition: opacity 0.2s, filter 0.2s;
+}
+
+#top-picks.is-stale .pick-card:hover {
+  opacity: 0.85;
+  filter: none;
+}
+
+/* Mobile: horizontal scroller */
+@media (max-width: 960px) {
   #picksOuter {
     width: 100%;
   }
@@ -62,8 +315,10 @@
     display: flex;
     flex-wrap: nowrap;
     overflow-x: auto;
+
     gap: 1rem;
-    padding-bottom: .75rem;
+    padding-bottom: 0.75rem;
+
     scroll-snap-type: x mandatory;
   }
 
@@ -72,7 +327,6 @@
     scroll-snap-align: start;
   }
 
-  /* :contentReference[oaicite:4]{index=4} */
   .picks-grid>.pick-card:first-child {
     margin-left: 1rem;
   }
@@ -86,128 +340,35 @@
   }
 }
 
-/* Kartu */
-#top-picks .pick-card {
-  position: relative;
-}
-
-/* :contentReference[oaicite:5]{index=5} */
-.pick-card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 1rem;
-}
-
-.pick-head {
-  display: flex;
-  align-items: center;
-  gap: .5rem;
-  margin-bottom: .25rem;
-}
-
-.pick-ticker {
-  letter-spacing: -.02em;
-  margin: 0;
-}
-
-.pick-score {
-  font-size: .9rem;
-  color: var(--muted);
-}
-
-/* Progress bar (warna di-set inline JS; ini hanya base + animasi) */
-.score-rail {
-  width: 100%;
-  height: 10px;
-  background: #edf2f7;
-  border-radius: 999px;
-  overflow: hidden;
-  margin: .35rem 0 .5rem;
-}
-
-.score-fill {
-  height: 100%;
-  transition: width .25s ease, background .25s ease;
-}
-
-/* Bullets & badge */
-.pick-bullets {
-  margin: 0;
-  padding-left: 1.1rem;
-  min-height: 150px;
-  width: 14rem;
-}
-
-.pick-bullets li {
-  margin: .15rem 0;
-}
-
-.pick-bullets li>strong {
-  color: #007bff;
-  text-transform: uppercase;
-}
-
-.pick-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: .4rem;
-  font-size: .8rem;
-  padding: .25rem .5rem;
-  border-radius: 999px;
-  background: #eaf4ff;
-  color: var(--primary);
-}
-
-.pick-cta {
-  margin-top: .75rem;
-  width: 100%;
-}
-
-/* ---------- 13) STALE DIMMING (drop-in, tidak mengganggu yang lain) ---------- */
-/* aktif ketika JS memberi class #top-picks.is-stale */
-/* :contentReference[oaicite:6]{index=6} */
-#top-picks.is-stale .pick-card {
-  opacity: .55;
-  filter: grayscale(40%) saturate(85%);
-  transition: opacity .2s, filter .2s;
-}
-
-#top-picks.is-stale .pick-card:hover {
-  opacity: .85;
-  filter: none;
-}
-
-/* ---------- 14) REKO TABLE ---------- */
-
+/* =========================
+   8) REKO TABLE
+   ========================= */
 #dump-wrap {
   overflow-x: auto;
 }
 
 #dump-wrap>div:nth-child(2) {
-  display: none
+  display: none;
 }
 
 #reko-section h5 {
-  letter-spacing: -.01em;
+  letter-spacing: -0.01em;
 }
 
 #reko-thead th,
 #dump-wrap th {
-  color: #475569;
   position: sticky;
   top: 0;
   background: #fafafa;
+  color: #475569;
 }
 
-/* :contentReference[oaicite:7]{index=7} */
 #reko-tbody td,
 #dump-wrap td {
   border: none;
   vertical-align: middle;
 }
 
-/* :contentReference[oaicite:8]{index=8} */
 .reko-right {
   text-align: right;
 }
@@ -230,21 +391,23 @@
 #reko-tbody table thead tr th,
 #dump-wrap table thead tr th {
   background: #ddd;
-  font-size: .9rem;
+  font-size: 0.9rem;
   text-align: center !important;
 }
 
-/* :contentReference[oaicite:9]{index=9} */
-
-/* --- feed chips (NM/MK) --- */
+/* =========================
+   9) FEED CHIPS (NM/MK)
+   ========================= */
 .feed-chip {
   display: inline-block;
-  font-size: .72rem;
+
+  padding: 0.275rem 0.55rem;
+  border-radius: 999px;
+
+  font-size: 0.72rem;
   line-height: 1;
   font-weight: 800;
-  letter-spacing: .02em;
-  padding: .275rem .55rem;
-  border-radius: 999px;
+  letter-spacing: 0.02em;
 }
 
 .feed-chip.nm {
@@ -252,31 +415,29 @@
   color: #fff;
 }
 
-/* non-markov, optional */
 .feed-chip.mk {
   background: #6f42c1;
   color: #fff;
 }
 
-/* markov */
-
-
-
-/* Loading shimmer */
+/* =========================
+   10) LOADING SHIMMER
+   ========================= */
 .reko-shimmer {
   height: 56px;
+  border-radius: 8px;
+
   background: linear-gradient(90deg, #f4f4f4 0%, #eaeaea 50%, #f4f4f4 100%);
   background-size: 200% 100%;
   animation: rekoShimmer 1.3s infinite;
-  border-radius: 8px;
 }
 
 @keyframes rekoShimmer {
   0% {
-    background-position: 200% 0
+    background-position: 200% 0;
   }
 
   100% {
-    background-position: -200% 0
+    background-position: -200% 0;
   }
 }
