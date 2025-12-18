@@ -149,7 +149,7 @@
       <div class="tab-pane fade show active" id="tab-monitoring" role="tabpanel" aria-labelledby="tab-monitoring-btn">
 
         <!-- System Health (Live Monitor) -->
-        <h6 class="fw-bold mb-3"><i class="fa-solid fa-heart-pulse me-2"></i>Worker Health</h6>
+
         <div class="row g-3 mb-4" id="health-grid">
           <!-- Cards will be injected here -->
           <div class="col-12 text-center text-secondary py-3">Loading system health...</div>
@@ -704,7 +704,8 @@
 
                 groups.forEach(g => {
                   if (g.items) {
-                    $grid.append(`<div class="col-12 mt-2"><h6 class="small fw-bold text-muted border-bottom pb-1 mb-2">${g.title}</h6></div>`);
+                    // Header dihapus sesuai request
+                    // $grid.append(`<div class="col-12 mt-2"><h6 class="small fw-bold text-muted border-bottom pb-1 mb-2">${g.title}</h6></div>`);
                     $grid.append(r2Card('Raw Data', g.items.raw));
                     $grid.append(r2Card('Agregat Data', g.items.agg));
                     $grid.append(r2Card('Features Data', g.items.features));
