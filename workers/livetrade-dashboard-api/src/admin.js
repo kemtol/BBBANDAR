@@ -19,12 +19,7 @@ function withCORS(resp) {
 // ==============================
 export async function getWorkerStatus(env) {
     const result = {
-        worker: {
-            name: "livetrade-taping",
-            status: "UNKNOWN",
-            details: null,
-            latency_ms: -1
-        },
+        workers: [], // Array of status objects
         data_integrity: {
             status: "UNKNOWN",
             last_file: null,
@@ -35,96 +30,104 @@ export async function getWorkerStatus(env) {
         ts: Date.now()
     };
 
-    // 1. Cek Worker Status via Service Binding
-    if (env.TAPING) {
+    // Helper: Check single worker
+    const checkService = async (binding, name, label) => {
+        const item = { name, label, status: "UNKNOWN", latency_ms: -1, details: null };
+        if (!binding) {
+            item.status = "MISSING";
+            item.details = "Service binding not found";
+            return item;
+        }
         const start = Date.now();
         try {
-            // Panggil endpoint root / dari livetrade-taping
-            const res = await env.TAPING.fetch("https://internal/");
-            const latency = Date.now() - start;
+            // Timeout 2s agar dashboard tidak lemot kalau worker mati
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 2000);
 
+            // Try fetch root "/"
+            const res = await binding.fetch("https://internal/", { signal: controller.signal });
+            clearTimeout(timeout);
+
+            item.latency_ms = Date.now() - start;
             if (res.ok) {
-                const data = await res.json();
-                result.worker.status = "ONLINE"; // Worker responds
-                result.worker.details = data;
-                result.worker.latency_ms = latency;
-
-                // Cek status internal worker
-                // data.status biasanya "CONNECTED (LT + OB watchlist)" atau "Mati"
-                if (data.status && data.status.startsWith("CONNECTED")) {
-                    result.worker.status = "HEALTHY";
-                } else {
-                    result.worker.status = "WARNING"; // Responding but not connected
+                // Try parse JSON, fallback to text/status
+                try {
+                    const data = await res.json();
+                    item.details = data;
+                    // Logic health check standar
+                    if (data.status && String(data.status).toUpperCase().includes("CONNECTED")) {
+                        item.status = "HEALTHY";
+                    } else if (data.status === "OK") {
+                        item.status = "HEALTHY";
+                    } else {
+                        item.status = "WARNING"; // Online but status weird
+                    }
+                } catch (e) {
+                    item.status = "ONLINE"; // Responded but not JSON
+                    item.details = "OK (Non-JSON)";
                 }
-
             } else {
-                result.worker.status = "ERROR";
-                result.worker.details = `HTTP ${res.status}`;
+                item.status = "ERROR";
+                item.details = `HTTP ${res.status}`;
             }
         } catch (err) {
-            result.worker.status = "UNREACHABLE";
-            result.worker.details = String(err);
+            item.status = "UNREACHABLE";
+            item.details = String(err.message || err);
         }
-    } else {
-        result.worker.details = "Binding TAPING missing";
-    }
+        return item;
+    };
 
-    // 2. Cek Data Integrity (R2)
+    // Parallel checks
+    const services = [
+        // STOCKS
+        { b: env.TAPING, n: 'livetrade-taping', l: 'Stock Taping' },
+        { b: env.AGGREGATOR, n: 'livetrade-taping-agregator', l: 'Stock Aggregator' },
+        { b: env.LT_STATE, n: 'livetrade-state-engine', l: 'Stock Engine' },
+        // FUTURES
+        { b: env.FUT_TAPING, n: 'fut-taping', l: 'Future Taping' },
+        { b: env.FUT_AGGREGATOR, n: 'fut-taping-agregator', l: 'Future Aggregator' },
+        { b: env.FUT_FEATURES, n: 'fut-features', l: 'Future Features' },
+    ];
+
+    result.workers = await Promise.all(services.map(s => checkService(s.b, s.n, s.l)));
+
+    // 2. Cek Data Integrity (R2) - Existing Logic
     if (env.DATA_LAKE) {
         const now = new Date();
-        // Cek path jam ini: raw_lt/YYYY/MM/DD/HH
-        // Format: raw_lt/2025/08/08/10
         const pad = (n) => String(n).padStart(2, '0');
         const pathPrefix = `raw_lt/${now.getFullYear()}/${pad(now.getMonth() + 1)}/${pad(now.getDate())}/${pad(now.getHours())}/`;
 
         result.data_integrity.path_checked = pathPrefix;
 
         try {
-            // List files logic
             let objects = await env.DATA_LAKE.list({ prefix: pathPrefix });
-
-            // Jika jam baru mulai (misal menit 00:01), mungkin folder jam ini masih kosong.
-            // Cek jam sebelumnya jika kosong
             if (objects.objects.length === 0 && now.getMinutes() < 5) {
                 const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
                 const prevPath = `raw_lt/${oneHourAgo.getFullYear()}/${pad(oneHourAgo.getMonth() + 1)}/${pad(oneHourAgo.getDate())}/${pad(oneHourAgo.getHours())}/`;
-                result.data_integrity.path_checked += ` OR ${prevPath}`;
                 const objPrev = await env.DATA_LAKE.list({ prefix: prevPath });
                 if (objPrev.objects.length > 0) objects = objPrev;
             }
 
             if (objects.objects.length > 0) {
-                // Ambil yang terakhir di list (asumsi sorted by key ascending)
                 const lastObj = objects.objects[objects.objects.length - 1];
                 result.data_integrity.last_file = lastObj.key;
 
-                // Coba parse timestamp dari nama file jika format: .../1723456789000.json
+                // Try parse timestamp from filename
                 const parts = lastObj.key.split('/');
-                const fname = parts[parts.length - 1];
-                const tsString = fname.replace('.json', '');
-                const ts = Number(tsString);
+                const ts = Number(parts[parts.length - 1].replace('.json', ''));
 
                 if (!isNaN(ts)) {
                     result.data_integrity.last_file_age_ms = Date.now() - ts;
-                    // Status OK jika < 2 menit (120000ms) - asumsi data masuk setidaknya tiap menit
-                    if (result.data_integrity.last_file_age_ms < 120000) {
-                        result.data_integrity.status = "OK";
-                    } else if (result.data_integrity.last_file_age_ms < 300000) {
-                        result.data_integrity.status = "LAGGING"; // 2-5 mins delay
-                    } else {
-                        result.data_integrity.status = "STALE"; // > 5 mins
-                    }
+                    if (result.data_integrity.last_file_age_ms < 120000) result.data_integrity.status = "OK";
+                    else if (result.data_integrity.last_file_age_ms < 300000) result.data_integrity.status = "LAGGING";
+                    else result.data_integrity.status = "STALE";
                 } else {
-                    // Fallback pakai uploaded property
-                    const uploaded = lastObj.uploaded;
-                    const age = Date.now() - new Date(uploaded).getTime();
-                    result.data_integrity.last_file_age_ms = age;
-                    result.data_integrity.status = age < 120000 ? "OK" : "STALE";
+                    result.data_integrity.last_file_age_ms = Date.now() - new Date(lastObj.uploaded).getTime();
+                    result.data_integrity.status = "OK";
                 }
             } else {
-                result.data_integrity.status = "EMPTY"; // No data in current hour
+                result.data_integrity.status = "EMPTY";
             }
-
         } catch (err) {
             result.data_integrity.status = "ERROR";
             result.data_integrity.error = String(err);

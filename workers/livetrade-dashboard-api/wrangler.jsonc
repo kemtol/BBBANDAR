@@ -26,6 +26,22 @@
     {
       "binding": "AGGREGATOR",
       "service": "livetrade-taping-agregator"
+    },
+    {
+      "binding": "LT_STATE",
+      "service": "livetrade-state-engine"
+    },
+    {
+      "binding": "FUT_TAPING",
+      "service": "fut-taping"
+    },
+    {
+      "binding": "FUT_AGGREGATOR",
+      "service": "fut-taping-agregator"
+    },
+    {
+      "binding": "FUT_FEATURES",
+      "service": "fut-features"
     }
   ],
   "vars": {
