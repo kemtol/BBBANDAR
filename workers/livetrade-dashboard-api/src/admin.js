@@ -14,57 +14,69 @@ function withCORS(resp) {
     });
 }
 
+// Helper to check R2
+async function checkR2(bucket, prefix) {
+    if (!bucket) return { status: "ERROR", detail: "No Binding" };
+    try {
+        const list = await bucket.list({ prefix, limit: 1 });
+        if (list.objects.length > 0) {
+            const latest = list.objects[0]; // Just taking the first one found
+            const ageMs = Date.now() - latest.uploaded.getTime();
+            return {
+                status: "OK",
+                detail: `${list.objects.length} files`,
+                last_file: latest.key,
+                age_ms: ageMs
+            };
+        }
+        return { status: "EMPTY", detail: "0 files" };
+    } catch (e) {
+        return { status: "ERROR", detail: String(e.message) };
+    }
+}
+
 // ==============================
 // WORKER STATUS & INTEGRITY CHECK
 // ==============================
 export async function getWorkerStatus(env) {
     const result = {
         workers: [], // Array of status objects
-        data_integrity: {
-            status: "UNKNOWN",
-            last_file: null,
-            last_file_age_ms: -1,
-            bucket: "tape-data-saham",
-            path_checked: ""
+        r2_monitor: {
+            stock: {},
+            futures: {}
         },
+        // Legacy fallback fields for safety
+        worker: { name: "livetrade-taping (legacy)", status: "UNKNOWN" },
+        data_integrity: { status: "UNKNOWN", bucket: "tape-data-saham" },
         ts: Date.now()
     };
 
-    // Helper: Check single worker
+    // --- 1. Worker Health Checks (Parallel) ---
     const checkService = async (binding, name, label) => {
         const item = { name, label, status: "UNKNOWN", latency_ms: -1, details: null };
         if (!binding) {
             item.status = "MISSING";
-            item.details = "Service binding not found";
+            item.details = "Binding missing in wrangler.jsonc";
             return item;
         }
         const start = Date.now();
         try {
-            // Timeout 2s agar dashboard tidak lemot kalau worker mati
             const controller = new AbortController();
             const timeout = setTimeout(() => controller.abort(), 2000);
-
-            // Try fetch root "/"
             const res = await binding.fetch("https://internal/", { signal: controller.signal });
             clearTimeout(timeout);
 
             item.latency_ms = Date.now() - start;
             if (res.ok) {
-                // Try parse JSON, fallback to text/status
+                item.status = "ONLINE";
                 try {
                     const data = await res.json();
                     item.details = data;
-                    // Logic health check standar
-                    if (data.status && String(data.status).toUpperCase().includes("CONNECTED")) {
-                        item.status = "HEALTHY";
-                    } else if (data.status === "OK") {
-                        item.status = "HEALTHY";
-                    } else {
-                        item.status = "WARNING"; // Online but status weird
-                    }
+                    const ds = (data.status || "").toUpperCase();
+                    if (ds.includes("CONNECTED") || ds === "OK") item.status = "HEALTHY";
+                    else item.status = "WARNING";
                 } catch (e) {
-                    item.status = "ONLINE"; // Responded but not JSON
-                    item.details = "OK (Non-JSON)";
+                    item.details = "Non-JSON Response";
                 }
             } else {
                 item.status = "ERROR";
@@ -72,18 +84,15 @@ export async function getWorkerStatus(env) {
             }
         } catch (err) {
             item.status = "UNREACHABLE";
-            item.details = String(err.message || err);
+            item.details = String(err.message);
         }
         return item;
     };
 
-    // Parallel checks
     const services = [
-        // STOCKS
         { b: env.TAPING, n: 'livetrade-taping', l: 'Stock Taping' },
         { b: env.AGGREGATOR, n: 'livetrade-taping-agregator', l: 'Stock Aggregator' },
         { b: env.LT_STATE, n: 'livetrade-state-engine', l: 'Stock Engine' },
-        // FUTURES
         { b: env.FUT_TAPING, n: 'fut-taping', l: 'Future Taping' },
         { b: env.FUT_AGGREGATOR, n: 'fut-taping-agregator', l: 'Future Aggregator' },
         { b: env.FUT_FEATURES, n: 'fut-features', l: 'Future Features' },
@@ -91,47 +100,48 @@ export async function getWorkerStatus(env) {
 
     result.workers = await Promise.all(services.map(s => checkService(s.b, s.n, s.l)));
 
-    // 2. Cek Data Integrity (R2) - Existing Logic
-    if (env.DATA_LAKE) {
-        const now = new Date();
-        const pad = (n) => String(n).padStart(2, '0');
-        const pathPrefix = `raw_lt/${now.getFullYear()}/${pad(now.getMonth() + 1)}/${pad(now.getDate())}/${pad(now.getHours())}/`;
+    // --- 2. R2 Data Integrity Checks (Parallel) ---
+    const now = new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+    const y = now.getUTCFullYear();
+    const m = pad(now.getUTCMonth() + 1);
+    const d = pad(now.getUTCDate());
+    const h = pad(now.getUTCHours());
 
-        result.data_integrity.path_checked = pathPrefix;
+    const datePath = `${y}/${m}/${d}/`;     // YYYY/MM/DD/
+    const dateDash = `${y}-${m}-${d}`;      // YYYY-MM-DD
+    const dateMonth = `${y}${m}`;           // YYYYMM
 
-        try {
-            let objects = await env.DATA_LAKE.list({ prefix: pathPrefix });
-            if (objects.objects.length === 0 && now.getMinutes() < 5) {
-                const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
-                const prevPath = `raw_lt/${oneHourAgo.getFullYear()}/${pad(oneHourAgo.getMonth() + 1)}/${pad(oneHourAgo.getDate())}/${pad(oneHourAgo.getHours())}/`;
-                const objPrev = await env.DATA_LAKE.list({ prefix: prevPath });
-                if (objPrev.objects.length > 0) objects = objPrev;
-            }
+    const checks = [
+        // STOCK (Bucket: DATA_LAKE)
+        { g: 'stock', k: 'raw', b: env.DATA_LAKE, p: `raw_lt/${datePath}` },
+        { g: 'stock', k: 'agg', b: env.DATA_LAKE, p: `raw_lt_compressed/${dateDash}` }, // partial match prefix
+        { g: 'stock', k: 'features', b: env.DATA_LAKE, p: `features/` }, // Generic
 
-            if (objects.objects.length > 0) {
-                const lastObj = objects.objects[objects.objects.length - 1];
-                result.data_integrity.last_file = lastObj.key;
+        // FUTURES (Bucket: DATA_LAKE_FUTURES)
+        { g: 'futures', k: 'raw', b: env.DATA_LAKE_FUTURES, p: `raw_tns/ENQ/${datePath}${h}` },
+        { g: 'futures', k: 'agg', b: env.DATA_LAKE_FUTURES, p: `footprint/ENQ/1m/${datePath}${h}` },
+        { g: 'futures', k: 'features', b: env.DATA_LAKE_FUTURES, p: `features/${dateMonth}` }
+    ];
 
-                // Try parse timestamp from filename
-                const parts = lastObj.key.split('/');
-                const ts = Number(parts[parts.length - 1].replace('.json', ''));
+    const r2Promises = checks.map(async (c) => {
+        const res = await checkR2(c.b, c.p);
+        return { g: c.g, k: c.k, res };
+    });
 
-                if (!isNaN(ts)) {
-                    result.data_integrity.last_file_age_ms = Date.now() - ts;
-                    if (result.data_integrity.last_file_age_ms < 120000) result.data_integrity.status = "OK";
-                    else if (result.data_integrity.last_file_age_ms < 300000) result.data_integrity.status = "LAGGING";
-                    else result.data_integrity.status = "STALE";
-                } else {
-                    result.data_integrity.last_file_age_ms = Date.now() - new Date(lastObj.uploaded).getTime();
-                    result.data_integrity.status = "OK";
-                }
-            } else {
-                result.data_integrity.status = "EMPTY";
-            }
-        } catch (err) {
-            result.data_integrity.status = "ERROR";
-            result.data_integrity.error = String(err);
+    const r2Results = await Promise.all(r2Promises);
+    r2Results.forEach(r => {
+        if (result.r2_monitor[r.g]) {
+            result.r2_monitor[r.g][r.k] = r.res;
         }
+    });
+
+    // --- 3. Legacy Backward Compat ---
+    // (Optional: maintain old structure if dashboard breaks, but we updated dashboard)
+    if (result.r2_monitor.stock.raw) {
+        const raw = result.r2_monitor.stock.raw;
+        result.data_integrity.status = raw.status;
+        result.data_integrity.last_file_age_ms = raw.age_ms;
     }
 
     return withCORS(

@@ -616,14 +616,12 @@
               if (!res.ok) throw new Error("API Unreachable");
               const data = await res.json();
 
-              // Render 6 Cards Grid
+              // Render 6 Cards Grid (Workers)
               const $grid = $("#health-grid");
               $grid.empty();
 
               const workers = data.workers || [];
-              if (!Array.isArray(workers) && data.worker) {
-                workers.push(data.worker);
-              }
+              if (!Array.isArray(workers) && data.worker) workers.push(data.worker);
 
               workers.forEach(w => {
                 let statusColor = "text-secondary";
@@ -667,19 +665,52 @@
                 $grid.append(html);
               });
 
-              const di = data.data_integrity || {};
-              let diColor = di.status === 'OK' ? 'success' : 'danger';
-              if (di.status === 'LAGGING') diColor = 'warning';
+              // Render R2 Integrity Grid (6 Cards)
+              // Only if r2_monitor exists
+              if (data.r2_monitor) {
+                const groups = [
+                  { id: 'stock', title: 'STOCK R2 INTEGRITY', items: data.r2_monitor.stock },
+                  { id: 'futures', title: 'FUTURES R2 INTEGRITY', items: data.r2_monitor.futures }
+                ];
 
-              $grid.after(`
-                  <div id="integrity-bar" class="alert alert-${diColor} py-1 small d-flex align-items-center mb-4">
-                     <i class="fa-solid fa-database me-2"></i>
-                     <strong>R2 Data Integrity:</strong>&nbsp;${di.status} 
-                     <span class="mx-2">|</span> 
-                     Last file: ${Math.round(di.last_file_age_ms / 1000)}s ago
-                  </div>
-               `);
-              $('#integrity-bar').prev('.alert').remove();
+                // Remove old integrity bar if exists
+                $('#integrity-bar').remove();
+
+                // Helper for R2 card
+                const r2Card = (label, info) => {
+                  let color = 'secondary';
+                  let icon = 'fa-database';
+                  let status = (info?.status || 'UNKNOWN');
+                  let time = (info?.age_ms > 0) ? Math.round(info.age_ms / 1000) + 's ago' : '-';
+
+                  if (status === 'OK') { color = 'success'; icon = 'fa-check'; }
+                  else if (status === 'EMPTY') { color = 'danger'; icon = 'fa-xmark'; }
+                  else if (status === 'ERROR') { color = 'warning'; icon = 'fa-triangle-exclamation'; }
+
+                  return `
+                     <div class="col-6 col-md-4">
+                        <div class="card shadow-sm h-100 border-${color} bg-${color}-subtle">
+                          <div class="card-body p-2 d-flex align-items-center">
+                             <div class="me-3 text-${color}"><i class="fa-solid ${icon} fs-4"></i></div>
+                             <div style="line-height: 1.2; overflow: hidden;">
+                                <h6 class="card-title text-uppercase text-muted small fw-bold mb-1 text-truncate">${label}</h6>
+                                <div class="badge bg-${color} text-white mb-1" style="font-size: 0.65rem;">${status}</div>
+                                <small class="d-block text-muted text-truncate" style="font-size: 0.65rem;">Last: ${time}</small>
+                             </div>
+                          </div>
+                        </div>
+                     </div>`;
+                };
+
+                groups.forEach(g => {
+                  if (g.items) {
+                    $grid.append(`<div class="col-12 mt-2"><h6 class="small fw-bold text-muted border-bottom pb-1 mb-2">${g.title}</h6></div>`);
+                    $grid.append(r2Card('Raw Data', g.items.raw));
+                    $grid.append(r2Card('Agregat Data', g.items.agg));
+                    $grid.append(r2Card('Features Data', g.items.features));
+                  }
+                });
+              }
 
             } catch (e) {
               console.error("System Health Check Failed", e);
