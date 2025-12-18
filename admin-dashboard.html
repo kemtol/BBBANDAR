@@ -1,0 +1,719 @@
+<!doctype html>
+<html lang="id">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Service Monitoring — Grid (jQuery)</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>
+    body {
+      padding: 24px;
+      background-color: #f8f9fa;
+    }
+
+    .status-badge {
+      text-transform: uppercase;
+      font-weight: 600;
+    }
+
+    .slot-cell {
+      min-width: 90px;
+      cursor: pointer;
+      transition: background-color 0.2s ease-in-out;
+    }
+
+    .slot-cell:hover {
+      background-color: #e9ecef;
+    }
+
+    .slot-pill {
+      display: inline-block;
+      padding: .15rem .5rem;
+      border-radius: 999px;
+      font-size: .75rem;
+      font-weight: 600;
+    }
+
+    .pill-ok {
+      background: #e7f7ee;
+      border: 1px solid #19875450;
+      color: #198754;
+    }
+
+    .pill-fail {
+      background: #fdecea;
+      border: 1px solid #dc354550;
+      color: #dc3545;
+    }
+
+    .pill-late {
+      background: #fff7e6;
+      border: 1px solid #fd7e1450;
+      color: #fd7e14;
+    }
+
+    .pill-skip {
+      background: #f3f4f6;
+      border: 1px solid #6c757d50;
+      color: #6c757d;
+    }
+
+    .pill-run {
+      background: #e7f0ff;
+      border: 1px solid #0d6efd50;
+      color: #0d6efd;
+    }
+
+    .result {
+      white-space: pre-wrap;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      background-color: #fff;
+    }
+
+    .jobs-col {
+      width: 220px;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="container-fluid">
+    <!-- Tabs: Content (CMS) and Service Monitoring -->
+    <ul class="nav nav-tabs mb-3" id="dashboardTabs" role="tablist">
+      <li class="nav-item" role="presentation">
+        <button class="nav-link" id="tab-content-btn" data-bs-toggle="tab" data-bs-target="#tab-content" type="button"
+          role="tab" aria-controls="tab-content" aria-selected="false">Content</button>
+      </li>
+      <li class="nav-item" role="presentation">
+        <button class="nav-link active" id="tab-monitoring-btn" data-bs-toggle="tab" data-bs-target="#tab-monitoring"
+          type="button" role="tab" aria-controls="tab-monitoring" aria-selected="true">Service Monitoring</button>
+      </li>
+    </ul>
+
+    <div class="tab-content">
+      <div class="tab-pane fade" id="tab-content" role="tabpanel" aria-labelledby="tab-content-btn">
+        <!-- CMS simple editor -->
+        <div class="card mb-3">
+          <div class="card-body">
+            <h2 class="h6">CMS — Create file (client-side)</h2>
+            <div class="mb-2 row">
+              <label class="col-sm-2 col-form-label">File name</label>
+              <div class="col-sm-10">
+                <input id="cms-filename" class="form-control" placeholder="e.g. berita-2025-10-27-demo.html" />
+              </div>
+            </div>
+            <div class="mb-2">
+              <textarea id="cms-body" class="form-control" rows="12"
+                placeholder="Tulis konten HTML di sini..."></textarea>
+            </div>
+
+            <div class="d-flex gap-2">
+              <button id="btn-save-download" class="btn btn-primary">Save (download)</button>
+              <button id="btn-save-fs" class="btn btn-outline-primary">Write to folder (File System Access)</button>
+              <div id="cms-status" class="ms-3 text-muted align-self-center small"></div>
+            </div>
+
+            <hr />
+
+            <div class="mb-2">
+              <label class="form-label small">Publish via Cloudflare Worker (server-side)</label>
+              <div class="input-group mb-2">
+                <span class="input-group-text">Endpoint</span>
+                <input id="cms-cf-endpoint" class="form-control"
+                  placeholder="https://your-worker.your-domain.workers.dev/publish" />
+              </div>
+              <div class="input-group">
+                <span class="input-group-text">Bearer token</span>
+                <input id="cms-cf-token" type="password" class="form-control"
+                  placeholder="worker secret / API key (not stored)" />
+              </div>
+              <div class="form-text small text-muted">The worker endpoint should accept POST JSON: { filename, content,
+                commitMessage? } and authenticate via Bearer token.
+              </div>
+            </div>
+
+            <div class="d-flex gap-2">
+              <button id="btn-publish-cf" class="btn btn-success">Publish (Cloudflare Worker)</button>
+            </div>
+
+            <div class="mt-3 small text-secondary">
+              <strong>Note:</strong> Browsers cannot modify files on the server without an API. Use the Cloudflare
+              Worker to perform server-side commits (example worker included in /scripts/). The worker may write to
+              GitHub via its API or store files in R2/KV depending on your setup.
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="tab-pane fade show active" id="tab-monitoring" role="tabpanel" aria-labelledby="tab-monitoring-btn">
+
+        <!-- System Health (Live Monitor) -->
+        <div class="row g-3 mb-4">
+          <!-- Worker Status Card -->
+          <div class="col-md-6">
+            <div class="card shadow-sm h-100" id="worker-card">
+              <div class="card-body">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                  <h6 class="card-title text-uppercase text-muted small fw-bold mb-0">
+                    ⭐ Taping Worker
+                  </h6>
+                  <span class="badge bg-light text-dark border" id="worker-latency">Latency: - ms</span>
+                </div>
+
+                <div class="d-flex align-items-center">
+                  <div class="me-3" id="worker-icon-container">
+                    <div class="spinner-border text-primary spinner-border-sm" role="status"></div>
+                  </div>
+                  <div>
+                    <h4 class="mb-0 fw-bold" id="worker-status-text">Checking...</h4>
+                    <small class="text-muted d-block text-truncate" style="max-width: 300px;"
+                      id="worker-status-detail">Connecting to API...</small>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Data Integrity Card -->
+          <div class="col-md-6">
+            <div class="card shadow-sm h-100" id="integrity-card">
+              <div class="card-body">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                  <h6 class="card-title text-uppercase text-muted small fw-bold mb-0">
+                    📦 Data Integrity (R2)
+                  </h6>
+                  <span class="badge bg-light text-dark border" id="integrity-badge">Unknown</span>
+                </div>
+
+                <div class="d-flex align-items-center">
+                  <div class="me-3" id="integrity-icon-container">
+                    <div class="spinner-border text-primary spinner-border-sm" role="status"></div>
+                  </div>
+                  <div>
+                    <h4 class="mb-0 fw-bold" id="integrity-status-text">Checking...</h4>
+                    <small class="text-muted d-block" id="integrity-detail">Verifying last file...</small>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Global Controls -->
+        <div class="d-flex align-items-center gap-2 flex-wrap mb-4 sticky-top bg-light py-2" style="z-index: 10;">
+          <h1 class="h5 mb-0 me-3">Monitoring</h1>
+          <button id="btn-prev" class="btn btn-sm btn-outline-secondary">←</button>
+          <input type="date" class="form-control form-control-sm" style="width: 150px" id="inp-date">
+          <button id="btn-next" class="btn btn-sm btn-outline-secondary">→</button>
+          <div class="vr mx-2"></div>
+          <select id="sel-preset" class="form-select form-select-sm" style="width: 130px;">
+            <option value="today">Hari ini</option>
+            <option value="yesterday">Kemarin</option>
+          </select>
+          <div class="vr mx-2"></div>
+          <div class="form-check form-check-inline mb-0">
+            <input class="form-check-input" type="checkbox" id="chk-errors" />
+            <label class="form-check-label small" for="chk-errors">Error only</label>
+          </div>
+          <button id="btn-refresh" class="btn btn-sm btn-primary ms-auto">Refresh Data</button>
+          <span id="last-upd" class="ms-2 text-secondary small"></span>
+        </div>
+
+        <!-- STOCKS Grid -->
+        <div class="card mb-4 shadow-sm">
+          <div class="card-header bg-white d-flex justify-content-between align-items-center py-2">
+            <h6 class="mb-0 fw-bold text-primary"><i class="fa-solid fa-arrow-trend-up me-2"></i>STOCKS (Livetrade)</h6>
+            <div id="kpi-stocks" class="small"></div>
+          </div>
+          <div class="table-responsive">
+            <table class="table table-sm align-middle table-hover mb-0" id="grid-stocks">
+              <thead class="table-light">
+                <tr>
+                  <th class="jobs-col">Job</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- FUTURES Grid -->
+        <div class="card mb-4 shadow-sm">
+          <div class="card-header bg-white d-flex justify-content-between align-items-center py-2">
+            <h6 class="mb-0 fw-bold text-success"><i class="fa-solid fa-bolt me-2"></i>FUTURES (Crypto/Indicies)</h6>
+            <div id="kpi-futures" class="small"></div>
+          </div>
+          <div class="table-responsive">
+            <table class="table table-sm align-middle table-hover mb-0" id="grid-futures">
+              <thead class="table-light">
+                <tr>
+                  <th class="jobs-col">Job</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+
+
+        <!-- Legend -->
+        <div class="mb-5 small text-secondary">
+          <span class="fw-bold me-2">Legend:</span>
+          <span class="slot-pill pill-ok">OK</span>
+          <span class="slot-pill pill-late ms-1">LATE</span>
+          <span class="slot-pill pill-fail ms-1">FAIL</span>
+          <span class="slot-pill pill-run ms-1">RUN</span>
+          <span class="slot-pill pill-skip ms-1">–</span>
+        </div>
+
+        <div class="offcanvas offcanvas-end" tabindex="-1" id="drawer" style="width: 600px;">
+          <div class="offcanvas-header bg-light border-bottom">
+            <div>
+              <h5 class="offcanvas-title" id="drawerTitle">Detail Run</h5>
+              <small class="text-muted" id="drawerSubtitle">Job ID</small>
+            </div>
+            <button type="button" class="btn-close" data-bs-dismiss="offcanvas"></button>
+          </div>
+          <div class="offcanvas-body">
+            <div id="drawerMeta" class="small mb-3 text-secondary border-bottom pb-3"
+              style="white-space: pre-wrap; line-height: 1.6;"></div>
+
+            <h6 class="small fw-bold text-uppercase text-muted mb-2">Execution Log</h6>
+            <div class="position-relative">
+              <pre id="drawerLog" class="result border rounded p-3 bg-light"
+                style="max-height: 50vh; overflow:auto; font-size: 0.85rem;">Tidak ada log.</pre>
+              <button class="btn btn-sm btn-light position-absolute top-0 end-0 m-2 border"
+                onclick="navigator.clipboard.writeText($('#drawerLog').text())">Copy</button>
+            </div>
+
+            <div class="mt-3">
+              <a id="drawerLink" href="#" target="_blank" class="btn btn-sm btn-outline-primary disabled">
+                <i class="fa-solid fa-external-link me-1"></i> Open full log
+              </a>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+      <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+      <!-- FontAwesome for Icons -->
+      <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+      <script>
+        $(document).ready(function () {
+          // --- CONFIGURATION ---
+          const SLOTS_STOCKS = ["09:30", "10:30", "11:30", "14:15", "15:50", "23:59"];
+          const SLOTS_FUTURES = ["00:00", "04:00", "08:00", "12:00", "16:00", "20:00"]; // Example slots for futures (24h market)
+
+          // Definisi Jobs untuk Stocks
+          const JOBS_STOCKS = [
+            { id: "fetch_1m", label: "Fetch 1m", sla_seconds: 120, schedule: SLOTS_STOCKS },
+            { id: "agg_service", label: "Aggregation Service", sla_seconds: 60, schedule: SLOTS_STOCKS },
+            { id: "r2_housekeeping", label: "R2 Housekeeping", sla_seconds: 300, schedule: ["23:59"] },
+            { id: "core_bpjs", label: "core-bpjs", sla_seconds: 120, schedule: ["10:30", "11:30", "14:15", "15:50"] },
+            { id: "rekomendasi", label: "Rekomendasi", sla_seconds: 120, schedule: ["10:30", "15:50"] },
+            { id: "kv_sync", label: "Sync KV", sla_seconds: 120, schedule: SLOTS_STOCKS },
+          ];
+
+          // Definisi Jobs untuk Futures
+          const JOBS_FUTURES = [
+            { id: "fut_fetch", label: "Fetch Service", sla_seconds: 120, schedule: SLOTS_FUTURES },
+            { id: "fut_agg", label: "Aggregation Service", sla_seconds: 60, schedule: SLOTS_FUTURES },
+            { id: "fut_r2", label: "R2 Housekeeping", sla_seconds: 300, schedule: ["00:00"] }, // daily cleanup
+          ];
+
+          // --- UI REFERENCES ---
+          const $inpDate = $('#inp-date');
+          const $selPreset = $('#sel-preset');
+          const $chkErrors = $('#chk-errors');
+          const $lastUpd = $('#last-upd');
+
+          const drawer = new bootstrap.Offcanvas($('#drawer')[0]);
+
+          // --- HELPERS ---
+          function fmtDateInput(d) { return d.toISOString().slice(0, 10); }
+          function addDays(d, n) { const x = new Date(d); x.setDate(x.getDate() + n); return x; }
+
+          function pill(status, text) {
+            const map = { ok: 'pill-ok', fail: 'pill-fail', late: 'pill-late', run: 'pill-run', skip: 'pill-skip' };
+            const cls = map[status] || 'pill-skip';
+            return `<span class="slot-pill ${cls}" title="${text || status}">${(status === 'skip') ? '–' : status.toUpperCase()}</span>`;
+          }
+
+          function computeStatus(run, sla) {
+            if (!run) return 'skip';
+            if (run.status === 'start') return 'run';
+            if (run.status === 'error' || (run.exit_code != null && run.exit_code > 0)) return 'fail';
+            if (run.status === 'success') {
+              const dur = run.duration_sec ?? 0;
+              return (sla && dur > sla) ? 'late' : 'ok';
+            }
+            return 'skip';
+          }
+
+          // Adapter: Transforms flat API response -> Nested Grid Structure
+          function adaptDataForGrid(allLatestData, jobDefinitions, slotDefinitions, dateStr) {
+            const day = {
+              date: dateStr,
+              slots: [...slotDefinitions],
+              jobs: JSON.parse(JSON.stringify(jobDefinitions))
+            };
+
+            // Group latest runs by job ID
+            const items = Object.values(allLatestData || {}).filter(it => it != null);
+            const byJob = {};
+            for (const it of items) {
+              const id = (it.job || '').replaceAll(' ', '_').toLowerCase(); // normalize ID keys if needed
+              // Map mock IDs to real definitions if mismatched, strictly we assume API returns same keys as definitions
+              // For this dummy, we assume strict match or simple normalization
+              // Check if 'it.job' matches one of our defined IDs
+              const def = jobDefinitions.find(j => j.id === it.job || j.id === id);
+              const key = def ? def.id : id;
+
+              if (!byJob[key]) byJob[key] = [];
+              byJob[key].push(it);
+            }
+
+            // Process each job row
+            for (const job of day.jobs) {
+              const arr = byJob[job.id] || [];
+              job.runs = [];
+
+              for (const it of arr) {
+                // Find nearest slot
+                const slot = nearestSlot(it.ts, day.slots, dateStr);
+                if (!slot) continue;
+
+                job.runs.push({
+                  slot,
+                  start: it.ts ? new Date(it.ts).toLocaleString('id-ID') : '-',
+                  status: it.status,
+                  exit_code: it.exit_code,
+                  message: it.result || it.message || '',
+                  command: it.command || '',
+                  log_url: it.log_url,
+                  duration_sec: it.duration_sec,
+                  raw: it // keep original
+                });
+              }
+
+              // Deduplicate per slot (take latest)
+              const latestPerSlot = {};
+              for (const r of job.runs) {
+                if (!latestPerSlot[r.slot] || (new Date(r.start) > new Date(latestPerSlot[r.slot].start))) {
+                  latestPerSlot[r.slot] = r;
+                }
+              }
+              job.runs = Object.values(latestPerSlot);
+            }
+            return day;
+          }
+
+          function nearestSlot(ts, slots, dateStr) {
+            if (!ts) return null;
+            try {
+              const t = new Date(ts);
+              let best = null, bestDiff = 1e15; // huge number
+              for (const s of slots) {
+                const dt = new Date(`${dateStr}T${s}:00`);
+                // Handle crossover days if needed, but simple day-match is mostly sufficient for admin grid
+                const diff = Math.abs(t - dt);
+                if (diff < bestDiff) { bestDiff = diff; best = s; }
+              }
+              // Optional: Threshold (e.g. within 60 mins)
+              if (bestDiff > 3600000 * 2) return null; // Too far from any slot
+              return best;
+            } catch { return null; }
+          }
+
+          // --- CORE RENDER FUNCTION ---
+          function renderSpecificGrid(tableId, kpiId, jobDefs, slotDefs, allData, dateStr) {
+            const $table = $(tableId);
+            const $thead = $table.find('thead');
+            const $tbody = $table.find('tbody');
+            const $kpi = $(kpiId);
+
+            // 1. Prepare Data
+            const dayData = adaptDataForGrid(allData, jobDefs, slotDefs, dateStr);
+
+            // 2. Render Header
+            let headHtml = '<tr><th class="jobs-col ps-3">Job Name</th>';
+            dayData.slots.forEach(s => headHtml += `<th class="text-center">${s}</th>`);
+            headHtml += '</tr>';
+            $thead.html(headHtml);
+
+            // 3. Render Body
+            $tbody.empty();
+            const KPI = { ok: 0, late: 0, fail: 0, run: 0, skip: 0 };
+
+            dayData.jobs.forEach(job => {
+              let rowHtml = `<td class="text-nowrap fw-semibold ps-3">${job.label} <small class="text-muted ms-1 fw-normal">(${job.id})</small></td>`;
+
+              dayData.slots.forEach(slot => {
+                const isScheduled = (job.schedule || []).includes(slot);
+                const run = (job.runs || []).find(r => r.slot === slot);
+
+                const status = isScheduled ? computeStatus(run, job.sla_seconds) : 'skip';
+                KPI[status]++;
+
+                const tooltip = run
+                  ? `${status.toUpperCase()}\nDurasi: ${run.duration_sec}s\n${run.message.slice(0, 100)}`
+                  : (isScheduled ? 'Pending / No Data' : 'Not Scheduled');
+
+                // Valid data attributes for click handler
+                const dataAttrs = run ? `data-job="${job.id}" data-slot="${slot}" data-has-log="true"` : `data-job="${job.id}" data-slot="${slot}"`;
+
+                rowHtml += `<td><div class="slot-cell text-center" ${dataAttrs}>${pill(status, tooltip)}</div></td>`;
+              });
+              $tbody.append(`<tr>${rowHtml}</tr>`);
+            });
+
+            // 4. Render KPI
+            const kpiHtml = `
+                <span class="badge bg-success-subtle text-success border border-success-subtle me-1">OK: ${KPI.ok}</span>
+                <span class="badge bg-danger-subtle text-danger border border-danger-subtle me-1">FAIL: ${KPI.fail}</span>
+                <span class="badge bg-primary-subtle text-primary border border-primary-subtle">RUN: ${KPI.run}</span>
+             `;
+            $kpi.html(kpiHtml);
+          }
+
+
+          // --- MAIN LOAD FUNCTION ---
+          async function load() {
+            const dateStr = $inpDate.val() || fmtDateInput(new Date());
+            $lastUpd.text("Updating...");
+
+            try {
+              // Fetch Data from API
+              const res = await fetch(`https://api-bandar.sssaham.com/job-monitoring?date=${dateStr}`);
+              if (!res.ok) throw new Error("API Error: " + res.status);
+              const raw = await res.json();
+
+              // Store globally for click handlers
+              window.CURRENT_RAW_DATA = raw;
+              window.CURRENT_DATE_STR = dateStr;
+
+              // Render Stocks Grid
+              renderSpecificGrid('#grid-stocks', '#kpi-stocks', JOBS_STOCKS, SLOTS_STOCKS, raw.stocks || {}, dateStr);
+
+              // Render Futures Grid
+              renderSpecificGrid('#grid-futures', '#kpi-futures', JOBS_FUTURES, SLOTS_FUTURES, raw.futures || {}, dateStr);
+
+              $lastUpd.text('Updated: ' + new Date().toLocaleTimeString('id-ID'));
+              applyFilter();
+
+              // Auto-open drawer if requested
+              const urlParams = new URLSearchParams(window.location.search);
+              const autoService = urlParams.get('service');
+              if (autoService && !window.hasAutoOpened) {
+                // Check both groups
+                const latest = (raw.stocks && raw.stocks[autoService]) || (raw.futures && raw.futures[autoService]);
+                if (latest) {
+                  openDrawer(latest.job, "LATEST", latest);
+                  window.hasAutoOpened = true;
+                }
+              }
+
+            } catch (e) {
+              console.error("Load failed", e);
+              // $gridBody is not defined, assuming it refers to the table bodies
+              $('#grid-stocks tbody').html(`<tr><td colspan="10" class="text-danger p-3 text-center">Error loading: ${e.message}</td></tr>`);
+              $('#grid-futures tbody').html(`<tr><td colspan="10" class="text-danger p-3 text-center">Error loading: ${e.message}</td></tr>`);
+            }
+          }
+
+          function applyFilter() {
+            const onlyErr = $chkErrors.is(':checked');
+            $('tbody tr').each(function () {
+              if (!onlyErr) {
+                $(this).show();
+                return;
+              }
+              const hasIssue = $(this).find('.pill-fail, .pill-late, .pill-run').length > 0;
+              $(this).toggle(hasIssue);
+            });
+          }
+
+          // --- EVENT HANDLERS ---
+          $('#btn-refresh').on('click', load);
+          $chkErrors.on('change', applyFilter);
+
+          $('#btn-prev').click(() => {
+            $inpDate.val(fmtDateInput(addDays(new Date($inpDate.val()), -1)));
+            $selPreset.val(''); load();
+          });
+          $('#btn-next').click(() => {
+            $inpDate.val(fmtDateInput(addDays(new Date($inpDate.val()), 1)));
+            $selPreset.val(''); load();
+          });
+          $selPreset.change(function () {
+            const d = $(this).val() === 'yesterday' ? addDays(new Date(), -1) : new Date();
+            $inpDate.val(fmtDateInput(d));
+            load();
+          });
+
+          // INIT
+          $inpDate.val(fmtDateInput(new Date()));
+          load();
+
+
+          // --- DRAWER & CLICK HANDLING ---
+          // Delegate click on any slot-cell in any table
+          $(document).on('click', '.slot-cell', function () {
+            const jobId = $(this).data('job');
+            const slot = $(this).data('slot');
+            const isLog = $(this).data('has-log');
+
+            if (!isLog) return; // Empty slot
+
+            const raw = window.CURRENT_RAW_DATA || {};
+            // We need to re-find the exact run object.
+            // Since we don't store the full run object in DOM, we re-derive using adapt
+            // But easier: we stored "raw" data. Keep in mind "raw" is just flat latest.
+            // The grid logic actually splits runs by slot. 
+            // Re-running adapt logic is safer to get the exact run for *that* slot.
+
+            // Helper to find definition (Stocks vs Futures)???
+            let defs = [...JOBS_STOCKS, ...JOBS_FUTURES];
+            let slots = [...SLOTS_STOCKS, ...SLOTS_FUTURES]; // loose match
+
+            const day = adaptDataForGrid(raw, defs, slots, window.CURRENT_DATE_STR);
+            const job = day.jobs.find(j => j.id === jobId);
+            const run = job?.runs.find(r => r.slot === slot);
+
+            if (run) {
+              openDrawer(job.label, slot, run);
+            }
+          });
+
+          function openDrawer(title, subtitle, run) {
+            $drawerTitle = $('#drawerTitle');
+            $drawerSubtitle = $('#drawerSubtitle');
+            $drawerMeta = $('#drawerMeta');
+            $drawerLog = $('#drawerLog');
+
+            $('#drawerTitle').text(title);
+            $('#drawerSubtitle').text(subtitle);
+
+            let meta = `<b>Status:</b> ${run.status ? run.status.toUpperCase() : 'UNKNOWN'}\n`;
+            meta += `<b>Time:</b> ${run.start || '-'} (Duration: ${run.duration_sec}s)\n`;
+            // meta += `<b>Command:</b> ${run.command || '-'}\n`;
+
+            $drawerMeta.html(meta);
+            $drawerLog.text(run.message || run.result || "(No output)");
+
+            drawer.show();
+
+            // Update URL without reload to allow sharing
+            // const newUrl = new URL(window.location);
+            // newUrl.searchParams.set('service', run.job || title); 
+            // window.history.pushState({}, '', newUrl);
+          }
+
+          // --- SYSTEM HEALTH (Existing Logic) ---
+          async function checkSystemHealth() {
+            const API_URL = "https://api-bandar.sssaham.com/worker-status";
+
+            try {
+              const res = await fetch(API_URL);
+              if (!res.ok) throw new Error("API Unreachable");
+              const data = await res.json();
+
+              // 1. Worker UI
+              const wStatus = data.worker.status;
+              const wDetails = data.worker.details;
+
+              const $wTextEl = $("#worker-status-text");
+              const $wDetailEl = $("#worker-status-detail");
+              const $wIconEl = $("#worker-icon-container");
+              const $wCard = $("#worker-card");
+
+              $("#worker-latency").text(`Latency: ${data.worker.latency_ms} ms`);
+
+              let wIconHtml = "";
+              let wClass = "";
+              let wBorder = "";
+
+              if (wStatus === "HEALTHY") {
+                wIconHtml = '<span class="text-success fs-2">✔</span>';
+                wClass = "text-success";
+                wBorder = "border-success";
+              } else if (wStatus === "WARNING" || wStatus === "ONLINE") {
+                wIconHtml = '<span class="text-warning fs-2">⚠</span>';
+                wClass = "text-warning";
+                wBorder = "border-warning";
+              } else {
+                wIconHtml = '<span class="text-danger fs-2">✖</span>';
+                wClass = "text-danger";
+                wBorder = "border-danger";
+              }
+
+              $wIconEl.html(wIconHtml);
+              $wTextEl.removeClass("text-success text-warning text-danger").addClass(wClass).text(wStatus);
+
+              if (typeof wDetails === 'object' && wDetails !== null) {
+                $wDetailEl.text(wDetails.status || JSON.stringify(wDetails));
+              } else {
+                $wDetailEl.text(String(wDetails));
+              }
+
+              $wCard.removeClass("border-success border-warning border-danger").addClass(wBorder);
+
+              // 2. Data Integrity UI
+              const iStatus = data.data_integrity.status;
+              const $iTextEl = $("#integrity-status-text");
+              const $iDetailEl = $("#integrity-detail");
+              const $iIconEl = $("#integrity-icon-container");
+              const $iBadge = $("#integrity-badge");
+              const $iCard = $("#integrity-card");
+
+              let iIconHtml = "";
+              let iClass = "";
+              let iBorder = "";
+
+              if (iStatus === "OK") {
+                iIconHtml = '<span class="text-success fs-2">✔</span>';
+                iClass = "text-success";
+                wBorder = "border-success";
+              } else if (iStatus === "LAGGING") {
+                iIconHtml = '<span class="text-warning fs-2">⏳</span>';
+                iClass = "text-warning";
+                iBorder = "border-warning";
+              } else {
+                iIconHtml = '<span class="text-danger fs-2">✖</span>';
+                iClass = "text-danger";
+                iBorder = "border-danger";
+              }
+
+              $iIconEl.html(iIconHtml);
+              $iTextEl.removeClass("text-success text-warning text-danger").addClass(iClass).text(iStatus === "OK" ? "DATA FLOWING" : iStatus);
+
+              if (data.data_integrity.last_file_age_ms !== -1) {
+                const ageSec = Math.round(data.data_integrity.last_file_age_ms / 1000);
+                $iDetailEl.text(`Last snapshot saved ${ageSec}s ago`);
+                $iBadge.text(`${ageSec}s lag`);
+              } else {
+                $iDetailEl.text(data.data_integrity.error || "No file found in current hour");
+                $iBadge.text("No Data");
+              }
+
+              $iCard.removeClass("border-success border-warning border-danger").addClass(iBorder);
+
+            } catch (e) {
+              console.error("System Health Check Failed", e);
+              $("#worker-status-text").text("Offline");
+              $("#worker-status-detail").text("Check internet / API URL");
+            }
+          }
+
+          // Initial check & interval
+          checkSystemHealth();
+          setInterval(checkSystemHealth, 30000); // 30s
+        });
+      </script>
+
+</body>
+
+</html>

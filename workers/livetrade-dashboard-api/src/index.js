@@ -1,4 +1,5 @@
 // workers/livetrade-dashboard-api/src/index.js
+import { getWorkerStatus } from './admin.js';
 
 // ==============================
 // CORS helper
@@ -412,146 +413,6 @@ async function getSymbolDetail(env, url) {
   );
 }
 
-// ==============================
-// WORKER STATUS & INTEGRITY CHECK
-// ==============================
-async function getWorkerStatus(env) {
-  const result = {
-    worker: {
-      name: "livetrade-taping",
-      status: "UNKNOWN",
-      details: null,
-      latency_ms: -1
-    },
-    data_integrity: {
-      status: "UNKNOWN",
-      last_file: null,
-      last_file_age_ms: -1,
-      bucket: "tape-data-saham",
-      path_checked: ""
-    },
-    ts: Date.now()
-  };
-
-  // 1. Cek Worker Status via Service Binding
-  if (env.TAPING) {
-    const start = Date.now();
-    try {
-      // Panggil endpoint root / dari livetrade-taping
-      const res = await env.TAPING.fetch("https://internal/");
-      const latency = Date.now() - start;
-
-      if (res.ok) {
-        const data = await res.json();
-        result.worker.status = "ONLINE"; // Worker responds
-        result.worker.details = data;
-        result.worker.latency_ms = latency;
-
-        // Cek status internal worker
-        // data.status biasanya "CONNECTED (LT + OB watchlist)" atau "Mati"
-        if (data.status && data.status.startsWith("CONNECTED")) {
-          result.worker.status = "HEALTHY";
-        } else {
-          result.worker.status = "WARNING"; // Responding but not connected
-        }
-
-      } else {
-        result.worker.status = "ERROR";
-        result.worker.details = `HTTP ${res.status}`;
-      }
-    } catch (err) {
-      result.worker.status = "UNREACHABLE";
-      result.worker.details = String(err);
-    }
-  } else {
-    result.worker.details = "Binding TAPING missing";
-  }
-
-  // 2. Cek Data Integrity (R2)
-  if (env.DATA_LAKE) {
-    const now = new Date();
-    // Cek path jam ini: raw_lt/YYYY/MM/DD/HH
-    // Format: raw_lt/2025/08/08/10
-    const pad = (n) => String(n).padStart(2, '0');
-    const pathPrefix = `raw_lt/${now.getFullYear()}/${pad(now.getMonth() + 1)}/${pad(now.getDate())}/${pad(now.getHours())}/`;
-
-    result.data_integrity.path_checked = pathPrefix;
-
-    try {
-      // List 1 file terakhir (lexicographically last usually implies latest timestamp if named by timestamp)
-      // Tapi R2 list order by default is key name.
-      // Kalau nama file = timestamp.json, maka lexicographical ~ chronological.
-      // Kita perlu daftar file, sort descending, ambil 1.
-      // Optimasi: List tidak support sort reverse native di standard S3 xml, tapi R2 list return keys sorted.
-      // Jadi kita ambil success, tapi mungkin kita butuh logic cursor kalau file banyak?
-      // Untuk cek "live", kita harap ada file baru-baru ini.
-      // Kita coba list tanpa limit ketat atau limit cukup besar lalu ambil yg terakhir? 
-      // Atau list limit 100, lalu ambil max. 
-      // Karena ini endpoint monitoring, kita tidak mau scan ribuan file.
-      // ASUMSI: File baru akan selalu di bagian bawah list (urutan nama file membesar). 
-      // Sayangnya list R2 mungkin pagination. 
-      // Workaround: Cek menit ini atau menit sebelumnya? Itu ribet.
-      // Kita list saja prefix jam ini. Kalau kosong, cek jam sebelumnya (jika menit < 5).
-
-      let objects = await env.DATA_LAKE.list({ prefix: pathPrefix });
-
-      // Jika jam baru mulai (misal menit 00:01), mungkin folder jam ini masih kosong.
-      // Cek jam sebelumnya jika kosong
-      if (objects.objects.length === 0 && now.getMinutes() < 5) {
-        const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
-        const prevPath = `raw_lt/${oneHourAgo.getFullYear()}/${pad(oneHourAgo.getMonth() + 1)}/${pad(oneHourAgo.getDate())}/${pad(oneHourAgo.getHours())}/`;
-        result.data_integrity.path_checked += ` OR ${prevPath}`;
-        const objPrev = await env.DATA_LAKE.list({ prefix: prevPath });
-        // Combine logic simple
-        if (objPrev.objects.length > 0) objects = objPrev;
-      }
-
-      if (objects.objects.length > 0) {
-        // Ambil yang terakhir di list (asumsi sorted by key ascending)
-        const lastObj = objects.objects[objects.objects.length - 1];
-        result.data_integrity.last_file = lastObj.key;
-
-        // Coba parse timestamp dari nama file jika format: .../1723456789000.json
-        // Filename: .../timestamp.json
-        const parts = lastObj.key.split('/');
-        const fname = parts[parts.length - 1];
-        const tsString = fname.replace('.json', '');
-        const ts = Number(tsString);
-
-        if (!isNaN(ts)) {
-          result.data_integrity.last_file_age_ms = Date.now() - ts;
-          // Status OK jika < 2 menit (120000ms) - asumsi data masuk setidaknya tiap menit
-          if (result.data_integrity.last_file_age_ms < 120000) {
-            result.data_integrity.status = "OK";
-          } else if (result.data_integrity.last_file_age_ms < 300000) {
-            result.data_integrity.status = "LAGGING"; // 2-5 mins delay
-          } else {
-            result.data_integrity.status = "STALE"; // > 5 mins
-          }
-        } else {
-          // Fallback pakai uploaded property jika ada (tapi R2 list obj punya uploaded date)
-          const uploaded = lastObj.uploaded;
-          const age = Date.now() - new Date(uploaded).getTime();
-          result.data_integrity.last_file_age_ms = age;
-          result.data_integrity.status = age < 120000 ? "OK" : "STALE";
-        }
-      } else {
-        result.data_integrity.status = "EMPTY"; // No data in current hour
-      }
-
-    } catch (err) {
-      result.data_integrity.status = "ERROR";
-      result.data_integrity.error = String(err);
-    }
-  }
-
-  return withCORS(
-    new Response(
-      JSON.stringify(result, null, 2),
-      { headers: { "Content-Type": "application/json" } }
-    )
-  );
-}
 
 // ==============================
 // MAIN HANDLER
@@ -621,6 +482,12 @@ export default {
       }
 
       // Monitoring Status Worker
+      // Monitoring Job Grid
+      if (pathname === "/job-monitoring") {
+        return getJobMonitoring(env, request);
+      }
+
+      // Existing routed
       if (pathname === "/worker-status") {
         return getWorkerStatus(env);
       }
