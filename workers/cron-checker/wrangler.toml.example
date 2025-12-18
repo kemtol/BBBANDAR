@@ -1,0 +1,25 @@
+name = "cron-checker"
+main = "src/index.js"
+compatibility_date = "2024-11-01"
+
+# Cron trigger - runs every minute to check and trigger workers
+[triggers]
+crons = ["* * * * *"]
+
+# KV namespace for storing worker execution state
+[[kv_namespaces]]
+binding = "CRON_STATE"
+id = "5a7ef6911df742faae88edd35228aeb5"
+
+# Service bindings for internal worker-to-worker communication
+[[services]]
+binding = "FUT_FETCHERS"
+service = "fut-fetchers"
+
+[[services]]
+binding = "FUT_FEATURES"
+service = "fut-features"
+
+[[services]]
+binding = "LIVETRADE_AGG"
+service = "livetrade-taping-agregator"

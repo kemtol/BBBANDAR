@@ -1,0 +1,12 @@
+name = "batch-delete"
+main = "src/index.js"
+compatibility_date = "2024-12-17"
+
+# R2 bucket bindings for both futures and saham data
+[[r2_buckets]]
+binding = "TAPE_DATA_FUTURES"
+bucket_name = "tape-data-futures"
+
+[[r2_buckets]]
+binding = "TAPE_DATA_SAHAM"
+bucket_name = "tape-data-saham"
