@@ -323,7 +323,16 @@
             const matchesJobId = rawKeys.some(k => jobDefinitions.find(j => j.id === k));
 
             if (matchesJobId) {
-              // --- NEW FORMAT: { "fetch_1m": { "09:30": "FAIL" }, ... } ---
+              // --- NEW FORMAT: { "fetch_1m": { "13:00": "FAIL", ... }, ... } ---
+              // Detect dynamic slots from the data itself
+              const firstJobData = Object.values(allLatestData || {}).find(v => v && typeof v === 'object');
+              if (firstJobData) {
+                const dynamicSlots = Object.keys(firstJobData).sort();
+                if (dynamicSlots.length > 0) {
+                  day.slots = dynamicSlots;
+                }
+              }
+
               for (const job of day.jobs) {
                 const statusMap = allLatestData[job.id];
                 job.runs = [];
