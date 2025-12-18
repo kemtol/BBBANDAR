@@ -311,13 +311,44 @@
             return 'skip';
           }
 
-          // Adapter: Transforms flat API response -> Nested Grid Structure
           function adaptDataForGrid(allLatestData, jobDefinitions, slotDefinitions, dateStr) {
             const day = {
               date: dateStr,
               slots: [...slotDefinitions],
               jobs: JSON.parse(JSON.stringify(jobDefinitions))
             };
+
+            // NEW FORMAT DETECTION: Check if keys match Job IDs
+            const rawKeys = Object.keys(allLatestData || {});
+            const matchesJobId = rawKeys.some(k => jobDefinitions.find(j => j.id === k));
+
+            if (matchesJobId) {
+              // --- NEW FORMAT: { "fetch_1m": { "09:30": "FAIL" }, ... } ---
+              for (const job of day.jobs) {
+                const statusMap = allLatestData[job.id];
+                job.runs = [];
+                if (!statusMap) continue;
+
+                for (const slot of day.slots) {
+                  let status = statusMap[slot];
+                  if (status && status !== 'PENDING') {
+                    let runStatus = 'skip';
+                    if (status === 'OK') runStatus = 'success';
+                    else if (status === 'FAIL') runStatus = 'error';
+                    else if (status === 'RUN') runStatus = 'start';
+
+                    job.runs.push({
+                      slot,
+                      start: dateStr + ' ' + slot,
+                      status: runStatus,
+                      message: 'Sanity Check Result: ' + status,
+                      duration_sec: 0
+                    });
+                  }
+                }
+              }
+              return day;
+            }
 
             // Group latest runs by job ID
             const items = Object.values(allLatestData || {}).filter(it => it != null);
