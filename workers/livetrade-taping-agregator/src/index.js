@@ -28,13 +28,273 @@ export default {
     const url = new URL(request.url);
     const pathname = url.pathname;
 
+    // Cron-checker integration endpoints
+    if (request.method === "POST" && pathname === "/run") {
+      try {
+        console.log("🚀 /run endpoint triggered by cron-checker");
+        await runDailyCron(env);
+        // TODO: Add compression logic
+
+        return Response.json({
+          ok: true,
+          message: "Aggregation completed",
+          timestamp: new Date().toISOString()
+        });
+      } catch (error) {
+        console.error("Error in /run:", error);
+        return Response.json(
+          { ok: false, error: error.message },
+          { status: 500 }
+        );
+      }
+    }
+
+    if (request.method === "GET" && pathname === "/schedule") {
+      return Response.json({
+        ok: true,
+        worker: 'livetrade-taping-agregator',
+        schedule: {
+          interval: '1h',
+          cron_expression: '0 * * * *'
+        }
+      });
+    }
+
     if (pathname === "/step-backfill") {
       return stepBackfill(env, url);
     }
 
-    // 🔥 ROUTE BARU: gabung LT + OB
     if (pathname === "/signal-realtime") {
       return realtimeSignal(env, url);
+    }
+
+    // Verify integrity endpoint - compare compressed vs raw_lt
+    if (request.method === "GET" && pathname === "/verify-integrity") {
+      try {
+        const date = url.searchParams.get("date");
+        if (!date) {
+          return Response.json({ error: "Missing ?date=YYYY-MM-DD" }, { status: 400 });
+        }
+
+        const [y, m, d] = date.split('-');
+        const compressedKey = `raw_lt_compressed/${date}.jsonl.gz`;
+        const rawPrefix = `raw_lt/${y}/${m}/${d}/`;
+
+        // Check if compressed file exists
+        const compressed = await env.DATA_LAKE.get(compressedKey);
+        if (!compressed) {
+          return Response.json({
+            ok: false,
+            error: "Compressed file not found",
+            compressedKey,
+            verified: false
+          });
+        }
+
+        // Decompress and parse
+        const decompStream = compressed.body.pipeThrough(new DecompressionStream('gzip'));
+        const decompText = await new Response(decompStream).text();
+        const compressedLines = decompText.trim().split('\n');
+
+        // Sample random lines from raw_lt
+        const rawSamples = [];
+        const sampleCount = 10; // Sample 10 random files
+
+        const listed = await env.DATA_LAKE.list({ prefix: rawPrefix, limit: 100 });
+        if (listed.objects.length === 0) {
+          return Response.json({
+            ok: false,
+            error: "No raw files found",
+            rawPrefix,
+            verified: false
+          });
+        }
+
+        // Pick random files
+        const randomFiles = [];
+        for (let i = 0; i < Math.min(sampleCount, listed.objects.length); i++) {
+          const randomIndex = Math.floor(Math.random() * listed.objects.length);
+          randomFiles.push(listed.objects[randomIndex]);
+        }
+
+        for (const file of randomFiles) {
+          const obj = await env.DATA_LAKE.get(file.key);
+          const text = await obj.text();
+          const lines = text.trim().split('\n');
+          rawSamples.push(...lines.slice(0, 3)); // 3 lines per file
+        }
+
+        // Check if samples exist in compressed
+        let matchCount = 0;
+        for (const sample of rawSamples) {
+          if (compressedLines.includes(sample)) {
+            matchCount++;
+          }
+        }
+
+        const matchRatio = rawSamples.length > 0 ? matchCount / rawSamples.length : 0;
+        const verified = matchRatio >= 0.8; // 80% match threshold
+
+        return Response.json({
+          ok: true,
+          date,
+          verified,
+          compressedLines: compressedLines.length,
+          sampledLines: rawSamples.length,
+          matchedLines: matchCount,
+          matchRatio: Number(matchRatio.toFixed(2)),
+          threshold: 0.8,
+          status: verified ? "PASS" : "FAIL",
+          message: verified ?
+            "Integrity verified - safe to delete raw files" :
+            "Integrity check failed - DO NOT delete raw files"
+        });
+      } catch (err) {
+        return Response.json({ ok: false, error: err.message, verified: false }, { status: 500 });
+      }
+    }
+
+    // Force delete for specific date - FIXED VERSION with limits
+    if (request.method === "POST" && pathname === "/force-delete-date") {
+      try {
+        const date = url.searchParams.get("date");
+        if (!date) {
+          return Response.json({ error: "Missing ?date=YYYY-MM-DD" }, { status: 400 });
+        }
+
+        const maxDelete = parseInt(url.searchParams.get("max") || "1000", 10); // Limit per invocation
+        const [y, m, d] = date.split('-');
+        const prefix = `raw_lt/${y}/${m}/${d}/`;
+
+        console.log(`🗑️ Force deleting up to ${maxDelete} files from: ${prefix}`);
+
+        let deleted = 0;
+        let cursor;
+        let totalListed = 0;
+
+        // List and delete in batches
+        outer: do {
+          const listed = await env.DATA_LAKE.list({ prefix, cursor, limit: 100 });
+          totalListed += listed.objects.length;
+
+          // Delete files ONE BY ONE (not parallel)
+          for (const obj of listed.objects) {
+            if (deleted >= maxDelete) {
+              console.log(`⚠️ Reached max deletion limit: ${maxDelete}`);
+              break outer;
+            }
+
+            try {
+              await env.DATA_LAKE.delete(obj.key);
+              deleted++;
+              if (deleted % 100 === 0) {
+                console.log(`Progress: ${deleted} files deleted...`);
+              }
+            } catch (err) {
+              console.error(`Failed to delete ${obj.key}:`, err.message);
+            }
+          }
+
+          cursor = listed.truncated ? listed.cursor : null;
+        } while (cursor && deleted < maxDelete);
+
+        console.log(`✅ Deletion complete: ${deleted} files deleted from ${prefix}`);
+
+        return Response.json({
+          ok: true,
+          deleted,
+          prefix,
+          date,
+          maxLimit: maxDelete,
+          reachedLimit: deleted >= maxDelete,
+          message: deleted >= maxDelete ?
+            `Deleted ${deleted} files (limit reached). Call again to continue.` :
+            `Deleted ${deleted} files (all done).`
+        });
+      } catch (err) {
+        return Response.json({ ok: false, error: err.message }, { status: 500 });
+      }
+    }
+
+    // Inspection endpoint - list what's in raw_lt
+    if (request.method === "GET" && pathname === "/inspect-raw-lt") {
+      try {
+        const dateMap = new Map();
+        let cursor;
+        let totalFiles = 0;
+        const limit = parseInt(url.searchParams.get("limit") || "2000", 10);
+
+        do {
+          const listed = await env.DATA_LAKE.list({
+            prefix: 'raw_lt/',
+            cursor,
+            limit: 100
+          });
+
+          for (const obj of listed.objects) {
+            const match = obj.key.match(/^raw_lt\/(\d{4})\/(\d{2})\/(\d{2})\//);
+            if (match) {
+              const [_, y, m, d] = match;
+              const dateKey = `${y}-${m}-${d}`;
+              dateMap.set(dateKey, (dateMap.get(dateKey) || 0) + 1);
+              totalFiles++;
+            }
+          }
+
+          cursor = listed.truncated ? listed.cursor : null;
+
+          if (totalFiles >= limit) break;
+        } while (cursor);
+
+        const dates = Array.from(dateMap.entries())
+          .map(([date, count]) => ({ date, fileCount: count }))
+          .sort((a, b) => a.date.localeCompare(b.date));
+
+        return Response.json({
+          ok: true,
+          totalFiles,
+          dateCount: dates.length,
+          dates,
+          oldest: dates[0]?.date,
+          newest: dates[dates.length - 1]?.date
+        });
+      } catch (err) {
+        return Response.json({ ok: false, error: err.message }, { status: 500 });
+      }
+    }
+
+    // Test endpoints for compression and deletion
+    if (request.method === "POST" && pathname === "/test-compress") {
+      const date = url.searchParams.get("date");
+      if (!date) {
+        return Response.json({ error: "Missing ?date=YYYY-MM-DD" }, { status: 400 });
+      }
+      try {
+        const result = await compressRawLtForDate(env, date);
+        return Response.json({ ok: true, result });
+      } catch (err) {
+        return Response.json({ ok: false, error: err.message }, { status: 500 });
+      }
+    }
+
+    if (request.method === "POST" && pathname === "/test-delete") {
+      const retention = parseInt(url.searchParams.get("retention") || "7", 10);
+      const dryRun = url.searchParams.get("dryRun") === "true";
+
+      try {
+        if (dryRun) {
+          return Response.json({
+            ok: true,
+            message: "Dry-run mode - use dryRun=false to actually delete",
+            retention,
+            note: "Actual deletion not implemented in dry-run, use live endpoint"
+          });
+        }
+        const result = await deleteOldRawLt(env, retention);
+        return Response.json({ ok: true, result });
+      } catch (err) {
+        return Response.json({ ok: false, error: err.message }, { status: 500 });
+      }
     }
 
     if (pathname === "/" || pathname === "") {
@@ -128,6 +388,31 @@ async function runDailyCron(env) {
       // HANYA kalau market tutup baru kita anggap EOD final
       state.done = true;
       console.log("✅ Market closed → tandai backfill hari ini FINAL.");
+
+      // 🗜️ COMPRESSION & CLEANUP - Run after successful aggregation
+      console.log("🧹 Starting post-aggregation cleanup...");
+
+      // Compress YESTERDAY's data (safer than today)
+      const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+      const yY = yesterday.getUTCFullYear();
+      const yM = String(yesterday.getUTCMonth() + 1).padStart(2, "0");
+      const yD = String(yesterday.getUTCDate()).padStart(2, "0");
+      const yesterdayStr = `${yY}-${yM}-${yD}`;
+
+      try {
+        const compressResult = await compressRawLtForDate(env, yesterdayStr);
+        console.log("📦 Compression result:", JSON.stringify(compressResult));
+      } catch (err) {
+        console.error("❌ Compression failed:", err);
+      }
+
+      // Delete old raw_lt (7 days retention)
+      try {
+        const deleteResult = await deleteOldRawLt(env, 7);
+        console.log("🗑️ Deletion result:", JSON.stringify(deleteResult));
+      } catch (err) {
+        console.error("❌ Deletion failed:", err);
+      }
     } else {
       // Sesi 1 selesai / break / sesi 2 masih jalan → jangan final
       state.done = false;
@@ -905,3 +1190,194 @@ async function stepBackfill(env, url) {
     { headers: { "Content-Type": "application/json" } }
   );
 }
+
+/**
+ * Compress all raw_lt files for a specific date into a single gzipped file
+ * @param {Object} env - Worker environment bindings
+ * @param {string} dateStr - Date in YYYY-MM-DD format
+ * @returns {Object} - Compression result with stats
+ */
+async function compressRawLtForDate(env, dateStr) {
+  const [y, m, d] = dateStr.split('-');
+  const prefix = `raw_lt/${y}/${m}/${d}/`;
+  const outputKey = `raw_lt_compressed/${dateStr}.jsonl.gz`;
+
+  console.log(`🗜️ Starting compression for ${dateStr}...`);
+
+  // Check if already compressed
+  const existing = await env.DATA_LAKE.head(outputKey);
+  if (existing) {
+    console.log(`✅ Already compressed: ${outputKey}`);
+    return { compressed: true, skipReason: 'already_exists', outputKey };
+  }
+
+  // List files with a reasonable limit to avoid API issues
+  const MAX_FILES = 500; // Limit to avoid "Too many API requests" error
+  const files = [];
+  let cursor;
+  let listCount = 0;
+  const MAX_LIST_CALLS = 5; // Limit list operations
+
+  do {
+    const listed = await env.DATA_LAKE.list({ prefix, cursor, limit: 100 });
+    files.push(...listed.objects);
+    cursor = listed.truncated ? listed.cursor : null;
+    listCount++;
+
+    // Stop if we have enough files or made too many list calls
+    if (files.length >= MAX_FILES || listCount >= MAX_LIST_CALLS) {
+      console.log(`⚠️ Reached limit: ${files.length} files listed in ${listCount} calls`);
+      break;
+    }
+  } while (cursor);
+
+  if (files.length === 0) {
+    console.log(`⚠️ No files to compress for ${dateStr}`);
+    return { compressed: false, skipReason: 'no_files' };
+  }
+
+  // Fetch and concatenate files (limit to MAX_FILES to avoid memory/API issues)
+  const filesToProcess = files.slice(0, MAX_FILES);
+  const allLines = [];
+  let originalSize = 0;
+
+  for (const file of filesToProcess) {
+    const obj = await env.DATA_LAKE.get(file.key);
+    const text = await obj.text();
+    const trimmed = text.trim();
+    if (trimmed) {
+      allLines.push(trimmed);
+    }
+    originalSize += file.size;
+  }
+
+  const combined = allLines.join('\n');
+
+  // Compress using CompressionStream and collect into ArrayBuffer
+  const stream = new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(combined));
+      controller.close();
+    }
+  });
+
+  const compressedStream = stream.pipeThrough(
+    new CompressionStream('gzip')
+  );
+
+  // Collect stream into buffer
+  const reader = compressedStream.getReader();
+  const chunks = [];
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+  }
+
+  // Combine chunks into single Uint8Array
+  const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
+  const compressedData = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    compressedData.set(chunk, offset);
+    offset += chunk.length;
+  }
+
+  // Upload compressed file with known length
+  await env.DATA_LAKE.put(outputKey, compressedData, {
+    httpMetadata: {
+      contentType: 'application/gzip'
+    }
+  });
+
+  const compressedSize = compressedData.length;
+  const compressionRatio = Math.round((compressedSize / originalSize) * 100);
+
+  console.log(`✅ Compressed ${dateStr}: ${files.length} files, ${originalSize}→${compressedSize} bytes (${compressionRatio}%)`);
+
+  return {
+    compressed: true,
+    fileCount: files.length,
+    originalSize,
+    compressedSize,
+    compressionRatio,
+    outputKey
+  };
+}
+
+/**
+ * Delete raw_lt folders older than retentionDays
+ * @param {Object} env - Worker environment bindings  
+ * @param {number} retentionDays - Keep data for this many days
+ * @returns {Object} - Deletion result with stats
+ */
+async function deleteOldRawLt(env, retentionDays = 7) {
+  const now = new Date();
+  const cutoffDate = new Date(now.getTime() - retentionDays * 24 * 60 * 60 * 1000);
+
+  const cutoffY = cutoffDate.getUTCFullYear();
+  const cutoffM = String(cutoffDate.getUTCMonth() + 1).padStart(2, '0');
+  const cutoffD = String(cutoffDate.getUTCDate()).padStart(2, '0');
+  const cutoffStr = `${cutoffY}-${cutoffM}-${cutoffD}`;
+
+  console.log(`🗑️ Deleting raw_lt older than ${cutoffStr} (${retentionDays} days retention)`);
+
+  // List all files in raw_lt with date-based filtering
+  const toDelete = [];
+  const datesFound = new Set();
+  let cursor;
+
+  do {
+    const listed = await env.DATA_LAKE.list({
+      prefix: 'raw_lt/',
+      cursor,
+      limit: 1000
+    });
+
+    for (const obj of listed.objects) {
+      // Parse date from path: raw_lt/YYYY/MM/DD/...
+      const match = obj.key.match(/^raw_lt\/(\d{4})\/(\d{2})\/(\d{2})\//);
+      if (!match) continue;
+
+      const [_, y, m, d] = match;
+      const fileDate = `${y}-${m}-${d}`;
+      datesFound.add(fileDate);
+
+      // Only delete if older than cutoff
+      if (fileDate < cutoffStr) {
+        toDelete.push(obj.key);
+      }
+    }
+
+    cursor = listed.truncated ? listed.cursor : null;
+  } while (cursor);
+
+  if (toDelete.length === 0) {
+    console.log(`✅ No old files to delete (found dates: ${Array.from(datesFound).sort()})`);
+    return { deleted: false, fileCount: 0, cutoffDate: cutoffStr, skipReason: 'no_old_files' };
+  }
+
+  // Delete in batches
+  const batchSize = 100;
+  let deleted = 0;
+
+  for (let i = 0; i < toDelete.length; i += batchSize) {
+    const batch = toDelete.slice(i, i + batchSize);
+    await Promise.all(batch.map(key =>
+      env.DATA_LAKE.delete(key).catch(err =>
+        console.error(`Failed to delete ${key}:`, err)
+      )
+    ));
+    deleted += batch.length;
+  }
+
+  console.log(`✅ Deleted ${deleted} old raw_lt files (cutoff: ${cutoffStr})`);
+
+  return {
+    deleted: true,
+    fileCount: deleted,
+    cutoffDate: cutoffStr,
+    datesDeleted: Array.from(datesFound).filter(d => d < cutoffStr).sort()
+  };
+}
+

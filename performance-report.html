@@ -1,23 +1,45 @@
 <!doctype html>
 <html lang="id">
+
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Scalping Trading Performance & Laddering Strategy — Bootstrap</title>
   <!-- Bootstrap CSS -->
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"
+    integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
   <!-- (Opsional) Font Awesome untuk ikon -->
   <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" rel="stylesheet">
   <style>
-    body { background-color: #f8f9fa; }
-    header.page-header h1 { letter-spacing: .2px; }
-	main{ max-width: 960px!important; }
-    .figure > img { box-shadow: 0 .125rem .25rem rgba(0,0,0,.075); }
-    .table caption { caption-side: top; font-weight: 600; }
+    body {
+      background-color: #f8f9fa;
+    }
+
+    header.page-header h1 {
+      letter-spacing: .2px;
+    }
+
+    main {
+      max-width: 960px !important;
+    }
+
+    .figure>img {
+      box-shadow: 0 .125rem .25rem rgba(0, 0, 0, .075);
+    }
+
+    .table caption {
+      caption-side: top;
+      font-weight: 600;
+    }
+
     /* Warna lembut untuk callout */
-    .callout { background: #fff; border-left: .25rem solid var(--bs-primary); }
+    .callout {
+      background: #fff;
+      border-left: .25rem solid var(--bs-primary);
+    }
   </style>
 </head>
+
 <body>
   <!-- Navbar sederhana -->
   <nav class="d-none navbar navbar-expand-lg bg-white border-bottom sticky-top">
@@ -25,7 +47,8 @@
       <a class="navbar-brand fw-semibold" href="#">
         <i class="fa-solid fa-chart-line me-2"></i>Trading Performance
       </a>
-      <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#nav" aria-controls="nav" aria-expanded="false" aria-label="Toggle navigation">
+      <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#nav" aria-controls="nav"
+        aria-expanded="false" aria-label="Toggle navigation">
         <span class="navbar-toggler-icon"></span>
       </button>
       <div id="nav" class="collapse navbar-collapse">
@@ -45,8 +68,10 @@
       <h1 class="display-6 fw-bold mb-1">Trading Performance</h1>
       <p class="text-muted mb-0">Auditable Using Indopremiere Sekuritas</p>
       <small class="text-secondary">Last Update 08 Aug 2025</small>
-      <hr class="mt-3"/>
+      <hr class="mt-3" />
     </header>
+
+
 
     <!-- ===== Executive Summary ===== -->
     <section id="exec-summary" class="mb-5">
@@ -60,36 +85,90 @@
             </tr>
           </thead>
           <tbody>
-            <tr><td><strong>Total Hari Trading</strong></td><td>56 hari</td></tr>
-            <tr><td><strong>Total Hari Kalender</strong></td><td>102 hari <em>(28 Apr 2025 – 7 Agu 2025)</em></td></tr>
-            <tr><td><strong>Max Allocation Harian</strong></td><td>Rp <strong>26.840.719</strong> <em>(tertinggi pada 18 Jul 2025)</em></td></tr>
-            <tr><td><strong>Rata-rata Allocation Harian</strong></td><td>Rp <strong>3.064.593</strong> <em>(mean allocation, day-level)</em></td></tr>
-            <tr><td><strong>Rata-rata Return Harian</strong></td><td><strong>4,23%</strong> <em>(pakai mean allocation per hari)</em></td></tr>
-            <tr><td><strong>Standar Deviasi Harian</strong></td><td><strong>16,76%</strong> <em>(pakai mean allocation per hari)</em></td></tr>
-            <tr><td><strong>Capital Utilization Harian</strong></td><td><strong>0,204%</strong> dari total equity <strong>Rp 1,5 M</strong></td></tr>
-            <tr><td><strong>Total PNL</strong></td><td>Rp <strong>6.531.379</strong></td></tr>
-            <tr><td><strong>Rata-rata PNL per Hari</strong></td><td>Rp <strong>116.631</strong></td></tr>
-            <tr><td><strong>Jumlah Hari Menang</strong></td><td>31 hari</td></tr>
-            <tr><td><strong>Jumlah Hari Kalah</strong></td><td>25 hari</td></tr>
-            <tr><td><strong>Win Rate</strong></td><td><strong>55,36%</strong></td></tr>
-            <tr><td><strong>Avg Reward (Win Day)</strong></td><td>Rp <strong>459.665</strong></td></tr>
-            <tr><td><strong>Avg Loss (Loss Day)</strong></td><td>Rp <strong>261.839</strong></td></tr>
-            <tr><td><strong>Risk:Reward Ratio</strong></td><td><strong>1 : 1,76</strong></td></tr>
-            <tr><td><strong>Expectancy per Risk Unit</strong></td><td><strong>+0,53</strong> <em>(≈ <strong>+53%</strong>)</em></td></tr>
+            <tr>
+              <td><strong>Total Hari Trading</strong></td>
+              <td>56 hari</td>
+            </tr>
+            <tr>
+              <td><strong>Total Hari Kalender</strong></td>
+              <td>102 hari <em>(28 Apr 2025 – 7 Agu 2025)</em></td>
+            </tr>
+            <tr>
+              <td><strong>Max Allocation Harian</strong></td>
+              <td>Rp <strong>26.840.719</strong> <em>(tertinggi pada 18 Jul 2025)</em></td>
+            </tr>
+            <tr>
+              <td><strong>Rata-rata Allocation Harian</strong></td>
+              <td>Rp <strong>3.064.593</strong> <em>(mean allocation, day-level)</em></td>
+            </tr>
+            <tr>
+              <td><strong>Rata-rata Return Harian</strong></td>
+              <td><strong>4,23%</strong> <em>(pakai mean allocation per hari)</em></td>
+            </tr>
+            <tr>
+              <td><strong>Standar Deviasi Harian</strong></td>
+              <td><strong>16,76%</strong> <em>(pakai mean allocation per hari)</em></td>
+            </tr>
+            <tr>
+              <td><strong>Capital Utilization Harian</strong></td>
+              <td><strong>0,204%</strong> dari total equity <strong>Rp 1,5 M</strong></td>
+            </tr>
+            <tr>
+              <td><strong>Total PNL</strong></td>
+              <td>Rp <strong>6.531.379</strong></td>
+            </tr>
+            <tr>
+              <td><strong>Rata-rata PNL per Hari</strong></td>
+              <td>Rp <strong>116.631</strong></td>
+            </tr>
+            <tr>
+              <td><strong>Jumlah Hari Menang</strong></td>
+              <td>31 hari</td>
+            </tr>
+            <tr>
+              <td><strong>Jumlah Hari Kalah</strong></td>
+              <td>25 hari</td>
+            </tr>
+            <tr>
+              <td><strong>Win Rate</strong></td>
+              <td><strong>55,36%</strong></td>
+            </tr>
+            <tr>
+              <td><strong>Avg Reward (Win Day)</strong></td>
+              <td>Rp <strong>459.665</strong></td>
+            </tr>
+            <tr>
+              <td><strong>Avg Loss (Loss Day)</strong></td>
+              <td>Rp <strong>261.839</strong></td>
+            </tr>
+            <tr>
+              <td><strong>Risk:Reward Ratio</strong></td>
+              <td><strong>1 : 1,76</strong></td>
+            </tr>
+            <tr>
+              <td><strong>Expectancy per Risk Unit</strong></td>
+              <td><strong>+0,53</strong> <em>(≈ <strong>+53%</strong>)</em></td>
+            </tr>
           </tbody>
         </table>
       </div>
 
       <figure class="figure d-block my-3">
-        <img class="figure-img img-fluid rounded" src="Scalping%20Trading%20Performance%20&amp;%20Laddering%20Strategy%2024069351171e80628fe2ccdcd161fb69/output(1).png" alt="Equity curve screenshot">
+        <img class="figure-img img-fluid rounded"
+          src="Scalping%20Trading%20Performance%20&amp;%20Laddering%20Strategy%2024069351171e80628fe2ccdcd161fb69/output(1).png"
+          alt="Equity curve screenshot">
       </figure>
       <figure class="figure d-block my-3">
-        <img class="figure-img img-fluid rounded" src="Scalping%20Trading%20Performance%20&amp;%20Laddering%20Strategy%2024069351171e80628fe2ccdcd161fb69/output(2).png" alt="PNL distribution screenshot">
+        <img class="figure-img img-fluid rounded"
+          src="Scalping%20Trading%20Performance%20&amp;%20Laddering%20Strategy%2024069351171e80628fe2ccdcd161fb69/output(2).png"
+          alt="PNL distribution screenshot">
       </figure>
 
       <div class="callout p-3 border rounded">
         <figure class="mb-0">
-          <blockquote class="blockquote mb-2">Strategi menunjukkan edge positif dengan win rate &gt;50% dan RRR sehat. Trading dilakukan secara full liquid harian dengan max allocation saat ini sebesar Rp 10 juta/hari, tanpa penumpukan posisi.</blockquote>
+          <blockquote class="blockquote mb-2">Strategi menunjukkan edge positif dengan win rate &gt;50% dan RRR sehat.
+            Trading dilakukan secara full liquid harian dengan max allocation saat ini sebesar Rp 10 juta/hari, tanpa
+            penumpukan posisi.</blockquote>
         </figure>
       </div>
     </section>
@@ -108,15 +187,60 @@
             </tr>
           </thead>
           <tbody>
-            <tr><td>1</td><td><strong>Harga naik &gt; +15%</strong></td><td>Menuju atau menyentuh ARA</td><td></td></tr>
-            <tr><td>2</td><td><strong>Candle hijau tebal (bullish)</strong></td><td>Tanpa ekor atas panjang</td><td></td></tr>
-            <tr><td>3</td><td><strong>Volume &gt; 2x rata-rata 5 hari</strong></td><td>Breakout valid / niat bandar</td><td></td></tr>
-            <tr><td>4</td><td><strong>OBV naik tajam</strong></td><td>Akumulasi besar, bukan markup</td><td></td></tr>
-            <tr><td>5</td><td><strong>Bid makin tebal, offer tipis</strong></td><td>Tanda tekanan beli real</td><td></td></tr>
-            <tr><td>6</td><td><strong>Broker dominan net buy</strong></td><td>1-2 broker dominasi bid besar</td><td></td></tr>
-            <tr><td>7</td><td><strong>Tidak ada distribusi di offer</strong></td><td>Tidak ada lot besar di atas</td><td></td></tr>
-            <tr><td>8</td><td><strong>Breakout dari base volume</strong></td><td>Lewat resistance konsolidasi</td><td></td></tr>
-            <tr><td>9</td><td><strong>Entry Time</strong></td><td>15 menit sebelum closing</td><td></td></tr>
+            <tr>
+              <td>1</td>
+              <td><strong>Harga naik &gt; +15%</strong></td>
+              <td>Menuju atau menyentuh ARA</td>
+              <td></td>
+            </tr>
+            <tr>
+              <td>2</td>
+              <td><strong>Candle hijau tebal (bullish)</strong></td>
+              <td>Tanpa ekor atas panjang</td>
+              <td></td>
+            </tr>
+            <tr>
+              <td>3</td>
+              <td><strong>Volume &gt; 2x rata-rata 5 hari</strong></td>
+              <td>Breakout valid / niat bandar</td>
+              <td></td>
+            </tr>
+            <tr>
+              <td>4</td>
+              <td><strong>OBV naik tajam</strong></td>
+              <td>Akumulasi besar, bukan markup</td>
+              <td></td>
+            </tr>
+            <tr>
+              <td>5</td>
+              <td><strong>Bid makin tebal, offer tipis</strong></td>
+              <td>Tanda tekanan beli real</td>
+              <td></td>
+            </tr>
+            <tr>
+              <td>6</td>
+              <td><strong>Broker dominan net buy</strong></td>
+              <td>1-2 broker dominasi bid besar</td>
+              <td></td>
+            </tr>
+            <tr>
+              <td>7</td>
+              <td><strong>Tidak ada distribusi di offer</strong></td>
+              <td>Tidak ada lot besar di atas</td>
+              <td></td>
+            </tr>
+            <tr>
+              <td>8</td>
+              <td><strong>Breakout dari base volume</strong></td>
+              <td>Lewat resistance konsolidasi</td>
+              <td></td>
+            </tr>
+            <tr>
+              <td>9</td>
+              <td><strong>Entry Time</strong></td>
+              <td>15 menit sebelum closing</td>
+              <td></td>
+            </tr>
           </tbody>
         </table>
       </div>
@@ -134,18 +258,39 @@
             </tr>
           </thead>
           <tbody>
-            <tr><td><strong>Sharpe Ratio</strong></td><td><strong>0,25 (harian) / 4,00 (annualized)</strong></td></tr>
-            <tr><td><strong>Beta vs IHSG</strong></td><td><strong>0,37</strong> <em>(sensitivitas rendah, pergerakan tidak terlalu tergantung IHSG)</em></td></tr>
-            <tr><td><strong>Alpha (daily)</strong></td><td><strong>+0,036</strong> <em>(≈ <strong>+3,6%/hari</strong>)</em></td></tr>
-            <tr><td><strong>Alpha (annualized)</strong></td><td><strong>≈ +9,0</strong> <em>(≈ <strong>+900%</strong>; annualisasi dari 56 data—pakai untuk perbandingan internal, jangan dibaca literal)</em></td></tr>
-            <tr><td><strong>R² (goodness of fit)</strong></td><td><strong>0,02</strong> <em>(99% variasi return dijelaskan faktor selain IHSG)</em></td></tr>
-            <tr><td><strong>Observations</strong></td><td><strong>56</strong> hari (28 Apr – 8 Agu 2025)</td></tr>
+            <tr>
+              <td><strong>Sharpe Ratio</strong></td>
+              <td><strong>0,25 (harian) / 4,00 (annualized)</strong></td>
+            </tr>
+            <tr>
+              <td><strong>Beta vs IHSG</strong></td>
+              <td><strong>0,37</strong> <em>(sensitivitas rendah, pergerakan tidak terlalu tergantung IHSG)</em></td>
+            </tr>
+            <tr>
+              <td><strong>Alpha (daily)</strong></td>
+              <td><strong>+0,036</strong> <em>(≈ <strong>+3,6%/hari</strong>)</em></td>
+            </tr>
+            <tr>
+              <td><strong>Alpha (annualized)</strong></td>
+              <td><strong>≈ +9,0</strong> <em>(≈ <strong>+900%</strong>; annualisasi dari 56 data—pakai untuk
+                  perbandingan internal, jangan dibaca literal)</em></td>
+            </tr>
+            <tr>
+              <td><strong>R² (goodness of fit)</strong></td>
+              <td><strong>0,02</strong> <em>(99% variasi return dijelaskan faktor selain IHSG)</em></td>
+            </tr>
+            <tr>
+              <td><strong>Observations</strong></td>
+              <td><strong>56</strong> hari (28 Apr – 8 Agu 2025)</td>
+            </tr>
           </tbody>
         </table>
       </div>
 
       <figure class="figure d-block my-3">
-        <img class="figure-img img-fluid rounded" src="Scalping%20Trading%20Performance%20&amp;%20Laddering%20Strategy%2024069351171e80628fe2ccdcd161fb69/output(4).png" alt="Risk metrics chart">
+        <img class="figure-img img-fluid rounded"
+          src="Scalping%20Trading%20Performance%20&amp;%20Laddering%20Strategy%2024069351171e80628fe2ccdcd161fb69/output(4).png"
+          alt="Risk metrics chart">
       </figure>
 
       <div class="table-responsive">
@@ -159,25 +304,55 @@
             </tr>
           </thead>
           <tbody>
-            <tr><td>Strategi Anda</td><td><strong>4.00</strong></td><td>Return harian = PNL ÷ mean allocation per hari; periode <strong>28 Apr–7 Agu 2025</strong></td></tr>
-            <tr><td>IHSG</td><td><strong>3.35</strong></td><td>Dari CSV IHSG yang di-upload; log-return harian, annualized</td></tr>
-            <tr><td>S&amp;P 500 (Ref)</td><td><strong>0.60</strong></td><td>Angka referensi jangka panjang, <strong>bukan</strong> periode yang sama</td></tr>
-            <tr><td>Median Hedge Fund</td><td><strong>1.50</strong></td><td>Referensi industri</td></tr>
-            <tr><td>Top Decile Hedge Fund</td><td><strong>2.80</strong></td><td>Referensi industri</td></tr>
-            <tr><td>Bottom Decile Hedge Fund</td><td><strong>0.30</strong></td><td>Referensi industri</td></tr>
+            <tr>
+              <td>Strategi Anda</td>
+              <td><strong>4.00</strong></td>
+              <td>Return harian = PNL ÷ mean allocation per hari; periode <strong>28 Apr–7 Agu 2025</strong></td>
+            </tr>
+            <tr>
+              <td>IHSG</td>
+              <td><strong>3.35</strong></td>
+              <td>Dari CSV IHSG yang di-upload; log-return harian, annualized</td>
+            </tr>
+            <tr>
+              <td>S&amp;P 500 (Ref)</td>
+              <td><strong>0.60</strong></td>
+              <td>Angka referensi jangka panjang, <strong>bukan</strong> periode yang sama</td>
+            </tr>
+            <tr>
+              <td>Median Hedge Fund</td>
+              <td><strong>1.50</strong></td>
+              <td>Referensi industri</td>
+            </tr>
+            <tr>
+              <td>Top Decile Hedge Fund</td>
+              <td><strong>2.80</strong></td>
+              <td>Referensi industri</td>
+            </tr>
+            <tr>
+              <td>Bottom Decile Hedge Fund</td>
+              <td><strong>0.30</strong></td>
+              <td>Referensi industri</td>
+            </tr>
           </tbody>
         </table>
       </div>
 
       <figure class="figure d-block my-3">
-        <img class="figure-img img-fluid rounded" src="Scalping%20Trading%20Performance%20&amp;%20Laddering%20Strategy%2024069351171e80628fe2ccdcd161fb69/output(6).png" alt="Benchmark chart">
+        <img class="figure-img img-fluid rounded"
+          src="Scalping%20Trading%20Performance%20&amp;%20Laddering%20Strategy%2024069351171e80628fe2ccdcd161fb69/output(6).png"
+          alt="Benchmark chart">
       </figure>
     </section>
 
     <!-- ===== Risk Laddering & Consistency ===== -->
     <section id="laddering" class="mb-5">
       <h2 class="h4 fw-bold mb-2">3. Risk Laddering & Consistency</h2>
-      <p class="mb-3">Strategi ini menggunakan pendekatan <strong>day trade</strong> selama 1000 hari dengan sistem <strong>laddering modal</strong>, <strong>lock risk harian</strong>, dan <strong>Monte Carlo simulation</strong> untuk validasi risiko dan hasil akhir. Pendekatan ini dirancang untuk <strong>menghindari overfitting</strong> dan memberikan hasil realistis.</p>
+      <p class="mb-3">Strategi ini menggunakan pendekatan <strong>day trade</strong> selama 1000 hari dengan sistem
+        <strong>laddering modal</strong>, <strong>lock risk harian</strong>, dan <strong>Monte Carlo simulation</strong>
+        untuk validasi risiko dan hasil akhir. Pendekatan ini dirancang untuk <strong>menghindari overfitting</strong>
+        dan memberikan hasil realistis.
+      </p>
 
       <h3 class="h6 text-uppercase text-secondary mt-4">Key Assumption</h3>
       <ul class="mb-4">
@@ -186,27 +361,64 @@
         <li><strong>Total Modal Maksimal</strong>: Rp550.000.000 (berdasarkan sistem Fibonacci)</li>
         <li><strong>Winrate Harian</strong>: Dinamis antara <strong>52% - 55%</strong></li>
         <li><strong>Risk-Reward Ratio (RRR)</strong>: Dinamis antara <strong>1:1.25 - 1:1.5</strong></li>
-        <li><strong>Metode Trade</strong>: Rollover harian (modal kembali digunakan ulang), <strong>tanpa compounding</strong></li>
+        <li><strong>Metode Trade</strong>: Rollover harian (modal kembali digunakan ulang), <strong>tanpa
+            compounding</strong></li>
       </ul>
 
       <h3 class="h6 text-uppercase text-secondary">Laddering Strategy (Fibonacci-Based)</h3>
       <div class="table-responsive mb-3">
         <table class="table table-sm table-striped table-bordered align-middle">
           <thead class="table-light">
-            <tr><th>Trade Range</th><th>Modal Aktif (Rp)</th></tr>
+            <tr>
+              <th>Trade Range</th>
+              <th>Modal Aktif (Rp)</th>
+            </tr>
           </thead>
           <tbody>
-            <tr><td>1–100</td><td>10.000.000</td></tr>
-            <tr><td>101–200</td><td>10.000.000</td></tr>
-            <tr><td>201–300</td><td>20.000.000</td></tr>
-            <tr><td>301–400</td><td>30.000.000</td></tr>
-            <tr><td>401–500</td><td>50.000.000</td></tr>
-            <tr><td>501–600</td><td>80.000.000</td></tr>
-            <tr><td>601–700</td><td>130.000.000</td></tr>
-            <tr><td>701–800</td><td>210.000.000</td></tr>
-            <tr><td>801–900</td><td>340.000.000</td></tr>
-            <tr><td>901–1000</td><td>550.000.000</td></tr>
-            <tr><td><strong>Max Cap</strong></td><td><strong>1.000.000.000</strong> (dibatasi)</td></tr>
+            <tr>
+              <td>1–100</td>
+              <td>10.000.000</td>
+            </tr>
+            <tr>
+              <td>101–200</td>
+              <td>10.000.000</td>
+            </tr>
+            <tr>
+              <td>201–300</td>
+              <td>20.000.000</td>
+            </tr>
+            <tr>
+              <td>301–400</td>
+              <td>30.000.000</td>
+            </tr>
+            <tr>
+              <td>401–500</td>
+              <td>50.000.000</td>
+            </tr>
+            <tr>
+              <td>501–600</td>
+              <td>80.000.000</td>
+            </tr>
+            <tr>
+              <td>601–700</td>
+              <td>130.000.000</td>
+            </tr>
+            <tr>
+              <td>701–800</td>
+              <td>210.000.000</td>
+            </tr>
+            <tr>
+              <td>801–900</td>
+              <td>340.000.000</td>
+            </tr>
+            <tr>
+              <td>901–1000</td>
+              <td>550.000.000</td>
+            </tr>
+            <tr>
+              <td><strong>Max Cap</strong></td>
+              <td><strong>1.000.000.000</strong> (dibatasi)</td>
+            </tr>
           </tbody>
         </table>
       </div>
@@ -215,30 +427,61 @@
       <div class="table-responsive mb-4">
         <table class="table table-sm table-striped table-bordered align-middle">
           <thead class="table-light">
-            <tr><th>Range Trade</th><th>Risk per Day (% dari modal aktif)</th></tr>
+            <tr>
+              <th>Range Trade</th>
+              <th>Risk per Day (% dari modal aktif)</th>
+            </tr>
           </thead>
           <tbody>
-            <tr><td>1–100</td><td>1% – 3%</td></tr>
-            <tr><td>101–1000</td><td>3% – 5% (randomized per day)</td></tr>
+            <tr>
+              <td>1–100</td>
+              <td>1% – 3%</td>
+            </tr>
+            <tr>
+              <td>101–1000</td>
+              <td>3% – 5% (randomized per day)</td>
+            </tr>
           </tbody>
         </table>
       </div>
 
       <h3 class="h6 text-uppercase text-secondary">Monte Carlo Simulation Results</h3>
       <figure class="figure d-block my-3">
-        <img class="figure-img img-fluid rounded" src="Scalping%20Trading%20Performance%20&amp;%20Laddering%20Strategy%2024069351171e80628fe2ccdcd161fb69/1000385428.png" alt="Monte Carlo chart">
+        <img class="figure-img img-fluid rounded"
+          src="Scalping%20Trading%20Performance%20&amp;%20Laddering%20Strategy%2024069351171e80628fe2ccdcd161fb69/1000385428.png"
+          alt="Monte Carlo chart">
       </figure>
 
       <div class="table-responsive mb-3">
         <table class="table table-sm table-striped table-bordered align-middle">
           <thead class="table-light">
-            <tr><th>Statistik</th><th>Hasil Asli</th><th>Half Monte Carlo</th></tr>
+            <tr>
+              <th>Statistik</th>
+              <th>Hasil Asli</th>
+              <th>Half Monte Carlo</th>
+            </tr>
           </thead>
           <tbody>
-            <tr><td>Rata-rata (Mean)</td><td>Rp 1.548.098.189</td><td><strong>Rp 774.049.095</strong></td></tr>
-            <tr><td>Median (50%)</td><td>Rp 1.552.303.058</td><td><strong>Rp 776.151.529</strong></td></tr>
-            <tr><td>Persentil 5%</td><td>Rp 1.003.060.867</td><td><strong>Rp 501.530.433</strong></td></tr>
-            <tr><td>Persentil 95%</td><td>Rp 2.088.841.621</td><td><strong>Rp 1.044.420.810</strong></td></tr>
+            <tr>
+              <td>Rata-rata (Mean)</td>
+              <td>Rp 1.548.098.189</td>
+              <td><strong>Rp 774.049.095</strong></td>
+            </tr>
+            <tr>
+              <td>Median (50%)</td>
+              <td>Rp 1.552.303.058</td>
+              <td><strong>Rp 776.151.529</strong></td>
+            </tr>
+            <tr>
+              <td>Persentil 5%</td>
+              <td>Rp 1.003.060.867</td>
+              <td><strong>Rp 501.530.433</strong></td>
+            </tr>
+            <tr>
+              <td>Persentil 95%</td>
+              <td>Rp 2.088.841.621</td>
+              <td><strong>Rp 1.044.420.810</strong></td>
+            </tr>
           </tbody>
         </table>
       </div>
@@ -250,7 +493,8 @@
           <li>Tidak semua risk-reward tercapai secara sempurna</li>
           <li>Laddering bisa terhambat oleh faktor psikologis dan operasional</li>
         </ul>
-        <p class="mb-0">Dengan pendekatan ini, strategi masih menunjukkan potensi <strong>Rp 776 juta dalam 1000 hari</strong> secara konservatif, tanpa compounding dan dengan kontrol risiko ketat.</p>
+        <p class="mb-0">Dengan pendekatan ini, strategi masih menunjukkan potensi <strong>Rp 776 juta dalam 1000
+            hari</strong> secara konservatif, tanpa compounding dan dengan kontrol risiko ketat.</p>
       </div>
 
       <h3 class="h6 text-uppercase text-secondary">Metodologi Simulasi Monte Carlo</h3>
@@ -264,24 +508,31 @@
           </ul>
         </li>
         <li>Modal aktif disesuaikan dengan <strong>laddering Fibonacci</strong>.</li>
-        <li>Jika trade menang, ekuitas naik sebesar: <code>risk_amount * RRR</code>. Jika kalah, turun sebesar: <code>risk_amount</code>.</li>
+        <li>Jika trade menang, ekuitas naik sebesar: <code>risk_amount * RRR</code>. Jika kalah, turun sebesar:
+          <code>risk_amount</code>.
+        </li>
         <li>Setelah semua hari trade selesai, hasil disimpan dan dianalisis.</li>
       </ol>
 
       <h3 class="h6 text-uppercase text-secondary">Pencegahan Overfitting</h3>
       <ul class="mb-4">
         <li><strong>Tidak menggunakan data historis tetap</strong> (fixed backtest)</li>
-        <li>Menggunakan <strong>randomisasi parameter dalam rentang realistis</strong> untuk menciptakan ribuan skenario.</li>
+        <li>Menggunakan <strong>randomisasi parameter dalam rentang realistis</strong> untuk menciptakan ribuan
+          skenario.</li>
         <li>Tidak mengasumsikan compounding (tidak eksponensial palsu).</li>
         <li>Tidak mengubah strategi berdasarkan hasil sebelumnya (no adaptive overfitting).</li>
-        <li>Menggunakan pendekatan <strong>probabilistik berbasis distribusi</strong>, bukan rule-based over-optimization.</li>
+        <li>Menggunakan pendekatan <strong>probabilistik berbasis distribusi</strong>, bukan rule-based
+          over-optimization.</li>
       </ul>
 
       <h3 class="h6 text-uppercase text-secondary">Kesimpulan</h3>
       <ul>
-        <li>Sistem <strong>laddering + lock risk</strong> ini menghasilkan pertumbuhan <strong>konsisten dan defensif</strong> terhadap fluktuasi performa.</li>
-        <li>Strategi ini berhasil <strong>menghindari overfitting</strong>, menjaga hasil tetap realistis, dan sangat menguntungkan di mayoritas skenario.</li>
-        <li>Simulasi menunjukkan bahwa <strong>target ekuitas ≥ Rp1 miliar sangat feasible</strong> dalam 1000 hari, dengan risiko drawdown besar yang sangat terkendali.</li>
+        <li>Sistem <strong>laddering + lock risk</strong> ini menghasilkan pertumbuhan <strong>konsisten dan
+            defensif</strong> terhadap fluktuasi performa.</li>
+        <li>Strategi ini berhasil <strong>menghindari overfitting</strong>, menjaga hasil tetap realistis, dan sangat
+          menguntungkan di mayoritas skenario.</li>
+        <li>Simulasi menunjukkan bahwa <strong>target ekuitas ≥ Rp1 miliar sangat feasible</strong> dalam 1000 hari,
+          dengan risiko drawdown besar yang sangat terkendali.</li>
       </ul>
     </section>
 
@@ -289,7 +540,9 @@
     <section id="discipline" class="mb-5">
       <h2 class="h4 fw-bold mb-3">4. Disiplin Risiko vs Pelanggaran</h2>
       <figure class="figure d-block my-3">
-        <img class="figure-img img-fluid rounded" src="Scalping%20Trading%20Performance%20&amp;%20Laddering%20Strategy%2024069351171e80628fe2ccdcd161fb69/1000382915.png" alt="Risk discipline chart">
+        <img class="figure-img img-fluid rounded"
+          src="Scalping%20Trading%20Performance%20&amp;%20Laddering%20Strategy%2024069351171e80628fe2ccdcd161fb69/1000382915.png"
+          alt="Risk discipline chart">
       </figure>
       <ul>
         <li><strong>Average Target Risk % per Hari</strong>: 8,13%</li>
@@ -353,9 +606,27 @@
             </tr>
           </thead>
           <tbody>
-            <tr><td>2025-04-28</td><td>2</td><td>Rp 554,721</td><td>Rp 200,000</td><td>Rp 4,825,384</td></tr>
-            <tr><td>2025-04-29</td><td>1</td><td>Rp 525,437</td><td>Rp 200,000</td><td>Rp 2,350,877</td></tr>
-            <tr><td>2025-04-30</td><td>2</td><td>Rp -119,809</td><td>Rp 400,000</td><td>Rp 3,923,404</td></tr>
+            <tr>
+              <td>2025-04-28</td>
+              <td>2</td>
+              <td>Rp 554,721</td>
+              <td>Rp 200,000</td>
+              <td>Rp 4,825,384</td>
+            </tr>
+            <tr>
+              <td>2025-04-29</td>
+              <td>1</td>
+              <td>Rp 525,437</td>
+              <td>Rp 200,000</td>
+              <td>Rp 2,350,877</td>
+            </tr>
+            <tr>
+              <td>2025-04-30</td>
+              <td>2</td>
+              <td>Rp -119,809</td>
+              <td>Rp 400,000</td>
+              <td>Rp 3,923,404</td>
+            </tr>
             <!-- ...lanjutkan baris sesuai data penuh Anda... -->
           </tbody>
         </table>
@@ -368,7 +639,9 @@
   </main>
 
   <!-- Bootstrap JS -->
-  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
+    integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz"
+    crossorigin="anonymous"></script>
 
   <!-- Transform utilitas (opsional): jika Anda masih menyimpan class bawaan Notion seperti `simple-table` / `image` di bagian lain, skrip ini menormalkan ke Bootstrap. -->
   <script>
@@ -390,5 +663,8 @@
       });
     })();
   </script>
+
+
 </body>
+
 </html>
