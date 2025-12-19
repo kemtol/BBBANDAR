@@ -1,0 +1,27 @@
+name: LiveTrade Token Refresh
+
+on:
+  schedule:
+    # Run hourly from 09:00 to 16:00 WIB (02:00 - 09:00 UTC), Mon-Fri
+    - cron: '0 2-9 * * 1-5'
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  refresh-token:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm' # Enable caching
+          
+      - name: Install Dependencies
+        run: npm install puppeteer
+        
+      - name: Fetch and Push Token
+        env:
+          WORKER_URL: 'https://livetrade-taping.mkemalw.workers.dev'
+        run: node scripts/fetch-token-puppeteer.js
