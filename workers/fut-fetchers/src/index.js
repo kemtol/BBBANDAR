@@ -284,6 +284,203 @@ async function putFuturesOHLCV(env, ticker, dateStr, ohlcv) {
     return key;
 }
 
+// Fetch Yahoo Finance intraday data (1m, 5m, 15m, 1h)
+// Note: Yahoo limits: 1m/5m/15m max 60 days, 1h max 730 days
+// Yahoo does NOT have 4h native, we resample from 1h
+async function fetchYahooIntraday(ticker, interval, daysBack = 7) {
+    // Yahoo interval mapping
+    const intervalMap = {
+        '1m': '1m',
+        '5m': '5m',
+        '15m': '15m',
+        '1h': '60m'
+    };
+
+    const yahooInterval = intervalMap[interval];
+    if (!yahooInterval) {
+        throw new Error(`Unsupported interval: ${interval}`);
+    }
+
+    const now = Math.floor(Date.now() / 1000);
+    const start = now - (daysBack * 24 * 60 * 60);
+
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}=F?interval=${yahooInterval}&period1=${start}&period2=${now}`;
+
+    const r = await fetch(url, {
+        headers: {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        }
+    });
+
+    if (!r.ok) {
+        throw new Error(`Yahoo ${ticker} intraday HTTP ${r.status}`);
+    }
+
+    const data = await r.json();
+
+    if (!data.chart || !data.chart.result || data.chart.result.length === 0) {
+        throw new Error(`Yahoo ${ticker} no intraday data`);
+    }
+
+    const result = data.chart.result[0];
+    const timestamps = result.timestamp || [];
+    const quote = result.indicators?.quote?.[0];
+
+    if (!quote || timestamps.length === 0) {
+        throw new Error(`Yahoo ${ticker} no intraday quote`);
+    }
+
+    // Build bars array
+    const bars = [];
+    for (let i = 0; i < timestamps.length; i++) {
+        const ts = timestamps[i];
+        const date = new Date(ts * 1000);
+
+        bars.push({
+            timestamp: date.toISOString(),
+            open: quote.open?.[i] || null,
+            high: quote.high?.[i] || null,
+            low: quote.low?.[i] || null,
+            close: quote.close?.[i] || null,
+            volume: quote.volume?.[i] || null
+        });
+    }
+
+    return bars;
+}
+
+// Resample 1h bars to 4h bars
+function resample1hTo4h(bars1h) {
+    // Sort by timestamp
+    const sorted = [...bars1h].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+    const bars4h = [];
+    const buckets = new Map(); // "YYYY-MM-DD-HH" (4h bucket) -> bars
+
+    for (const bar of sorted) {
+        const d = new Date(bar.timestamp);
+        const hour = d.getUTCHours();
+        const bucket4h = Math.floor(hour / 4) * 4; // 0, 4, 8, 12, 16, 20
+        const key = `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}-${pad2(bucket4h)}`;
+
+        if (!buckets.has(key)) buckets.set(key, []);
+        buckets.get(key).push(bar);
+    }
+
+    for (const [key, chunk] of buckets.entries()) {
+        if (chunk.length === 0) continue;
+
+        const open = chunk[0].open;
+        const close = chunk[chunk.length - 1].close;
+        const high = Math.max(...chunk.map(b => b.high).filter(v => v !== null));
+        const low = Math.min(...chunk.map(b => b.low).filter(v => v !== null));
+        const volume = chunk.reduce((sum, b) => sum + (b.volume || 0), 0);
+
+        // Use first bar's timestamp as 4h bar timestamp
+        bars4h.push({
+            timestamp: chunk[0].timestamp,
+            open,
+            high,
+            low,
+            close,
+            volume
+        });
+    }
+
+    return bars4h.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+}
+
+// Ingest intraday bars into existing daily files
+async function ingestIntraday(env, ticker, interval, bars) {
+    // Group bars by date
+    const byDate = new Map(); // YYYYMMDD -> bars[]
+
+    for (const bar of bars) {
+        const d = new Date(bar.timestamp);
+        const dateKey = `${d.getUTCFullYear()}${pad2(d.getUTCMonth() + 1)}${pad2(d.getUTCDate())}`;
+
+        if (!byDate.has(dateKey)) byDate.set(dateKey, []);
+        byDate.get(dateKey).push(bar);
+    }
+
+    let updated = 0;
+    let skipped = 0;
+
+    for (const [dateKey, dateBars] of byDate.entries()) {
+        const fileKey = `${ticker}/${dateKey}.json`;
+
+        // Check if file exists
+        const existing = await env.TAPE_DATA_FUTURES.get(fileKey);
+        if (!existing) {
+            skipped++;
+            continue; // Daily file doesn't exist, skip
+        }
+
+        // Parse existing file
+        const existingData = JSON.parse(await existing.text());
+
+        // Add date field to each bar for consistency
+        const dateStr = `${dateKey.slice(0, 4)}-${dateKey.slice(4, 6)}-${dateKey.slice(6, 8)}`;
+        const formattedBars = dateBars.map(bar => ({
+            date: dateStr,
+            ...bar
+        }));
+
+        // Update timeseries for this interval
+        existingData.timeseries[interval] = formattedBars;
+        existingData.meta.count[interval] = formattedBars.length;
+        existingData.meta.generated_at = new Date().toISOString();
+
+        // Write back
+        await env.TAPE_DATA_FUTURES.put(
+            fileKey,
+            JSON.stringify(existingData, null, 2),
+            { httpMetadata: { contentType: 'application/json' } }
+        );
+
+        updated++;
+    }
+
+    return { ticker, interval, updated, skipped };
+}
+
+// Backfill intraday data for a ticker (all intervals)
+async function backfillYahooIntraday(env, ticker, daysBack = 7) {
+    const results = [];
+
+    // 1. Fetch 1h data (we'll resample to 4h)
+    console.log(`[Intraday] Fetching 1h for ${ticker}...`);
+    const bars1h = await fetchYahooIntraday(ticker, '1h', daysBack);
+    const ingest1h = await ingestIntraday(env, ticker, '1h', bars1h);
+    results.push(ingest1h);
+
+    // 2. Resample to 4h and ingest
+    console.log(`[Intraday] Resampling 1h → 4h for ${ticker}...`);
+    const bars4h = resample1hTo4h(bars1h);
+    const ingest4h = await ingestIntraday(env, ticker, '4h', bars4h);
+    results.push(ingest4h);
+
+    // 3. Fetch 15m data
+    console.log(`[Intraday] Fetching 15m for ${ticker}...`);
+    const bars15m = await fetchYahooIntraday(ticker, '15m', Math.min(daysBack, 60));
+    const ingest15m = await ingestIntraday(env, ticker, '15m', bars15m);
+    results.push(ingest15m);
+
+    // 4. Fetch 5m data
+    console.log(`[Intraday] Fetching 5m for ${ticker}...`);
+    const bars5m = await fetchYahooIntraday(ticker, '5m', Math.min(daysBack, 60));
+    const ingest5m = await ingestIntraday(env, ticker, '5m', bars5m);
+    results.push(ingest5m);
+
+    // 5. Fetch 1m data (most granular, shortest history available)
+    console.log(`[Intraday] Fetching 1m for ${ticker}...`);
+    const bars1m = await fetchYahooIntraday(ticker, '1m', Math.min(daysBack, 7)); // 1m typically max 7 days
+    const ingest1m = await ingestIntraday(env, ticker, '1m', bars1m);
+    results.push(ingest1m);
+
+    return { ticker, daysBack, results };
+}
+
 
 
 // =========================
@@ -362,6 +559,85 @@ async function backfillYahooFutures(env, ticker, yearsBack = 5) {
     };
 }
 
+// Backfill Yahoo Finance futures data for a specific month (chunked)
+// month format: "YYYY-MM"
+async function backfillYahooFuturesMonth(env, ticker, month) {
+    const [year, mon] = month.split('-').map(Number);
+
+    // Calculate date range for this month
+    const startDate = new Date(Date.UTC(year, mon - 1, 1));
+    const endDate = new Date(Date.UTC(year, mon, 0)); // Last day of month
+
+    const period1 = Math.floor(startDate.getTime() / 1000);
+    const period2 = Math.floor(endDate.getTime() / 1000) + 86400; // Include last day
+
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}=F?interval=1d&period1=${period1}&period2=${period2}`;
+
+    const r = await fetch(url, {
+        headers: {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        }
+    });
+
+    if (!r.ok) {
+        throw new Error(`Yahoo ${ticker} HTTP ${r.status} for ${month}`);
+    }
+
+    const data = await r.json();
+
+    if (!data.chart || !data.chart.result || data.chart.result.length === 0) {
+        return { ticker, month, total: 0, wrote: 0, skipped: 0, error: "no data" };
+    }
+
+    const result = data.chart.result[0];
+    const timestamps = result.timestamp || [];
+    const quote = result.indicators?.quote?.[0];
+
+    if (!quote || timestamps.length === 0) {
+        return { ticker, month, total: 0, wrote: 0, skipped: 0, error: "no quotes" };
+    }
+
+    let wrote = 0;
+    let skipped = 0;
+
+    for (let i = 0; i < timestamps.length; i++) {
+        const ts = timestamps[i];
+        const date = new Date(ts * 1000);
+        const dateStr = `${date.getUTCFullYear()}-${pad2(date.getUTCMonth() + 1)}-${pad2(date.getUTCDate())}`;
+        const yyyymmdd = `${date.getUTCFullYear()}${pad2(date.getUTCMonth() + 1)}${pad2(date.getUTCDate())}`;
+
+        // Check if file exists
+        const finalKey = `${ticker}/${yyyymmdd}.json`;
+        if (await existsR2(env, finalKey)) {
+            skipped++;
+            continue;
+        }
+
+        const ohlcv = {
+            timestamp: date.toISOString(),
+            open: quote.open?.[i] || null,
+            high: quote.high?.[i] || null,
+            low: quote.low?.[i] || null,
+            close: quote.close?.[i] || null,
+            volume: quote.volume?.[i] || null
+        };
+
+        await putFuturesOHLCV(env, ticker, dateStr, ohlcv);
+        wrote++;
+    }
+
+    return {
+        ticker,
+        month,
+        total: timestamps.length,
+        wrote,
+        skipped,
+        range: {
+            start: startDate.toISOString().split('T')[0],
+            end: endDate.toISOString().split('T')[0]
+        }
+    };
+}
 
 // Backfill FRED data for a date range
 async function backfillFredData(env, seriesId, prefix, instrumentName, startDate, endDate) {
@@ -855,11 +1131,14 @@ export default {
         // Schedule metadata endpoint
         if (request.method === "GET" && url.pathname === "/schedule") {
             let scheduleInfo = null;
+
+            // Read from R2 (cron-checker now stores in monitoring-fut-saham bucket)
             try {
-                const stateStr = await env.CRON_STATE?.get('fut-fetchers');
-                scheduleInfo = stateStr ? JSON.parse(stateStr) : null;
+                // Note: This worker doesn't have STATE_BUCKET binding
+                // So we can't read the state directly
+                // Return static info instead
             } catch (e) {
-                // KV not configured or error reading
+                // Ignore errors
             }
 
             return Response.json({
@@ -872,7 +1151,8 @@ export default {
                 last_trigger: scheduleInfo?.last_trigger || null,
                 next_trigger: scheduleInfo?.next_trigger || null,
                 status: scheduleInfo?.status || 'unknown',
-                trigger_count: scheduleInfo?.trigger_count || 0
+                trigger_count: scheduleInfo?.trigger_count || 0,
+                note: 'State tracked by cron-checker in R2 (monitoring-fut-saham)'
             });
         }
 
@@ -919,16 +1199,54 @@ export default {
             });
         }
 
-        // Backfill futures (Yahoo Finance historical)
+        // Backfill futures (Yahoo Finance historical) - CHUNKED by month
+        // Usage: POST /backfill-futures?ticker=MNQ&month=2024-01
+        // Or for full backfill: POST /backfill-futures?ticker=MNQ&years=5 (will return list of months to process)
         if (request.method === "POST" && url.pathname === "/backfill-futures") {
-            const ticker = url.searchParams.get("ticker") || "MNQ"; // MNQ or MGC
-            const yearsBack = parseInt(url.searchParams.get("years") || "5");
+            const ticker = url.searchParams.get("ticker") || "MNQ";
+            const month = url.searchParams.get("month"); // YYYY-MM format
 
-            const result = await backfillYahooFutures(env, ticker, yearsBack);
+            if (month) {
+                // Process single month
+                const result = await backfillYahooFuturesMonth(env, ticker, month);
+                return Response.json({
+                    ok: true,
+                    backfill_futures: result
+                });
+            } else {
+                // Return list of months to process
+                const yearsBack = parseInt(url.searchParams.get("years") || "5");
+                const months = [];
+                const now = new Date();
+
+                for (let i = 0; i < yearsBack * 12; i++) {
+                    const d = new Date(now);
+                    d.setUTCMonth(d.getUTCMonth() - i);
+                    const m = `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}`;
+                    months.push(m);
+                }
+
+                return Response.json({
+                    ok: true,
+                    message: "Use ?month=YYYY-MM to backfill one month at a time",
+                    ticker,
+                    months_to_process: months,
+                    example: `/backfill-futures?ticker=${ticker}&month=${months[months.length - 1]}`,
+                    total_months: months.length
+                });
+            }
+        }
+
+        // Backfill intraday data (4h, 1h, 15m, 5m) into existing daily files
+        if (request.method === "POST" && url.pathname === "/backfill-intraday") {
+            const ticker = url.searchParams.get("ticker") || "MNQ";
+            const daysBack = parseInt(url.searchParams.get("days") || "7");
+
+            const result = await backfillYahooIntraday(env, ticker, daysBack);
 
             return Response.json({
                 ok: true,
-                backfill_futures: result
+                backfill_intraday: result
             });
         }
 
@@ -949,9 +1267,11 @@ export default {
             endpoints: [
                 "POST /run",
                 "POST /backfill?start=YYYY-MM-DD&end=YYYY-MM-DD",
+                "POST /backfill-futures?ticker=MNQ&years=5",
+                "POST /backfill-intraday?ticker=MNQ&days=7",
                 "GET /sanity-check?start=YYYY-MM-DD&end=YYYY-MM-DD&samples=N&deep=true"
             ],
-            note: "Cron runs hourly. Use ?deep=true for value verification"
+            note: "Cron runs hourly. /backfill-intraday ingests 4h/1h/15m/5m into existing files"
         });
     },
 

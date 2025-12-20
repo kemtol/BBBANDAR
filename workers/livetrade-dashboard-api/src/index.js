@@ -1,5 +1,5 @@
 // workers/livetrade-dashboard-api/src/index.js
-import { getWorkerStatus } from './admin.js';
+import { getWorkerStatus, generateSanityCheck } from './admin.js';
 
 // ==============================
 // CORS helper
@@ -415,6 +415,43 @@ async function getSymbolDetail(env, url) {
 
 
 // ==============================
+// JOB MONITORING (Read from R2)
+// ==============================
+async function getJobMonitoring(env, request) {
+  const url = new URL(request.url);
+  const dateStr = url.searchParams.get("date"); // YYYY-MM-DD
+
+  let key;
+  if (dateStr) {
+    key = `system/monitoring/${dateStr}.json`;
+  } else {
+    key = `system/monitoring_latest.json`;
+  }
+
+  // Backup key if not found? No, simple logic first.
+  let obj = await env.DATA_LAKE.get(key);
+
+  // Fallback to latest if specific date not found AND date is today?
+  // Let's just return empty structure if not found to avoid 500
+  if (!obj) {
+    const emptyData = {
+      date: dateStr || "latest",
+      stocks: {},
+      futures: {},
+      note: "Data not found in R2: " + key
+    };
+    return withCORS(new Response(JSON.stringify(emptyData, null, 2), {
+      headers: { "Content-Type": "application/json" }
+    }));
+  }
+
+  const data = await obj.json();
+  return withCORS(new Response(JSON.stringify(data, null, 2), {
+    headers: { "Content-Type": "application/json" }
+  }));
+}
+
+// ==============================
 // MAIN HANDLER
 // ==============================
 export default {
@@ -481,11 +518,42 @@ export default {
         return getSymbolDetail(env, url);
       }
 
+      if (pathname === "/run-sanity-check") {
+        if (request.method !== "POST") {
+          return withCORS(new Response("Method Not Allowed", { status: 405 }));
+        }
+        const checkResult = await generateSanityCheck(env);
+        return withCORS(new Response(JSON.stringify(checkResult, null, 2), {
+          headers: { "Content-Type": "application/json" }
+        }));
+      }
+
+      if (pathname === "/debug-check-folders") {
+        const now = new Date();
+        const y = now.getUTCFullYear();
+        const m = String(now.getUTCMonth() + 1).padStart(2, '0');
+        const d = String(now.getUTCDate()).padStart(2, '0');
+        // Adjust to query specific date if needed
+        const dateParam = url.searchParams.get("date"); // YYYY-MM-DD
+        let prefix = `raw_lt/${y}/${m}/${d}/`;
+        if (dateParam) {
+          prefix = `raw_lt/${dateParam.replace(/-/g, '/')}/`;
+        }
+
+        const listed = await env.DATA_LAKE.list({ prefix: prefix, delimiter: '/' });
+        return withCORS(new Response(JSON.stringify({
+          prefix,
+          folders: listed.delimitedPrefixes,
+          files: listed.objects.map(o => o.key)
+        }, null, 2), { headers: { "Content-Type": "application/json" } }));
+      }
+
       // Monitoring Status Worker
       // Monitoring Job Grid
       if (pathname === "/job-monitoring") {
         return getJobMonitoring(env, request);
       }
+
 
       // Existing routed
       if (pathname === "/worker-status") {

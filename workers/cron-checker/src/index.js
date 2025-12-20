@@ -35,6 +35,39 @@ const WORKERS = [
             unit: 'seconds'
         },
         enabled: true
+    },
+    {
+        name: 'livetrade-taping',
+        binding: null,  // Force HTTP fetch
+        url: 'https://livetrade-taping.mkemalw.workers.dev',
+        endpoint: '/status', // Keep-alive / Resurrection
+        schedule: {
+            interval: 60, // 1 minute in seconds
+            unit: 'seconds'
+        },
+        enabled: true
+    },
+    {
+        name: 'fut-footprint', // Minutely Aggregation
+        binding: null,
+        url: 'https://fut-taping-agregator.mkemalw.workers.dev',
+        endpoint: '/run-cron?mode=aggregation',
+        schedule: {
+            interval: 60, // 1 minute
+            unit: 'seconds'
+        },
+        enabled: true
+    },
+    {
+        name: 'fut-housekeeping-daily', // Hourly/Daily Cleanup
+        binding: null,
+        url: 'https://fut-taping-agregator.mkemalw.workers.dev',
+        endpoint: '/run-cron?mode=housekeeping',
+        schedule: {
+            interval: 3600, // 1 hour
+            unit: 'seconds'
+        },
+        enabled: true
     }
 ];
 
@@ -112,25 +145,31 @@ async function triggerWorker(worker, env) {
     }
 }
 
-// Get worker state from KV
+// Get worker state from R2
 async function getWorkerState(env, workerName) {
-    if (!env.CRON_STATE) return null;
+    if (!env.STATE_BUCKET) return null;
 
     try {
-        const state = await env.CRON_STATE.get(workerName);
-        return state ? JSON.parse(state) : null;
+        const key = `cron-state/${workerName}.json`;
+        const obj = await env.STATE_BUCKET.get(key);
+        return obj ? await obj.json() : null;
     } catch (error) {
         console.error(`Failed to get state for ${workerName}:`, error);
         return null;
     }
 }
 
-// Update worker state in KV
+// Update worker state in R2
 async function updateWorkerState(env, workerName, state) {
-    if (!env.CRON_STATE) return;
+    if (!env.STATE_BUCKET) return;
 
     try {
-        await env.CRON_STATE.put(workerName, JSON.stringify(state));
+        const key = `cron-state/${workerName}.json`;
+        await env.STATE_BUCKET.put(
+            key,
+            JSON.stringify(state, null, 2),
+            { httpMetadata: { contentType: 'application/json' } }
+        );
     } catch (error) {
         console.error(`Failed to update state for ${workerName}:`, error);
     }

@@ -334,11 +334,14 @@ export default {
         // Schedule metadata endpoint
         if (request.method === "GET" && url.pathname === "/schedule") {
             let scheduleInfo = null;
+
+            // Read from R2 (cron-checker now stores in monitoring-fut-saham bucket)
             try {
-                const stateStr = await env.CRON_STATE?.get('fut-features');
-                scheduleInfo = stateStr ? JSON.parse(stateStr) : null;
+                // Note: This worker doesn't have STATE_BUCKET binding
+                // So we can't read the state directly
+                // Return static info instead
             } catch (e) {
-                // KV not configured or error reading
+                // Ignore errors
             }
 
             return Response.json({
@@ -351,7 +354,8 @@ export default {
                 last_trigger: scheduleInfo?.last_trigger || null,
                 next_trigger: scheduleInfo?.next_trigger || null,
                 status: scheduleInfo?.status || 'unknown',
-                trigger_count: scheduleInfo?.trigger_count || 0
+                trigger_count: scheduleInfo?.trigger_count || 0,
+                note: 'State tracked by cron-checker in R2 (monitoring-fut-saham)'
             });
         }
 
@@ -554,6 +558,7 @@ export default {
         // Service info
         return Response.json({
             ok: true,
+            status: 'OK', // Added for dashboard compatibility
             service: 'fut-features',
             endpoints: [
                 'GET /schedule',

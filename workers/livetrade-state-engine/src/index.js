@@ -31,6 +31,16 @@ export default {
       });
     }
 
+    // Health Check Intercept
+    if (pathname === "/" || pathname === "/health") {
+      return withCORS(
+        new Response(
+          JSON.stringify({ status: "OK", service: "livetrade-state-engine" }),
+          { headers: { "Content-Type": "application/json" } }
+        )
+      );
+    }
+
     // 🔴 BYPASS /history DI SINI (TIDAK LEWAT DO)
     // Bagian ini dibiarkan sesuai original request (bypass dummy)
     if (pathname === "/history") {
@@ -113,7 +123,7 @@ export class StateEngine extends DurableObject {
         try {
           // Clone request agar aman jika perlu dibaca ulang, lalu parse JSON
           bodyData = await request.clone().json();
-          
+
           if (bodyData.kode) kode = bodyData.kode;
           if (bodyData.mode) mode = bodyData.mode;
         } catch (e) {
@@ -126,21 +136,21 @@ export class StateEngine extends DurableObject {
       // ============================================================
       if (pathname === "/bulk-update" && request.method === "POST" && bodyData) {
         const items = bodyData.items || [];
-        
+
         // Simpan ke storage DO (Persistent Storage)
         if (items.length > 0) {
-           let ops = {};
-           items.forEach(item => {
-             // Key: Kode Saham, Value: Object lengkap (termasuk history array)
-             ops[item.kode] = item; 
-           });
-           
-           // Cloudflare DO supports bulk put (menyimpan banyak sekaligus)
-           await this.storage.put(ops);
+          let ops = {};
+          items.forEach(item => {
+            // Key: Kode Saham, Value: Object lengkap (termasuk history array)
+            ops[item.kode] = item;
+          });
+
+          // Cloudflare DO supports bulk put (menyimpan banyak sekaligus)
+          await this.storage.put(ops);
         }
 
-        return new Response(JSON.stringify({ 
-          status: "UPDATED", 
+        return new Response(JSON.stringify({
+          status: "UPDATED",
           count: items.length,
           note: "Data stored securely in Durable Object"
         }, null, 2), {
@@ -155,17 +165,17 @@ export class StateEngine extends DurableObject {
         if (kode) {
           // Ambil data asli dari storage
           const storedData = await this.storage.get(kode);
-          
+
           if (storedData) {
             return new Response(JSON.stringify(storedData, null, 2), {
               headers: { "Content-Type": "application/json" }
             });
           } else {
-             // Jika data belum ada di storage, kembalikan kosong/error halus
-             return new Response(JSON.stringify({ error: "No Data Found", kode }, null, 2), {
-               status: 404,
-               headers: { "Content-Type": "application/json" }
-             });
+            // Jika data belum ada di storage, kembalikan kosong/error halus
+            return new Response(JSON.stringify({ error: "No Data Found", kode }, null, 2), {
+              status: 404,
+              headers: { "Content-Type": "application/json" }
+            });
           }
         }
       }
@@ -177,9 +187,9 @@ export class StateEngine extends DurableObject {
       const debugPayload = {
         path: pathname,
         method: request.method,
-        kode, 
+        kode,
         mode,
-        received_body: bodyData, 
+        received_body: bodyData,
         note: "DEBUG_MINIMAL_FETCH_FIXED (Fallback Route)"
       };
 

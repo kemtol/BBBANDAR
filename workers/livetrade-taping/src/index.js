@@ -282,7 +282,22 @@ export class TradeIngestor extends DurableObject {
     // Path: raw_lt/...
     const path = `raw_lt/${now.getFullYear()}/${(now.getMonth() + 1).toString().padStart(2, '0')}/${now.getDate().toString().padStart(2, '0')}/${now.getHours().toString().padStart(2, '0')}`;
     const filename = `${path}/${Date.now()}.json`;
-    try { await this.env.DATA_LAKE.put(filename, fileContent); console.log(`[LT] Saved ${dataToWrite.length} items.`); } catch (err) { console.error("[R2] Fail LT:", err); }
+    try {
+      await this.env.DATA_LAKE.put(filename, fileContent);
+
+      // --- SANITY INFO ---
+      const sanityPath = `${path}/sanity-info.json`;
+      const sanityData = {
+        last_update: Date.now(),
+        status: "OK",
+        count: dataToWrite.length,
+        service: "livetrade-taping"
+      };
+      await this.env.DATA_LAKE.put(sanityPath, JSON.stringify(sanityData));
+      // -------------------
+
+      console.log(`[LT] Saved ${dataToWrite.length} items.`);
+    } catch (err) { console.error("[R2] Fail LT:", err); }
   }
 
   // --- [BARU] Fungsi Flush Khusus Orderbook ---
