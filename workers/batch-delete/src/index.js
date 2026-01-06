@@ -247,6 +247,58 @@ export default {
                 }, { headers: corsHeaders });
             }
 
+            // DELETE /delete-keys - Bulk delete specific keys
+            if (path === '/delete-keys' && request.method === 'POST') {
+                const bucketName = url.searchParams.get('bucket') || 'futures';
+                const bucket = getBucket();
+
+                let keys = [];
+                try {
+                    const body = await request.json();
+                    if (Array.isArray(body.keys)) {
+                        keys = body.keys;
+                    }
+                } catch (e) {
+                    return Response.json({ error: 'Invalid JSON body or missing "keys" array' }, { status: 400, headers: corsHeaders });
+                }
+
+                if (!keys.length) {
+                    return Response.json({ success: true, deleted: 0, message: "No keys provided" }, { headers: corsHeaders });
+                }
+
+                // Delete in badges of 1000 (limit is implicit by promise.all but let's be safe)
+                // Actually R2 delete is one by one or via delete(key). 
+                // We'll use Promise.all with some concurrency control if needed, 
+                // but for ~50 keys it's fine.
+
+                const results = {
+                    success: [],
+                    failed: []
+                };
+
+                // Helper for batching promises
+                const batchSize = 50;
+                for (let i = 0; i < keys.length; i += batchSize) {
+                    const chunk = keys.slice(i, i + batchSize);
+                    await Promise.all(chunk.map(async (key) => {
+                        try {
+                            await bucket.delete(key);
+                            results.success.push(key);
+                        } catch (err) {
+                            results.failed.push({ key, error: err.message });
+                        }
+                    }));
+                }
+
+                return Response.json({
+                    success: true,
+                    bucket: bucketName,
+                    deletedCount: results.success.length,
+                    failedCount: results.failed.length,
+                    failed: results.failed.length > 0 ? results.failed : undefined
+                }, { headers: corsHeaders });
+            }
+
             return Response.json({ error: 'Not found' }, { status: 404, headers: corsHeaders });
 
         } catch (err) {

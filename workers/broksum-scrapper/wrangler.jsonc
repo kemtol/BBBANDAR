@@ -1,0 +1,42 @@
+/**
+ * For more details on how to configure Wrangler, refer to:
+ * https://developers.cloudflare.com/workers/wrangler/configuration/
+ */
+{
+    "$schema": "node_modules/wrangler/config-schema.json",
+    "name": "broksum-scrapper",
+    "main": "src/index.js",
+    "compatibility_date": "2025-01-01",
+    "observability": {
+        "enabled": true
+    },
+    "kv_namespaces": [
+        {
+            "binding": "SSSAHAM_WATCHLIST",
+            "id": "701c5c47230142e49d7c899f6bdcc029",
+            "preview_id": "9df14ffa735441bdbf5931fa19c4ce09"
+        }
+    ],
+    "queues": {
+        "producers": [
+            {
+                "queue": "sssaham-queue",
+                "binding": "SSSAHAM_QUEUE"
+            }
+        ],
+        "consumers": [
+            {
+                "queue": "sssaham-queue",
+                "max_batch_size": 10,
+                "max_batch_timeout": 30
+            }
+        ]
+    },
+    "r2_buckets": [
+        {
+            "binding": "RAW_BROKSUM",
+            "bucket_name": "raw-broksum",
+            "preview_bucket_name": "raw-broksum-preview"
+        }
+    ]
+}

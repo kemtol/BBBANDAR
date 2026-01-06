@@ -354,8 +354,8 @@ async function runDailyCron(env) {
   const params = new URLSearchParams();
   params.set("date", dateStr);
 
-  // TURUNKAN LIMIT BIAR ENTENG
-  params.set("limit", "250");
+  // NAIKKAN LIMIT AGAR EOD CEPAT SELESAI
+  params.set("limit", "2000");
 
   if (!state.cursor) {
     params.set("reset", "true");
@@ -406,12 +406,21 @@ async function runDailyCron(env) {
         console.error("❌ Compression failed:", err);
       }
 
+
       // Delete old raw_lt (7 days retention)
       try {
         const deleteResult = await deleteOldRawLt(env, 7);
         console.log("🗑️ Deletion result:", JSON.stringify(deleteResult));
       } catch (err) {
         console.error("❌ Deletion failed:", err);
+      }
+
+      // 🧹 CLEANUP BACKFILL STATES
+      try {
+        const cleanupStateResult = await cleanupBackfillStates(env);
+        console.log("🧹 Backfill State Cleanup:", JSON.stringify(cleanupStateResult));
+      } catch (err) {
+        console.error("❌ Backfill State Cleanup failed:", err);
       }
     } else {
       // Sesi 1 selesai / break / sesi 2 masih jalan → jangan final
@@ -1379,5 +1388,66 @@ async function deleteOldRawLt(env, retentionDays = 7) {
     cutoffDate: cutoffStr,
     datesDeleted: Array.from(datesFound).filter(d => d < cutoffStr).sort()
   };
+}
+
+/**
+ * Cleanup old backfill_state_*.json files
+ * Keep only the most recent one (or two), delete the rest via Batch Delete Worker
+ */
+async function cleanupBackfillStates(env) {
+  const prefix = BACKFILL_STATE_PREFIX; // "backfill_state_"
+
+  // 1. List all state files
+  const listed = await env.DATA_LAKE.list({ prefix });
+  const allFiles = listed.objects;
+
+  if (allFiles.length <= 1) {
+    return { skipped: true, reason: "Not enough files to clean (<= 1)", count: allFiles.length };
+  }
+
+  // 2. Sort by uploaded time (descending) -> newest first
+  // key format: backfill_state_YYYY-MM-DD.json
+  // We can also sort by key since YYYY-MM-DD is lexicographically sortable
+  allFiles.sort((a, b) => b.key.localeCompare(a.key));
+
+  // 3. Keep the newest 2 files (active today + maybe yesterday) just to be safe
+  const KEEP_COUNT = 2;
+  const toDelete = allFiles.slice(KEEP_COUNT);
+
+  if (toDelete.length === 0) {
+    return { skipped: true, reason: "No old files to delete", count: allFiles.length };
+  }
+
+  const keysToDelete = toDelete.map(o => o.key);
+  console.log(`🧹 Found ${keysToDelete.length} old backfill states to delete:`, keysToDelete);
+
+  // 4. Send to Batch Delete Worker
+  if (!env.BATCH_DELETE) {
+    console.warn("⚠️ BATCH_DELETE binding missing, falling back to manual delete");
+    // Fallback: manual delete one by one
+    let deletedCount = 0;
+    for (const key of keysToDelete) {
+      await env.DATA_LAKE.delete(key);
+      deletedCount++;
+    }
+    return { manual: true, deleted: deletedCount };
+  }
+
+  try {
+    const resp = await env.BATCH_DELETE.fetch("https://batch-delete/delete-keys?bucket=saham", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ keys: keysToDelete })
+    });
+
+    const resJson = await resp.json();
+    return {
+      success: resp.ok,
+      worker_response: resJson,
+      deleted_keys: keysToDelete.length
+    };
+  } catch (err) {
+    throw new Error(`Failed to call BATCH_DELETE: ${err.message}`);
+  }
 }
 

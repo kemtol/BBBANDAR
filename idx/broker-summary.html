@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="id">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#ffffff" />
+
+    <title>SSSAHAM - Intraday Orderflow Scanner</title>
+
+    <!-- (opsional) samain dengan index.html -->
+    <link rel="manifest" href="img/site.webmanifest" />
+    <link rel="apple-touch-icon" sizes="180x180" href="img/apple-touch-icon.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="img/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="img/favicon-16x16.png">
+
+    <!-- Bootstrap & Font Awesome -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css" rel="stylesheet" />
+
+    <style>
+        /* Biar konsisten dengan index.html / QQQUANTA */
+        #app.container,
+        .container,
+        .chat-wrapper {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        body {
+            font-size: 1rem;
+        }
+
+        .navbar {
+            background-color: #463CFF !important;
+        }
+
+        .navbar i.fa-chevron-left {
+            font-size: 1rem;
+            color: white;
+        }
+
+        .nav-title {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: white;
+            transition: opacity 0.3s ease;
+            opacity: 1;
+        }
+
+        .nav-title.hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        .page-title {
+            font-weight: 600;
+            font-size: 1rem;
+        }
+
+        .card-swing {
+            border-radius: 12px;
+            border: none;
+        }
+
+        .card-swing-header {
+            background: transparent;
+            border-bottom: 1px solid rgba(148, 163, 184, 0.4);
+            border-radius: 12px 12px 0 0;
+            padding: 0.5rem 0.75rem;
+        }
+
+        .table-orderflow {
+            font-size: 0.9rem;
+            white-space: nowrap;
+        }
+
+        .table-orderflow thead th {
+            text-transform: uppercase;
+            font-size: 0.9rem;
+            color: #6b7280;
+            border-bottom-color: #e5e7eb;
+        }
+
+        .table-orderflow tbody tr {
+            cursor: pointer;
+        }
+
+        .table-orderflow tbody tr:hover {
+            background-color: #f1f5f9;
+        }
+
+        .table-orderflow thead th.sortable {
+            position: relative;
+            padding-right: 14px;
+            /* ruang untuk icon */
+        }
+
+        .sort-icon {
+            position: absolute;
+            right: 2px;
+            top: 50%;
+            transform: translateY(-50%);
+        }
+
+        .sort-icon.active {
+            opacity: 1;
+        }
+
+
+
+        .quadrant-badge {
+            width: 18px;
+            text-align: center;
+            border-radius: 999px;
+            font-size: 0.7rem;
+            display: block;
+            height: 18px;
+            position: relative;
+            left: 5px;
+        }
+
+        .stat-pill {
+            font-size: 0.7rem;
+            border-radius: 999px;
+            padding: 2px 8px;
+        }
+
+        .quad-legend {
+            font-size: 0.7rem;
+            color: #6b7280;
+        }
+
+        @media (max-width: 576px) {
+            .page-title {
+                font-size: 0.95rem;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <!-- NAVBAR (iOS-style back only) -->
+    <nav class="navbar navbar-light sticky-top border-bottom bg-white">
+        <div class="container d-flex align-items-center py-2" style="max-width: 1200px;position: relative;">
+            <a href="https://buy.sssaham.com" class="d-flex align-items-center text-decoration-none me-2">
+                <i class="fa-solid fa-chevron-left me-1"></i>
+                <span class="small d-none">Bandar Radar</span>
+            </a>
+            <div class="flex-grow-1 text-center">
+                <span class="fw-semibold nav-title">Intraday Scanner</span>
+            </div>
+            <!-- dummy spacer biar title tetap center -->
+            <div style="width:72px;"></div>
+        </div>
+    </nav>
+
+    <div id="app" class="container mb-3">
+
+        <!-- 4-QUADRANT HEATMAP (Chart.js) -->
+        <div class="mb-3">
+            <div style="height:50vh;">
+                <canvas id="quadChart"></canvas>
+            </div>
+        </div>
+
+        <!-- HEADER + FILTER -->
+        <div class="d-flex flex-wrap justify-content-between align-items-center mb-3 gap-2">
+            <div class="d-none">
+                <div class="page-title">Daftar Emiten – Intraday Bias</div>
+                <div class="small text-muted">
+                    Window: <span id="label-range">-</span>
+                </div>
+            </div>
+
+            <div class="d-flex flex-wrap gap-2 align-items-end">
+                <div>
+                    <label for="date-from" class="small text-muted mb-0">Dari tanggal</label>
+                    <input type="date" id="date-from" class="form-control form-control-sm" />
+                </div>
+                <div>
+                    <label for="time-from" class="small text-muted mb-0">Jam</label>
+                    <input type="time" id="time-from" class="form-control form-control-sm" />
+                </div>
+
+                <div>
+                    <label for="date-to" class="small text-muted mb-0">Sampai tanggal</label>
+                    <input type="date" id="date-to" class="form-control form-control-sm" />
+                </div>
+                <div>
+                    <label for="time-to" class="small text-muted mb-0">Jam</label>
+                    <input type="time" id="time-to" class="form-control form-control-sm" />
+                </div>
+
+                <button id="btn-apply-range" class="btn btn-sm btn-primary">
+                    Apply
+                </button>
+                <button id="btn-refresh" class="btn btn-sm btn-outline-primary">
+                    <i class="fa-solid fa-rotate-right me-1"></i> Refresh
+                </button>
+            </div>
+        </div>
+
+
+        <!-- TABLE CARD -->
+        <div class="card card-swing mb-5">
+            <div class="card-swing-header d-flex justify-content-between align-items-center">
+                <div class="small text-muted" style="visibility: hidden;">
+                    Top emiten by value
+                </div>
+                <div class="small text-muted" id="last-updated" style="visibility: hidden;">Last update: -</div>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0 table-orderflow align-middle">
+                        <thead>
+                            <tr>
+                                <th class="text-center">#</th>
+
+                                <th class="sortable" data-sort="kode">
+                                    Kode <span class="sort-icon">↕</span>
+                                </th>
+
+                                <th class="text-end sortable" data-sort="last">
+                                    Last <span class="sort-icon">↕</span>
+                                </th>
+
+                                <th class="text-end sortable" data-sort="return_pct">
+                                    % Day <span class="sort-icon">↕</span>
+                                </th>
+
+                                <th class="text-end sortable" data-sort="vol">
+                                    Vol <span class="sort-icon">↕</span>
+                                </th>
+
+                                <th class="text-end sortable" data-sort="net_vol">
+                                    Net Vol <span class="sort-icon">↕</span>
+                                </th>
+
+                                <th class="text-end sortable" data-sort="haka_pct">
+                                    % Haka <span class="sort-icon">↕</span>
+                                </th>
+
+                                <th class="text-end sortable" data-sort="ob_imbalance">
+                                    OB Imb <span class="sort-icon">↕</span>
+                                </th>
+
+                                <th class="text-center sortable" data-sort="signal_score">
+                                    Signal <span class="sort-icon">↕</span>
+                                </th>
+
+                                <th class="text-center sortable" data-sort="quadrant">
+                                    &nbsp;
+                                </th>
+                            </tr>
+                        </thead>
+                        <tbody id="tbody-intraday">
+                            <!-- DUMMY DATA -->
+                            <tr data-kode="BBCA">
+                                <td class="text-center text-muted">1</td>
+                                <td><span class="text-decoration-none fw-semibold">BBCA</span></td>
+                                <td class="text-end">10,250</td>
+                                <td class="text-end text-success">1.50%</td>
+                                <td class="text-end">150,000</td>
+                                <td class="text-end text-success">50,000</td>
+                                <td class="text-end">65%</td>
+                                <td class="text-end">12.5%</td>
+                                <td class="text-center">BUY</td>
+                                <td class="text-center"><span class="quadrant-badge bg-success text-white">1</span></td>
+                            </tr>
+                            <tr data-kode="BMRI">
+                                <td class="text-center text-muted">2</td>
+                                <td><span class="text-decoration-none fw-semibold">BMRI</span></td>
+                                <td class="text-end">6,100</td>
+                                <td class="text-end text-danger">-0.75%</td>
+                                <td class="text-end">120,000</td>
+                                <td class="text-end text-danger">-20,000</td>
+                                <td class="text-end">45%</td>
+                                <td class="text-end">-5.0%</td>
+                                <td class="text-center">SELL</td>
+                                <td class="text-center"><span class="quadrant-badge bg-info text-dark">2</span></td>
+                            </tr>
+                            <tr data-kode="TLKM">
+                                <td class="text-center text-muted">3</td>
+                                <td><span class="text-decoration-none fw-semibold">TLKM</span></td>
+                                <td class="text-end">3,850</td>
+                                <td class="text-end text-secondary">0.00%</td>
+                                <td class="text-end">90,000</td>
+                                <td class="text-end">100</td>
+                                <td class="text-end">50%</td>
+                                <td class="text-end">0.0%</td>
+                                <td class="text-center">-</td>
+                                <td class="text-center"><span class="quadrant-badge bg-secondary text-white">?</span>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- DETAIL PANEL -->
+        <div class="card card-swing mb-4" id="detail-card">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <div>
+                        <div class="text-muted small">Detail Emiten (Dummy)</div>
+                        <div class="h6 mb-0" id="detail-kode">BBCA</div>
+                    </div>
+                    <span id="detail-quadrant" class="quadrant-badge bg-success text-white">1</span>
+                </div>
+                <div id="detail-body" class="small text-muted">
+                    <div>Last: <strong>10,250</strong></div>
+                    <div>% Day: <strong>1.50%</strong></div>
+                    <div>Volume: <strong>150,000</strong> · Net: <strong>50,000</strong> (65% Haka)</div>
+                    <div>Orderbook Imbalance: <strong>12.5%</strong></div>
+                    <hr class="my-2" />
+                    <div>Realtime signal: <strong>BUY</strong></div>
+                    <div class="small">
+                        Momentum score: 0.85 · Intention: 0.75 · Fused: 0.80
+                    </div>
+                    <div class="mt-2 text-muted">
+                        Sudut pandang intraday: money (Haka), %Day, dan intensi dari orderbook.
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- SCRIPTS -->
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0"></script>
+
+    <script>
+        // --- DUMMY LAYOUT SCRIPT ---
+        // Semua logic API & realtime dimatikan. Hanya layout.
+
+        Chart.register(ChartDataLabels);
+
+        // Dummy Chart
+        const ctx = document.getElementById("quadChart");
+        new Chart(ctx, {
+            type: 'bubble',
+            data: {
+                datasets: [{
+                    label: 'Dummy Data',
+                    data: [
+                        { x: 20, y: 30, r: 15, kode: 'BBCA', quadrant: 1 },
+                        { x: -10, y: 15, r: 10, kode: 'BMRI', quadrant: 2 },
+                        { x: -15, y: -20, r: 12, kode: 'TLKM', quadrant: 3 },
+                        { x: 10, y: -10, r: 8, kode: 'ASII', quadrant: 4 }
+                    ],
+                    backgroundColor: [
+                        "rgba(34,197,94,0.7)",
+                        "rgba(59,130,246,0.7)",
+                        "rgba(239,68,68,0.7)",
+                        "rgba(234,179,8,0.8)"
+                    ]
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false }
+                },
+                scales: {
+                    x: {
+                        title: { display: true, text: 'Money ( %Haka - 50 )' },
+                        grid: { color: "rgba(226,232,240,0.7)" }
+                    },
+                    y: {
+                        title: { display: true, text: 'Momentum Intraday (% Day)' },
+                        grid: { color: "rgba(226,232,240,0.7)" }
+                    }
+                }
+            }
+        });
+
+        // Toggle detail card visibility for demo
+        $('#tbody-intraday tr').on('click', function () {
+            $('#detail-card').toggle();
+        });
+
+        // Scroll Behavior for Nav Title
+        // Hide on scroll down, Show if scrollTop < 25% viewport height
+        $(window).on('scroll', function () {
+            const scrollTop = $(this).scrollTop();
+            const threshold = $(window).height() * 0.25;
+            const $title = $('.nav-title');
+
+            if (scrollTop > threshold) {
+                // Scrolled down past 25% VH -> Hide
+                if (!$title.hasClass('hidden')) {
+                    $title.addClass('hidden');
+                }
+            } else {
+                // Within top 25% VH -> Show
+                if ($title.hasClass('hidden')) {
+                    $title.removeClass('hidden');
+                }
+            }
+        });
+    </script>
+</body>
+
+</html>

@@ -1,54 +1,43 @@
-// workers/livetrade-state-engine/wrangler.jsonc
+/**
+ * For more details on how to configure Wrangler, refer to:
+ * https://developers.cloudflare.com/workers/wrangler/configuration/
+ */
 {
-  // ============================
-  // livetrade-state-engine
-  // Engine: L1, roster, prediction
-  // ============================
-  "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "livetrade-state-engine",
-  "main": "src/index.js",
-  "compatibility_date": "2025-12-06",
-  "compatibility_flags": [
-    "nodejs_compat"
-  ],
-  "workers_dev": true,
-  // ============================
-  // DURABLE OBJECT
-  // ============================
-  "durable_objects": {
-    "bindings": [
-      {
-        "name": "STATE_ENGINE", // env.STATE_ENGINE di worker ini
-        "class_name": "StateEngine" // export class StateEngine extends DurableObject { ... }
-      }
-    ]
-  },
-  "migrations": [
-    {
-      "tag": "v1_state_engine",
-      "new_classes": [
-        "StateEngine"
-      ]
-    }
-  ],
-  // ============================
-  // CRON (kalau nanti mau dipakai)
-  // ============================
-  "triggers": {
-    "crons": [
-      "* * * * *"
-    ]
-  },
-  // ============================
-  // ENV VARS (opsional, future use)
-  // ============================
-  "vars": {
-    "PROJECT_NAME": "SSSAHAM",
-    "ENGINE_ROLE": "STATE_ENGINE",
-    "SCALP_WINDOW_SECONDS": "3",
-    "ROSTER_LIMIT": "10"
-  },
-  "observability": {
-    "enabled": true
-  }
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "livetrade-state-engine",
+	"main": "src/index.ts",
+	"compatibility_date": "2025-12-31",
+	"compatibility_flags": [
+		"global_fetch_strictly_public"
+	],
+	"assets": {
+		// The path to the directory containing the `index.html` file to be served at `/`
+		"directory": "./public"
+	},
+	"observability": {
+		"enabled": true
+	}
+	/**
+	 * Smart Placement
+	 * https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement
+	 */
+	// "placement": {  "mode": "smart" }
+	/**
+	 * Bindings
+	 * Bindings allow your Worker to interact with resources on the Cloudflare Developer Platform, including
+	 * databases, object storage, AI inference, real-time communication and more.
+	 * https://developers.cloudflare.com/workers/runtime-apis/bindings/
+	 */
+	/**
+	 * Environment Variables
+	 * https://developers.cloudflare.com/workers/wrangler/configuration/#environment-variables
+	 * Note: Use secrets to store sensitive data.
+	 * https://developers.cloudflare.com/workers/configuration/secrets/
+	 */
+	// "vars": {  "MY_VARIABLE": "production_value" }
+	/**
+	 * Service Bindings (communicate between multiple Workers)
+	 * https://developers.cloudflare.com/workers/wrangler/configuration/#service-bindings
+	 */
+	// "services": [  {   "binding": "MY_SERVICE",   "service": "my-service"  } ]
 }

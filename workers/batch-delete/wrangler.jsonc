@@ -1,0 +1,16 @@
+{
+    "$schema": "node_modules/wrangler/config-schema.json",
+    "name": "batch-delete",
+    "main": "src/index.js",
+    "compatibility_date": "2024-12-17",
+    "r2_buckets": [
+        {
+            "binding": "TAPE_DATA_FUTURES",
+            "bucket_name": "tape-data-futures"
+        },
+        {
+            "binding": "TAPE_DATA_SAHAM",
+            "bucket_name": "tape-data-saham"
+        }
+    ]
+}

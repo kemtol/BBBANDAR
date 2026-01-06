@@ -1,0 +1,5 @@
+workers/
+node_modules/
+.git/
+.github/
+.vscode/

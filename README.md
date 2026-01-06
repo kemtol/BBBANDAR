@@ -9,7 +9,7 @@
 | `index.html` | **Main Landing Page**. Entry point for the ecosystem. |
 | `admin-dashboard.html` | **Admin Dashboard**. Monitors worker health, cron jobs, and housecleaning status. |
 | `performance-report.html` | **Performance Reports**. Visualizes portfolio/trading performance. |
-| `runningtrade/` | **Stock Analysis App**. Contains module specific pages (Emiten, Intraday, Swing). |
+| `idx/` | **Stock Analysis App**. Contains module specific pages (Emiten, Intraday, Swing). |
 | `futures/` | **Futures Trading Platform**. Full trading UI with Auth (Login/Reg) and Charts. |
 | `about-us.html` | Company/Project info page. |
 | `home.html` | Dashboard home (internal user). |

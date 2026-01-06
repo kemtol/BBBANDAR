@@ -19,6 +19,10 @@
     {
       "binding": "ORDERBOOK_AGG",
       "service": "orderbook-taping-agregator"
+    },
+    {
+      "binding": "BATCH_DELETE",
+      "service": "batch-delete"
     }
   ],
   // Binding ke Durable Object (PENTING)
