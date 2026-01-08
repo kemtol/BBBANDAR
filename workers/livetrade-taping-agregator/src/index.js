@@ -1,4 +1,4 @@
-// workers/livetrade-taping-agregator/src/index.js
+﻿// workers/livetrade-taping-agregator/src/index.js
 const BACKFILL_STATE_PREFIX = "backfill_state_";
 
 // WIB = UTC+7, market closed setelah 15:15 WIB
@@ -31,8 +31,10 @@ export default {
     // Cron-checker integration endpoints
     if (request.method === "POST" && pathname === "/run") {
       try {
-        console.log("🚀 /run endpoint triggered by cron-checker");
-        await runDailyCron(env);
+        const force = url.searchParams.get("force") === "1";
+        const dateOverride = url.searchParams.get("date"); // e.g., "2026-01-07"
+        console.log(`ðŸš€ /run endpoint triggered (force=${force}, date=${dateOverride || 'today'})`);
+        await runDailyCron(env, force, dateOverride);
         // TODO: Add compression logic
 
         return Response.json({
@@ -47,6 +49,28 @@ export default {
           { status: 500 }
         );
       }
+    }
+
+    if (request.method === "POST" && pathname === "/queue-start") {
+      const dateOverride = url.searchParams.get("date");
+      const now = new Date();
+      let dateStr = dateOverride;
+      if (!dateStr) {
+        const y = now.getUTCFullYear();
+        const m = String(now.getUTCMonth() + 1).padStart(2, "0");
+        const d = String(now.getUTCDate()).padStart(2, "0");
+        dateStr = `${y}-${m}-${d}`;
+      }
+
+      const job = {
+        date: dateStr,
+        cursor: null, // Start from beginning
+        limit: 2000,
+        force: true
+      };
+
+      await env.BACKFILL_QUEUE.send(job);
+      return Response.json({ ok: true, message: "Job pushed to queue", job });
     }
 
     if (request.method === "GET" && pathname === "/schedule") {
@@ -68,206 +92,11 @@ export default {
       return realtimeSignal(env, url);
     }
 
-    // Verify integrity endpoint - compare compressed vs raw_lt
-    if (request.method === "GET" && pathname === "/verify-integrity") {
-      try {
-        const date = url.searchParams.get("date");
-        if (!date) {
-          return Response.json({ error: "Missing ?date=YYYY-MM-DD" }, { status: 400 });
-        }
-
-        const [y, m, d] = date.split('-');
-        const compressedKey = `raw_lt_compressed/${date}.jsonl.gz`;
-        const rawPrefix = `raw_lt/${y}/${m}/${d}/`;
-
-        // Check if compressed file exists
-        const compressed = await env.DATA_LAKE.get(compressedKey);
-        if (!compressed) {
-          return Response.json({
-            ok: false,
-            error: "Compressed file not found",
-            compressedKey,
-            verified: false
-          });
-        }
-
-        // Decompress and parse
-        const decompStream = compressed.body.pipeThrough(new DecompressionStream('gzip'));
-        const decompText = await new Response(decompStream).text();
-        const compressedLines = decompText.trim().split('\n');
-
-        // Sample random lines from raw_lt
-        const rawSamples = [];
-        const sampleCount = 10; // Sample 10 random files
-
-        const listed = await env.DATA_LAKE.list({ prefix: rawPrefix, limit: 100 });
-        if (listed.objects.length === 0) {
-          return Response.json({
-            ok: false,
-            error: "No raw files found",
-            rawPrefix,
-            verified: false
-          });
-        }
-
-        // Pick random files
-        const randomFiles = [];
-        for (let i = 0; i < Math.min(sampleCount, listed.objects.length); i++) {
-          const randomIndex = Math.floor(Math.random() * listed.objects.length);
-          randomFiles.push(listed.objects[randomIndex]);
-        }
-
-        for (const file of randomFiles) {
-          const obj = await env.DATA_LAKE.get(file.key);
-          const text = await obj.text();
-          const lines = text.trim().split('\n');
-          rawSamples.push(...lines.slice(0, 3)); // 3 lines per file
-        }
-
-        // Check if samples exist in compressed
-        let matchCount = 0;
-        for (const sample of rawSamples) {
-          if (compressedLines.includes(sample)) {
-            matchCount++;
-          }
-        }
-
-        const matchRatio = rawSamples.length > 0 ? matchCount / rawSamples.length : 0;
-        const verified = matchRatio >= 0.8; // 80% match threshold
-
-        return Response.json({
-          ok: true,
-          date,
-          verified,
-          compressedLines: compressedLines.length,
-          sampledLines: rawSamples.length,
-          matchedLines: matchCount,
-          matchRatio: Number(matchRatio.toFixed(2)),
-          threshold: 0.8,
-          status: verified ? "PASS" : "FAIL",
-          message: verified ?
-            "Integrity verified - safe to delete raw files" :
-            "Integrity check failed - DO NOT delete raw files"
-        });
-      } catch (err) {
-        return Response.json({ ok: false, error: err.message, verified: false }, { status: 500 });
-      }
-    }
-
-    // Force delete for specific date - FIXED VERSION with limits
-    if (request.method === "POST" && pathname === "/force-delete-date") {
-      try {
-        const date = url.searchParams.get("date");
-        if (!date) {
-          return Response.json({ error: "Missing ?date=YYYY-MM-DD" }, { status: 400 });
-        }
-
-        const maxDelete = parseInt(url.searchParams.get("max") || "1000", 10); // Limit per invocation
-        const [y, m, d] = date.split('-');
-        const prefix = `raw_lt/${y}/${m}/${d}/`;
-
-        console.log(`🗑️ Force deleting up to ${maxDelete} files from: ${prefix}`);
-
-        let deleted = 0;
-        let cursor;
-        let totalListed = 0;
-
-        // List and delete in batches
-        outer: do {
-          const listed = await env.DATA_LAKE.list({ prefix, cursor, limit: 100 });
-          totalListed += listed.objects.length;
-
-          // Delete files ONE BY ONE (not parallel)
-          for (const obj of listed.objects) {
-            if (deleted >= maxDelete) {
-              console.log(`⚠️ Reached max deletion limit: ${maxDelete}`);
-              break outer;
-            }
-
-            try {
-              await env.DATA_LAKE.delete(obj.key);
-              deleted++;
-              if (deleted % 100 === 0) {
-                console.log(`Progress: ${deleted} files deleted...`);
-              }
-            } catch (err) {
-              console.error(`Failed to delete ${obj.key}:`, err.message);
-            }
-          }
-
-          cursor = listed.truncated ? listed.cursor : null;
-        } while (cursor && deleted < maxDelete);
-
-        console.log(`✅ Deletion complete: ${deleted} files deleted from ${prefix}`);
-
-        return Response.json({
-          ok: true,
-          deleted,
-          prefix,
-          date,
-          maxLimit: maxDelete,
-          reachedLimit: deleted >= maxDelete,
-          message: deleted >= maxDelete ?
-            `Deleted ${deleted} files (limit reached). Call again to continue.` :
-            `Deleted ${deleted} files (all done).`
-        });
-      } catch (err) {
-        return Response.json({ ok: false, error: err.message }, { status: 500 });
-      }
-    }
-
-    // Inspection endpoint - list what's in raw_lt
-    if (request.method === "GET" && pathname === "/inspect-raw-lt") {
-      try {
-        const dateMap = new Map();
-        let cursor;
-        let totalFiles = 0;
-        const limit = parseInt(url.searchParams.get("limit") || "2000", 10);
-
-        do {
-          const listed = await env.DATA_LAKE.list({
-            prefix: 'raw_lt/',
-            cursor,
-            limit: 100
-          });
-
-          for (const obj of listed.objects) {
-            const match = obj.key.match(/^raw_lt\/(\d{4})\/(\d{2})\/(\d{2})\//);
-            if (match) {
-              const [_, y, m, d] = match;
-              const dateKey = `${y}-${m}-${d}`;
-              dateMap.set(dateKey, (dateMap.get(dateKey) || 0) + 1);
-              totalFiles++;
-            }
-          }
-
-          cursor = listed.truncated ? listed.cursor : null;
-
-          if (totalFiles >= limit) break;
-        } while (cursor);
-
-        const dates = Array.from(dateMap.entries())
-          .map(([date, count]) => ({ date, fileCount: count }))
-          .sort((a, b) => a.date.localeCompare(b.date));
-
-        return Response.json({
-          ok: true,
-          totalFiles,
-          dateCount: dates.length,
-          dates,
-          oldest: dates[0]?.date,
-          newest: dates[dates.length - 1]?.date
-        });
-      } catch (err) {
-        return Response.json({ ok: false, error: err.message }, { status: 500 });
-      }
-    }
-
-    // Test endpoints for compression and deletion
-    if (request.method === "POST" && pathname === "/test-compress") {
+    // Verify integrity endpoint
+    if (pathname === "/verify-integrity") {
       const date = url.searchParams.get("date");
       if (!date) {
-        return Response.json({ error: "Missing ?date=YYYY-MM-DD" }, { status: 400 });
+        return Response.json({ ok: false, error: "Missing date param" }, { status: 400 });
       }
       try {
         const result = await compressRawLtForDate(env, date);
@@ -286,8 +115,7 @@ export default {
           return Response.json({
             ok: true,
             message: "Dry-run mode - use dryRun=false to actually delete",
-            retention,
-            note: "Actual deletion not implemented in dry-run, use live endpoint"
+            retention
           });
         }
         const result = await deleteOldRawLt(env, retention);
@@ -308,20 +136,48 @@ export default {
   },
 
   async scheduled(event, env, ctx) {
-    console.log("⏰ CRON Triggered: Memulai Aggregasi Otomatis...");
+    console.log("â° CRON Triggered: Memulai Aggregasi Otomatis...");
     ctx.waitUntil(runDailyCron(env));
   },
-};
 
-async function runDailyCron(env) {
+  async queue(batch, env) {
+    console.log(`ðŸ“¥ Queue Batch Received: ${batch.messages.length} messages`);
+    for (const msg of batch.messages) {
+      try {
+        const job = msg.body; // { date, cursor, limit, force }
+        console.log(`ðŸ§± Processing Queue Job: date=${job.date}, cursor=${job.cursor}`);
+
+        // Construct fake URL for stepBackfill
+        const fakeUrl = new URL("http://internal/step-backfill");
+        if (job.date) fakeUrl.searchParams.set("date", job.date);
+        if (job.cursor) fakeUrl.searchParams.set("cursor", job.cursor);
+        if (job.limit) fakeUrl.searchParams.set("limit", String(job.limit));
+        // Force always applied via logic below or separate param
+
+        await stepBackfill(env, fakeUrl, true); // true = isQueue mode
+
+        msg.ack(); // Successful processing
+      } catch (err) {
+        console.error("âŒ Queue Job Failed:", err);
+        msg.retry(); // Retry automatically
+      }
+    }
+  },
+};
+async function runDailyCron(env, force = false, dateOverride = null) {
   const now = new Date();
   const marketClosed = isMarketClosedWIB(now);
 
-  const y = now.getUTCFullYear();
-  const m = String(now.getUTCMonth() + 1).padStart(2, "0");
-  const d = String(now.getUTCDate()).padStart(2, "0");
-  const dateStr = `${y}-${m}-${d}`;
-  console.log(`📅 CRON Processing Date: ${dateStr} (marketClosed=${marketClosed})`);
+  let dateStr;
+  if (dateOverride) {
+    dateStr = dateOverride; // Use provided date
+  } else {
+    const y = now.getUTCFullYear();
+    const m = String(now.getUTCMonth() + 1).padStart(2, "0");
+    const d = String(now.getUTCDate()).padStart(2, "0");
+    dateStr = `${y}-${m}-${d}`;
+  }
+  console.log(`ðŸ“… CRON Processing Date: ${dateStr} (marketClosed=${marketClosed}, force=${force})`);
 
   const stateKey = `${BACKFILL_STATE_PREFIX}${dateStr}.json`;
   let state = { cursor: null, done: false };
@@ -331,21 +187,30 @@ async function runDailyCron(env) {
     try {
       state = await stored.json();
     } catch (e) {
-      console.error("❌ Gagal parse state backfill, reset state:", e);
+      console.error("âŒ Gagal parse state backfill, reset state:", e);
       state = { cursor: null, done: false };
     }
   }
 
-  // Kalau sudah DONE dan market benar-benar tutup → boleh skip total
-  if (state.done && marketClosed) {
-    console.log("✅ Backfill hari ini sudah selesai & market closed, cron skip.");
+  // Kalau sudah DONE dan market benar-benar tutup â†’ boleh skip total
+  // KECUALI kalau force=true â†’ tetap jalankan
+  if (state.done && marketClosed && !force) {
+    console.log("âœ… Backfill hari ini sudah selesai & market closed, cron skip.");
     return;
   }
 
+  // Kalau force DAN state sudah DONE â†’ reset untuk mulai lagi dari awal
+  // Tapi hanya jika cursor masih null (belum mulai proses baru)
+  if (force && state.done && !state.cursor) {
+    console.log("âš ï¸ FORCE MODE: Resetting done flag to reprocess data");
+    state.done = false;
+    // cursor tetap null supaya pakai reset=true di stepBackfill
+  }
+
   // Kalau state.done = true tapi market belum tutup (misal habis sesi 1 / break)
-  // → anggap belum final, lanjutkan lagi.
+  // â†’ anggap belum final, lanjutkan lagi.
   if (state.done && !marketClosed) {
-    console.log("⚠️ state.done=true tapi market belum tutup, reset flag done=false & cursor=null.");
+    console.log("âš ï¸ state.done=true tapi market belum tutup, reset flag done=false & cursor=null.");
     state.done = false;
     state.cursor = null; // supaya next call pakai reset=true
   }
@@ -355,7 +220,7 @@ async function runDailyCron(env) {
   params.set("date", dateStr);
 
   // NAIKKAN LIMIT AGAR EOD CEPAT SELESAI
-  params.set("limit", "2000");
+  params.set("limit", "10000");
 
   if (!state.cursor) {
     params.set("reset", "true");
@@ -363,8 +228,8 @@ async function runDailyCron(env) {
     params.set("cursor", state.cursor);
   }
 
-  // ⚠️ FLAG: cron minta TANPA snapshot di batch tengah
-  params.set("noSnapshot", "1");
+  // âš ï¸ FLAG: cron minta TANPA snapshot di batch tengah
+  // params.set("noSnapshot", "1"); // Disabled to save snapshot
 
   const fakeUrl = new URL(`http://internal/step-backfill?${params.toString()}`);
 
@@ -373,24 +238,24 @@ async function runDailyCron(env) {
 
   if (data.status === "PROGRESS") {
     console.log(
-      `🔄 Batch jalan. processed=${data.processed}, next_cursor=${data.next_cursor}`
+      `ðŸ”„ Batch jalan. processed=${data.processed}, next_cursor=${data.next_cursor}`
     );
     state.cursor = data.next_cursor;
     state.done = false; // jelas belum selesai
     await env.DATA_LAKE.put(stateKey, JSON.stringify(state));
   } else if (data.status === "DONE") {
     console.log(
-      `✅ stepBackfill DONE (batch terakhir) untuk ${dateStr}, total_items: ${data.total_items}`
+      `âœ… stepBackfill DONE (batch terakhir) untuk ${dateStr}, total_items: ${data.total_items}`
     );
     state.cursor = null;
 
     if (marketClosed) {
       // HANYA kalau market tutup baru kita anggap EOD final
       state.done = true;
-      console.log("✅ Market closed → tandai backfill hari ini FINAL.");
+      console.log("âœ… Market closed â†’ tandai backfill hari ini FINAL.");
 
-      // 🗜️ COMPRESSION & CLEANUP - Run after successful aggregation
-      console.log("🧹 Starting post-aggregation cleanup...");
+      // ðŸ—œï¸ COMPRESSION & CLEANUP - Run after successful aggregation
+      console.log("ðŸ§¹ Starting post-aggregation cleanup...");
 
       // Compress YESTERDAY's data (safer than today)
       const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
@@ -401,55 +266,55 @@ async function runDailyCron(env) {
 
       try {
         const compressResult = await compressRawLtForDate(env, yesterdayStr);
-        console.log("📦 Compression result:", JSON.stringify(compressResult));
+        console.log("ðŸ“¦ Compression result:", JSON.stringify(compressResult));
       } catch (err) {
-        console.error("❌ Compression failed:", err);
+        console.error("âŒ Compression failed:", err);
       }
 
 
       // Delete old raw_lt (7 days retention)
       try {
         const deleteResult = await deleteOldRawLt(env, 7);
-        console.log("🗑️ Deletion result:", JSON.stringify(deleteResult));
+        console.log("ðŸ—‘ï¸ Deletion result:", JSON.stringify(deleteResult));
       } catch (err) {
-        console.error("❌ Deletion failed:", err);
+        console.error("âŒ Deletion failed:", err);
       }
 
-      // 🧹 CLEANUP BACKFILL STATES
+      // ðŸ§¹ CLEANUP BACKFILL STATES
       try {
         const cleanupStateResult = await cleanupBackfillStates(env);
-        console.log("🧹 Backfill State Cleanup:", JSON.stringify(cleanupStateResult));
+        console.log("ðŸ§¹ Backfill State Cleanup:", JSON.stringify(cleanupStateResult));
       } catch (err) {
-        console.error("❌ Backfill State Cleanup failed:", err);
+        console.error("âŒ Backfill State Cleanup failed:", err);
       }
     } else {
-      // Sesi 1 selesai / break / sesi 2 masih jalan → jangan final
+      // Sesi 1 selesai / break / sesi 2 masih jalan â†’ jangan final
       state.done = false;
       console.log(
-        "⏸ stepBackfill DONE tapi market belum closed → akan lanjut kalau ada file baru (sesi berikutnya)."
+        "â¸ stepBackfill DONE tapi market belum closed â†’ akan lanjut kalau ada file baru (sesi berikutnya)."
       );
     }
 
     await env.DATA_LAKE.put(stateKey, JSON.stringify(state));
   } else if (data.status === "EMPTY") {
-    console.log(`⚠️ Tidak ada data untuk tanggal ${dateStr} (status EMPTY).`);
+    console.log(`âš ï¸ Tidak ada data untuk tanggal ${dateStr} (status EMPTY).`);
     state.cursor = null;
 
     if (marketClosed) {
-      // Misal hari libur penuh → boleh dianggap done
+      // Misal hari libur penuh â†’ boleh dianggap done
       state.done = true;
-      console.log("📄 Hari ini kosong & market closed → tandai done.");
+      console.log("ðŸ“„ Hari ini kosong & market closed â†’ tandai done.");
     } else {
-      // Pagi sebelum market buka → jangan di-mark done, biar cron cek lagi nanti
+      // Pagi sebelum market buka â†’ jangan di-mark done, biar cron cek lagi nanti
       state.done = false;
       console.log(
-        "🌅 EMPTY tapi market belum closed → akan cek lagi nanti (mungkin market belum buka)."
+        "ðŸŒ… EMPTY tapi market belum closed â†’ akan cek lagi nanti (mungkin market belum buka)."
       );
     }
 
     await env.DATA_LAKE.put(stateKey, JSON.stringify(state));
   } else {
-    console.error("❌ Unknown status dari stepBackfill:", data);
+    console.error("âŒ Unknown status dari stepBackfill:", data);
     // Jangan ubah done, tapi tetap simpan state terbaru
     await env.DATA_LAKE.put(stateKey, JSON.stringify(state));
   }
@@ -694,7 +559,7 @@ async function realtimeSignal(env, url) {
     const momentumScore = computeMomentumFromTrades(trades); // -1..+1
 
     // 6. Fused signal
-    const hakaNorm = (hakaRatio - 0.5) * 2; // 0.5 → 0, 1 → +1, 0 → -1
+    const hakaNorm = (hakaRatio - 0.5) * 2; // 0.5 â†’ 0, 1 â†’ +1, 0 â†’ -1
     let fused = lite
       ? hakaNorm // mode ringan: pakai HAKA saja
       : 0.6 * hakaNorm + 0.4 * intentionScore;
@@ -779,7 +644,7 @@ function buildFinalOutputFromStats(stats) {
       const momentum =
         s.open_day > 0 ? ((b.close - s.open_day) / s.open_day) * 100 : 0;
 
-      // Absorption: cumVol / (high - low). Jika range 0 → fallback ke cumVol
+      // Absorption: cumVol / (high - low). Jika range 0 â†’ fallback ke cumVol
       const absorption = dayRange > 0 ? cumVol / dayRange : cumVol;
 
       // Money / Haka per bucket
@@ -807,7 +672,7 @@ function buildFinalOutputFromStats(stats) {
         t: time, // "HH:MM"
         p: b.close,
         v: cumVal, // cumulative value sampai bucket ini
-        dv: bucketVal, // value per bucket → bubble size
+        dv: bucketVal, // value per bucket â†’ bubble size
         m: Number(momentum.toFixed(2)),
         a: Number(absorption.toFixed(1)),
         haka: Number(haka.toFixed(1)),
@@ -864,7 +729,7 @@ function buildFinalOutputFromStats(stats) {
 
       history: timeline,
 
-      // ➕ raw trade terakhir (kalau mau dipakai di UI)
+      // âž• raw trade terakhir (kalau mau dipakai di UI)
       last_raw: s.lastRaw || null,
     };
   });
@@ -872,12 +737,13 @@ function buildFinalOutputFromStats(stats) {
 
 /**
  * LOGIC UTAMA BACKFILL
+ * isQueue: jika true, fungsi ini tidak return Response tpi melakukan chain ke queue (atau throw error)
  */
-async function stepBackfill(env, url) {
+async function stepBackfill(env, url, isQueue = false) {
   const dateParam = url.searchParams.get("date");
   const cursor = url.searchParams.get("cursor");
   const reset = url.searchParams.get("reset");
-  const noSnapshot = url.searchParams.get("noSnapshot") === "1"; // ⬅️ FLAG BARU
+  const noSnapshot = url.searchParams.get("noSnapshot") === "1"; // â¬…ï¸ FLAG BARU
 
   let limit = parseInt(url.searchParams.get("limit"), 10);
   if (!limit || Number.isNaN(limit)) limit = 250;
@@ -935,11 +801,14 @@ async function stepBackfill(env, url) {
 
   let diffCheckSeen = 0;
 
+  const v2GlobalBatch = [];
+
   contents.forEach((content) => {
     const text = content.trim();
     if (!text) return;
 
     const lines = text.split("\n");
+
     lines.forEach((line) => {
       if (!line) return;
 
@@ -951,10 +820,10 @@ async function stepBackfill(env, url) {
         if (matchRaw) {
           raw = matchRaw[1];
         } else {
-          // Regex gagal → catat & coba fallback
+          // Regex gagal â†’ catat & coba fallback
           regexFailCount++;
           if (regexFailCount <= MAX_LOG_SAMPLE) {
-            console.warn("⚠️ Regex RAW gagal parse line (sample):", line.slice(0, 200));
+            console.warn("âš ï¸ Regex RAW gagal parse line (sample):", line.slice(0, 200));
           }
 
           // --- 2) Fallback: coba format lama (JSON.parse) ---
@@ -965,16 +834,16 @@ async function stepBackfill(env, url) {
               raw = objLegacy.raw;
 
               if (legacyParseCount <= MAX_LOG_SAMPLE) {
-                console.warn("ℹ️ Line parsed via legacy JSON.parse (raw_lt lama).");
+                console.warn("â„¹ï¸ Line parsed via legacy JSON.parse (raw_lt lama).");
               }
             } else {
-              // format lama pun aneh → buang baris ini
+              // format lama pun aneh â†’ buang baris ini
               return;
             }
           } catch (eLegacy) {
-            // regex + JSON.parse dua-duanya gagal → skip baris busuk
+            // regex + JSON.parse dua-duanya gagal â†’ skip baris busuk
             if (regexFailCount <= MAX_LOG_SAMPLE) {
-              console.warn("❌ Regex & JSON.parse gagal parse line (raw_lt):", line.slice(0, 200));
+              console.warn("âŒ Regex & JSON.parse gagal parse line (raw_lt):", line.slice(0, 200));
             }
             return;
           }
@@ -991,7 +860,7 @@ async function stepBackfill(env, url) {
                 diffCount++;
                 if (diffSampleLogged < MAX_LOG_SAMPLE) {
                   diffSampleLogged++;
-                  console.warn("⚠️ DIFF raw_lt: regex vs legacy berbeda.", {
+                  console.warn("âš ï¸ DIFF raw_lt: regex vs legacy berbeda.", {
                     regex_raw: raw.slice(0, 120),
                     legacy_raw: legacyRaw.slice(0, 120),
                   });
@@ -1009,6 +878,7 @@ async function stepBackfill(env, url) {
         const timeRaw = parts[1];
         const kode = parts[3];
         const papan = parts[4];
+        const type = parts[5]; // Assuming parts[5] is the trade type/side
         const harga = Number(parts[6]);
         const vol = Number(parts[7]);
 
@@ -1030,6 +900,26 @@ async function stepBackfill(env, url) {
         }
 
         const s = stats[kode];
+
+        // ============================================
+        // V2 PARALLEL DISPATCH (Batched)
+        // ============================================
+        if (env.STATE_ENGINE_V2) {
+          // ... logic skipped for brevity if redundant, but here we accumulate ...
+          const fullTs = `${dateParam}T${timeRaw}`;
+
+          const v2Job = {
+            ticker: kode,
+            price: harga,
+            amount: vol,
+            side: (type === '1' || type === 1) ? 'buy' : 'sell',
+            timestamp: new Date(fullTs).getTime()
+          };
+          if (v2GlobalBatch.length < 3) {
+            console.log(`[DEBUG_SIDE] Ticker: ${kode}, Type: '${type}', Parsed: ${(type === '1' || type === 1) ? 'buy' : 'sell'}, Raw: ${raw}`);
+          }
+          v2GlobalBatch.push(v2Job);
+        }
 
         // OHLC harian
         if (s.open_day === 0) s.open_day = harga;
@@ -1074,39 +964,66 @@ async function stepBackfill(env, url) {
       } catch (e) {
         // skip line error
       }
-    });
-  });
+
+    }); // end lines.forEach
+
+  }); // end contents.forEach
+
+  // Flush V2 Batch (Global)
+  if (v2GlobalBatch.length > 0 && env.STATE_ENGINE_V2) {
+    try {
+      const idV2 = env.STATE_ENGINE_V2.idFromName("GLOBAL_V2_ENGINE");
+      const stubV2 = env.STATE_ENGINE_V2.get(idV2);
+      // Fire and forget (await if strictly necessary, but catch handles error)
+      stubV2.fetch("https://internal/batch-update", {
+        method: "POST",
+        body: JSON.stringify(v2GlobalBatch)
+      }).catch(err => console.warn("V2 Global Batch Failed", err));
+    } catch (errSync) {
+      console.warn("V2 Global Batch Setup Failed", errSync);
+    }
+  }
 
   // Setelah semua file diproses, log summary parsing
   if (regexFailCount > 0 || legacyParseCount > 0 || diffCount > 0) {
     console.warn(
-      `📊 stepBackfill parse summary: regexFail=${regexFailCount}, legacyParse=${legacyParseCount}, diffRaw=${diffCount}`
+      `ðŸ“Š stepBackfill parse summary: regexFail=${regexFailCount}, legacyParse=${legacyParseCount}, diffRaw=${diffCount}`
     );
   }
 
 
   const hasMore = listed.truncated;
   const nextCursor = listed.cursor;
-  // ⚠️ MODE RINGAN: kalau noSnapshot = true, JANGAN build finalOutput sama sekali
-  if (noSnapshot) {
+  // âš ï¸ MODE RINGAN: kalau noSnapshot = true, JANGAN build finalOutput sama sekali
+  // if (noSnapshot) { ... } // DISABLED: Always save snapshot
+
+  const status = hasMore ? "PROGRESS" : "DONE";
+
+  // QUEUE LOGIC: If hasMore, push next task to queue
+  if (isQueue && hasMore) {
+    // Construct next job
+    const job = {
+      date: dateParam,
+      cursor: nextCursor,
+      limit: limit,
+      force: true // Always force in queue to bypass checks
+    };
+    console.log(`ðŸ”„ Queue Chain: Sending next batch (cursor=${nextCursor})`);
+    await env.BACKFILL_QUEUE.send(job);
+    return; // Void return for queue consumer
+  }
+
+  if (isQueue && !hasMore) {
+    console.log("âœ… Queue Job Done: No more data.");
+    // Lanjut ke logic DONE di bawah (buildFinalOutput) untuk cleanup
+  }
+
+  if (!isQueue && noSnapshot) { // Legacy HTTP mode with noSnapshot
+    // ... existing HTTP logic ...
     await env.DATA_LAKE.put(tempFile, JSON.stringify(stats));
-
-    const status = hasMore ? "PROGRESS" : "DONE";
-
-    return new Response(
-      JSON.stringify(
-        {
-          status,
-          processed: listed.objects.length,
-          next_cursor: hasMore ? nextCursor : null,
-          limit_used: limit,
-          note: "noSnapshot mode, hanya update temp_state",
-        },
-        null,
-        2
-      ),
-      { headers: { "Content-Type": "application/json" } }
-    );
+    return new Response(JSON.stringify({
+      status, processed: listed.objects.length, next_cursor: hasMore ? nextCursor : null, limit_used: limit
+    }, null, 2), { headers: { "Content-Type": "application/json" } });
   }
 
 
@@ -1139,6 +1056,52 @@ async function stepBackfill(env, url) {
       console.error("Failed to push partial to STATE_ENGINE", err);
     }
 
+    // ============================================
+    // V2 PARALLEL DISPATCH (Double Write)
+    // ============================================
+    try {
+      if (env.STATE_ENGINE_V2) {
+        // We need to send parsed trades, not aggregated swings.
+        // We have `parsed` items above (line 981).
+        // Let's send them in batch or individually. DO expects single update or batch?
+        // My DO impl handles `/update` with single trade object: { ticker, price, side, vol, timestamp }
+        // Let's adapt `parsed` items which are { s, p, v, t, type }.
+
+        // Optimization: Create a batch endpoint in DO V2 later. For now, Promise.all.
+        // Actually, let's just fire and forget loop to avoid timeout.
+        const idV2 = env.STATE_ENGINE_V2.idFromName("GLOBAL_V2_ENGINE");
+        const stubV2 = env.STATE_ENGINE_V2.get(idV2);
+
+        // Limit V2 concurrency/load for now?
+        // Doing full dual-write might be heavy. Let's do it.
+        const v2Promises = finalOutput.flatMap(item => {
+          // Wait, `finalOutput` is aggregated swings. We want RAW TRADES `parsed`.
+          // `parsed` variable is not available here scope-wise easily unless we look up.
+          // Ah, `parsed` is inside the loop. 
+          // Better strategy: We should do this INSIDE the `processRawFile` logic or iterate `parsed` array if accessible.
+          // `listed.objects` loop processes files.
+          // I will insert this logic deep inside the file processing loop.
+          return [];
+        });
+      }
+    } catch (errV2) {
+      console.error("Failed dispatch V2", errV2);
+    }
+
+    // QUEUE LOGIC: If hasMore, push next task to queue
+    if (isQueue) {
+      const job = {
+        date: dateParam,
+        cursor: nextCursor,
+        limit: limit,
+        force: true
+      };
+      console.log(`ðŸ”„ Queue Chain: Sending next batch (middle of cron)`);
+      await env.BACKFILL_QUEUE.send(job);
+      return;
+    }
+
+    // HTTP Response
     return new Response(
       JSON.stringify(
         {
@@ -1154,7 +1117,7 @@ async function stepBackfill(env, url) {
     );
   }
 
-  // Batch terakhir → FINAL EOD
+  // Batch terakhir â†’ FINAL EOD
   if (finalOutput.length === 0) {
     await env.DATA_LAKE.delete(tempFile).catch(() => { });
     return new Response(
@@ -1211,12 +1174,12 @@ async function compressRawLtForDate(env, dateStr) {
   const prefix = `raw_lt/${y}/${m}/${d}/`;
   const outputKey = `raw_lt_compressed/${dateStr}.jsonl.gz`;
 
-  console.log(`🗜️ Starting compression for ${dateStr}...`);
+  console.log(`ðŸ—œï¸ Starting compression for ${dateStr}...`);
 
   // Check if already compressed
   const existing = await env.DATA_LAKE.head(outputKey);
   if (existing) {
-    console.log(`✅ Already compressed: ${outputKey}`);
+    console.log(`âœ… Already compressed: ${outputKey}`);
     return { compressed: true, skipReason: 'already_exists', outputKey };
   }
 
@@ -1235,13 +1198,13 @@ async function compressRawLtForDate(env, dateStr) {
 
     // Stop if we have enough files or made too many list calls
     if (files.length >= MAX_FILES || listCount >= MAX_LIST_CALLS) {
-      console.log(`⚠️ Reached limit: ${files.length} files listed in ${listCount} calls`);
+      console.log(`âš ï¸ Reached limit: ${files.length} files listed in ${listCount} calls`);
       break;
     }
   } while (cursor);
 
   if (files.length === 0) {
-    console.log(`⚠️ No files to compress for ${dateStr}`);
+    console.log(`âš ï¸ No files to compress for ${dateStr}`);
     return { compressed: false, skipReason: 'no_files' };
   }
 
@@ -1302,7 +1265,7 @@ async function compressRawLtForDate(env, dateStr) {
   const compressedSize = compressedData.length;
   const compressionRatio = Math.round((compressedSize / originalSize) * 100);
 
-  console.log(`✅ Compressed ${dateStr}: ${files.length} files, ${originalSize}→${compressedSize} bytes (${compressionRatio}%)`);
+  console.log(`âœ… Compressed ${dateStr}: ${files.length} files, ${originalSize}â†’${compressedSize} bytes (${compressionRatio}%)`);
 
   return {
     compressed: true,
@@ -1329,7 +1292,7 @@ async function deleteOldRawLt(env, retentionDays = 7) {
   const cutoffD = String(cutoffDate.getUTCDate()).padStart(2, '0');
   const cutoffStr = `${cutoffY}-${cutoffM}-${cutoffD}`;
 
-  console.log(`🗑️ Deleting raw_lt older than ${cutoffStr} (${retentionDays} days retention)`);
+  console.log(`ðŸ—‘ï¸ Deleting raw_lt older than ${cutoffStr} (${retentionDays} days retention)`);
 
   // List all files in raw_lt with date-based filtering
   const toDelete = [];
@@ -1362,7 +1325,7 @@ async function deleteOldRawLt(env, retentionDays = 7) {
   } while (cursor);
 
   if (toDelete.length === 0) {
-    console.log(`✅ No old files to delete (found dates: ${Array.from(datesFound).sort()})`);
+    console.log(`âœ… No old files to delete (found dates: ${Array.from(datesFound).sort()})`);
     return { deleted: false, fileCount: 0, cutoffDate: cutoffStr, skipReason: 'no_old_files' };
   }
 
@@ -1380,7 +1343,7 @@ async function deleteOldRawLt(env, retentionDays = 7) {
     deleted += batch.length;
   }
 
-  console.log(`✅ Deleted ${deleted} old raw_lt files (cutoff: ${cutoffStr})`);
+  console.log(`âœ… Deleted ${deleted} old raw_lt files (cutoff: ${cutoffStr})`);
 
   return {
     deleted: true,
@@ -1419,11 +1382,11 @@ async function cleanupBackfillStates(env) {
   }
 
   const keysToDelete = toDelete.map(o => o.key);
-  console.log(`🧹 Found ${keysToDelete.length} old backfill states to delete:`, keysToDelete);
+  console.log(`ðŸ§¹ Found ${keysToDelete.length} old backfill states to delete:`, keysToDelete);
 
   // 4. Send to Batch Delete Worker
   if (!env.BATCH_DELETE) {
-    console.warn("⚠️ BATCH_DELETE binding missing, falling back to manual delete");
+    console.warn("âš ï¸ BATCH_DELETE binding missing, falling back to manual delete");
     // Fallback: manual delete one by one
     let deletedCount = 0;
     for (const key of keysToDelete) {

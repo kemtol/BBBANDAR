@@ -25,6 +25,22 @@
       "service": "batch-delete"
     }
   ],
+  "queues": {
+    "consumers": [
+      {
+        "queue": "livetrade-backfill-queue",
+        "max_batch_size": 1,
+        "max_batch_timeout": 60,
+        "max_concurrency": 1
+      }
+    ],
+    "producers": [
+      {
+        "queue": "livetrade-backfill-queue",
+        "binding": "BACKFILL_QUEUE"
+      }
+    ]
+  },
   // Binding ke Durable Object (PENTING)
   "durable_objects": {
     "bindings": [
@@ -34,11 +50,20 @@
         // 🔥 INI KUNCINYA: script_name memberitahu bahwa DO ada di worker LAIN
         // Tanpa baris ini, worker akan error mencari class di dalam dirinya sendiri
         "script_name": "livetrade-state-engine"
+      },
+      {
+        "name": "STATE_ENGINE_V2",
+        "class_name": "StateEngine",
+        "script_name": "livetrade-durable-object"
       }
     ]
   },
-  // Cron trigger removed - now managed by cron-checker
-  // Triggered hourly via Service Binding
+  // Cron trigger - runs hourly to aggregate data
+  "triggers": {
+    "crons": [
+      "0 * * * *"
+    ]
+  },
   "observability": {
     "enabled": true
   }
