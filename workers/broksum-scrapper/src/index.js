@@ -1,3 +1,49 @@
+// Helper: Get token from KV
+const HARDCODED_TOKEN = "eyJhbGciOiJSUzI1NiIsImtpZCI6IjU3MDc0NjI3LTg4MWItNDQzZC04OTcyLTdmMmMzOTNlMzYyOSIsInR5cCI6IkpXVCJ9.eyJkYXRhIjp7InVzZSI6ImtlbXRvbCIsImVtYSI6Im1rZW1hbHdAZ21haWwuY29tIiwiZnVsIjoiTXVzdGFmYSBLZW1hbCBXaXJ5YXdhbiIsInNlcyI6IiIsImR2YyI6IjVjZjJmZjljM2JkMjFhYzFmYmZhNTZiNGE1MjE4YWJhIiwiZGlkIjoiZGVza3RvcCIsInVpZCI6MjMwNTM1MCwiY291IjoiSUQifSwiZXhwIjoxNzY4MTA4NTI3LCJpYXQiOjE3NjgwMjIxMjcsImlzcyI6IlNUT0NLQklUIiwianRpIjoiNWYxNjE4NmYtNDgwYS00N2NjLWFlZGItNTgwZGNmOWM4M2I5IiwibmJmIjoxNzY4MDIyMTI3LCJ2ZXIiOiJ2MSJ9.s_e-PUIlYOfKymrWzQvxp-pIozYaCd81O4SSyHPAspHmqudA_GlrwOwNFWrTE4L2E1uU0oTiQ5VOvv-2fW5JJBPwl8dvirQe5C9BgjvbjyhzIY397mVlY6UOUnd5A4l-o42isT1M7KxrYXyOUO4BnupVRx9fVxqz8aAx0VBaFi0FOPQEJ1E-MNwgJaK2B1SYvq5LkwRN0kpxS-uWVGWK7hGmcLmYnJfvWAU0LsX5vjeaRzIIjZo99BDZ1ti0oJlPiYXJ_aUGwK0i0KnbpYCHFwUTOsfmM3w8Xblk32CElKC0ySyz7WI_vLT1ffQnTz0BvbW-vqTxE4BzcM4tcRiZ4A";
+
+async function getToken(env) {
+    if (HARDCODED_TOKEN) return HARDCODED_TOKEN;
+
+    const stored = await env.SSSAHAM_WATCHLIST.get("STOCKBIT_TOKEN");
+    if (!stored) {
+        throw new Error("No token found in KV. Please update token via rpa-auth.");
+    }
+    const data = JSON.parse(stored);
+    return data.access_token;
+}
+
+// Helper: Check if R2 object exists
+async function objectExists(env, key) {
+    try {
+        const head = await env.RAW_BROKSUM.head(key);
+        return head !== null;
+    } catch (e) {
+        return false;
+    }
+}
+
+// Helper: Get trading days (skip weekends) for last N days
+function getTradingDays(days) {
+    const dates = [];
+    const today = new Date();
+    let count = 0;
+    let offset = 1; // Start from yesterday
+
+    while (count < days) {
+        const date = new Date(today);
+        date.setDate(today.getDate() - offset);
+        const dayOfWeek = date.getDay();
+
+        // Skip weekends (0 = Sunday, 6 = Saturday)
+        if (dayOfWeek !== 0 && dayOfWeek !== 6) {
+            dates.push(date.toISOString().split("T")[0]);
+            count++;
+        }
+        offset++;
+    }
+    return dates;
+}
+
 export default {
     async fetch(request, env, ctx) {
         const url = new URL(request.url);
@@ -9,19 +55,96 @@ export default {
                 return await this.updateWatchlist(env);
             }
 
-            // ROUTE 2: Trigger Scraping (Read KV -> Dispatch to Queue)
+            // ROUTE 2: Trigger Scraping for single date (Read KV -> Dispatch to Queue)
             if (path === "/scrape") {
                 let date = url.searchParams.get("date");
-                // Default to yesterday if date not provided
+                const overwrite = url.searchParams.get("overwrite") === "true";
                 if (!date) {
                     const yesterday = new Date();
                     yesterday.setDate(yesterday.getDate() - 1);
-                    date = yesterday.toISOString().split("T")[0]; // YYYY-MM-DD
+                    date = yesterday.toISOString().split("T")[0];
                 }
-                return await this.dispatchScrapeJobs(env, date);
+                return await this.dispatchScrapeJobs(env, date, overwrite);
             }
 
-            return new Response("Not Found", { status: 404 });
+            // ROUTE 3: Backfill N days (default 90)
+            if (path === "/backfill-queue") {
+                const days = parseInt(url.searchParams.get("days") || "90");
+                const overwrite = url.searchParams.get("overwrite") === "true";
+                return await this.backfill90Days(env, days, overwrite);
+            }
+
+            // ROUTE 4: Trigger full flow (update watchlist + backfill)
+            if (path === "/trigger-full-flow") {
+                const days = parseInt(url.searchParams.get("days") || "90");
+                const overwrite = url.searchParams.get("overwrite") === "true";
+
+                // 1. Update watchlist first
+                const watchlistResult = await this.updateWatchlist(env);
+                const watchlistData = await watchlistResult.json();
+
+                // 2. Then backfill
+                const backfillResult = await this.backfill90Days(env, days, overwrite);
+                const backfillData = await backfillResult.json();
+
+                return new Response(JSON.stringify({
+                    message: "Full flow triggered",
+                    watchlist: watchlistData,
+                    backfill: backfillData
+                }), {
+                    headers: { "Content-Type": "application/json" }
+                });
+            }
+
+            // ROUTE 5: Debug token - test API with stored token
+            if (path === "/debug-token") {
+                try {
+                    const TOKEN = await getToken(env);
+                    const symbol = url.searchParams.get("symbol") || "BBCA";
+                    const dateParam = url.searchParams.get("date");
+                    const date = dateParam || new Date().toISOString().split('T')[0];
+
+                    const targetUrl = `https://exodus.stockbit.com/marketdetectors/${symbol}?from=${date}&to=${date}&transaction_type=TRANSACTION_TYPE_GROSS&market_board=MARKET_BOARD_REGULER&investor_type=INVESTOR_TYPE_ALL&limit=25`;
+
+                    const response = await fetch(targetUrl, {
+                        method: "GET",
+                        headers: {
+                            "Host": "exodus.stockbit.com",
+                            "Connection": "keep-alive",
+                            "X-Platform": "desktop",
+                            "Authorization": `Bearer ${TOKEN}`,
+                            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0",
+                            "Accept": "application/json, text/plain, */*",
+                            "Origin": "https://tauri.localhost",
+                            "Referer": "https://tauri.localhost/",
+                            "Sec-Fetch-Site": "cross-site",
+                            "Sec-Fetch-Mode": "cors",
+                            "Sec-Fetch-Dest": "empty",
+                            "sec-ch-ua-platform": '"Windows"',
+                            "sec-ch-ua-mobile": "?0",
+                            "Accept-Encoding": "gzip, deflate, br"
+                        }
+                    });
+
+                    const data = await response.json();
+
+                    return new Response(JSON.stringify({
+                        token_preview: TOKEN.substring(0, 50) + "...",
+                        token_length: TOKEN.length,
+                        api_status: response.status,
+                        api_response: data
+                    }), {
+                        headers: { "Content-Type": "application/json" }
+                    });
+                } catch (e) {
+                    return new Response(JSON.stringify({ error: e.message }), {
+                        status: 500,
+                        headers: { "Content-Type": "application/json" }
+                    });
+                }
+            }
+
+            return new Response("Not Found. Available: /update-watchlist, /scrape?date=YYYY-MM-DD&overwrite=true, /backfill-90days?days=120&overwrite=true, /trigger-full-flow, /debug-token", { status: 404 });
 
         } catch (e) {
             return new Response(JSON.stringify({ error: e.message, stack: e.stack }), {
@@ -33,7 +156,7 @@ export default {
 
     // Helper: Update Watchlist
     async updateWatchlist(env) {
-        const TOKEN = "eyJhbGciOiJSUzI1NiIsImtpZCI6IjU3MDc0NjI3LTg4MWItNDQzZC04OTcyLTdmMmMzOTNlMzYyOSIsInR5cCI6IkpXVCJ9.eyJkYXRhIjp7InVzZSI6ImtlbXRvbCIsImVtYSI6Im1rZW1hbHdAZ21haWwuY29tIiwiZnVsIjoiTXVzdGFmYSBLZW1hbCBXaXJ5YXdhbiIsInNlcyI6IiIsImR2YyI6IjVjZjJmZjljM2JkMjFhYzFmYmZhNTZiNGE1MjE4YWJhIiwiZGlkIjoiZGVza3RvcCIsInVpZCI6MjMwNTM1MCwiY291IjoiSUQifSwiZXhwIjoxNzY3MTgyNDA5LCJpYXQiOjE3NjcwOTYwMDksImlzcyI6IlNUT0NLQklUIiwianRpIjoiMDY3Mjg1YjAtYjgxMy00NjZlLTk5ZWMtZjBhOGJjYzNhZmRlIiwibmJmIjoxNzY3MDk2MDA5LCJ2ZXIiOiJ2MSJ9.MeM21u4oWbfoa90-QZZTa-0bNvqqUFHxjyjHmFq84GaUO0mzQEKKZlQScUbbdKbmOb9gRkyEAK1zFTn_UEWo_nQBStDgNvycAH6CMGz5PQ5L49vQIav-fGVy1YmiDntVV3jx6ge1oHhTzBFnU2VsUCB1ydftWlZyYqWt74TfC8ntaELaTWgG3oJOKhZ9f1GvKGdMxbF9hAlFzZx9sGMehE9Zc6Xgy6mv4l-CmZPBHgTWm7o50wG_p-5cL0tvSSr7yYgYz_MlNHU8v6xJ8UOlG27RIRyyfhw5z4OTfU_QikYQ1N0xrKUd66xtlFIkx7eOwHk365VHrhhIRLclCSHv0Q";
+        const TOKEN = await getToken(env);
         const TEMPLATE_IDS = [97, 96, 92, 106, 63, 108];
         const uniqueSymbols = new Set();
         const errors = [];
@@ -50,8 +173,18 @@ export default {
                         "Connection": "keep-alive",
                         "X-Platform": "desktop",
                         "Authorization": `Bearer ${TOKEN}`,
+                        "sec-ch-ua-platform": "\"Windows\"",
                         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0",
-                        "Accept": "application/json"
+                        "Accept": "application/json, text/plain, */*",
+                        "sec-ch-ua": "\"Microsoft Edge WebView2\";v=\"143\", \"Microsoft Edge\";v=\"143\", \"Chromium\";v=\"143\", \"Not A(Brand\";v=\"24\"",
+                        "sec-ch-ua-mobile": "?0",
+                        "Origin": "https://tauri.localhost",
+                        "Sec-Fetch-Site": "cross-site",
+                        "Sec-Fetch-Mode": "cors",
+                        "Sec-Fetch-Dest": "empty",
+                        "Referer": "https://tauri.localhost/",
+                        "Accept-Encoding": "gzip, deflate, br, zstd",
+                        "Accept-Language": "en-US,en;q=0.9"
                     }
                 });
 
@@ -77,18 +210,37 @@ export default {
 
         const watchlist = Array.from(uniqueSymbols).sort();
 
+        // FALLBACK: If screener API fails, list existing symbols from R2
+        let finalWatchlist = watchlist;
+        if (watchlist.length === 0 && errors.length > 0) {
+            console.log("Screener API failed, using R2 existing symbols as fallback...");
+            try {
+                // List with delimiter '/' to get directories (symbols)
+                const listed = await env.RAW_BROKSUM.list({ delimiter: '/' });
+
+                // delimitingPrefixes contains the folders (e.g. "BBCA/")
+                if (listed.delimitedPrefixes && listed.delimitedPrefixes.length > 0) {
+                    finalWatchlist = listed.delimitedPrefixes.map(prefix => prefix.replace(/\/$/, ''));
+                } else {
+                    console.log("No existing symbols found in R2.");
+                }
+            } catch (r2Err) {
+                console.error("Failed to list R2 objects for fallback:", r2Err);
+            }
+        }
+
         const output = {
             updated_at: new Date().toISOString(),
-            total_symbols: watchlist.length,
-            watchlist: watchlist,
-            errors: errors
+            total_symbols: finalWatchlist.length,
+            watchlist: finalWatchlist,
+            errors: errors,
+            is_fallback: watchlist.length === 0 && errors.length > 0
         };
 
         // Save to KV
         if (env.SSSAHAM_WATCHLIST) {
             await env.SSSAHAM_WATCHLIST.put("LATEST", JSON.stringify(output));
         } else {
-            console.warn("KV namespace SSSAHAM_WATCHLIST is not bound.");
             errors.push("KV namespace SSSAHAM_WATCHLIST is not bound.");
         }
 
@@ -100,23 +252,37 @@ export default {
         });
     },
 
-    // Helper: Dispatch Scrape Jobs
-    async dispatchScrapeJobs(env, date) {
-        console.log(`Triggered scraping for date: ${date}`);
+    // Helper: Dispatch Scrape Jobs for single date
+    async dispatchScrapeJobs(env, date, overwrite = false) {
+        console.log(`Triggered scraping for date: ${date}, overwrite: ${overwrite}`);
 
-        // 1. Get Watchlist from KV
         const watchlistData = await env.SSSAHAM_WATCHLIST.get("LATEST", { type: "json" });
         if (!watchlistData || !watchlistData.watchlist) {
             return new Response("Watchlist not found in KV. Please run /update-watchlist first.", { status: 404 });
         }
 
         const watchlist = watchlistData.watchlist;
+        const messages = [];
+        let skipped = 0;
 
-        // 2. Dispatch to Queue
-        const messages = watchlist.map(symbol => ({
-            body: { symbol, date }
-        }));
+        // Check which files already exist
+        for (const symbol of watchlist) {
+            const key = `${symbol}/${date}.json`;
 
+            // Should check existence only if overwrite IS FALSE
+            let exists = false;
+            if (!overwrite) {
+                exists = await objectExists(env, key);
+            }
+
+            if (!exists) {
+                messages.push({ body: { symbol, date, overwrite } });
+            } else {
+                skipped++;
+            }
+        }
+
+        // Dispatch in batches of 50
         const chunkSize = 50;
         for (let i = 0; i < messages.length; i += chunkSize) {
             const chunk = messages.slice(i, i + chunkSize);
@@ -124,56 +290,141 @@ export default {
         }
 
         return new Response(JSON.stringify({
-            message: `Dispatched ${watchlist.length} jobs to queue`,
+            message: `Dispatched ${messages.length} jobs to queue (skipped ${skipped} existing)`,
             date: date,
-            total_batches: Math.ceil(watchlist.length / chunkSize)
+            dispatched: messages.length,
+            skipped: skipped,
+            total_symbols: watchlist.length,
+            overwrite: overwrite
+        }), {
+            headers: { "Content-Type": "application/json" }
+        });
+    },
+
+    // Helper: Backfill N days
+    async backfill90Days(env, days = 90, overwrite = false) {
+        console.log(`Starting backfill for ${days} trading days... Overwrite: ${overwrite}`);
+
+        const watchlistData = await env.SSSAHAM_WATCHLIST.get("LATEST", { type: "json" });
+        if (!watchlistData || !watchlistData.watchlist) {
+            return new Response("Watchlist not found in KV. Please run /update-watchlist first.", { status: 404 });
+        }
+
+        const watchlist = watchlistData.watchlist;
+        const tradingDays = getTradingDays(days);
+
+        let totalDispatched = 0;
+        let totalSkipped = 0;
+
+        // For each trading day, dispatch jobs
+        for (const date of tradingDays) {
+            const messages = [];
+
+            for (const symbol of watchlist) {
+                const key = `${symbol}/${date}.json`;
+
+                let exists = false;
+                if (!overwrite) {
+                    exists = await objectExists(env, key);
+                }
+
+                if (!exists) {
+                    messages.push({ body: { symbol, date, overwrite } });
+                } else {
+                    totalSkipped++;
+                }
+            }
+
+            // Dispatch in batches
+            const chunkSize = 50;
+            for (let i = 0; i < messages.length; i += chunkSize) {
+                const chunk = messages.slice(i, i + chunkSize);
+                await env.SSSAHAM_QUEUE.sendBatch(chunk);
+            }
+
+            totalDispatched += messages.length;
+            console.log(`Date ${date}: dispatched ${messages.length} jobs`);
+        }
+
+        return new Response(JSON.stringify({
+            message: `Backfill completed for ${days} trading days`,
+            total_dispatched: totalDispatched,
+            total_skipped: totalSkipped,
+            trading_days: tradingDays.length,
+            symbols_count: watchlist.length,
+            overwrite: overwrite
         }), {
             headers: { "Content-Type": "application/json" }
         });
     },
 
     async queue(batch, env) {
-        const TOKEN = "eyJhbGciOiJSUzI1NiIsImtpZCI6IjU3MDc0NjI3LTg4MWItNDQzZC04OTcyLTdmMmMzOTNlMzYyOSIsInR5cCI6IkpXVCJ9.eyJkYXRhIjp7InVzZSI6ImtlbXRvbCIsImVtYSI6Im1rZW1hbHdAZ21haWwuY29tIiwiZnVsIjoiTXVzdGFmYSBLZW1hbCBXaXJ5YXdhbiIsInNlcyI6IiIsImR2YyI6IjVjZjJmZjljM2JkMjFhYzFmYmZhNTZiNGE1MjE4YWJhIiwiZGlkIjoiZGVza3RvcCIsInVpZCI6MjMwNTM1MCwiY291IjoiSUQifSwiZXhwIjoxNzY3MTgyNDA5LCJpYXQiOjE3NjcwOTYwMDksImlzcyI6IlNUT0NLQklUIiwianRpIjoiMDY3Mjg1YjAtYjgxMy00NjZlLTk5ZWMtZjBhOGJjYzNhZmRlIiwibmJmIjoxNzY3MDk2MDA5LCJ2ZXIiOiJ2MSJ9.MeM21u4oWbfoa90-QZZTa-0bNvqqUFHxjyjHmFq84GaUO0mzQEKKZlQScUbbdKbmOb9gRkyEAK1zFTn_UEWo_nQBStDgNvycAH6CMGz5PQ5L49vQIav-fGVy1YmiDntVV3jx6ge1oHhTzBFnU2VsUCB1ydftWlZyYqWt74TfC8ntaELaTWgG3oJOKhZ9f1GvKGdMxbF9hAlFzZx9sGMehE9Zc6Xgy6mv4l-CmZPBHgTWm7o50wG_p-5cL0tvSSr7yYgYz_MlNHU8v6xJ8UOlG27RIRyyfhw5z4OTfU_QikYQ1N0xrKUd66xtlFIkx7eOwHk365VHrhhIRLclCSHv0Q";
+        const TOKEN = await getToken(env);
 
         for (const message of batch.messages) {
-            const { symbol, date } = message.body;
+            const { symbol, date, overwrite } = message.body;
 
-            console.log(`Processing ${symbol} for ${date}`);
+            console.log(`Processing ${symbol} for ${date} (overwrite: ${overwrite})`);
 
             try {
-                const url = `https://exodus.stockbit.com/marketdetectors/${symbol}?from=${date}&to=${date}&transaction_type=TRANSACTION_TYPE_GROSS&market_board=MARKET_BOARD_ALL&investor_type=INVESTOR_TYPE_ALL&limit=25`;
+                // Check if already exists (double-check), UNLESS overwrite is true
+                const key = `${symbol}/${date}.json`;
+
+                if (!overwrite) {
+                    const exists = await objectExists(env, key);
+                    if (exists) {
+                        console.log(`Skipping ${key} - already exists`);
+                        message.ack();
+                        continue;
+                    }
+                }
+
+                const url = `https://exodus.stockbit.com/marketdetectors/${symbol}?from=${date}&to=${date}&transaction_type=TRANSACTION_TYPE_GROSS&market_board=MARKET_BOARD_REGULER&investor_type=INVESTOR_TYPE_ALL&limit=25`;
 
                 const response = await fetch(url, {
+                    method: "GET",
                     headers: {
                         "Host": "exodus.stockbit.com",
                         "Connection": "keep-alive",
                         "X-Platform": "desktop",
                         "Authorization": `Bearer ${TOKEN}`,
+                        "sec-ch-ua-platform": "\"Windows\"",
                         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0",
-                        "Accept": "application/json"
+                        "Accept": "application/json, text/plain, */*",
+                        "sec-ch-ua": "\"Microsoft Edge WebView2\";v=\"143\", \"Microsoft Edge\";v=\"143\", \"Chromium\";v=\"143\", \"Not A(Brand\";v=\"24\"",
+                        "sec-ch-ua-mobile": "?0",
+                        "Origin": "https://tauri.localhost",
+                        "Sec-Fetch-Site": "cross-site",
+                        "Sec-Fetch-Mode": "cors",
+                        "Sec-Fetch-Dest": "empty",
+                        "Referer": "https://tauri.localhost/",
+                        "Accept-Encoding": "gzip, deflate, br, zstd",
+                        "Accept-Language": "en-US,en;q=0.9"
                     }
                 });
 
                 if (!response.ok) {
                     console.error(`Failed to fetch ${symbol}: ${response.status}`);
-                    // Optionally retry message: message.retry();
+                    if (response.status === 401) {
+                        // Token expired - retry later
+                        message.retry();
+                    } else {
+                        message.ack(); // Don't retry for other errors
+                    }
                     continue;
                 }
 
                 const data = await response.json();
 
-                // Save to R2: RAW_BROKSUM / SYMBOL / DATE.json
-                const key = `${symbol}/${date}.json`;
+                // Save to R2
                 await env.RAW_BROKSUM.put(key, JSON.stringify(data));
-
                 console.log(`Saved ${key} to R2`);
 
-                // Ack message
                 message.ack();
 
             } catch (err) {
                 console.error(`Error processing ${symbol}:`, err);
-                message.retry(); // Retry later
+                message.retry();
             }
         }
     }

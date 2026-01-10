@@ -1,0 +1,33 @@
+{
+    "$schema": "node_modules/wrangler/config-schema.json",
+    "name": "rpa-auth",
+    "main": "src/index.js",
+    "compatibility_date": "2025-01-01",
+    "compatibility_flags": [
+        "nodejs_compat"
+    ],
+    "observability": {
+        "enabled": true
+    },
+    "kv_namespaces": [
+        {
+            "binding": "SSSAHAM_WATCHLIST",
+            "id": "701c5c47230142e49d7c899f6bdcc029",
+            "preview_id": "9df14ffa735441bdbf5931fa19c4ce09"
+        }
+    ],
+    "browser": {
+        "binding": "BROWSER"
+    },
+    "services": [
+        {
+            "binding": "BROKSUM_SCRAPPER",
+            "service": "broksum-scrapper"
+        }
+    ],
+    "triggers": {
+        "crons": [
+            "0 12 * * *"
+        ]
+    }
+}

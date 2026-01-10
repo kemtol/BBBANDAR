@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RPA Token Manager</title>
+    <style>
+        :root {
+            --primary: #10b981;
+            --primary-dark: #059669;
+            --bg: #0f172a;
+            --card-bg: #1e293b;
+            --text: #f1f5f9;
+            --text-muted: #94a3b8;
+            --border: #334155;
+            --danger: #ef4444;
+            --warning: #f59e0b;
+            --success: #22c55e;
+        }
+        
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        
+        body {
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            padding: 2rem;
+        }
+        
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+        }
+        
+        h1 {
+            text-align: center;
+            margin-bottom: 2rem;
+            font-size: 1.5rem;
+            color: var(--primary);
+        }
+        
+        .card {
+            background: var(--card-bg);
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+            border: 1px solid var(--border);
+        }
+        
+        .card h2 {
+            font-size: 1rem;
+            margin-bottom: 1rem;
+            color: var(--text-muted);
+        }
+        
+        .token-input {
+            width: 100%;
+            padding: 0.75rem 1rem;
+            font-size: 0.9rem;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text);
+            font-family: monospace;
+            resize: vertical;
+            min-height: 80px;
+        }
+        
+        .token-input:focus {
+            outline: none;
+            border-color: var(--primary);
+        }
+        
+        .btn {
+            display: inline-block;
+            padding: 0.75rem 1.5rem;
+            font-size: 0.9rem;
+            font-weight: 600;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+            margin-top: 1rem;
+            margin-right: 0.5rem;
+        }
+        
+        .btn-primary {
+            background: var(--primary);
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            background: var(--primary-dark);
+        }
+        
+        .btn-secondary {
+            background: var(--border);
+            color: var(--text);
+        }
+        
+        .btn-secondary:hover {
+            background: #475569;
+        }
+        
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        .status-box {
+            padding: 1rem;
+            border-radius: 8px;
+            margin-top: 1rem;
+            font-size: 0.85rem;
+        }
+        
+        .status-success {
+            background: rgba(34, 197, 94, 0.1);
+            border: 1px solid var(--success);
+            color: var(--success);
+        }
+        
+        .status-error {
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid var(--danger);
+            color: var(--danger);
+        }
+        
+        .status-warning {
+            background: rgba(245, 158, 11, 0.1);
+            border: 1px solid var(--warning);
+            color: var(--warning);
+        }
+        
+        .status-info {
+            background: rgba(16, 185, 129, 0.1);
+            border: 1px solid var(--primary);
+            color: var(--text);
+        }
+        
+        .token-info {
+            display: grid;
+            gap: 0.5rem;
+        }
+        
+        .token-info-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 0.5rem 0;
+            border-bottom: 1px solid var(--border);
+        }
+        
+        .token-info-row:last-child {
+            border-bottom: none;
+        }
+        
+        .token-info-label {
+            color: var(--text-muted);
+        }
+        
+        .token-info-value {
+            font-family: monospace;
+            color: var(--text);
+        }
+        
+        .badge {
+            display: inline-block;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+        
+        .badge-success {
+            background: var(--success);
+            color: white;
+        }
+        
+        .badge-danger {
+            background: var(--danger);
+            color: white;
+        }
+        
+        .badge-warning {
+            background: var(--warning);
+            color: black;
+        }
+        
+        .loading {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid var(--border);
+            border-top-color: var(--primary);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-right: 0.5rem;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        .instructions {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            line-height: 1.6;
+        }
+        
+        .instructions ol {
+            padding-left: 1.5rem;
+            margin-top: 0.5rem;
+        }
+        
+        .instructions li {
+            margin-bottom: 0.5rem;
+        }
+        
+        code {
+            background: var(--bg);
+            padding: 0.1rem 0.3rem;
+            border-radius: 4px;
+            font-size: 0.8rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔐 RPA Token Manager</h1>
+        
+        <!-- Token Status Card -->
+        <div class="card">
+            <h2>📊 Token Status</h2>
+            <div id="tokenStatus">
+                <div class="status-box status-info">
+                    <span class="loading"></span> Loading token info...
+                </div>
+            </div>
+        </div>
+        
+        <!-- Update Token Card -->
+        <div class="card">
+            <h2>🔄 Update Token</h2>
+            <textarea id="tokenInput" class="token-input" placeholder="Paste your Stockbit access_token here..."></textarea>
+            <div>
+                <button class="btn btn-primary" id="updateBtn" onclick="updateToken()">Update Token</button>
+                <button class="btn btn-secondary" id="verifyBtn" onclick="verifyToken()">Verify Token</button>
+            </div>
+            <div id="updateResult"></div>
+        </div>
+        
+        <!-- Instructions Card -->
+        <div class="card">
+            <h2>📖 How to Get Token</h2>
+            <div class="instructions">
+                <ol>
+                    <li>Login to <a href="https://stockbit.com" target="_blank" style="color: var(--primary)">stockbit.com</a></li>
+                    <li>Open DevTools: <code>F12</code> or <code>Ctrl+Shift+I</code></li>
+                    <li>Go to <code>Application</code> → <code>Local Storage</code> → <code>https://stockbit.com</code></li>
+                    <li>Find key containing <code>access_token</code> or <code>trustedDevice</code></li>
+                    <li>Copy the token value and paste above</li>
+                </ol>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        const API_BASE = 'https://rpa-auth.mkemalw.workers.dev';
+        
+        // Load token info on page load
+        document.addEventListener('DOMContentLoaded', loadTokenInfo);
+        
+        async function loadTokenInfo() {
+            const statusDiv = document.getElementById('tokenStatus');
+            try {
+                const response = await fetch(`${API_BASE}/token-info`);
+                const data = await response.json();
+                
+                if (data.ok && data.token_exists) {
+                    const updatedAt = new Date(data.updated_at);
+                    const now = new Date();
+                    const hoursAgo = Math.floor((now - updatedAt) / (1000 * 60 * 60));
+                    
+                    let statusClass = 'status-success';
+                    let statusBadge = '<span class="badge badge-success">Valid</span>';
+                    
+                    if (hoursAgo > 24) {
+                        statusClass = 'status-warning';
+                        statusBadge = '<span class="badge badge-warning">May need refresh</span>';
+                    }
+                    if (hoursAgo > 72) {
+                        statusClass = 'status-error';
+                        statusBadge = '<span class="badge badge-danger">Likely expired</span>';
+                    }
+                    
+                    statusDiv.innerHTML = `
+                        <div class="token-info">
+                            <div class="token-info-row">
+                                <span class="token-info-label">Status</span>
+                                ${statusBadge}
+                            </div>
+                            <div class="token-info-row">
+                                <span class="token-info-label">Token Preview</span>
+                                <span class="token-info-value">${data.token_preview}</span>
+                            </div>
+                            <div class="token-info-row">
+                                <span class="token-info-label">Last Updated</span>
+                                <span class="token-info-value">${updatedAt.toLocaleString()}</span>
+                            </div>
+                            <div class="token-info-row">
+                                <span class="token-info-label">Age</span>
+                                <span class="token-info-value">${hoursAgo} hours ago</span>
+                            </div>
+                        </div>
+                    `;
+                } else {
+                    statusDiv.innerHTML = `
+                        <div class="status-box status-error">
+                            ❌ No token found. Please paste a token below.
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                statusDiv.innerHTML = `
+                    <div class="status-box status-error">
+                        ❌ Failed to load token info: ${error.message}
+                    </div>
+                `;
+            }
+        }
+        
+        async function updateToken() {
+            const tokenInput = document.getElementById('tokenInput');
+            const resultDiv = document.getElementById('updateResult');
+            const btn = document.getElementById('updateBtn');
+            
+            const token = tokenInput.value.trim();
+            if (!token) {
+                resultDiv.innerHTML = '<div class="status-box status-error">Please enter a token</div>';
+                return;
+            }
+            
+            btn.disabled = true;
+            btn.innerHTML = '<span class="loading"></span> Updating...';
+            
+            try {
+                const response = await fetch(`${API_BASE}/update-token`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ token })
+                });
+                
+                const data = await response.json();
+                
+                if (data.ok) {
+                    resultDiv.innerHTML = `
+                        <div class="status-box status-success">
+                            ✅ Token updated successfully!
+                        </div>
+                    `;
+                    tokenInput.value = '';
+                    loadTokenInfo();
+                } else {
+                    resultDiv.innerHTML = `
+                        <div class="status-box status-error">
+                            ❌ Failed: ${data.error}
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `
+                    <div class="status-box status-error">
+                        ❌ Error: ${error.message}
+                    </div>
+                `;
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = 'Update Token';
+            }
+        }
+        
+        async function verifyToken() {
+            const resultDiv = document.getElementById('updateResult');
+            const btn = document.getElementById('verifyBtn');
+            
+            btn.disabled = true;
+            btn.innerHTML = '<span class="loading"></span> Verifying...';
+            
+            try {
+                const response = await fetch(`${API_BASE}/verify-token`);
+                const data = await response.json();
+                
+                if (data.ok) {
+                    resultDiv.innerHTML = `
+                        <div class="status-box status-success">
+                            ✅ Token is valid! API responded with: ${data.message || 'Success'}
+                        </div>
+                    `;
+                } else {
+                    resultDiv.innerHTML = `
+                        <div class="status-box status-error">
+                            ❌ Token invalid or expired: ${data.error}
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `
+                    <div class="status-box status-error">
+                        ❌ Verification error: ${error.message}
+                    </div>
+                `;
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = 'Verify Token';
+            }
+        }
+    </script>
+</body>
+</html>

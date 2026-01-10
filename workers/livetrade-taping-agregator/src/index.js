@@ -51,6 +51,8 @@ export default {
       }
     }
 
+
+
     if (request.method === "POST" && pathname === "/queue-start") {
       const dateOverride = url.searchParams.get("date");
       const now = new Date();
@@ -901,25 +903,7 @@ async function stepBackfill(env, url, isQueue = false) {
 
         const s = stats[kode];
 
-        // ============================================
-        // V2 PARALLEL DISPATCH (Batched)
-        // ============================================
-        if (env.STATE_ENGINE_V2) {
-          // ... logic skipped for brevity if redundant, but here we accumulate ...
-          const fullTs = `${dateParam}T${timeRaw}`;
 
-          const v2Job = {
-            ticker: kode,
-            price: harga,
-            amount: vol,
-            side: (type === '1' || type === 1) ? 'buy' : 'sell',
-            timestamp: new Date(fullTs).getTime()
-          };
-          if (v2GlobalBatch.length < 3) {
-            console.log(`[DEBUG_SIDE] Ticker: ${kode}, Type: '${type}', Parsed: ${(type === '1' || type === 1) ? 'buy' : 'sell'}, Raw: ${raw}`);
-          }
-          v2GlobalBatch.push(v2Job);
-        }
 
         // OHLC harian
         if (s.open_day === 0) s.open_day = harga;
@@ -944,6 +928,28 @@ async function stepBackfill(env, url, isQueue = false) {
         s.lastPrice = harga;
         s.lastDir = dir;
         s.lastRaw = raw; // simpan raw hasil regex / legacy
+
+        // ============================================
+        // V2 PARALLEL DISPATCH (Batched) - MOVED AFTER DIR
+        // ============================================
+        if (env.STATE_ENGINE_V2) {
+          const fullTs = `${dateParam}T${timeRaw}`;
+          // Use 'dir' (1=Buy, -1=Sell). If 0 (flat/first), fallback to lastDir or default to Sell.
+          let v2Side = 'sell';
+          if (dir === 1) v2Side = 'buy';
+          else if (dir === -1) v2Side = 'sell';
+          else if (s.lastDir === 1) v2Side = 'buy';
+
+          v2GlobalBatch.push({
+            ticker: kode,
+            price: harga,
+            amount: vol,
+            side: v2Side,
+            timestamp: new Date(fullTs).getTime()
+          });
+
+
+        }
 
         const bucketTime = getTimeBucket(timeRaw);
 
