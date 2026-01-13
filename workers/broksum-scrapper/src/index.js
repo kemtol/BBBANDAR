@@ -44,10 +44,27 @@ function getTradingDays(days) {
     return dates;
 }
 
+// Helper: Add CORS headers
+function withCors(headers = {}) {
+    return {
+        ...headers,
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, HEAD, POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+    };
+}
+
 export default {
     async fetch(request, env, ctx) {
         const url = new URL(request.url);
         const path = url.pathname;
+
+        // Handle CORS Preflight
+        if (request.method === "OPTIONS") {
+            return new Response(null, {
+                headers: withCors()
+            });
+        }
 
         try {
             // ROUTE 1: Update Watchlist (Fetch from Templates -> Save to KV)
@@ -144,14 +161,315 @@ export default {
                 }
             }
 
-            return new Response("Not Found. Available: /update-watchlist, /scrape?date=YYYY-MM-DD&overwrite=true, /backfill-90days?days=120&overwrite=true, /trigger-full-flow, /debug-token", { status: 404 });
+            // ROUTE 6: Read Watchlist (for frontend index)
+            if (path === "/watchlist") {
+                const watchlistData = await env.SSSAHAM_WATCHLIST.get("LATEST", { type: "json" });
+                return new Response(JSON.stringify(watchlistData), {
+                    headers: withCors({ "Content-Type": "application/json" })
+                });
+            }
+
+            // ROUTE 7: Read Broksum (Single Date)
+            if (path === "/read-broksum") {
+                const symbol = url.searchParams.get("symbol");
+                const date = url.searchParams.get("date");
+                if (!symbol || !date) return new Response("Missing symbol or date", { status: 400, headers: withCors() });
+
+                const key = `${symbol}/${date}.json`;
+                const object = await env.RAW_BROKSUM.get(key);
+
+                if (!object) return new Response("Not found", { status: 404, headers: withCors() });
+
+                const headers = new Headers(object.httpMetadata);
+                object.writeHttpMetadata(headers);
+                headers.set("etag", object.httpEtag);
+
+                return new Response(object.body, { headers: withCors(Object.fromEntries(headers)) });
+            }
+
+            // ROUTE 8: Read Broksum (Range)
+            // Limit to avoid timeout: max 30 days per call recommended
+            if (path === "/read-broksum-range") {
+                const symbol = url.searchParams.get("symbol");
+                const from = url.searchParams.get("from");
+                const to = url.searchParams.get("to");
+
+                if (!symbol || !from || !to) return new Response("Missing symbol, from, or to", { status: 400, headers: withCors() });
+
+                // Simple date loop
+                const startDate = new Date(from);
+                const endDate = new Date(to);
+                const results = [];
+                const accBrokers = {}; // Accumulator for broker summary
+                const errors = []; // Error collector
+
+                const diffTime = Math.abs(endDate - startDate);
+                const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                if (diffDays > maxDays) return new Response("Range too large (max 60 days)", { status: 400, headers: withCors() });
+
+                // Call centralized calculation logic
+                const finalResponse = await this.calculateRangeData(env, symbol, startDate, endDate);
+
+                return new Response(JSON.stringify(finalResponse), {
+                    headers: withCors({ "Content-Type": "application/json" })
+                });
+            }
+
+            // ROUTE 9: Cached Chart Data Endpoint
+            if (path === "/chart-data") {
+                const symbol = url.searchParams.get("symbol");
+                const from = url.searchParams.get("from");
+                const to = url.searchParams.get("to");
+                const reload = url.searchParams.get("cache-reload") === "true";
+
+                if (!symbol || !from || !to) return new Response("Missing params", { status: 400, headers: withCors() });
+
+                // Key Format: broker/summary/{symbol}/{start}_{end}.json
+                const key = `broker/summary/${symbol}/${from}_${to}.json`;
+
+                // 1. Try Cache
+                if (!reload) {
+                    try {
+                        const cached = await env.SSSAHAM_EMITEN.get(key);
+                        if (cached) {
+                            return new Response(cached.body, {
+                                headers: withCors({ "Content-Type": "application/json", "X-Cache": "HIT" })
+                            });
+                        }
+                    } catch (e) { console.error("Cache read error", e); }
+                }
+
+                // 2. Calculate
+                const data = await this.calculateRangeData(env, symbol, new Date(from), new Date(to));
+
+                // Add metadata
+                data.meta = {
+                    generated_at: new Date().toISOString(),
+                    range: { from, to }
+                };
+
+                // 3. Save Cache
+                try {
+                    await env.SSSAHAM_EMITEN.put(key, JSON.stringify(data));
+                } catch (e) { console.error("Cache write error", e); }
+
+                return new Response(JSON.stringify(data), {
+                    headers: withCors({ "Content-Type": "application/json", "X-Cache": reload ? "RELOAD" : "MISS" })
+                });
+            }
+
+            // ROUTE 10: Get Brokers Mapping (from D1)
+            if (path === "/brokers") {
+                try {
+                    const { results } = await env.SSSAHAM_DB.prepare("SELECT * FROM brokers").all();
+
+                    // Transform array to object { "ZP": { name: "...", ... } }
+                    const brokersMap = {};
+                    if (results) {
+                        results.forEach(b => {
+                            brokersMap[b.code] = b;
+                        });
+                    }
+
+                    return new Response(JSON.stringify({ brokers: brokersMap }), {
+                        headers: withCors({ "Content-Type": "application/json" })
+                    });
+                } catch (e) {
+                    return new Response(JSON.stringify({ error: e.message }), {
+                        status: 500,
+                        headers: withCors({ "Content-Type": "application/json" })
+                    });
+                }
+            }
+
+            // FALLBACK: 404 Not Found
+            return new Response("Not Found. Available: /update-watchlist, /scrape, /backfill-queue, /read-broksum, /read-broksum-range, /watchlist, /brokers, /chart-data", { status: 404, headers: withCors() });
 
         } catch (e) {
             return new Response(JSON.stringify({ error: e.message, stack: e.stack }), {
                 status: 500,
-                headers: { "Content-Type": "application/json" }
+                headers: withCors({ "Content-Type": "application/json" })
             });
         }
+    },
+
+    // Refactored Helper: Calculate Broker Summary for a Date Range
+    async calculateRangeData(env, symbol, startDate, endDate) {
+        const results = [];
+        const accBrokers = {}; // Accumulator for broker summary
+        const errors = []; // Error collector
+
+        // 0. Fetch Brokers Mapping for categorization
+        let brokersMap = {};
+        try {
+            const { results } = await env.SSSAHAM_DB.prepare("SELECT * FROM brokers").all();
+            if (results) {
+                results.forEach(b => {
+                    brokersMap[b.code] = b;
+                });
+            }
+        } catch (e) {
+            console.error("Error fetching brokers mapping:", e);
+        }
+
+        // Loop through dates
+        for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
+            const dateStr = d.toISOString().split('T')[0];
+            const key = `${symbol}/${dateStr}.json`;
+
+            try {
+                const object = await env.RAW_BROKSUM.get(key);
+                if (object) {
+                    const fullOuter = await object.json();
+                    if (fullOuter && fullOuter.data) {
+                        const bd = fullOuter.data.bandar_detector;
+                        const bs = fullOuter.data.broker_summary;
+
+                        // 1. Calculate Daily Flow (Foreign, Retail, Local)
+                        let foreignBuy = 0, foreignSell = 0;
+                        let retailBuy = 0, retailSell = 0;
+                        let localBuy = 0, localSell = 0;
+
+                        // Helper to identify Retail vs Local
+                        const isRetail = (code) => {
+                            const b = brokersMap[code];
+                            if (!b) return false;
+                            const cat = (b.category || '').toLowerCase();
+                            return cat.includes('retail');
+                        };
+
+                        // 2. Aggregate
+                        if (bs) {
+                            // Process Buys
+                            if (bs.brokers_buy && Array.isArray(bs.brokers_buy)) {
+                                bs.brokers_buy.forEach(b => {
+                                    if (!b) return;
+                                    const val = parseFloat(b.bval || 0);
+                                    const vol = parseFloat(b.blotv || 0) || (parseFloat(b.blot || 0) * 100);
+                                    const code = b.netbs_broker_code;
+
+                                    // Determine Type for Daily Flow
+                                    if (isRetail(code)) {
+                                        retailBuy += val;
+                                    } else if (b.type === "Asing") {
+                                        foreignBuy += val;
+                                    } else {
+                                        localBuy += val;
+                                    }
+
+                                    if (code) {
+                                        if (!accBrokers[code]) accBrokers[code] = { bval: 0, sval: 0, bvol: 0, svol: 0, type: b.type };
+                                        accBrokers[code].bval += val;
+                                        accBrokers[code].bvol += vol;
+                                    }
+                                });
+                            }
+                            // Process Sells
+                            if (bs.brokers_sell && Array.isArray(bs.brokers_sell)) {
+                                bs.brokers_sell.forEach(b => {
+                                    if (!b) return;
+                                    const val = parseFloat(b.sval || 0);
+                                    const vol = parseFloat(b.slotv || 0) || (parseFloat(b.slot || 0) * 100);
+                                    const code = b.netbs_broker_code;
+
+                                    if (isRetail(code)) {
+                                        retailSell += val;
+                                    } else if (b.type === "Asing") {
+                                        foreignSell += val;
+                                    } else {
+                                        localSell += val;
+                                    }
+
+                                    if (code) {
+                                        if (!accBrokers[code]) accBrokers[code] = { bval: 0, sval: 0, bvol: 0, svol: 0, type: b.type };
+                                        accBrokers[code].sval += val;
+                                        accBrokers[code].svol += vol;
+                                    }
+                                });
+                            }
+                        }
+
+                        const summary = {
+                            detector: bd,
+                            foreign: {
+                                buy_val: foreignBuy,
+                                sell_val: foreignSell,
+                                net_val: foreignBuy - foreignSell
+                            },
+                            retail: {
+                                buy_val: retailBuy,
+                                sell_val: retailSell,
+                                net_val: retailBuy - retailSell
+                            },
+                            local: {
+                                buy_val: localBuy,
+                                sell_val: localSell,
+                                net_val: localBuy - localSell
+                            }
+                        };
+                        results.push({ date: dateStr, data: summary });
+                    }
+                }
+            } catch (e) {
+                console.error(`Error reading ${key}:`, e);
+                errors.push({ date: dateStr, error: e.message });
+            }
+        }
+
+        // POST-LOOP: Format Aggregated Brokers
+        const buyers = Object.keys(accBrokers)
+            .map(k => ({ code: k, ...accBrokers[k] }))
+            .sort((a, b) => b.bval - a.bval)
+            .map(b => ({
+                code: b.code,
+                val: b.bval,
+                vol: b.bvol,
+                avg: b.bvol > 0 ? (b.bval / b.bvol) : 0,
+                type: b.type
+            }))
+            .slice(0, 20);
+
+        const sellers = Object.keys(accBrokers)
+            .map(k => ({ code: k, ...accBrokers[k] }))
+            .sort((a, b) => b.sval - a.sval)
+            .map(b => ({
+                code: b.code,
+                val: b.sval,
+                vol: b.svol,
+                avg: b.svol > 0 ? (b.sval / b.svol) : 0,
+                type: b.type
+            }))
+            .slice(0, 20);
+
+        const allNetBrokers = Object.keys(accBrokers)
+            .map(k => ({
+                code: k,
+                ...accBrokers[k],
+                net: accBrokers[k].bval - accBrokers[k].sval
+            }))
+            .map(b => ({
+                code: b.code,
+                bval: b.bval,
+                sval: b.sval,
+                bvol: b.bvol,
+                svol: b.svol,
+                net: b.net,
+                type: b.type
+            }));
+
+        const topNetBuyers = allNetBrokers.filter(b => b.net > 0).sort((a, b) => b.net - a.net).slice(0, 20);
+        const topNetSellers = allNetBrokers.filter(b => b.net < 0).sort((a, b) => a.net - b.net).slice(0, 20);
+
+        return {
+            history: results,
+            summary: {
+                top_buyers: buyers,
+                top_sellers: sellers,
+                top_net_buyers: topNetBuyers,
+                top_net_sellers: topNetSellers
+            },
+            debug_errors: errors.length > 0 ? errors : undefined
+        };
     },
 
     // Helper: Update Watchlist
