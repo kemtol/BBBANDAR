@@ -1,0 +1,56 @@
+/**
+ * For more details on how to configure Wrangler, refer to:
+ * https://developers.cloudflare.com/workers/wrangler/configuration/
+ */
+{
+    "$schema": "node_modules/wrangler/config-schema.json",
+    "name": "features-service",
+    "main": "src/index.js",
+    "compatibility_date": "2025-01-01",
+    "observability": {
+        "enabled": true
+    },
+    "queues": {
+        "producers": [
+            {
+                "queue": "features-queue",
+                "binding": "FEATURES_QUEUE"
+            }
+        ],
+        "consumers": [
+            {
+                "queue": "features-queue",
+                "max_batch_size": 10,
+                "max_batch_timeout": 30
+            }
+        ]
+    },
+    "r2_buckets": [
+        {
+            "binding": "RAW_BROKSUM",
+            "bucket_name": "raw-broksum"
+        },
+        {
+            "binding": "SSSAHAM_EMITEN",
+            "bucket_name": "sssaham-emiten"
+        }
+    ],
+    "d1_databases": [
+        {
+            "binding": "SSSAHAM_DB",
+            "database_name": "sssaham-db",
+            "database_id": "98cd91eb-5666-4284-8845-8e8b6d7a1b8f"
+        }
+    ],
+    "services": [
+        {
+            "binding": "NOTIF_SERVICE",
+            "service": "notif-webhook"
+        }
+    ],
+    "triggers": {
+        "crons": [
+            "0 11 * * 1-5"
+        ]
+    }
+}

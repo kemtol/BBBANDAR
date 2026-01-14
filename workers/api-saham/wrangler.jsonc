@@ -1,0 +1,26 @@
+{
+    "$schema": "node_modules/wrangler/config-schema.json",
+    "name": "api-saham",
+    "main": "src/index.js",
+    "compatibility_date": "2025-01-01",
+    "observability": {
+        "enabled": true
+    },
+    "r2_buckets": [
+        {
+            "binding": "SSSAHAM_EMITEN",
+            "bucket_name": "sssaham-emiten"
+        },
+        {
+            "binding": "RAW_BROKSUM",
+            "bucket_name": "raw-broksum"
+        }
+    ],
+    "d1_databases": [
+        {
+            "binding": "SSSAHAM_DB",
+            "database_name": "sssaham-db",
+            "database_id": "98cd91eb-5666-4284-8845-8e8b6d7a1b8f"
+        }
+    ]
+}
