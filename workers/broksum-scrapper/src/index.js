@@ -407,15 +407,24 @@ export default {
                 // 2. Calculate
                 const data = await this.calculateRangeData(env, symbol, new Date(from), new Date(to));
 
+                // 3. Smart Expiration Logic (Updated to User Requirement: Fixed 48h)
+                // User requested 48 hours expiration for ALL cache.
+                // 48 hours = 48 * 60 * 60 = 172800 seconds
+
+                const ttl = 172800;
+                const expiresAt = new Date(Date.now() + ttl * 1000).toISOString();
+
                 // Add metadata
                 data.meta = {
                     generated_at: new Date().toISOString(),
+                    expires_at: expiresAt,
+                    ttl_seconds: ttl,
                     range: { from, to }
                 };
 
-                // 3. Save Cache
+                // 4. Save Cache with TTL
                 try {
-                    await env.SSSAHAM_EMITEN.put(key, JSON.stringify(data));
+                    await env.SSSAHAM_EMITEN.put(key, JSON.stringify(data), { expirationTtl: ttl });
                 } catch (e) { console.error("Cache write error", e); }
 
                 return new Response(JSON.stringify(data), {
@@ -712,6 +721,8 @@ export default {
                 bvol: b.bvol,
                 svol: b.svol,
                 net: b.net,
+                buy_avg: b.bvol > 0 ? (b.bval / b.bvol) : 0,
+                sell_avg: b.svol > 0 ? (b.sval / b.svol) : 0,
                 type: b.type
             }));
 

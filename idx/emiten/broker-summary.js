@@ -3,8 +3,9 @@ const urlParams = new URLSearchParams(window.location.search);
 const emitenParam = urlParams.get('emiten');
 const startParam = urlParams.get('start');
 const endParam = urlParams.get('end');
-const netParam = urlParams.get('net'); // 'true' or 'false'
+const nettParam = urlParams.get('nett'); // 'true' or 'false'
 let brokersMap = {};
+let currentBrokerSummary = null;
 
 $(document).ready(function () {
     // Fetch Brokers Mapping
@@ -318,6 +319,14 @@ async function initDetailMode(symbol) {
     $('#date-from').val(startDate.toISOString().split('T')[0]);
     $('#date-to').val(endDate.toISOString().split('T')[0]);
 
+    // Set Net/Gross Toggle based on URL param
+    // Default is NETT (true) if param is missing or not explicitly 'false'
+    if (nettParam === 'false') {
+        $('#toggleNet').prop('checked', false);
+    } else {
+        $('#toggleNet').prop('checked', true);
+    }
+
     // Fetch Data
     await loadDetailData(symbol, startDate, endDate);
 
@@ -325,7 +334,17 @@ async function initDetailMode(symbol) {
     $('#btn-apply-range').on('click', () => {
         const newFrom = $('#date-from').val();
         const newTo = $('#date-to').val();
-        window.location.href = `?emiten=${symbol}&start=${newFrom}&end=${newTo}`;
+        // Preserve current nett state
+        const isNet = $('#toggleNet').is(':checked');
+        const nettVal = isNet ? 'true' : 'false';
+        window.location.href = `?emiten=${symbol}&start=${newFrom}&end=${newTo}&nett=${nettVal}`;
+    });
+
+    // Net/Gross Toggle
+    $('#toggleNet').on('change', function () {
+        if (currentBrokerSummary) {
+            renderBrokerTable(currentBrokerSummary, this.checked);
+        }
     });
 }
 
@@ -356,6 +375,9 @@ async function loadDetailData(symbol, start, end) {
             history = result.history;
             summary = result.summary;
         }
+
+        // Update global state for toggling
+        currentBrokerSummary = summary;
 
         if (!history || history.length === 0) {
             alert('Data tidak ditemukan untuk rentang tanggal ini.');
@@ -388,7 +410,11 @@ function processAndRenderDetail(history, brokerSummary) {
     renderAuditTrail([...history].reverse());
 
     // 3. BROKER SUMMARY LOGIC
-    // ... rest of function
+    if (brokerSummary) {
+        // Initial render checks if #toggleNet is checked (default checked in HTML)
+        const isNet = $('#toggleNet').is(':checked');
+        renderBrokerTable(brokerSummary, isNet);
+    }
 }
 
 let myChart = null;
