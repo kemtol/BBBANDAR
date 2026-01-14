@@ -1,5 +1,5 @@
 // Helper: Get token from KV
-const HARDCODED_TOKEN = "eyJhbGciOiJSUzI1NiIsImtpZCI6IjU3MDc0NjI3LTg4MWItNDQzZC04OTcyLTdmMmMzOTNlMzYyOSIsInR5cCI6IkpXVCJ9.eyJkYXRhIjp7InVzZSI6ImtlbXRvbCIsImVtYSI6Im1rZW1hbHdAZ21haWwuY29tIiwiZnVsIjoiTXVzdGFmYSBLZW1hbCBXaXJ5YXdhbiIsInNlcyI6IiIsImR2YyI6IjVjZjJmZjljM2JkMjFhYzFmYmZhNTZiNGE1MjE4YWJhIiwiZGlkIjoiZGVza3RvcCIsInVpZCI6MjMwNTM1MCwiY291IjoiSUQifSwiZXhwIjoxNzY4MTA4NTI3LCJpYXQiOjE3NjgwMjIxMjcsImlzcyI6IlNUT0NLQklUIiwianRpIjoiNWYxNjE4NmYtNDgwYS00N2NjLWFlZGItNTgwZGNmOWM4M2I5IiwibmJmIjoxNzY4MDIyMTI3LCJ2ZXIiOiJ2MSJ9.s_e-PUIlYOfKymrWzQvxp-pIozYaCd81O4SSyHPAspHmqudA_GlrwOwNFWrTE4L2E1uU0oTiQ5VOvv-2fW5JJBPwl8dvirQe5C9BgjvbjyhzIY397mVlY6UOUnd5A4l-o42isT1M7KxrYXyOUO4BnupVRx9fVxqz8aAx0VBaFi0FOPQEJ1E-MNwgJaK2B1SYvq5LkwRN0kpxS-uWVGWK7hGmcLmYnJfvWAU0LsX5vjeaRzIIjZo99BDZ1ti0oJlPiYXJ_aUGwK0i0KnbpYCHFwUTOsfmM3w8Xblk32CElKC0ySyz7WI_vLT1ffQnTz0BvbW-vqTxE4BzcM4tcRiZ4A";
+const HARDCODED_TOKEN = "eyJhbGciOiJSUzI1NiIsImtpZCI6IjU3MDc0NjI3LTg4MWItNDQzZC04OTcyLTdmMmMzOTNlMzYyOSIsInR5cCI6IkpXVCJ9.eyJkYXRhIjp7InVzZSI6ImtlbXRvbCIsImVtYSI6Im1rZW1hbHdAZ21haWwuY29tIiwiZnVsIjoiTXVzdGFmYSBLZW1hbCBXaXJ5YXdhbiIsInNlcyI6IiIsImR2YyI6IjVjZjJmZjljM2JkMjFhYzFmYmZhNTZiNGE1MjE4YWJhIiwiZGlkIjoiZGVza3RvcCIsInVpZCI6MjMwNTM1MCwiY291IjoiSUQifSwiZXhwIjoxNzY4Mjg1MDI5LCJpYXQiOjE3NjgxOTg2MjksImlzcyI6IlNUT0NLQklUIiwianRpIjoiNjBlNDI2Y2QtODVhMi00ZDU2LTg3YjktZWM1OGQ0NDg4ZWNhIiwibmJmIjoxNzY4MTk4NjI5LCJ2ZXIiOiJ2MSJ9.Rs9nGH-5OvxzbGiPaNzZ3Ye_uXWq9z__d8sjSi06kGxpmi_hbQ_f76gL29XTzc5IwtsytmWjOGX4kZAPNhxofEIsD9hFRNjlEUyQ4gY6IyenkIJKJcnI-V8XBDW2iGrgVUENy6cApqCUKZzmnz3l0oIuPkk8RjTVUa9gTt3461-GrKzcUUMLBG24kwyLcLBu9U1pvP_1XRSVFs64BjCqMW7_RvEDDlnscYNYEKnPltKLnDK0S-OFPx5vrG6lCb62trOgRXd188LqgiDqKSFgPC8HtWx-tVvBCqhJWqlmJTmfs1U6GMFn6VaCjE4WK_L3_iZxTsrZmiA5aMHpwPCULw";
 
 async function getToken(env) {
     if (HARDCODED_TOKEN) return HARDCODED_TOKEN;
@@ -23,15 +23,15 @@ async function objectExists(env, key) {
 }
 
 // Helper: Get trading days (skip weekends) for last N days
-function getTradingDays(days) {
+function getTradingDays(days, startDate = new Date()) {
     const dates = [];
-    const today = new Date();
+    const start = new Date(startDate);
     let count = 0;
     let offset = 1; // Start from yesterday
 
     while (count < days) {
-        const date = new Date(today);
-        date.setDate(today.getDate() - offset);
+        const date = new Date(start);
+        date.setDate(start.getDate() - offset);
         const dayOfWeek = date.getDay();
 
         // Skip weekends (0 = Sunday, 6 = Saturday)
@@ -111,6 +111,40 @@ export default {
                 }), {
                     headers: { "Content-Type": "application/json" }
                 });
+            }
+
+            // ROUTE 4.5: Init Backfill (All Active Emiten from D1)
+            if (path === "/init") {
+                const days = parseInt(url.searchParams.get("days") || "5"); // Default safe limit
+                const overwrite = url.searchParams.get("overwrite") === "true";
+                const fromDate = url.searchParams.get("from"); // Optional start date
+                return await this.backfillActiveEmiten(env, days, overwrite, fromDate);
+            }
+
+            // ROUTE 4.6: Automated Backfill Control (Cursor Based)
+            if (path === "/backfill/status") {
+                const cursor = await env.SSSAHAM_WATCHLIST.get("BACKFILL_CURSOR") || "0";
+                const active = await env.SSSAHAM_WATCHLIST.get("BACKFILL_ACTIVE") || "false";
+                return new Response(JSON.stringify({ cursor: parseInt(cursor), active: active === "true" }), {
+                    headers: { "Content-Type": "application/json" }
+                });
+            }
+
+            if (path === "/backfill/resume") {
+                await env.SSSAHAM_WATCHLIST.put("BACKFILL_ACTIVE", "true");
+                // Optionally trigger one batch immediately
+                const result = await this.processNextBackfillBatch(env);
+                return new Response(JSON.stringify({ message: "Backfill Resumed", result }), { headers: { "Content-Type": "application/json" } });
+            }
+
+            if (path === "/backfill/pause") {
+                await env.SSSAHAM_WATCHLIST.put("BACKFILL_ACTIVE", "false");
+                return new Response(JSON.stringify({ message: "Backfill Paused" }), { headers: { "Content-Type": "application/json" } });
+            }
+
+            if (path === "/backfill/reset") {
+                await env.SSSAHAM_WATCHLIST.put("BACKFILL_CURSOR", "0");
+                return new Response(JSON.stringify({ message: "Cursor Reset to 0" }), { headers: { "Content-Type": "application/json" } });
             }
 
             // ROUTE 5: Debug token - test API with stored token
@@ -472,6 +506,71 @@ export default {
         };
     },
 
+    async scheduled(event, env, ctx) {
+        // Run backfill batch if active
+        const active = await env.SSSAHAM_WATCHLIST.get("BACKFILL_ACTIVE");
+        if (active === "true") {
+            console.log("Cron Triggered: Processing next backfill batch...");
+            await this.processNextBackfillBatch(env);
+        } else {
+            console.log("Cron Triggered but Backfill is PAUSED.");
+        }
+    },
+
+    // Helper: Process Next Backfill Batch (Cursor Based)
+    async processNextBackfillBatch(env) {
+        // 1. Get List
+        const watchlist = await this.getActiveEmiten(env);
+        if (watchlist.length === 0) return { error: "No emiten" };
+
+        // 2. Get Cursor
+        let cursor = parseInt(await env.SSSAHAM_WATCHLIST.get("BACKFILL_CURSOR") || "0");
+        if (cursor >= watchlist.length) {
+            await this.sendWebhook(env, "✅ **Automated Backfill Finished!** Resetting cursor.");
+            await env.SSSAHAM_WATCHLIST.put("BACKFILL_ACTIVE", "false"); // Stop
+            return { status: "finished" };
+        }
+
+        // 3. Process Item
+        const symbol = watchlist[cursor];
+        console.log(`Processing Cursor ${cursor}: ${symbol}`);
+
+        const days = 365;
+        const tradingDays = getTradingDays(days);
+        const batchSize = 100;
+        let dispatched = 0;
+        const messages = [];
+
+        // Check R2 existence (we have time for 1 symbol)
+        for (const date of tradingDays) {
+            const key = `${symbol}/${date}.json`;
+            const exists = await objectExists(env, key);
+            if (!exists) {
+                messages.push({ body: { symbol, date, overwrite: false } });
+            }
+        }
+
+        // Dispatch
+        if (messages.length > 0) {
+            for (let i = 0; i < messages.length; i += batchSize) {
+                const chunk = messages.slice(i, i + batchSize);
+                await env.SSSAHAM_QUEUE.sendBatch(chunk);
+            }
+            dispatched = messages.length;
+        }
+
+        // 4. Update Cursor & Log
+        const nextCursor = cursor + 1;
+        await env.SSSAHAM_WATCHLIST.put("BACKFILL_CURSOR", nextCursor.toString());
+
+        // Notify (Maybe every 50 items or if 1st item)
+        if (cursor % 50 === 0 || cursor === 0) {
+            await this.sendWebhook(env, `🔄 **Auto-Backfill Progress**: ${cursor}/${watchlist.length}\nCurrent: ${symbol}\nDispatched: ${dispatched} jobs`);
+        }
+
+        return { symbol, cursor, dispatched };
+    },
+
     // Helper: Update Watchlist
     async updateWatchlist(env) {
         const TOKEN = await getToken(env);
@@ -676,12 +775,111 @@ export default {
         });
     },
 
+    // Helper: Get Active Emiten from D1 (Strip .JK suffix)
+    async getActiveEmiten(env) {
+        try {
+            const { results } = await env.SSSAHAM_DB.prepare("SELECT ticker FROM emiten WHERE status = 'ACTIVE'").all();
+            if (!results) return [];
+            // Strip .JK suffix
+            return results.map(r => r.ticker.replace(/\.JK$/, ''));
+        } catch (e) {
+            console.error("Error fetching active emiten from D1:", e);
+            return [];
+        }
+    },
+
+    // Helper: Send Webhook Notification (via Service Binding)
+    async sendWebhook(env, message) {
+        if (!env.NOTIF_SERVICE) {
+            console.log("No NOTIF_SERVICE binding, skipping notification:", message);
+            return;
+        }
+        try {
+            await env.NOTIF_SERVICE.fetch("http://internal/send", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ message: message })
+            });
+        } catch (e) {
+            console.error("Failed to send webhook via service:", e);
+        }
+    },
+
+    // Helper: Backfill Active Emiten (D1 source, N days)
+    async backfillActiveEmiten(env, days = 5, overwrite = false, fromDate = null) {
+        const startMsg = `🚀 **Starting INIT Backfill**\nDays: ${days}\nOverwrite: ${overwrite}\nStart Date: ${fromDate || 'Today'}\nSource: D1 (Active Emiten)`;
+        console.log(startMsg);
+        await this.sendWebhook(env, startMsg);
+
+        const watchlist = await this.getActiveEmiten(env);
+        if (watchlist.length === 0) {
+            await this.sendWebhook(env, "⚠️ **Backfill Aborted**: No active emiten found in D1.");
+            return new Response("No active emiten found in D1. Please seed database first.", { status: 404 });
+        }
+
+        const effectiveStart = fromDate ? new Date(fromDate) : new Date();
+        const tradingDays = getTradingDays(days, effectiveStart);
+        let totalDispatched = 0;
+        let totalSkipped = 0;
+        const batchSize = 100; // Queue batch size
+
+        // Optimization: Create all messages first? No, memory limit.
+        // Process day by day.
+
+        for (const date of tradingDays) {
+            const messages = [];
+
+            // Check existence logic can be slow if we do it one by one for 700*300 items.
+            // But we must do it if not overwriting.
+            // Optimization: Maybe listing R2 is faster? No, too many files.
+            // We'll stick to strict checking or just blind dispatch if overwrite is true?
+            // If overwrite=true, we skip checking.
+
+            for (const symbol of watchlist) {
+                if (!overwrite) {
+                    const key = `${symbol}/${date}.json`;
+                    const exists = await objectExists(env, key);
+                    if (exists) {
+                        totalSkipped++;
+                        continue;
+                    }
+                }
+                messages.push({ body: { symbol, date, overwrite } });
+            }
+
+            // Dispatch this day's messages in batches
+            if (messages.length > 0) {
+                for (let i = 0; i < messages.length; i += batchSize) {
+                    const chunk = messages.slice(i, i + batchSize);
+                    await env.SSSAHAM_QUEUE.sendBatch(chunk);
+                }
+                totalDispatched += messages.length;
+                console.log(`Date ${date}: dispatched ${messages.length} jobs`);
+            }
+        }
+
+        const endMsg = `✅ **INIT Backfill Completed**\nTotal Dispatched: ${totalDispatched}\nTotal Skipped: ${totalSkipped}\nTrading Days: ${tradingDays.length}\nSymbols: ${watchlist.length}`;
+        await this.sendWebhook(env, endMsg);
+
+        return new Response(JSON.stringify({
+            message: `Init Backfill completed for ${days} trading days`,
+            total_dispatched: totalDispatched,
+            total_skipped: totalSkipped,
+            trading_days: tradingDays.length,
+            symbols_count: watchlist.length,
+            overwrite: overwrite
+        }), {
+            headers: { "Content-Type": "application/json" }
+        });
+    },
+
     async queue(batch, env) {
         const TOKEN = await getToken(env);
 
         for (const message of batch.messages) {
             const { symbol, date, overwrite } = message.body;
 
+            const startTime = Date.now();
             console.log(`Processing ${symbol} for ${date} (overwrite: ${overwrite})`);
 
             try {
@@ -692,6 +890,9 @@ export default {
                     const exists = await objectExists(env, key);
                     if (exists) {
                         console.log(`Skipping ${key} - already exists`);
+                        await env.SSSAHAM_DB.prepare("INSERT INTO scraping_logs (timestamp, symbol, date, status, duration_ms) VALUES (?, ?, ?, ?, ?)")
+                            .bind(new Date().toISOString(), symbol, date, "SKIPPED", Date.now() - startTime)
+                            .run();
                         message.ack();
                         continue;
                     }
@@ -727,6 +928,10 @@ export default {
                         // Token expired - retry later
                         message.retry();
                     } else {
+                        // Log failure
+                        await env.SSSAHAM_DB.prepare("INSERT INTO scraping_logs (timestamp, symbol, date, status, duration_ms) VALUES (?, ?, ?, ?, ?)")
+                            .bind(new Date().toISOString(), symbol, date, `FAILED_${response.status}`, Date.now() - startTime)
+                            .run();
                         message.ack(); // Don't retry for other errors
                     }
                     continue;
@@ -737,6 +942,10 @@ export default {
                 // Save to R2
                 await env.RAW_BROKSUM.put(key, JSON.stringify(data));
                 console.log(`Saved ${key} to R2`);
+
+                await env.SSSAHAM_DB.prepare("INSERT INTO scraping_logs (timestamp, symbol, date, status, duration_ms) VALUES (?, ?, ?, ?, ?)")
+                    .bind(new Date().toISOString(), symbol, date, "SUCCESS", Date.now() - startTime)
+                    .run();
 
                 message.ack();
 

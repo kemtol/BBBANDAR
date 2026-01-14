@@ -49,5 +49,16 @@
             "database_name": "sssaham-db",
             "database_id": "98cd91eb-5666-4284-8845-8e8b6d7a1b8f"
         }
-    ]
+    ],
+    "services": [
+        {
+            "binding": "NOTIF_SERVICE",
+            "service": "notif-webhook"
+        }
+    ],
+    "triggers": {
+        "crons": [
+            "*/2 * * * *"
+        ]
+    }
 }
