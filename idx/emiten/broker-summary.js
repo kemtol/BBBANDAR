@@ -375,15 +375,9 @@ async function loadDetailData(symbol, start, end) {
 function processAndRenderDetail(history, brokerSummary) {
     // 1. CHART LOGIC
     // 1. CHART LOGIC
-    // Filter out empty days (holidays/no transaction)
-    history = history.filter(h => {
-        if (!h.data) return false;
-        const f = h.data.foreign?.net_val || 0;
-        const r = h.data.retail?.net_val || 0;
-        const l = h.data.local?.net_val || 0;
-        // Keep if ANY sector has non-zero value
-        return (f !== 0 || r !== 0 || l !== 0);
-    });
+    // Filter out empty days logic REMOVED to keep timeline accurate (flat line on empty days)
+    // This makes the slope of accumulation/distribution visually correct.
+    // history = history.filter(h => ...);
 
     // Sort ascending by date
     history.sort((a, b) => new Date(a.date) - new Date(b.date));
@@ -411,10 +405,26 @@ function renderChart(history) {
     // Validasi data null
     const getVal = (h, key) => h.data?.[key]?.net_val || 0;
 
-    // Daily Net Flow (Not Cumulative, matching remote code)
-    const foreignFlow = history.map(h => getVal(h, 'foreign'));
-    const retailFlow = history.map(h => getVal(h, 'retail'));
-    const localFlow = history.map(h => getVal(h, 'local'));
+    // Hitung Cumulative Flow (Akumulasi)
+    // Menjawab: "Senin beli 10, Selasa jual 8 => Sisa 2"
+    let accForeign = 0;
+    let accRetail = 0;
+    let accLocal = 0;
+
+    const foreignFlow = history.map(h => {
+        accForeign += getVal(h, 'foreign');
+        return accForeign;
+    });
+
+    const retailFlow = history.map(h => {
+        accRetail += getVal(h, 'retail');
+        return accRetail;
+    });
+
+    const localFlow = history.map(h => {
+        accLocal += getVal(h, 'local');
+        return accLocal;
+    });
 
     myChart = new Chart(ctx, {
         type: 'line',
