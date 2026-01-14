@@ -54,19 +54,150 @@ function withCors(headers = {}) {
     };
 }
 
+// SMART MONEY ENGINE (Ported to Backend)
+class SmartMoney {
+    constructor() {
+        this.W1 = 1.0; // Effort
+        this.W2 = 1.0; // Result (negative impact)
+        this.W3 = 1.0; // Elasticity
+        this.W4 = 0.5; // NGR
+    }
+
+    static stdDev(array, mean) {
+        if (array.length === 0) return 0;
+        return Math.sqrt(array.map(x => Math.pow(x - mean, 2)).reduce((a, b) => a + b, 0) / array.length);
+    }
+
+    analyze(history) {
+        if (!history || history.length < 20) return null;
+
+        // Sort by date ascending
+        const data = [...history].sort((a, b) => new Date(a.date) - new Date(b.date));
+        const n = data.length;
+        const window = 20;
+
+        // 1. Calculate base metrics
+        const metrics = data.map((d, i) => {
+            // Price Return (using close price if available, else 0)
+            let ret = 0;
+            const currClose = d.close || (d.data && d.data.close) || 0;
+            const prevClose = i > 0 ? (data[i - 1].close || (data[i - 1].data && data[i - 1].data.close) || 0) : 0;
+
+            if (prevClose > 0 && currClose > 0) {
+                ret = (currClose - prevClose) / prevClose;
+            }
+
+            // Gross & Net from Broker Summary
+            const foreign = d.data?.foreign || { buy_val: 0, sell_val: 0 };
+            const retail = d.data?.retail || { buy_val: 0, sell_val: 0 };
+            const local = d.data?.local || { buy_val: 0, sell_val: 0 };
+
+            const grossBuy = foreign.buy_val + retail.buy_val + local.buy_val;
+            const grossSell = foreign.sell_val + retail.sell_val + local.sell_val;
+
+            const effort = grossBuy + grossSell;
+            const net = grossBuy - grossSell;
+            const result = Math.abs(ret);
+
+            return { date: d.date, effort, result, net, ret };
+        });
+
+        // 2. Rolling Z-Scores (Latest)
+        const lastIdx = n - 1;
+        const latest = metrics[lastIdx];
+        const slice = metrics.slice(Math.max(0, n - window), n);
+
+        const effortMean = slice.reduce((a, b) => a + b.effort, 0) / slice.length;
+        const effortStd = SmartMoney.stdDev(slice.map(s => s.effort), effortMean);
+        const effortZ = effortStd === 0 ? 0 : (latest.effort - effortMean) / effortStd;
+
+        const resultMean = slice.reduce((a, b) => a + b.result, 0) / slice.length;
+        const resultStd = SmartMoney.stdDev(slice.map(s => s.result), resultMean);
+        const resultZ = resultStd === 0 ? 0 : (latest.result - resultMean) / resultStd;
+
+        const ngr = latest.effort === 0 ? 0 : Math.abs(latest.net) / latest.effort;
+        const epsilon = 1e-9;
+        const elasticity = latest.result / (Math.abs(latest.net) + epsilon);
+
+        // Rolling metrics for trend
+        const prevEffortZ = n > 1 ? ((metrics[n - 2].effort - effortMean) / effortStd) : 0;
+        const effortDeclining = effortZ < prevEffortZ;
+
+        const sliceElas = slice.map(s => s.result / (Math.abs(s.net) + epsilon));
+        const elasMean = sliceElas.reduce((a, b) => a + b, 0) / sliceElas.length;
+        const elasStd = SmartMoney.stdDev(sliceElas, elasMean);
+        const elasZ = elasStd === 0 ? 0 : (elasticity - elasMean) / elasStd;
+
+        const sliceNGR = slice.map(s => s.effort === 0 ? 0 : Math.abs(s.net) / s.effort);
+        const ngrMean = sliceNGR.reduce((a, b) => a + b, 0) / sliceNGR.length;
+        const ngrStd = SmartMoney.stdDev(sliceNGR, ngrMean);
+        const ngrZ = ngrStd === 0 ? 0 : (ngr - ngrMean) / ngrStd;
+
+        // 3. Classification
+        let state = 'NEUTRAL';
+        const isEffortHigh = effortZ > 0.5;
+        const isEffortLow = effortZ < -0.5;
+        const isResultLow = resultZ < 0;
+
+        if (effortDeclining && resultZ > -0.5 && elasticity > elasMean * 1.1) {
+            state = 'READY_MARKUP';
+        } else if (isEffortHigh && Math.abs(resultZ) < 0.5) {
+            state = 'TRANSITION';
+        } else if (isEffortHigh && resultZ < -0.5 && latest.ret >= 0) {
+            state = 'ACCUMULATION';
+        } else if (isEffortHigh && latest.ret < -0.01) {
+            state = 'DISTRIBUTION';
+        }
+
+        if (state === 'NEUTRAL' && isEffortLow && isResultLow) state = 'NEUTRAL';
+
+        // 4. Score
+        const score = (this.W1 * effortZ) - (this.W2 * Math.abs(resultZ)) + (this.W3 * (1 - elasZ)) + (this.W4 * ngrZ);
+
+        return {
+            state,
+            score,
+            metrics: {
+                effortZ, resultZ, elasticity, ngr, ret: latest.ret
+            }
+        };
+    }
+}
+
 export default {
     async fetch(request, env, ctx) {
         const url = new URL(request.url);
         const path = url.pathname;
 
-        // Handle CORS Preflight
+        // CORS Helper
+        const corsHeaders = {
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, HEAD, POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type",
+        };
+
         if (request.method === "OPTIONS") {
-            return new Response(null, {
-                headers: withCors()
-            });
+            return new Response(null, { headers: corsHeaders });
         }
 
         try {
+            // NEW ROUTE: Get Screener Results
+            if (path === "/screener") {
+                const results = await env.SSSAHAM_WATCHLIST.get("SCREENER_RESULT", { type: "json" });
+                return new Response(JSON.stringify(results || { candidates: [] }), {
+                    headers: { ...corsHeaders, "Content-Type": "application/json" }
+                });
+            }
+
+            // NEW ROUTE: Trigger Screener Run (Manual)
+            if (path === "/trigger-screener") {
+                ctx.waitUntil(this.runScreener(env));
+                return new Response(JSON.stringify({ message: "Screener triggered in background" }), {
+                    headers: { ...corsHeaders, "Content-Type": "application/json" }
+                });
+            }
+
+            // ... Existing Routes ...
             // ROUTE 1: Update Watchlist (Fetch from Templates -> Save to KV)
             if (path === "/update-watchlist") {
                 return await this.updateWatchlist(env);
@@ -325,6 +456,99 @@ export default {
                 headers: withCors({ "Content-Type": "application/json" })
             });
         }
+    },
+
+
+    // Helper: Run Screener (Background Job)
+    async runScreener(env) {
+        console.log("Starting Smart Money Screener...");
+        const engine = new SmartMoney();
+        const results = [];
+        const errors = [];
+
+        // 1. Get All Active Emiten
+        const watchlist = await this.getActiveEmiten(env); // approx 700
+        console.log(`Analyzing ${watchlist.length} stocks...`);
+
+        // 2. Define Time Window (Last 90 days)
+        // We need enough data for 20-day MA + trends
+        const endDate = new Date();
+        const startDate = new Date();
+        startDate.setDate(endDate.getDate() - 90);
+
+        // 3. Process in Batches (Parallel)
+        // Cloudflare Worker CPU time limit is tight (10ms-30s depending on plan)
+        // We must be careful. If too many, we might need Durable Object or Queue.
+        // For 700 stocks, calculating data means reading R2 700 times * 90 files? NO!
+        // fetching chart-data uses `calculateRangeData` which does reading.
+        // Reading 90 files * 700 stocks = 63,000 R2 reads. This is EXPENSIVE and SLOW.
+        // OPTIMIZATION: Use the `broker/summary/{symbol}/{start}_{end}.json` CACHE if available?
+        // OR better: Just analyze the last 90 days.
+
+        // LIMITATION: Doing this for 700 stocks in one request MIGHT TIMEOUT.
+        // We will process top 50 for now or use `ctx.waitUntil` creatively?
+        // Better: Queue based? 
+        // For this implementation, we will try to process them, but if it's too slow we might need to break it down.
+        // Let's attempt a batch of 50 concurrency.
+
+        const batchSize = 10; // Conservative batch size
+        for (let i = 0; i < watchlist.length; i += batchSize) {
+            const batch = watchlist.slice(i, i + batchSize);
+            console.log(`Processing batch ${i} - ${i + batchSize}`);
+
+            const promises = batch.map(async (symbol) => {
+                try {
+                    // Reuse calculateRangeData logic
+                    // This reads R2 daily files. 
+                    const data = await this.calculateRangeData(env, symbol, startDate, endDate);
+
+                    if (data && data.history) {
+                        const analysis = engine.analyze(data.history);
+                        if (analysis) {
+                            return { symbol, ...analysis };
+                        }
+                    }
+                } catch (e) {
+                    console.error(`Error analyzing ${symbol}:`, e);
+                }
+                return null;
+            });
+
+            const batchResults = (await Promise.all(promises)).filter(r => r !== null);
+            results.push(...batchResults);
+
+            // Short pause to yield I/O?
+        }
+
+        // 4. Sort Globally
+        // Priority: READY_MARKUP > TRANSITION > ACCUMULATION > NEUTRAL > DISTRIBUTION
+        const statePriority = {
+            'READY_MARKUP': 1,
+            'TRANSITION': 2,
+            'ACCUMULATION': 3,
+            'NEUTRAL': 4,
+            'DISTRIBUTION': 5
+        };
+
+        results.sort((a, b) => {
+            const sA = statePriority[a.state] || 99;
+            const sB = statePriority[b.state] || 99;
+            if (sA !== sB) return sA - sB;
+            return b.score - a.score;
+        });
+
+        // 5. Store Result
+        const output = {
+            generated_at: new Date().toISOString(),
+            count: results.length,
+            candidates: results
+        };
+
+        await env.SSSAHAM_WATCHLIST.put("SCREENER_RESULT", JSON.stringify(output));
+        console.log("Screener completed and saved.");
+
+        // Optional: Webhook
+        await this.sendWebhook(env, `✅ **Smart Money Screener Finished**\nAnalyzed: ${watchlist.length}\nQualified: ${results.length}`);
     },
 
     // Refactored Helper: Calculate Broker Summary for a Date Range
