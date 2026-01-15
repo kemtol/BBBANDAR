@@ -3,7 +3,6 @@
  * https://developers.cloudflare.com/workers/wrangler/configuration/
  */
 {
-    "$schema": "node_modules/wrangler/config-schema.json",
     "name": "features-service",
     "main": "src/index.js",
     "compatibility_date": "2025-01-01",

@@ -1,6 +1,6 @@
 const WORKER_BASE_URL = "https://api-saham.mkemalw.workers.dev";
 const urlParams = new URLSearchParams(window.location.search);
-const emitenParam = urlParams.get('emiten');
+const kodeParam = urlParams.get('kode');
 const startParam = urlParams.get('start');
 const endParam = urlParams.get('end');
 const nettParam = urlParams.get('nett');
@@ -8,91 +8,26 @@ let brokersMap = {};
 let currentBrokerSummary = null;
 
 $(document).ready(function () {
-    // 1. Fetch Brokers Mapping (from API-Saham which proxies D1 or we can skip if not needed for index)
-    // Actually api-saham doesn't expose /brokers. broksum-scrapper did.
-    // I should add /brokers to api-saham index.js? 
-    // Or just fetch from where? 
-    // Let's assume we can fetch it or lazy load. 
-    // For now, let's skip /brokers fetch for index mode, only for Detail.
-
-    if (emitenParam) {
-        initDetailMode(emitenParam);
-    } else {
-        initIndexMode();
-    }
-
-    initSearch();
-});
-
-// =========================================
-// SEARCH FUNCTIONALITY
-// =========================================
-function toggleSearch() {
-    const panel = document.getElementById('search-panel');
-    panel.classList.toggle('open');
-    if (panel.classList.contains('open')) {
-        document.getElementById('search-input').focus();
-        loadSearchHistory();
-    }
-}
-
-function initSearch() {
-    const input = document.getElementById('search-input');
-    input.addEventListener('keypress', function (e) {
-        if (e.key === 'Enter') {
-            const symbol = this.value.toUpperCase().trim();
-            if (symbol) {
-                saveSearchHistory(symbol);
-                window.location.href = `?emiten=${symbol}`;
+    // 1. Fetch Brokers Mapping
+    fetch(`${WORKER_BASE_URL}/brokers`)
+        .then(r => r.json())
+        .then(d => {
+            // Map array to object: { 'YP': { ... } }
+            if (d.brokers && Array.isArray(d.brokers)) {
+                d.brokers.forEach(b => brokersMap[b.code] = b);
             }
-        }
-    });
-}
+        })
+        .catch(e => console.error("Error fetching brokers:", e))
+        .finally(() => {
+            if (kodeParam) {
+                initDetailMode(kodeParam);
+            } else {
+                initIndexMode();
+            }
+        });
 
-function saveSearchHistory(symbol) {
-    let history = JSON.parse(localStorage.getItem('search_history') || '[]');
-    history = history.filter(h => h !== symbol);
-    history.unshift(symbol);
-    if (history.length > 10) history.pop();
-    localStorage.setItem('search_history', JSON.stringify(history));
-}
-
-function loadSearchHistory() {
-    const history = JSON.parse(localStorage.getItem('search_history') || '[]');
-    const list = document.getElementById('search-history-list');
-    list.innerHTML = '';
-    if (history.length === 0) {
-        list.innerHTML = '<p class="small opacity-50 fst-italic">Belum ada riwayat.</p>';
-        return;
-    }
-    history.forEach(sym => {
-        const div = document.createElement('div');
-        div.className = 'search-history-item';
-        div.innerHTML = `<span class="fw-bold">${sym}</span><i class="fa-solid fa-chevron-right small opacity-50"></i>`;
-        div.onclick = () => {
-            saveSearchHistory(sym);
-            window.location.href = `?emiten=${sym}`;
-        };
-        list.appendChild(div);
-    });
-}
-
-// =========================================
-// SMART STICKY HEADER
-// =========================================
-let lastScrollY = 0;
-const navbar = document.querySelector('.navbar');
-window.addEventListener('scroll', () => {
-    const currentScrollY = window.scrollY;
-    if (currentScrollY > 100) {
-        if (currentScrollY > lastScrollY) navbar.classList.add('hidden');
-        else navbar.classList.remove('hidden');
-    } else {
-        navbar.classList.remove('hidden');
-    }
-    lastScrollY = currentScrollY;
+    // Search now in component.js
 });
-
 
 // =========================================
 // INDEX MODE (SCREENER)
@@ -100,7 +35,8 @@ window.addEventListener('scroll', () => {
 async function initIndexMode() {
     $('#index-view').show();
     $('#detail-view').hide();
-    $('.nav-title').text('Smart Money Screener');
+    $('.nav-title').text('Dashboard');
+    $('#nav-back').addClass('d-none'); // Hide back button in Screen Mode
     loadScreenerData();
 }
 
@@ -110,30 +46,25 @@ async function loadScreenerData() {
         const response = await fetch(`${WORKER_BASE_URL}/screener`);
         const data = await response.json();
 
-        // Data shape: { date: "...", items: [ { t: "BBRI", s: "RM", sc: 2.5, z: { "20": {e,r,n} } } ] }
         if (data && data.items) {
             const candidates = data.items.map(i => ({
                 symbol: i.t,
                 state: mapState(i.s),
                 score: i.sc,
-                // Use 20-day window metrics or fallback
                 metrics: {
                     effortZ: i.z["20"]?.e || 0,
                     resultZ: i.z["20"]?.r || 0,
                     ngr: i.z["20"]?.n || 0,
-                    elasticity: 0 // Elas might be missing in minified json if I excluded it? I included it in logic but excluded in aggregate?
-                    // In features-service aggregate: "Elas omitted". 
-                    // So we put 0 or re-include it. For now 0.
+                    elasticity: 0
                 }
             }));
 
-            // Sort by Score Desc
             candidates.sort((a, b) => b.score - a.score);
 
             renderScreenerTable(candidates);
 
             if (data.date) {
-                $('#index-view h5').html(`Smart Money Screener <small class='text-muted ms-2' style='font-size:0.7rem'>${data.date}</small>`);
+                $('#index-view h5').html(`<small class='text-muted ms-2' style='font-size:0.7rem'>${data.date}</small>`);
             }
         } else {
             $('#tbody-index').html('<tr><td colspan="7" class="text-center text-muted">No data available.</td></tr>');
@@ -156,7 +87,6 @@ function mapState(s) {
         'DI': 'DISTRIBUTION',
         'NE': 'NEUTRAL'
     };
-    // If full string, return it
     if (s.length > 2) return s;
     return map[s] || s;
 }
@@ -198,7 +128,7 @@ function renderScreenerTable(candidates) {
     candidates.forEach((item, idx) => {
         const m = item.metrics;
         const row = `
-            <tr onclick="window.location.href='?emiten=${item.symbol}'" style="cursor:pointer;">
+            <tr onclick="window.location.href='?kode=${item.symbol}'" style="cursor:pointer;">
                 <td class="text-center text-muted small">${idx + 1}</td>
                 <td class="fw-bold">${item.symbol}</td>
                 <td class="text-center">${getBadge(m.effortZ, 'effort')}</td>
@@ -218,7 +148,8 @@ function renderScreenerTable(candidates) {
 async function initDetailMode(symbol) {
     $('#index-view').hide();
     $('#detail-view').show();
-    $('#header-title').text(symbol);
+    $('.nav-title').text(symbol);
+    $('#nav-back').removeClass('d-none').attr('href', '?'); // Show back button, link to index
 
     let endDate = endParam ? new Date(endParam) : new Date();
     let startDate = startParam ? new Date(startParam) : new Date();
@@ -227,15 +158,27 @@ async function initDetailMode(symbol) {
     $('#date-from').val(startDate.toISOString().split('T')[0]);
     $('#date-to').val(endDate.toISOString().split('T')[0]);
 
+    // Set toggle state from URL param: nett=false means Gross (unchecked), default is Net (checked)
+    if (nettParam === 'false') {
+        $('#toggleNet').prop('checked', false);
+    } else {
+        $('#toggleNet').prop('checked', true); // Default: Net
+    }
+
     // Tab Handler
     $('#audit-tab').on('click', () => loadAuditTrail(symbol));
+
+    // Set Intraday link to preserve emiten parameter
+    $('#intraday-link').attr('href', `detail.html?kode=${symbol}`);
 
     await loadDetailData(symbol, startDate, endDate);
 
     $('#btn-apply-range').on('click', () => {
         const newFrom = $('#date-from').val();
         const newTo = $('#date-to').val();
-        window.location.href = `?emiten=${symbol}&start=${newFrom}&end=${newTo}`;
+        // Keep net param if exists
+        const netPart = nettParam ? `&nett=${nettParam}` : '';
+        window.location.href = `?kode=${symbol}&start=${newFrom}&end=${newTo}${netPart}`;
     });
 }
 
@@ -252,59 +195,347 @@ async function loadDetailData(symbol, start, end) {
         $('#loading-indicator').hide();
         $('#app').fadeIn();
 
-        // Chart Data (History of Flows)
         if (result.history) {
             renderChart(result.history);
         } else {
-            alert('No Chart Data');
+            console.warn('No Chart Data');
+        }
+
+        // Render Summary with correct mode
+        if (result.summary) {
+            renderDetailSummary(result.summary);
+            renderProportionalBar(result.summary);
+        } else {
+            $('#broker-table-container').html('<p class="text-center text-muted">No summary data available.</p>');
         }
 
     } catch (e) {
         console.error(e);
         $('#loading-indicator').hide();
-        alert('Failed to load chart data');
+        $('#broker-table-container').html('<p class="text-center text-danger">Failed to load data. Please try again.</p>');
     }
 }
 
-async function loadAuditTrail(symbol) {
-    const container = $('#audit-trail-list');
-    container.html('<div class="text-center my-3"><div class="spinner-border spinner-border-sm text-primary"></div> Loading...</div>');
+function loadAuditTrail(symbol) {
+    // Logic placeholder if needed
+}
 
-    try {
-        const res = await fetch(`${WORKER_BASE_URL}/features/history?symbol=${symbol}`);
-        const data = await res.json();
+function renderAuditTrail(history) {
+    const fmt = (num) => {
+        if (!num) return "-";
+        const abs = Math.abs(num);
+        if (abs >= 1e9) return (num / 1e9).toFixed(1) + "B";
+        if (abs >= 1e6) return (num / 1e6).toFixed(1) + "M";
+        return num.toLocaleString();
+    };
 
-        if (data.history) {
-            // New Z-Score Audit Trail
-            let html = '<div class="table-responsive"><table class="table table-sm small table-bordered">';
-            html += `<thead class="table-light"><tr>
-                <th>Date</th>
-                <th>State</th>
-                <th class="text-end">Effort (20)</th>
-                <th class="text-end">Result (20)</th>
-                <th class="text-end">NGR (20)</th>
-            </tr></thead><tbody>`;
+    let html = '<div class="table-responsive"><table class="table table-sm small">';
+    html += `<thead>
+        <tr class="text-muted">
+            <th>Date</th>
+            <th class="text-end">Foreign Buy</th>
+            <th class="text-end">Foreign Sell</th>
+            <th class="text-end">Net</th>
+        </tr>
+    </thead>`;
+    html += '<tbody>';
 
-            // Reverse order
-            const rev = [...data.history].reverse();
-            rev.forEach(h => {
-                const z20 = h.z_scores?.["20"] || {};
-                html += `<tr>
-                    <td>${h.date}</td>
-                    <td>${h.state}</td>
-                    <td class="text-end">${z20.effort?.toFixed(2) || '-'}</td>
-                    <td class="text-end">${z20.result?.toFixed(2) || '-'}</td>
-                    <td class="text-end">${z20.ngr?.toFixed(2) || '-'}</td>
-                </tr>`;
-            });
-            html += '</tbody></table></div>';
-            container.html(html);
-        } else {
-            container.html('<p>No audit trail data found.</p>');
-        }
-    } catch (e) {
-        container.html('<p class="text-danger">Failed to load audit trail.</p>');
+    [...history].reverse().forEach(h => {
+        const f = h.data?.foreign || {};
+        const net = f.net_val || 0;
+        const netClass = net >= 0 ? 'text-success' : 'text-danger';
+        html += `
+            <tr>
+                <td>${h.date}</td>
+                <td class="text-end text-success">${fmt(f.buy_val)}</td>
+                <td class="text-end text-danger">${fmt(f.sell_val)}</td>
+                <td class="text-end fw-bold ${netClass}">${fmt(net)}</td>
+            </tr>
+        `;
+    });
+
+    html += '</tbody></table></div>';
+    $('#audit-trail-list').html(html);
+}
+
+
+function renderDetailSummary(summary) {
+    const container = $('#broker-table-container');
+    container.empty();
+
+    if (!summary || (!summary.top_buyers?.length && !summary.top_sellers?.length && !summary.top_net_buyers?.length)) {
+        container.html('<p class="text-center text-muted">No broker data available for this range.</p>');
+        return;
     }
+
+    // Store summary for toggle re-render
+    currentBrokerSummary = summary;
+
+    // Use existing #toggleNet checkbox state (checked = Net, unchecked = Gross)
+    const isNet = $('#toggleNet').is(':checked');
+    renderBrokerTable(summary, isNet);
+
+    // Wire up toggle event (only once)
+    $('#toggleNet').off('change').on('change', function () {
+        const container = $('#broker-table-container');
+        container.empty();
+        if (currentBrokerSummary) {
+            renderBrokerTable(currentBrokerSummary, $(this).is(':checked'));
+        }
+    });
+}
+
+function renderProportionalBar(summary) {
+    const container = $('#proportional-bar-container');
+    container.empty();
+
+    if (!summary || !summary.foreign || !summary.retail || !summary.local) {
+        return; // No data to display
+    }
+
+    const fNet = Math.abs(summary.foreign.net_val || 0);
+    const rNet = Math.abs(summary.retail.net_val || 0);
+    const lNet = Math.abs(summary.local.net_val || 0);
+    const total = fNet + rNet + lNet;
+
+    if (total === 0) return;
+
+    const fPct = (fNet / total) * 100;
+    const lPct = (lNet / total) * 100;
+    const rPct = (rNet / total) * 100;
+
+    const fColor = '#198754'; // Foreign = Green (same as table text)
+    const lColor = '#0d6efd'; // Local = Blue (same as table text)
+    const rColor = '#dc3545'; // Retail = Red (same as table text)
+
+    const fmt = (num) => {
+        const abs = Math.abs(num);
+        if (abs >= 1e9) return (num / 1e9).toFixed(1) + 'B';
+        if (abs >= 1e6) return (num / 1e6).toFixed(1) + 'M';
+        return num.toLocaleString();
+    };
+
+    const html = `
+        <div class="d-flex w-100" style="height: 24px; border-radius: 4px; overflow: hidden;">
+            <div style="width: ${fPct}%; background-color: ${fColor}; display: flex; align-items: center; justify-content: center; overflow: hidden;">
+                <span class="text-white small fw-bold" style="white-space: nowrap;">Foreign</span>
+            </div>
+            <div style="width: ${lPct}%; background-color: ${lColor}; display: flex; align-items: center; justify-content: center; overflow: hidden;">
+                <span class="text-white small fw-bold" style="white-space: nowrap;">Local</span>
+            </div>
+            <div style="width: ${rPct}%; background-color: ${rColor}; display: flex; align-items: center; justify-content: center; overflow: hidden;">
+                <span class="text-white small fw-bold" style="white-space: nowrap;">Retail</span>
+            </div>
+        </div>
+        <div class="d-flex justify-content-between small mt-1">
+            <span class="fw-bold text-center" style="color: ${fColor};">${fmt(summary.foreign.net_val)} (${fPct.toFixed(0)}%)</span>
+            <span class="fw-bold text-center" style="color: ${lColor};">${fmt(summary.local.net_val)} (${lPct.toFixed(0)}%)</span>
+            <span class="fw-bold text-center" style="color: ${rColor};">${fmt(summary.retail.net_val)} (${rPct.toFixed(0)}%)</span>
+        </div>
+    `;
+
+    container.html(html);
+}
+
+function renderBrokerTable(summary, isNet = true) {
+    const fmt = (num) => {
+        if (!num) return "-";
+        const abs = Math.abs(num);
+        if (abs >= 1e9) return (num / 1e9).toFixed(1) + "B";
+        if (abs >= 1e6) return (num / 1e6).toFixed(1) + "M";
+        return num.toLocaleString();
+    };
+
+    const STYLE_BUY_TEXT = 'color: #0dcaf0;';
+    const STYLE_SELL_TEXT = 'color: #fd7e14;';
+
+    const getTextClass = (code) => {
+        const broker = brokersMap[code];
+        if (!broker) return 'text-secondary';
+        const cat = (broker.category || '').toLowerCase();
+        if (cat.includes('foreign')) return 'text-success';
+        if (cat.includes('retail')) return 'text-danger';
+        return 'text-primary';
+    };
+
+    const getBrokerLabel = (code) => {
+        const broker = brokersMap[code];
+        if (!broker) return code;
+        const shortName = broker.name.split(' ')[0];
+        return `${code} - ${shortName}`;
+    };
+
+    const getBuySideLabel = (code, net) => {
+        const broker = brokersMap[code];
+        const shortName = broker ? broker.name.split(' ')[0] : '';
+        return `(${fmt(net)}) ${shortName} - ${code}`;
+    };
+
+    const getSellSideLabel = (code, net) => {
+        const broker = brokersMap[code];
+        const shortName = broker ? broker.name.split(' ')[0] : '';
+        return `${code} - ${shortName} (${fmt(net)})`;
+    };
+
+    let html = '';
+
+    if (isNet && summary.top_net_buyers) {
+        const maxNet = Math.max(...(summary.top_net_buyers || []).map(b => Math.abs(b.net)));
+        const maxNetSell = Math.max(...(summary.top_net_sellers || []).map(s => Math.abs(s.net)));
+        const globalMax = Math.max(maxNet, maxNetSell);
+
+        html = `
+        <div class="row">
+            <div class="col-6">
+                <table class="table table-sm table-borderless small">
+                    <thead>
+                        <tr class="text-muted">
+                            <th class="text-end d-none d-md-table-cell">Net</th>
+                            <th class="text-end d-none d-md-table-cell">Avg</th>
+                            <th class="text-end d-none d-md-table-cell">Buy</th>
+                            <th class="text-end d-none d-md-table-cell">Sell</th>
+                            <th class="text-end">Buy Side Broker</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${(summary.top_net_buyers || []).map((b, i) => {
+            const ratio = globalMax > 0 ? Math.abs(b.net) / globalMax : 0;
+            const percentage = Math.round(ratio * 95);
+            const rowHeight = Math.max(35, Math.round(ratio * 60));
+            const barWidth = Math.max(1, Math.round(ratio * 5));
+            const rowStyle = `height: ${rowHeight}px; vertical-align: middle;`;
+            const avg = b.bvol ? Math.round(b.bval / b.bvol) : 0;
+            const barHtml = `<div style="position: absolute; top: 0; bottom: 0; right: 0; width: ${percentage}%; background-color: rgba(13, 202, 240, 0.25); border-right: ${barWidth}px solid #0aa2c0; z-index: 0;"></div>`;
+
+            return `<tr style="${rowStyle}">
+                            <td class="text-end fw-bold d-none d-md-table-cell" style="${STYLE_BUY_TEXT}">${fmt(b.net)}</td>
+                            <td class="text-end d-none d-md-table-cell text-muted">${fmt(avg)}</td>
+                            <td class="text-end d-none d-md-table-cell" style="${STYLE_BUY_TEXT}">${fmt(b.bval)}</td>
+                            <td class="text-end d-none d-md-table-cell" style="${STYLE_SELL_TEXT}">${fmt(b.sval)}</td>
+                            <td class="text-end" style="position: relative; padding-right: 8px;">
+                                ${barHtml}
+                                <span class="fw-bold ${getTextClass(b.code)} d-none d-md-inline" style="position: relative; z-index: 2;">${getBrokerLabel(b.code)}</span>
+                                <span class="fw-bold ${getTextClass(b.code)} d-inline d-md-none" style="position: relative; z-index: 2;">${getBuySideLabel(b.code, b.net)}</span>
+                            </td>
+                        </tr>`;
+        }).join('')}
+                    </tbody>
+                </table>
+            </div>
+            <div class="col-6">
+                <table class="table table-sm table-borderless small">
+                    <thead>
+                        <tr class="text-muted">
+                            <th>Sell Side Broker</th>
+                            <th class="text-start d-none d-md-table-cell">Buy</th>
+                            <th class="text-start d-none d-md-table-cell">Sell</th>
+                            <th class="text-start d-none d-md-table-cell">Avg</th>
+                            <th class="text-start d-none d-md-table-cell">Net</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${(summary.top_net_sellers || []).map((s, i) => {
+            const ratio = globalMax > 0 ? Math.abs(s.net) / globalMax : 0;
+            const percentage = Math.round(ratio * 95);
+            const rowHeight = Math.max(35, Math.round(ratio * 60));
+            const barWidth = Math.max(1, Math.round(ratio * 5));
+            const rowStyle = `height: ${rowHeight}px; vertical-align: middle;`;
+            const avg = s.svol ? Math.round(s.sval / s.svol) : 0;
+            const barHtml = `<div style="position: absolute; top: 0; bottom: 0; left: 0; width: ${percentage}%; background-color: rgba(253, 126, 20, 0.25); border-left: ${barWidth}px solid #c66210; z-index: 0;"></div>`;
+
+            return `<tr style="${rowStyle}">
+                            <td style="position: relative; padding-left: 8px;">
+                                ${barHtml}
+                                <span class="fw-bold ${getTextClass(s.code)} d-none d-md-inline" style="position: relative; z-index: 2;">${getBrokerLabel(s.code)}</span>
+                                <span class="fw-bold ${getTextClass(s.code)} d-inline d-md-none" style="position: relative; z-index: 2;">${getSellSideLabel(s.code, s.net)}</span>
+                            </td>
+                            <td class="text-start d-none d-md-table-cell" style="${STYLE_BUY_TEXT}">${fmt(s.bval)}</td>
+                            <td class="text-start d-none d-md-table-cell" style="${STYLE_SELL_TEXT}">${fmt(s.sval)}</td>
+                            <td class="text-start d-none d-md-table-cell text-muted">${fmt(avg)}</td>
+                            <td class="text-start fw-bold d-none d-md-table-cell" style="${STYLE_SELL_TEXT}">${fmt(s.net)}</td>
+                        </tr>`;
+        }).join('')}
+                    </tbody>
+                </table>
+            </div>
+        </div>`;
+    } else {
+        // GROSS VIEW - uses bval/sval instead of val
+        const maxBuy = Math.max(...(summary.top_buyers || []).map(b => b.bval || 0));
+        const maxSell = Math.max(...(summary.top_sellers || []).map(s => s.sval || 0));
+
+        html = `
+        <div class="row">
+            <div class="col-6">
+                <table class="table table-sm table-borderless small">
+                    <thead>
+                        <tr class="text-muted">
+                            <th>Buy Side Broker</th>
+                            <th class="text-end">Value</th>
+                            <th class="text-end d-none d-md-table-cell">Avg</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${(summary.top_buyers || []).map((b, i) => {
+            const buyVal = b.bval || 0;
+            const ratio = maxBuy > 0 ? buyVal / maxBuy : 0;
+            const percentage = Math.round(ratio * 95);
+            const barWidth = maxBuy > 0 ? (buyVal / maxBuy) * 5 : 1;
+            const avg = b.bvol ? Math.round(buyVal / b.bvol) : 0;
+            const rowStyle = `background: linear-gradient(90deg, rgba(13, 202, 240, 0.25) ${percentage}%, transparent ${percentage}%) !important; vertical-align: middle; height: 35px;`;
+            const borderStyle = `border-left: ${barWidth}px solid #0aa2c0; padding-left: 8px;`;
+
+            return `<tr style="${rowStyle}">
+                            <td style="${borderStyle}"><span class="fw-bold ${getTextClass(b.code)}">${getBrokerLabel(b.code)}</span></td>
+                            <td class="text-end fw-bold" style="${STYLE_BUY_TEXT}">${fmt(buyVal)}</td>
+                            <td class="text-end text-muted d-none d-md-table-cell">${fmt(avg)}</td>
+                        </tr>`;
+        }).join('')}
+                    </tbody>
+                </table>
+            </div>
+            <div class="col-6">
+                <table class="table table-sm table-borderless small">
+                    <thead>
+                        <tr class="text-muted">
+                            <th>Sell Side Broker</th>
+                            <th class="text-end">Value</th>
+                            <th class="text-end d-none d-md-table-cell">Avg</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                         ${(summary.top_sellers || []).map((s, i) => {
+            const sellVal = s.sval || 0;
+            const ratio = maxSell > 0 ? sellVal / maxSell : 0;
+            const percentage = Math.round(ratio * 95);
+            const barWidth = maxSell > 0 ? (sellVal / maxSell) * 5 : 1;
+            const avg = s.svol ? Math.round(sellVal / s.svol) : 0;
+            const rowStyle = `background: linear-gradient(90deg, rgba(253, 126, 20, 0.25) ${percentage}%, transparent ${percentage}%) !important; vertical-align: middle; height: 35px;`;
+            const borderStyle = `border-left: ${barWidth}px solid #c66210; padding-left: 8px;`;
+
+            return `<tr style="${rowStyle}">
+                            <td style="${borderStyle}"><span class="fw-bold ${getTextClass(s.code)}">${getBrokerLabel(s.code)}</span></td>
+                            <td class="text-end fw-bold" style="${STYLE_SELL_TEXT}">${fmt(sellVal)}</td>
+                            <td class="text-end text-muted d-none d-md-table-cell">${fmt(avg)}</td>
+                        </tr>`;
+        }).join('')}
+                    </tbody>
+                </table>
+            </div>
+        </div>`;
+    }
+
+    $('#broker-table-container').append(html);
+}
+
+function formatCompactNumber(number) {
+    if (number === 0) return '0';
+    const abs = Math.abs(number);
+    if (abs >= 1e12) return (number / 1e12).toFixed(1) + 'T';
+    if (abs >= 1e9) return (number / 1e9).toFixed(1) + 'B';
+    if (abs >= 1e6) return (number / 1e6).toFixed(1) + 'M';
+    if (abs >= 1e3) return (number / 1e3).toFixed(1) + 'K';
+    return number.toLocaleString();
 }
 
 let myChart = null;
@@ -312,19 +543,24 @@ function renderChart(history) {
     const ctx = document.getElementById('detailChart').getContext('2d');
     if (myChart) myChart.destroy();
 
-    // Sort Date Asc
+    // Sort and filter out NA/holiday days (days with no actual trading activity)
     history.sort((a, b) => new Date(a.date) - new Date(b.date));
+    const validHistory = history.filter(h => {
+        if (!h.data || !h.data.foreign) return false;
+        // Check if there's actual trading activity (buy or sell > 0)
+        const f = h.data.foreign;
+        return (f.buy_val > 0 || f.sell_val > 0);
+    });
 
-    const labels = history.map(h => {
+    const labels = validHistory.map(h => {
         const d = new Date(h.date);
         return `${d.getDate()}/${d.getMonth() + 1}`;
     });
 
-    // Cumulative Calculation
     let accF = 0, accR = 0, accL = 0;
-    const fData = history.map(h => { accF += (h.data.foreign?.net_val || 0); return accF; });
-    const rData = history.map(h => { accR += (h.data.retail?.net_val || 0); return accR; });
-    const lData = history.map(h => { accL += (h.data.local?.net_val || 0); return accL; });
+    const fData = validHistory.map(h => { accF += (h.data.foreign?.net_val || 0); return accF; });
+    const rData = validHistory.map(h => { accR += (h.data.retail?.net_val || 0); return accR; });
+    const lData = validHistory.map(h => { accL += (h.data.local?.net_val || 0); return accL; });
 
     myChart = new Chart(ctx, {
         type: 'line',
@@ -339,8 +575,51 @@ function renderChart(history) {
         options: {
             responsive: true,
             maintainAspectRatio: false,
-            plugins: { legend: { display: true } },
-            interaction: { mode: 'index', intersect: false }
-        }
+            plugins: {
+                legend: { display: false },
+            },
+            interaction: { mode: 'index', intersect: false },
+            scales: {
+                x: {
+                    grid: { display: false },
+                    ticks: { color: '#9ca3af' },
+                    border: { color: '#ffffff' }
+                },
+                y: {
+                    grid: { display: false },
+                    ticks: {
+                        color: '#9ca3af',
+                        callback: function (value) {
+                            return formatCompactNumber(value);
+                        }
+                    },
+                    border: { color: '#ffffff' }
+                }
+            }
+        },
+        plugins: [{
+            id: 'zeroLine',
+            afterDatasetsDraw: (chart) => {
+                const ctx = chart.ctx;
+                const yScale = chart.scales.y;
+                const xScale = chart.scales.x;
+
+                // Get y position for value 0
+                const yPos = yScale.getPixelForValue(0);
+
+                // Only draw if 0 is within the visible range
+                if (yPos >= yScale.top && yPos <= yScale.bottom) {
+                    ctx.save();
+                    ctx.beginPath();
+                    ctx.setLineDash([5, 5]); // Dashed line
+                    ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+                    ctx.lineWidth = 1;
+                    ctx.moveTo(xScale.left, yPos);
+                    ctx.lineTo(xScale.right, yPos);
+                    ctx.stroke();
+                    ctx.restore();
+                }
+            }
+        }]
     });
 }

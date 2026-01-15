@@ -1,36 +1,75 @@
 .
+├── api-saham
+│   ├── folder-structure.txt
+│   ├── src
+│   └── wrangler.jsonc
 ├── app-orderflow
 │   ├── src
-│   └── wrangler.toml
+│   └── wrangler.jsonc
 ├── app-qqquanta
-│   ├── src
-│   └── wrangler.toml
 ├── asset-analyzer
 │   ├── node_modules
-│   ├── src
-│   └── wrangler.toml
+│   └── src
 ├── asset-preprocess
 │   ├── node_modules
-│   ├── src
-│   └── wrangler.toml
+│   └── src
 ├── asset-router
 │   ├── node_modules
-│   ├── src
-│   └── wrangler.toml
+│   └── src
 ├── auth-uid
 │   ├── migrations
 │   ├── node_modules
 │   ├── package.json
 │   ├── package-lock.json
 │   ├── README.md
+│   └── src
+├── batch-delete
+│   ├── cleanup_raw.sh
+│   ├── README.md
 │   ├── src
-│   └── wrangler.toml
+│   ├── test.sh
+│   ├── wrangler.jsonc
+│   └── wrangler.toml.example
+├── broksum-scrapper
+│   ├── backfill_script.ps1
+│   ├── migrations
+│   ├── package.json
+│   ├── package-lock.json
+│   ├── src
+│   ├── test_logic.js
+│   ├── trigger_historical.ps1
+│   ├── verify_broksum.ps1
+│   ├── wrangler.err
+│   └── wrangler.jsonc
+├── cron-checker
+│   ├── DEPLOYMENT.md
+│   ├── KV_COST_ANALYSIS.md
+│   ├── MONITORING.md
+│   ├── README.md
+│   ├── SETUP.md
+│   ├── src
+│   └── wrangler.toml.example
 ├── deploy.sh
+├── features-service
+│   ├── node_modules
+│   ├── src
+│   └── wrangler.jsonc
 ├── livetrade-dashboard-api
 │   ├── src
 │   └── wrangler.jsonc
-├── livetrade-state-engine
+├── livetrade-durable-object
 │   ├── src
+│   ├── v2_tail_log.txt
+│   └── wrangler.jsonc
+├── livetrade-state-engine
+│   ├── node_modules
+│   ├── package.json
+│   ├── package-lock.json
+│   ├── public
+│   ├── src
+│   ├── test
+│   ├── tsconfig.json
+│   ├── vitest.config.mts
 │   └── wrangler.jsonc
 ├── livetrade-taping
 │   ├── node_modules
@@ -40,22 +79,110 @@
 │   ├── tree
 │   └── wrangler.jsonc
 ├── livetrade-taping-agregator
-│   ├── node_modules
+│   ├── debug_log.json
 │   ├── package.json
 │   ├── package-lock.json
 │   ├── src
+│   ├── tail_log_2.txt
 │   └── wrangler.jsonc
 ├── multi-agent
 │   ├── node_modules
 │   ├── package.json
 │   ├── package-lock.json
 │   ├── src
-│   ├── test.json
-│   └── wrangler.toml
-├── reko-worker
-│   ├── node_modules
+│   └── test.json
+├── node_modules
+│   ├── agent-base
+│   ├── ansi-regex
+│   ├── ansi-styles
+│   ├── ast-types
+│   ├── b4a
+│   ├── bare-events
+│   ├── bare-fs
+│   ├── bare-os
+│   ├── bare-path
+│   ├── bare-stream
+│   ├── bare-url
+│   ├── base64-js
+│   ├── basic-ftp
+│   ├── buffer
+│   ├── buffer-crc32
+│   ├── cliui
+│   ├── @cloudflare
+│   ├── color-convert
+│   ├── color-name
+│   ├── data-uri-to-buffer
+│   ├── debug
+│   ├── degenerator
+│   ├── devtools-protocol
+│   ├── emoji-regex
+│   ├── end-of-stream
+│   ├── escalade
+│   ├── escodegen
+│   ├── esprima
+│   ├── estraverse
+│   ├── esutils
+│   ├── events-universal
+│   ├── extract-zip
+│   ├── fast-fifo
+│   ├── fd-slicer
+│   ├── get-caller-file
+│   ├── get-stream
+│   ├── get-uri
+│   ├── http-proxy-agent
+│   ├── https-proxy-agent
+│   ├── ieee754
+│   ├── ip-address
+│   ├── is-fullwidth-code-point
+│   ├── lru-cache
+│   ├── ms
+│   ├── netmask
+│   ├── once
+│   ├── pac-proxy-agent
+│   ├── pac-resolver
+│   ├── pend
+│   ├── progress
+│   ├── proxy-agent
+│   ├── proxy-from-env
+│   ├── pump
+│   ├── @puppeteer
+│   ├── require-directory
+│   ├── semver
+│   ├── smart-buffer
+│   ├── socks
+│   ├── socks-proxy-agent
+│   ├── source-map
+│   ├── streamx
+│   ├── string-width
+│   ├── strip-ansi
+│   ├── tar-fs
+│   ├── tar-stream
+│   ├── text-decoder
+│   ├── through
+│   ├── @tootallnate
+│   ├── tslib
+│   ├── @types
+│   ├── unbzip2-stream
+│   ├── undici-types
+│   ├── wrap-ansi
+│   ├── wrappy
+│   ├── ws
+│   ├── y18n
+│   ├── yargs
+│   ├── yargs-parser
+│   └── yauzl
+├── notif-webhook
 │   ├── src
-│   └── wrangler.toml
+│   └── wrangler.jsonc
+├── orderbook-taping-agregator
+│   ├── src
+│   └── wrangler.jsonc
+├── rpa-auth
+│   ├── package.json
+│   ├── package-lock.json
+│   ├── src
+│   └── wrangler.jsonc
+├── sanity.sh
 └── workers-structure.txt
 
-34 directories, 25 files
+132 directories, 54 files

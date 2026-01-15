@@ -1,3 +1,39 @@
+/**
+ * @worker broksum-scrapper
+ * @objective Scrapes Broker Summary data from external API (Stockbit) using a rotating token mechanism, processes data via queues, and stores it in R2.
+ *
+ * @endpoints
+ * - GET /update-watchlist?date=... -> Updates watchlist and queues scrape jobs (public/internal)
+ * - GET /scrape-queue?date=... -> Manually triggers scrape queue logic (public/internal)
+ * - GET /backfill-queue?days=... -> Queues backfill jobs for N days (public/internal)
+ * - GET /trigger-full-flow -> Combines watchlist update and backfill trigger (public/internal)
+ *
+ * @triggers
+ * - http: yes
+ * - cron: * /2 * * * * (Dispatches scraping jobs or health checks)
+ * - queue: sssaham - queue(Consumes scrape jobs)
+    * - durable_object: none
+        * - alarms: none
+            *
+ * @io
+            * - reads: KV(SSSAHAM_WATCHLIST, Token), R2(Preview)
+                * - writes: R2(RAW_BROKSUM), Queue(SSSAHAM_QUEUE)
+                    *
+ * @relations
+                    * - upstream: Stockbit API(External)
+                        * - downstream: api - saham(via R2 data)
+                            *
+ * @success_metrics
+                            * - Scrape success rate(tokens valid)
+                                * - Queue processing latency
+                                    *
+ * @notes
+                                    * - Uses a hardcoded token fallback system.
+ * - Implements complex retry and backoff logic for scraping.
+ */
+
+
+
 // Helper: Get token from KV
 const HARDCODED_TOKEN = "eyJhbGciOiJSUzI1NiIsImtpZCI6IjU3MDc0NjI3LTg4MWItNDQzZC04OTcyLTdmMmMzOTNlMzYyOSIsInR5cCI6IkpXVCJ9.eyJkYXRhIjp7InVzZSI6ImtlbXRvbCIsImVtYSI6Im1rZW1hbHdAZ21haWwuY29tIiwiZnVsIjoiTXVzdGFmYSBLZW1hbCBXaXJ5YXdhbiIsInNlcyI6IiIsImR2YyI6IjVjZjJmZjljM2JkMjFhYzFmYmZhNTZiNGE1MjE4YWJhIiwiZGlkIjoiZGVza3RvcCIsInVpZCI6MjMwNTM1MCwiY291IjoiSUQifSwiZXhwIjoxNzY4Mjg1MDI5LCJpYXQiOjE3NjgxOTg2MjksImlzcyI6IlNUT0NLQklUIiwianRpIjoiNjBlNDI2Y2QtODVhMi00ZDU2LTg3YjktZWM1OGQ0NDg4ZWNhIiwibmJmIjoxNzY4MTk4NjI5LCJ2ZXIiOiJ2MSJ9.Rs9nGH-5OvxzbGiPaNzZ3Ye_uXWq9z__d8sjSi06kGxpmi_hbQ_f76gL29XTzc5IwtsytmWjOGX4kZAPNhxofEIsD9hFRNjlEUyQ4gY6IyenkIJKJcnI-V8XBDW2iGrgVUENy6cApqCUKZzmnz3l0oIuPkk8RjTVUa9gTt3461-GrKzcUUMLBG24kwyLcLBu9U1pvP_1XRSVFs64BjCqMW7_RvEDDlnscYNYEKnPltKLnDK0S-OFPx5vrG6lCb62trOgRXd188LqgiDqKSFgPC8HtWx-tVvBCqhJWqlmJTmfs1U6GMFn6VaCjE4WK_L3_iZxTsrZmiA5aMHpwPCULw";
 

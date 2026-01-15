@@ -142,13 +142,39 @@ async function calculateRangeData(env, symbol, startDate, endDate) {
     code: k, ...accBrokers[k], net: accBrokers[k].bval - accBrokers[k].sval
   }));
 
+  // Calculate Aggregated Stats for the Range
+  let aggForeign = { buy: 0, sell: 0, net: 0 };
+  let aggRetail = { buy: 0, sell: 0, net: 0 };
+  let aggLocal = { buy: 0, sell: 0, net: 0 };
+
+  results.forEach(r => {
+    if (r.data) {
+      aggForeign.buy += r.data.foreign?.buy_val || 0;
+      aggForeign.sell += r.data.foreign?.sell_val || 0;
+
+      aggRetail.buy += r.data.retail?.buy_val || 0;
+      aggRetail.sell += r.data.retail?.sell_val || 0;
+
+      aggLocal.buy += r.data.local?.buy_val || 0;
+      aggLocal.sell += r.data.local?.sell_val || 0;
+    }
+  });
+
+  aggForeign.net = aggForeign.buy - aggForeign.sell;
+  aggRetail.net = aggRetail.buy - aggRetail.sell;
+  aggLocal.net = aggLocal.buy - aggLocal.sell;
+
   return {
     history: results,
     summary: {
       top_buyers: format('bval'),
       top_sellers: format('sval'),
       top_net_buyers: allNet.filter(b => b.net > 0).sort((a, b) => b.net - a.net).slice(0, 20),
-      top_net_sellers: allNet.filter(b => b.net < 0).sort((a, b) => a.net - b.net).slice(0, 20)
+      top_net_sellers: allNet.filter(b => b.net < 0).sort((a, b) => a.net - b.net).slice(0, 20),
+      // Added Aggregates for Frontend Summary
+      foreign: { buy_val: aggForeign.buy, sell_val: aggForeign.sell, net_val: aggForeign.net },
+      retail: { buy_val: aggRetail.buy, sell_val: aggRetail.sell, net_val: aggRetail.net },
+      local: { buy_val: aggLocal.buy, sell_val: aggLocal.sell, net_val: aggLocal.net }
     }
   };
 }
@@ -167,9 +193,20 @@ export default {
       // 1. GET /screener
       if (url.pathname === "/screener" && req.method === "GET") {
         try {
-          const obj = await env.SSSAHAM_EMITEN.get("features/latest.json");
-          if (!obj) return json({ items: [] });
-          return withCORS(new Response(obj.body, { headers: { "Content-Type": "application/json" } }));
+          // Fetch Pointer
+          const pointerObj = await env.SSSAHAM_EMITEN.get("features/latest.json");
+          if (!pointerObj) return json({ items: [] });
+
+          let data = await pointerObj.json();
+
+          // Check if it is a pointer (has pointer_to)
+          if (data.pointer_to) {
+            const actualObj = await env.SSSAHAM_EMITEN.get(data.pointer_to);
+            if (!actualObj) return json({ items: [] });
+            data = await actualObj.json();
+          }
+
+          return withCORS(new Response(JSON.stringify(data), { headers: { "Content-Type": "application/json" } }));
         } catch (e) {
           return json({ error: "Failed to fetch screener", details: e.message }, 500);
         }
@@ -190,7 +227,29 @@ export default {
         }
       }
 
-      // 3. GET /cache-summary (Renamed from /chart-data)
+      // 3. GET /brokers (Mapping for frontend)
+      if (url.pathname === "/brokers" && req.method === "GET") {
+        try {
+          const { results } = await env.SSSAHAM_DB.prepare("SELECT * FROM brokers").all();
+          return json({ brokers: results || [] }); // Return array or object? User snippet expects { brokers: map } or array?
+          // User snippet: "if (d.brokers) brokersMap = d.brokers;" 
+          // But normally brokers table is list.
+          // However, calculateRangeData in line 46 does: results.forEach(b => brokersMap[b.code] = b);
+          // So let's return a map or list.
+          // Let's return the list, and let frontend map it, OR map it here.
+          // User snippet logic: `fetch... .then(d => { if (d.brokers) brokersMap = d.brokers; })`
+          // If d.brokers is expected to be a map { 'YP': {...} }, I should convert it.
+          // BUT standard D1 .all() returns array.
+          // Let's look at the user snippet usage: `const broker = brokersMap[code];` -> Implies Object/Map.
+          // So I should convert array to object here to match user's old API expectation, OR change frontend to map it.
+          // Changing frontend is safer as I control it.
+          // I will return the list as `brokers` array, and update frontend to reduce it to map.
+        } catch (e) {
+          return json({ error: "Failed to fetch brokers", details: e.message }, 500);
+        }
+      }
+
+      // 4. GET /cache-summary (Renamed from /chart-data)
       if (url.pathname === "/cache-summary" && req.method === "GET") {
         const symbol = url.searchParams.get("symbol");
         const from = url.searchParams.get("from");
@@ -206,25 +265,64 @@ export default {
         if (!reload) {
           const cached = await env.SSSAHAM_EMITEN.get(key);
           if (cached) {
-            return new Response(cached.body, {
-              headers: {
-                "Content-Type": "application/json",
-                "Access-Control-Allow-Origin": "*",
-                "X-Cache": "HIT"
-              }
-            });
+            const cachedData = await cached.json();
+            // Validate Structure (Check if "foreign" summary exists)
+            if (cachedData.summary && cachedData.summary.foreign) {
+              return withCORS(new Response(JSON.stringify(cachedData), {
+                headers: {
+                  "Content-Type": "application/json",
+                  "Access-Control-Allow-Origin": "*",
+                  "X-Cache": "HIT"
+                }
+              }));
+            }
+            // If missing, fallthrough to re-calculate (MISS/STALE)
           }
         }
 
         // Calculate
         const data = await calculateRangeData(env, symbol, from, to);
 
+        /**
+ * @worker api-saham
+ * @objective Provides public API endpoints for stock screener features, z-score history, broker lists, and aggregated broker summary (foreign/retail/local).
+ *
+ * @endpoints
+ * - GET /screener -> Returns latest Z-Score screener data (via R2 pointer) (public)
+ * - GET /features/history?symbol=... -> Returns historical Z-Score data for a ticker (public)
+ * - GET /brokers -> Returns list of brokers from D1 (public)
+ * - GET /cache-summary?symbol=...&from=...&to=... -> Returns aggregated broker summary (cached in R2) (public)
+ * - GET /health -> Health check (public)
+ *
+ * @triggers
+ * - http: yes
+ * - cron: none
+ * - queue: none
+ * - durable_object: none
+ * - alarms: none
+ *
+ * @io
+ * - reads: R2 (SSSAHAM_EMITEN, RAW_BROKSUM), D1 (SSSAHAM_DB)
+ * - writes: R2 (cache-summary results)
+ *
+ * @relations
+ * - upstream: Data pipelines producing R2 features/broksum (unknown source)
+ * - downstream: Frontend Clients
+ *
+ * @success_metrics
+ * - Latency of /cache-summary (cache hit vs miss)
+ * - Availability of screener data
+ *
+ * @notes
+ * - Uses R2 'pointer' mechanism to find latest screener file.
+ * - Implements 48h caching for broker summary.
+ */
+        // workers/api-saham/src/index.js
         // Save Cache
         await env.SSSAHAM_EMITEN.put(key, JSON.stringify(data), {
           httpMetadata: { contentType: "application/json" },
           customMetadata: { generated_at: new Date().toISOString() }
           // R2 doesn't support expirationTtl in put() directly via binding unless using specific methods or lifecycle rules.
-          // Workers R2 binding put() does NOT support 'expirationTtl' option like KV.
           // We must rely on Bucket Lifecycle Rules or manual cleanup.
           // User asked for cache. We will just save it.
         });

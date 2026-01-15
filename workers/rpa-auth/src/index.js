@@ -1,3 +1,33 @@
+/**
+ * @worker rpa-auth
+ * @objective Provides RPA-based authentication services using headless browsers (Puppeteer) to interact with external portals/SSO.
+ *
+ * @endpoints
+ * - POST /login -> Trigger automated login flow via Puppeteer (internal)
+ * - POST /screenshot -> Debug screenshot (internal)
+ *
+ * @triggers
+ * - http: yes
+ * - cron: none
+ * - queue: none
+ * - durable_object: none
+ * - alarms: none
+ *
+ * @io
+ * - reads: Puppeteer (Browser DOM)
+ * - writes: Puppeteer (Input)
+ *
+ * @relations
+ * - upstream: Auth Consumers (Backend)
+ * - downstream: External Websites (via Browser)
+ *
+ * @success_metrics
+ * - Login success success rate
+ * - Execution time
+ *
+ * @notes
+ * - Uses @cloudflare/puppeteer. heavy resource usage.
+ */
 import puppeteer from "@cloudflare/puppeteer";
 
 // CORS headers helper

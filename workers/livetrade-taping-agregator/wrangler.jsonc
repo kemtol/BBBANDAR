@@ -1,6 +1,5 @@
 // workers/livetrade-taping-agregator/wrangler.jsonc
 {
-  "$schema": "node_modules/wrangler/config-schema.json",
   "name": "livetrade-taping-agregator", // <--- Pastikan nama ini BENAR (Aggregator)
   "main": "src/index.js",
   "compatibility_date": "2025-12-06",
@@ -32,6 +31,12 @@
         "max_batch_size": 1,
         "max_batch_timeout": 60,
         "max_concurrency": 1
+      },
+      {
+        "queue": "livetrade-processed-queue",
+        "max_batch_size": 10,
+        "max_batch_timeout": 5,
+        "max_concurrency": 5
       }
     ],
     "producers": [
@@ -44,13 +49,6 @@
   // Binding ke Durable Object (PENTING)
   "durable_objects": {
     "bindings": [
-      {
-        "name": "STATE_ENGINE",
-        "class_name": "StateEngine",
-        // 🔥 INI KUNCINYA: script_name memberitahu bahwa DO ada di worker LAIN
-        // Tanpa baris ini, worker akan error mencari class di dalam dirinya sendiri
-        "script_name": "livetrade-state-engine"
-      },
       {
         "name": "STATE_ENGINE_V2",
         "class_name": "StateEngine",

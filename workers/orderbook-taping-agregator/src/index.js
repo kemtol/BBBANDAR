@@ -1,9 +1,44 @@
+/**
+ * @worker orderbook-taping-agregator
+ * @objective Aggregates raw orderbook snapshots from R2 into historical files and provides endpoints for retrieving latest orderbook state and intention scores.
+ *
+ * @endpoints
+ * - GET /ob-latest?kode=... -> Returns latest orderbook snapshot (internal/public)
+ * - GET /step-ob-hist -> Triggers historical aggregation step (internal/cron-like)
+ * - GET /ob-hist -> Retrieves historical orderbook data (internal/debug)
+ * - GET /intention?kode=... -> Calculates and returns intention score based on OB (internal/public)
+ *
+ * @triggers
+ * - http: yes
+ * - cron: * /5 * * * * (Configured in wrangler.jsonc, but 'scheduled' handler IS MISSING in code)
+ * - queue: none
+    * - durable_object: none
+        * - alarms: none
+            *
+ * @io
+            * - reads: R2(raw_ob)
+                * - writes: R2(ob_hist ? placeholders exist)
+                    *
+ * @relations
+                    * - upstream: livetrade - taping(via R2 raw_ob)
+                        * - downstream: Frontend / Clients(via HTTP endpoints)
+                            *
+ * @success_metrics
+                            * - Latency of / ob - latest
+                                * - Accuracy of intention score
+                                    *
+ * @notes
+                                    * - Cron trigger is defined but likely inoperative due to missing handler.
+ * - Many functions(stepObHist, getObHist) are placeholders returning TODO.
+ */
+
 // workers/orderbook-taping-agregator/src/index.js
 
 // Worker ini tugasnya:
 // - Baca raw_ob/... dari R2
 // - Agregasi jadi ob_hist/{KODE}/{YYYY}/{MM}/{DD}.jsonl
 // - (opsional) expose HTTP route buat debug / inspect
+
 function computeIntentionFromOrderbookSnapshot(ob) {
     if (!ob) return 0;
     const bids = ob.bids || [];

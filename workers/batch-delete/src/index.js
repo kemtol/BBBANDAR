@@ -1,3 +1,38 @@
+/**
+ * @worker batch-delete
+ * @objective Manages large-scale R2 object deletion via synchronous calls or asynchronous queues, supporting recursive deletion by prefix and bulk key deletion.
+ *
+ * @endpoints
+ * - POST /queue-delete -> Queues a background deletion job (fire-and-forget) (public/internal)
+ * - GET /job-status?id=... -> Checks progress of a queued deletion job (public/internal)
+ * - GET /list -> Lists objects for preview (public/internal)
+ * - DELETE /delete -> Synchronous deletion (timeout risk for large sets) (public/internal)
+ * - POST /delete-keys -> Bulk deletion of specific keys (public/internal)
+ * - GET / -> Help/Usage info (public)
+ *
+ * @triggers
+ * - http: yes
+ * - cron: none
+ * - queue: deletion-queue (Handler implemented as 'queue', but binding not visible in provided config snippet. Check wrangler.toml)
+ * - durable_object: none
+ * - alarms: none
+ *
+ * @io
+ * - reads: R2 (TAPE_DATA_FUTURES, TAPE_DATA_SAHAM), KV (JOB_STATUS)
+ * - writes: R2 (Delete interactions), KV (JOB_STATUS)
+ *
+ * @relations
+ * - upstream: Admin/Ops or Automated Workflows
+ * - downstream: none
+ *
+ * @success_metrics
+ * - Deletion throughput
+ * - Job completion rate
+ *
+ * @notes
+ * - Uses KV (JOB_STATUS) to track async job progress.
+ * - Supports two buckets: 'futures' and 'saham'.
+ */
 // batch-delete/src/index.js
 // Worker untuk batch delete files/objects di R2 secara recursive
 // Now with Cloudflare Queues support for background processing

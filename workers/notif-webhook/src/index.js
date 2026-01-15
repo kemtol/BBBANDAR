@@ -1,3 +1,32 @@
+/**
+ * @worker notif-webhook
+ * @objective Forwards notifications to external webhook services (e.g., Discord, Slack) with validation.
+ *
+ * @endpoints
+ * - POST / -> Forward message body to WEBHOOK_URL (internal)
+ *
+ * @triggers
+ * - http: yes
+ * - cron: none
+ * - queue: none
+ * - durable_object: none
+ * - alarms: none
+ *
+ * @io
+ * - reads: env.WEBHOOK_URL
+ * - writes: External Webhook (fetch)
+ *
+ * @relations
+ * - upstream: Internal Services (e.g., broksum-scrapper)
+ * - downstream: External Chat Apps
+ *
+ * @success_metrics
+ * - Delivery success rate
+ * - Latency of forwarding
+ *
+ * @notes
+ * - Simple proxy worker to abstract webhook URLs.
+ */
 export default {
     async fetch(request, env, ctx) {
         if (request.method !== "POST") {

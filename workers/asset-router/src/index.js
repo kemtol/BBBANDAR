@@ -1,3 +1,31 @@
+/**
+ * @worker asset-router
+ * @objective Routes requests for assets to appropriate backend services or storage buckets.
+ *
+ * @endpoints
+ * - ALL / -> Proxy/Route request (internal/public)
+ *
+ * @triggers
+ * - http: yes
+ * - cron: none
+ * - queue: none
+ * - durable_object: none
+ * - alarms: none
+ *
+ * @io
+ * - reads: Service Bindings / R2
+ * - writes: Service Bindings / R2
+ *
+ * @relations
+ * - upstream: Clients
+ * - downstream: Asset Services
+ *
+ * @success_metrics
+ * - Routing latency
+ *
+ * @notes
+ * - Simple router pattern.
+ */
 // workers/asset-router/src/index.js
 
 export default {

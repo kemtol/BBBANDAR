@@ -1,4 +1,32 @@
-// workers/asset-analyzer/src/index.js
+/**
+ * @worker asset-analyzer
+ * @objective Analyzes financial assets (Gold, NASDAQ) using advanced AI models (e.g., GPT-o1/o3 reasoning aliases) to generate trading insights and sentiment.
+ *
+ * @endpoints
+ * - POST /analyze -> Analyze asset data/context (internal)
+ *
+ * @triggers
+ * - http: yes
+ * - cron: none
+ * - queue: none
+ * - durable_object: none
+ * - alarms: none
+ *
+ * @io
+ * - reads: Request Body, OpenAI API
+ * - writes: Response JSON
+ *
+ * @relations
+ * - upstream: Multi-Agent / Router
+ * - downstream: OpenAI API
+ *
+ * @success_metrics
+ * - Analysis quality (subjective)
+ * - Response latency
+ *
+ * @notes
+ * - Uses specialized prompts for GOLD and NASDAQ.
+ */
 
 import { GOLD_PROMPT } from "./gold-prompt.js";
 import { NASDAQ_PROMPT } from "./nasdaq-prompt.js";

@@ -1,3 +1,33 @@
+/**
+ * @worker features-service
+ * @objective Calculates stock indicators and features (e.g., Smart Money Flow, Z-Score) on a schedule and manages aggregation of these features.
+ *
+ * @endpoints
+ * - GET /aggregate -> Trigger feature aggregation manually (internal)
+ * - GET /trigger-all -> Trigger calculation for all tickers (internal)
+ *
+ * @triggers
+ * - http: yes
+ * - cron: yes (Scheduled calculations)
+ * - queue: FEATURES_QUEUE (Producer)
+ * - durable_object: none
+ * - alarms: none
+ *
+ * @io
+ * - reads: R2/D1 (implied for feature data)
+ * - writes: Queue (FEATURES_QUEUE)
+ *
+ * @relations
+ * - upstream: Data Sources (R2/Broksum)
+ * - downstream: Feature Consumers (API/Dashboard)
+ *
+ * @success_metrics
+ * - Calculation latency
+ * - Queue dispatch success
+ *
+ * @notes
+ * - Dispatches jobs to a queue for distributed processing.
+ */
 import { SmartMoney } from './smart-money';
 
 export default {
@@ -7,7 +37,7 @@ export default {
         // 2. Dispatch Jobs to Queue
         console.log("Cron Triggered: Dispatching Feature Calculation Jobs...");
 
-        const date = new Date().toISOString().split("T")[0];
+        const date = (event && event.date) ? event.date : new Date().toISOString().split("T")[0];
 
         let tickers = [];
         try {
@@ -58,8 +88,9 @@ export default {
 
         if (url.pathname === "/trigger-all") {
             // Manual trigger for Cron logic
-            await this.scheduled(null, env, null);
-            return new Response("Triggered all");
+            const date = url.searchParams.get("date");
+            await this.scheduled({ date }, env, null);
+            return new Response(`Triggered all for ${date || "TODAY"}`);
         }
 
         return new Response("Features Service OK");
@@ -140,6 +171,11 @@ export default {
                         JSON.stringify(processed.z_scores),
                         new Date().toISOString()
                     ).run();
+
+                    // 5. Log Execution (Audit)
+                    await env.SSSAHAM_DB.prepare("INSERT INTO feature_logs (timestamp, symbol, date, status, duration_ms) VALUES (?, ?, ?, ?, ?)")
+                        .bind(new Date().toISOString(), ticker, date, "FEATURE_CALC_SUCCESS", 0) // Duration not tracked precisely here
+                        .run();
                 }
 
                 msg.ack();
@@ -188,9 +224,14 @@ export default {
         const key = `features/z_score/daily/${date}.json`;
         await env.SSSAHAM_EMITEN.put(key, JSON.stringify(dailyJson));
 
-        // Also update latest
-        await env.SSSAHAM_EMITEN.put(`features/latest.json`, JSON.stringify(dailyJson));
+        // Update pointer instead of full file
+        const pointer = {
+            date: date,
+            pointer_to: key,
+            generated_at: new Date().toISOString()
+        };
+        await env.SSSAHAM_EMITEN.put(`features/latest.json`, JSON.stringify(pointer));
 
-        console.log(`Aggregated ${items.length} items to ${key}`);
+        console.log(`Aggregated ${items.length} items to ${key} (Pointer updated)`);
     }
 };

@@ -1,3 +1,34 @@
+/**
+ * @worker cron-checker
+ * @objective Centralized orchestrator that triggers other workers via Service Bindings based on their defined schedules.
+ *
+ * @endpoints
+ * - POST /trigger -> Manually trigger all workers (admin/debug)
+ * - POST /check -> Run manual cron check logic (admin/debug)
+ * - GET /health -> Health check (public)
+ *
+ * @triggers
+ * - http: yes
+ * - cron: likely (wrangler config example suggests usage, logic exists in 'scheduled' handler)
+ * - queue: none
+ * - durable_object: none
+ * - alarms: none
+ *
+ * @io
+ * - reads: Service Bindings (env[worker.binding])
+ * - writes: Service Bindings (triggers fetch)
+ *
+ * @relations
+ * - upstream: Cloudflare Cron
+ * - downstream: Target Workers (via Service Bindings)
+ *
+ * @success_metrics
+ * - Successful trigger rate
+ * - Latency of orchestration
+ *
+ * @notes
+ * - Defines WORKERS configuration array mapping names to bindings/schedules.
+ */
 // cron-checker/src/index.js
 // Centralized cron orchestrator - manages all worker scheduling
 

@@ -1,3 +1,40 @@
+/**
+ * @worker livetrade-dashboard-api
+ * @objective Aggregates and serves data for the LiveTrade Dashboard, interacting with backend services like Taping and providing admin utilities.
+ *
+ * @endpoints
+ * - GET /health -> Health check (public)
+ * - GET /summary -> Dashboard summary data (public)
+ * - GET /symbol?ticker=... -> Symbol details (public)
+ * - GET /run-sanity-check -> Triggers sanity checks (admin)
+ * - GET /job-monitoring -> Monitor background jobs (admin)
+ * - GET /worker-status -> Check status of workers (admin)
+ * - GET /signal-realtime -> Stream realtime signals (public/websocket?)
+ * - GET /manual-sync-snapshot -> Admin sync tool (admin)
+ * - GET /admin/reprocess-day -> Trigger reprocessing (admin)
+ *
+ * @triggers
+ * - http: yes
+ * - cron: none
+ * - queue: none
+ * - durable_object: none
+ * - alarms: none
+ *
+ * @io
+ * - reads: Service Bindings (TAPING, etc)
+ * - writes: Service Bindings
+ *
+ * @relations
+ * - upstream: livetrade-taping (via Service Binding)
+ * - downstream: Dashboard Frontend
+ *
+ * @success_metrics
+ * - API Latency
+ * - Service Availability
+ *
+ * @notes
+ * - Acts as an API Gateway/BFF (Backend for Frontend) for the dashboard.
+ */
 // workers/livetrade-dashboard-api/src/index.js
 import { getWorkerStatus, generateSanityCheck } from './admin.js';
 
@@ -598,6 +635,53 @@ export default {
         );
       }
 
+
+      if (pathname === "/manual-sync-snapshot") {
+        try {
+          const list = await env.DATA_LAKE.list({ prefix: "processed/202", limit: 300 });
+          // Find latest date key (lexicographical sort works for ISO dates: 2026-01-15 > 2026-01-14)
+          const latestObj = list.objects.sort((a, b) => b.key.localeCompare(a.key))[0];
+
+          if (!latestObj) {
+            return withCORS(new Response(JSON.stringify({ error: "No processed files found in processed/202*" }), { status: 404, headers: { "Content-Type": "application/json" } }));
+          }
+
+          console.log(`[SYNC] Syncing snapshot from ${latestObj.key}`);
+          const dataObj = await env.DATA_LAKE.get(latestObj.key);
+          const data = await dataObj.arrayBuffer();
+
+          await env.DATA_LAKE.put("snapshot_latest.json", data);
+
+          return withCORS(new Response(JSON.stringify({
+            status: "OK",
+            message: `Synced snapshot_latest.json from ${latestObj.key}`,
+            size: data.byteLength
+          }, null, 2), { headers: { "Content-Type": "application/json" } }));
+        } catch (err) {
+          console.error("[SYNC] error:", err);
+          return withCORS(new Response(JSON.stringify({ error: String(err) }), { status: 500, headers: { "Content-Type": "application/json" } }));
+        }
+      }
+
+      if (pathname === "/admin/reprocess-day") {
+        const dateStr = url.searchParams.get("date");
+        if (!dateStr) return withCORS(new Response(JSON.stringify({ error: "Missing ?date=YYYY-MM-DD" }), { status: 400, headers: { "Content-Type": "application/json" } }));
+
+        if (!env.AGGREGATOR) return withCORS(new Response(JSON.stringify({ error: "Aggregator binding missing" }), { status: 500, headers: { "Content-Type": "application/json" } }));
+
+        const aggUrl = new URL("https://internal/run");
+        aggUrl.searchParams.set("date", dateStr);
+        aggUrl.searchParams.set("force", "1"); // Force re-process
+
+        try {
+          // Trigger Aggregator
+          const res = await env.AGGREGATOR.fetch(aggUrl.toString(), { method: "POST" });
+          const data = await res.json();
+          return withCORS(new Response(JSON.stringify(data, null, 2), { headers: { "Content-Type": "application/json" } }));
+        } catch (e) {
+          return withCORS(new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { "Content-Type": "application/json" } }));
+        }
+      }
 
       return withCORS(new Response("Not found", { status: 404 }));
     } catch (err) {

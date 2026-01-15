@@ -16,6 +16,14 @@
             "bucket_name": "tape-data-saham"
         }
     ],
+    "queues": {
+        "producers": [
+            {
+                "queue": "livetrade-processed-queue",
+                "binding": "PROCESSED_QUEUE"
+            }
+        ]
+    },
     "migrations": [
         {
             "tag": "v1",

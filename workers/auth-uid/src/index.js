@@ -1,3 +1,39 @@
+/**
+ * @worker auth-uid
+ * @objective Authentication service using D1 for user storage and JWT for session management. Handles registration, login, and profile updates.
+ *
+ * @endpoints
+ * - POST /register -> Register new user (public)
+ * - POST /register-temp -> Register temporary user (public)
+ * - POST /verify-temp -> Verify temp user (public)
+ * - POST /login -> Login (public)
+ * - GET /me -> Get current user info (authenticated)
+ * - POST /logout -> Logout (authenticated)
+ * - POST /profile/update -> Update profile (authenticated)
+ *
+ * @triggers
+ * - http: yes
+ * - cron: none
+ * - queue: none
+ * - durable_object: none
+ * - alarms: none
+ *
+ * @io
+ * - reads: D1
+ * - writes: D1
+ *
+ * @relations
+ * - upstream: Frontend
+ * - downstream: none
+ *
+ * @success_metrics
+ * - Login success rate
+ * - Latency of /me
+ *
+ * @notes
+ * - Uses UUID v7 for user IDs.
+ * - Implements CORS for browser access.
+ */
 // auth-uid/src/index.js
 // Clean Auth Worker – D1 + JWT, With CORS, Cookies & JSON helper
 import { SignJWT, jwtVerify } from "jose";

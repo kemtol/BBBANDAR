@@ -14,40 +14,17 @@
     <title>Bandar Radar – Detail Emiten</title>
 
     <!-- (opsional) samain dengan index.html -->
-    <link rel="manifest" href="img/site.webmanifest" />
-    <link rel="apple-touch-icon" sizes="180x180" href="img/apple-touch-icon.png">
-    <link rel="icon" type="image/png" sizes="32x32" href="img/favicon-32x32.png">
-    <link rel="icon" type="image/png" sizes="16x16" href="img/favicon-16x16.png">
+    <link rel="manifest" href="/site.webmanifest" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/img/apple-touch-icon.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="/img/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="/img/favicon-16x16.png">
 
     <!-- Bootstrap & Font Awesome -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css" rel="stylesheet" />
+    <link href="component.css" rel="stylesheet" />
 
     <style>
-        #app.container,
-        .container,
-        .chat-wrapper {
-            max-width: 1200px;
-            margin: 0 auto;
-        }
-
-        body {
-            font-size: 1rem;
-        }
-
-        .navbar {
-            background-color: #ffffff;
-        }
-
-        .navbar i.fa-chevron-left {
-            font-size: 1rem;
-        }
-
-        .page-title {
-            font-weight: 600;
-            font-size: 1.1rem;
-        }
-
         .card-swing {
             border-radius: 12px;
             border: none;
@@ -95,20 +72,35 @@
 
 <body>
     <!-- NAVBAR -->
-    <nav class="navbar navbar-light sticky-top border-bottom bg-white">
+    <nav class="navbar sticky-top border-bottom">
         <div class="container d-flex align-items-center py-2" style="max-width: 1200px;">
             <a href="index.html" class="d-flex align-items-center text-decoration-none me-2">
-                <i class="fa-solid fa-chevron-left me-1"></i>
+                <i class="fa-solid fa-chevron-left"></i>
                 <span class="small d-none">Kembali</span>
             </a>
             <div class="flex-grow-1 text-center">
-                <span class="fw-semibold" id="nav-kode">Detail Emiten</span>
+                <span class="nav-title" id="nav-kode">Detail Emiten</span>
             </div>
-            <div style="width:72px;"></div>
+            <div style="width:72px;" class="text-end">
+                <i class="fa-solid fa-magnifying-glass" onclick="toggleSearch()"></i>
+            </div>
         </div>
     </nav>
 
     <div id="app" class="container my-3">
+        <!-- NAVIGATION TABS -->
+        <ul class="nav nav-tabs mb-3" role="tablist">
+            <li class="nav-item" role="presentation">
+                <span class="nav-link active" id="intraday-tab">Intraday</span>
+            </li>
+            <li class="nav-item" role="presentation">
+                <a class="nav-link" id="fundflow-link" href="#">Fund Flow</a>
+            </li>
+            <li class="nav-item" role="presentation">
+                <a class="nav-link" id="audit-link" href="#">Audit Trail</a>
+            </li>
+        </ul>
+
         <!-- HEADER EMITEN -->
         <div class="mb-3 d-none">
             <div class="d-flex justify-content-between align-items-center">
@@ -161,7 +153,8 @@
                     <table class="table table-sm mb-0" id="timeseries-table">
                         <thead class="table-light">
                             <tr>
-                                <th class="text-center">Jam</th>
+                                <th class="text-center">Date</th>
+                                <th class="text-center">Time</th>
                                 <th class="text-end">Harga</th>
                                 <th class="text-end">Δ Harga</th>
                                 <th class="text-end">Moment %</th>
@@ -181,6 +174,7 @@
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0"></script>
+    <script src="component.js"></script>
 
     <script>
         Chart.register(ChartDataLabels);
@@ -404,9 +398,10 @@
                         min: xMin,
                         max: xMax,
                         grid: {
-                            color: "rgba(226,232,240,0.7)",
+                            color: "rgba(255,255,255,0.7)",
                             lineWidth: 1,
                         },
+                        border: { color: '#ffffff' },
                     },
                     y: {
                         title: {
@@ -416,9 +411,10 @@
                         min: yMin,
                         max: yMax,
                         grid: {
-                            color: "rgba(226,232,240,0.7)",
+                            color: "rgba(255,255,255,0.7)",
                             lineWidth: 1,
                         },
+                        border: { color: '#ffffff' },
                     },
                 },
             };
@@ -446,7 +442,7 @@
             if (!history || !history.length) {
                 const tr = document.createElement("tr");
                 const td = document.createElement("td");
-                td.colSpan = 6;
+                td.colSpan = 7;
                 td.className = "text-center text-muted py-3";
                 td.textContent = "Belum ada data history 5 menit.";
                 tr.appendChild(td);
@@ -497,6 +493,31 @@
                     }
                 }
 
+                const tdDate = document.createElement("td");
+
+                // DATA DATE LOGIC:
+                // 1. Use snapshot.date if available.
+                // 2. Else, check if it's "Pre-Market" today (< 09:00). If so, data is likely from Yesterday.
+                // 3. Otherwise, assume Today.
+                let dateObj = new Date();
+                if (snapshot.date) {
+                    // If provided, assume it's parseable or just use text
+                    // But here we want a specific format, so let's stick to text if it's already formatted
+                    // Or if it is NOT provided:
+                } else {
+                    const now = new Date();
+                    if (now.getHours() < 9) {
+                        // Assume data is from previous day
+                        dateObj.setDate(now.getDate() - 1);
+                    }
+                    // else keep Today
+                }
+
+                const dateStr = snapshot.date || dateObj.toLocaleDateString('id-ID', {
+                    day: '2-digit', month: '2-digit', year: 'numeric'
+                });
+                tdDate.textContent = dateStr;
+
                 const tdTime = document.createElement("td");
                 tdTime.textContent = t;
 
@@ -525,6 +546,7 @@
                 tdVal.textContent = val.toLocaleString("id-ID");
                 tdVal.className = "text-end";
 
+                tr.appendChild(tdDate);
                 tr.appendChild(tdTime);
                 tr.appendChild(tdPrice);
                 tr.appendChild(tdDelta);
@@ -537,28 +559,37 @@
             });
         }
 
-        // Satu call ke /symbol: snapshot + history
+
+
         function loadSnapshotAndHistory() {
+            // ... existing setup ...
             const kode = getKodeFromURL();
             const mode = getModeFromURL();
 
+            $('#fundflow-link').attr('href', `broker-summary.html?kode=${kode}`);
+            $('#audit-link').attr('href', `broker-summary.html?kode=${kode}#audit`);
+
+            // Load symbol
             $.getJSON(
                 `${API_BASE}/symbol?kode=${encodeURIComponent(kode)}&mode=${encodeURIComponent(mode)}`,
                 function (resp) {
+                    // ... existing success callback
                     const snapshot = resp.snapshot || {};
+
+                    // ... rest of logic
                     const state = resp.state || null;
                     const history = snapshot.history || [];
 
-                    // derive haka_pct & fluktuasi kalau belum ada
+                    // ... derived logic ...
                     let haka = snapshot.haka_pct;
                     if ((haka === undefined || haka === null) && typeof snapshot.money_flow === "number") {
                         haka = Math.round((snapshot.money_flow + 1) * 50);
                     }
+                    // ... continue ...
                     if (haka === undefined || haka === null || Number.isNaN(haka)) haka = 50;
 
                     let fluk = snapshot.fluktuasi;
                     if ((fluk === undefined || fluk === null) && typeof snapshot.momentum === "number") {
-                        // snapshot.momentum sudah persen
                         fluk = Number(snapshot.momentum.toFixed(2));
                     }
                     if (fluk === undefined || fluk === null || Number.isNaN(fluk)) fluk = 0;
@@ -578,13 +609,36 @@
                 renderFootprintTrailFromHistory(getKodeFromURL(), {}, []);
                 renderTimeSeriesTable({}, []);
             });
+
         }
 
         $(function () {
             loadSnapshotAndHistory();
         });
+        Chart.register(ChartDataLabels);
+
+        // ... existing scripts ...
     </script>
 
+    <!-- SEARCH PANEL -->
+    <div id="search-panel">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h5 class="mb-0 fw-bold">Cari Emiten</h5>
+            <i class="fa-solid fa-xmark fa-lg" style="cursor: pointer;" onclick="toggleSearch()"></i>
+        </div>
+
+        <div class="mb-4">
+            <input type="text" id="search-input" class="search-input" placeholder="Masukkan Kode (e.g. BBRI)"
+                autocomplete="off">
+        </div>
+
+        <div>
+            <p class="small opacity-75 mb-2 fw-bold">RIWAYAT PENCARIAN</p>
+            <div id="search-history-list">
+                <!-- Populated by JS -->
+            </div>
+        </div>
+    </div>
 </body>
 
 </html>

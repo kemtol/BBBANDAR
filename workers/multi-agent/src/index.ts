@@ -1,3 +1,34 @@
+/**
+ * @worker multi-agent
+ * @objective Orchestrates complex workflows involving multiple specialty agents (Analyzer, Preprocess, etc) to solve higher-level tasks.
+ *
+ * @endpoints
+ * - GET /health -> Health check (public)
+ * - POST /plan -> Generate execution plan (internal)
+ * - POST /execute -> Execute plan (internal)
+ *
+ * @triggers
+ * - http: yes
+ * - cron: none
+ * - queue: none
+ * - durable_object: none
+ * - alarms: none
+ *
+ * @io
+ * - reads: Request Body, Agent APIs
+ * - writes: Response JSON, Agent APIs
+ *
+ * @relations
+ * - upstream: Clients/UI
+ * - downstream: Asset Analyzer, Asset Preprocess, etc.
+ *
+ * @success_metrics
+ * - Task success rate
+ * - Orchestration latency
+ *
+ * @notes
+ * - Uses 'Reasoning' models (e.g. GPT-5.1 alias) via sub-agents.
+ */
 // workers/multi-agent/src/index.ts
 /// <reference types="@cloudflare/workers-types" />
 

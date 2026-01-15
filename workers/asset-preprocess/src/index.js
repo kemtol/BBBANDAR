@@ -1,9 +1,38 @@
-// workers/asset-preprocess/src/index.js
-
+/**
+ * @worker asset-preprocess
+ * @objective Preprocesses assets/images using OpenAI models (GPT-4o) for analysis, tagging, or transformation.
+ *
+ * @endpoints
+ * - POST /analyze -> Analyze image content (internal)
+ * - POST /chat -> Chat completion for asset context (internal)
+ *
+ * @triggers
+ * - http: yes
+ * - cron: none
+ * - queue: none
+ * - durable_object: none
+ * - alarms: none
+ *
+ * @io
+ * - reads: Request Body, OpenAI API
+ * - writes: Response JSON, OpenAI API
+ *
+ * @relations
+ * - upstream: Asset Analyzer / Router
+ * - downstream: OpenAI API
+ *
+ * @success_metrics
+ * - AI Response time
+ * - Token usage/Cost
+ *
+ * @notes
+ * - Uses external OpenAI API (`https://api.openai.com/v1/chat/completions`).
+ */
 import {
   PREPROCESS_CHART_PROMPT,
   PREPROCESS_MACRO_NEWS_PROMPT,
-  MACRO_CORRELATION_SENTIMENT_PROMPT
+  MACRO_CORRELATION_SENTIMENT_PROMPT,
+  SmartMoney
 } from "./preprocess-prompt.js";
 
 // =====================================
@@ -419,7 +448,7 @@ export default {
           macro_len: merged.screenshots.macro.length,
           news_len: merged.screenshots.news.length
         });
-        
+
         return json(merged);
       }
 

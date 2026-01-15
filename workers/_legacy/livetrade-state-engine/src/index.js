@@ -1,3 +1,33 @@
+/**
+ * @worker livetrade-state-engine
+ * @objective Legacy State Engine (V1) providing trade history and health checks. Serves as a reference or fallback for historical data access.
+ *
+ * @endpoints
+ * - GET /health -> Health check (public/internal)
+ * - GET /history?kode=...&mode=... -> Returns trade history/swing data (public/internal)
+ *
+ * @triggers
+ * - http: yes
+ * - cron: none
+ * - queue: none
+ * - durable_object: StateEngine (V1, exported class)
+ * - alarms: none
+ *
+ * @io
+ * - reads: Durable Object State
+ * - writes: Durable Object State
+ *
+ * @relations
+ * - upstream: none
+ * - downstream: Clients querying history
+ *
+ * @success_metrics
+ * - Availability of history data
+ *
+ * @notes
+ * - Seems to be V1 of the engine, succeeded by livetrade-durable-object (V2).
+ * - "Synced from Cloudflare" comment suggests it was recovered from deployment.
+ */
 // livetrade-state-engine/src/index.js
 // Synced from Cloudflare deployed version (20 days ago)
 import { DurableObject } from "cloudflare:workers";
