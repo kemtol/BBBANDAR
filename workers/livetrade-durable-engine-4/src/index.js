@@ -78,6 +78,9 @@ export class StateEngine {
 
         // B0: Ensure alarm is set on startup
         this.state.storage.setAlarm(Date.now() + 2000);
+
+        // WARMUP MODE FLAG: Suppresses queue notifications and raw writes
+        this.isWarmup = false;
     }
 
     // B1: Notification dedupe helpers
@@ -106,6 +109,65 @@ export class StateEngine {
             const batch = await request.json();
             const result = await this.processBatch(batch);
             return Response.json(result);
+        }
+
+        // WARMUP: Process batch immediately (NO STORAGE)
+        if (pathname === "/warmup-batch") {
+            const batch = await request.json();
+            // Set warmup mode to suppress side effects
+            this.isWarmup = true;
+            // Process immediately using existing pipeline
+            const result = await this.processBatch(batch);
+            return Response.json({ ok: true, size: batch.length, stats: result });
+        }
+
+        // FLUSH-WARMUP: Periodic flush to reduce memory pressure (does NOT promote)
+        if (pathname === "/flush-warmup") {
+            // Flush all dirty hours to _TEMP (overwrite mode)
+            const keysBefore = this.dirtyHours.size;
+            await this.flushAllFootprint("_TEMP");
+            // Clear in-memory candle data after flush
+            this.tickers.clear();
+            this.dedupeMap.clear();
+            return Response.json({ ok: true, flushed_hours: keysBefore });
+        }
+
+        // FINALIZE: Flush remaining and promote _TEMP -> final
+        if (pathname === "/finalize-warmup") {
+            // 1. Capture dirty keys BEFORE flush clears them
+            const keysToPromote = Array.from(this.dirtyHours);
+
+            // 2. Flush all in-memory candles to _TEMP files (overwrite mode)
+            await this.flushAllFootprint("_TEMP");
+
+            // 3. Promote _TEMP -> REAL (atomic swap)
+            let promotedCount = 0;
+            for (const realKey of keysToPromote) {
+                const tempKey = realKey.replace(".jsonl", "_TEMP.jsonl");
+                try {
+                    const tempObj = await this.env.DATA_LAKE.get(tempKey);
+                    if (tempObj) {
+                        // A8: Preserve content type for promoted final
+                        await this.env.DATA_LAKE.put(realKey, tempObj.body, {
+                            httpMetadata: { contentType: "application/x-ndjson" }
+                        });
+                        await this.env.DATA_LAKE.delete(tempKey);
+                        promotedCount++;
+                    }
+                } catch (e) {
+                    console.error(`Failed to promote ${tempKey}:`, e);
+                }
+            }
+
+            // 4. Clear in-memory state for this warmup session
+            this.tickers.clear();
+            this.dedupeMap.clear();
+            this.dirtyHours.clear();
+
+            // 5. Reset warmup flag
+            this.isWarmup = false;
+
+            return Response.json({ ok: true, promoted_files: promotedCount });
         }
 
         // LEGACY/DIRECT: Update Single
@@ -232,8 +294,10 @@ export class StateEngine {
                 // Accept
                 accepted++;
 
-                // 1. Fan-Out RAW
-                this.rawBuffer.push(cte);
+                // 1. Fan-Out RAW (SKIP during warmup)
+                if (!this.isWarmup) {
+                    this.rawBuffer.push(cte);
+                }
 
                 // 2. Fan-Out FOOTPRINT
                 this.updateFootprint(cte);
@@ -247,8 +311,10 @@ export class StateEngine {
             }
         }
 
-        // Check Flush
-        await this.checkFlush();
+        // Check Flush (SKIP during warmup - let finalize handle it)
+        if (!this.isWarmup) {
+            await this.checkFlush();
+        }
 
         return { accepted, deduped, errors };
     }
@@ -449,13 +515,23 @@ export class StateEngine {
     }
 
     async alarm() {
-        await this.flushRawTrades();
-        await this.flushFootprint();
+        // A5: Skip raw trades during warmup
+        if (!this.isWarmup) {
+            await this.flushRawTrades();
+        }
+        // A5: During warmup, flush to _TEMP only; realtime flushes to final
+        if (this.isWarmup) {
+            await this.flushFootprint("_TEMP");
+        } else {
+            await this.flushFootprint();
+        }
         this.pruneDedupe();
         this.state.storage.setAlarm(Date.now() + 5000);
     }
 
     async flushRawTrades() {
+        // A5: Safety guard - never write raw during warmup
+        if (this.isWarmup) return;
         if (this.rawBuffer.length === 0) return;
 
         const batch = this.rawBuffer.splice(0, this.rawBuffer.length); // Take all
@@ -490,11 +566,13 @@ export class StateEngine {
         }
     }
 
-    async flushFootprint() {
+    async flushFootprint(suffix = "") {
         // C5: Only process dirty hours for efficiency
         if (this.dirtyHours.size === 0) return;
 
         // PATCH D: Throttle to avoid timeout (max 50 per cycle)
+        // If suffix is provided (e.g. for finalize), we might want to flush ALL or caller handles loop.
+        // Let's keep consistent limit but allow caller to loop.
         const allKeys = Array.from(this.dirtyHours);
         const limit = 50;
         const dirtyKeys = allKeys.slice(0, limit);
@@ -532,6 +610,8 @@ export class StateEngine {
                 candles.push(candle);
 
                 // B2: Only notify finalized minutes (t0 < currentMinuteT0), deduped
+                // Skip notifications during WARMUP flush to avoid spamming queue with partials?
+                // Actually, finalize sends complete data, so notifications are valid.
                 if (candle.t0 < currentMinuteT0 && this.shouldNotifyMinute(ticker, candle.t0, nowMs)) {
                     const hourPrefix = `${candleY}/${candleM}/${candleD}/${candleH}`;
                     messages.push({
@@ -554,14 +634,14 @@ export class StateEngine {
 
         // Write each group
         for (const [key, candles] of Object.entries(grouped)) {
-            const ok = await this.writeBatchToHourlyFootprintJsonl(key, candles);
+            const ok = await this.writeBatchToHourlyFootprintJsonl(key, candles, suffix);
             if (ok) {
                 this.dirtyHours.delete(key);
             }
         }
 
-        // Send queue notifications
-        if (this.env.PROCESSED_QUEUE && messages.length > 0) {
+        // Send queue notifications (SKIP during warmup)
+        if (!this.isWarmup && this.env.PROCESSED_QUEUE && messages.length > 0) {
             for (let i = 0; i < messages.length; i += 100) {
                 try {
                     await this.env.PROCESSED_QUEUE.sendBatch(messages.slice(i, i + 100));
@@ -584,12 +664,37 @@ export class StateEngine {
         }
     }
 
-    async writeBatchToHourlyFootprintJsonl(key, newCandles) {
+    async flushAllFootprint(suffix = "") {
+        let attempts = 0;
+        // Safety Break: Allow enough loops to clear all keys (batch 50), plus buffer
+        const maxAttempts = Math.ceil(Math.max(this.dirtyHours.size, 1) / 50) + 10;
+
+        while (this.dirtyHours.size > 0) {
+            const sizeBefore = this.dirtyHours.size;
+            await this.flushFootprint(suffix);
+
+            // If no progress made, break to avoid infinite loop
+            if (this.dirtyHours.size >= sizeBefore) {
+                console.error(`Flush stuck? sizeBefore=${sizeBefore}, sizeAfter=${this.dirtyHours.size}. Breaking.`);
+                break;
+            }
+
+            attempts++;
+            if (attempts > maxAttempts) {
+                console.error("Flush hit max attempts, breaking.");
+                break;
+            }
+        }
+    }
+
+    async writeBatchToHourlyFootprintJsonl(key, newCandles, suffix = "") {
         // R6: Per-key write lock serialization
+        // Note: Suffix changes the effective file, but we lock on the LOGICAL key (r2Key)
+        // to prevent concurrent writes to same hour-ticker.
         const prev = this.writeLocks.get(key) || Promise.resolve();
         let success = false;
         const next = prev.then(async () => {
-            await this.doWriteMerge(key, newCandles);
+            await this.doWriteMerge(key, newCandles, suffix);
             success = true;
         }).catch(e => {
             console.error(`Write merge failed for ${key}:`, e);
@@ -601,14 +706,25 @@ export class StateEngine {
         return success;
     }
 
-    async doWriteMerge(key, newCandles) {
-        // Read existing
+    async doWriteMerge(key, newCandles, suffix = "") {
+        const targetKey = suffix ? key.replace(".jsonl", suffix + ".jsonl") : key;
+
+        // Read existing (Start from scratch for WARMUP/TEMP usually, but we support incremental too)
+        // If Writing to TEMP, we might want to overwrite or merge?
+        // Plan says: "Write CandleMap to ... TEMP".
+        // Since we loaded ALL batches into memory, CandleMap is complete.
+        // So we theoretically can overwrite.
+        // BUT to be safe against multi-part flushes (if > 128MB memory), we should merge.
+
+        // WARMUP OPTIMIZATION: Skip R2.get() for _TEMP files (overwrite mode)
         let existing = "";
-        try {
-            const obj = await this.env.DATA_LAKE.get(key);
-            if (obj) existing = await obj.text();
-        } catch (e) {
-            // New file
+        if (!suffix.includes("_TEMP")) {
+            try {
+                const obj = await this.env.DATA_LAKE.get(targetKey);
+                if (obj) existing = await obj.text();
+            } catch (e) {
+                // New file
+            }
         }
 
         const lines = existing ? existing.split("\n").filter(l => l.trim().length > 0) : [];
@@ -643,7 +759,8 @@ export class StateEngine {
         const finalLines = sortedKeys.map(k => JSON.stringify(mergedMap.get(k)));
         const body = finalLines.join("\n") + "\n";
 
-        await this.env.DATA_LAKE.put(key, body, {
+        // A1 BUGFIX: Write to targetKey not key
+        await this.env.DATA_LAKE.put(targetKey, body, {
             httpMetadata: { contentType: "application/x-ndjson" }
         });
     }

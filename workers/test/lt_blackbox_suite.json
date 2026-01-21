@@ -1,0 +1,384 @@
+{
+    "metadata": {
+        "title": "LiveTrade Blackbox Test Suite",
+        "version": "1.0",
+        "description": "Validates 'Straight-Through' pipeline and 'Backfill' capabilities via external endpoints.",
+        "target_system": "LiveTrade Gen-2",
+        "created_at": "2026-01-15"
+    },
+    "environment": {
+        "config": {
+            "INGEST_BASE": "https://livetrade-taping.mkemalw.workers.dev",
+            "ENGINE_BASE": "https://livetrade-durable-object.mkemalw.workers.dev",
+            "AGG_BASE": "https://livetrade-taping-agregator.mkemalw.workers.dev",
+            "TIMEOUT_MS": 30000,
+            "RETRY_INTERVAL_MS": 1000
+        }
+    },
+    "scenarios": [
+        {
+            "id": "SCN_001_LIVE_STRAIGHT_THROUGH",
+            "description": "Inject a batch of trades and verify immediate appearance in Raw, Footprint, and Processed output.",
+            "steps": [
+                {
+                    "step_id": "1_inject_batch",
+                    "action": "POST",
+                    "url": "{ENGINE_BASE}/trade-batch",
+                    "body": [
+                        {
+                            "v": 2,
+                            "fmt": "obj+rawpipe",
+                            "src": "fixture",
+                            "rtype": "LT",
+                            "ts": 1768442410000,
+                            "ts_quality": "derived_pipe",
+                            "raw": "20260115|090010|0|AADI|RG|T|100|10",
+                            "trade": {
+                                "kode": "AADI",
+                                "papan": "RG",
+                                "harga": 100,
+                                "vol": 10,
+                                "time": "090010"
+                            }
+                        },
+                        {
+                            "v": 2,
+                            "fmt": "obj+rawpipe",
+                            "src": "fixture",
+                            "rtype": "LT",
+                            "ts": 1768442420000,
+                            "ts_quality": "derived_pipe",
+                            "raw": "20260115|090020|0|AADI|RG|T|101|20",
+                            "trade": {
+                                "kode": "AADI",
+                                "papan": "RG",
+                                "harga": 101,
+                                "vol": 20,
+                                "time": "090020"
+                            }
+                        },
+                        {
+                            "v": 2,
+                            "fmt": "obj+rawpipe",
+                            "src": "fixture",
+                            "rtype": "LT",
+                            "ts": 1768442450000,
+                            "ts_quality": "derived_pipe",
+                            "raw": "20260115|090050|0|AADI|RG|T|99|30",
+                            "trade": {
+                                "kode": "AADI",
+                                "papan": "RG",
+                                "harga": 99,
+                                "vol": 30,
+                                "time": "090050"
+                            }
+                        },
+                        {
+                            "v": 2,
+                            "fmt": "obj+rawpipe",
+                            "src": "fixture",
+                            "rtype": "LT",
+                            "ts": 1768442465000,
+                            "ts_quality": "derived_pipe",
+                            "raw": "20260115|090105|0|AADI|RG|T|100|40",
+                            "trade": {
+                                "kode": "AADI",
+                                "papan": "RG",
+                                "harga": 100,
+                                "vol": 40,
+                                "time": "090105"
+                            }
+                        },
+                        {
+                            "v": 2,
+                            "fmt": "obj+rawpipe",
+                            "src": "fixture",
+                            "rtype": "LT",
+                            "ts": 1768442490000,
+                            "ts_quality": "derived_pipe",
+                            "raw": "20260115|090130|0|AADI|RG|T|102|50",
+                            "trade": {
+                                "kode": "AADI",
+                                "papan": "RG",
+                                "harga": 102,
+                                "vol": 50,
+                                "time": "090130"
+                            }
+                        },
+                        {
+                            "v": 2,
+                            "fmt": "obj+rawpipe",
+                            "src": "fixture",
+                            "rtype": "LT",
+                            "ts": 1768442515000,
+                            "ts_quality": "derived_pipe",
+                            "raw": "20260115|090155|0|AADI|RG|T|101|60",
+                            "trade": {
+                                "kode": "AADI",
+                                "papan": "RG",
+                                "harga": 101,
+                                "vol": 60,
+                                "time": "090155"
+                            }
+                        },
+                        {
+                            "v": 2,
+                            "fmt": "obj+rawpipe",
+                            "src": "fixture",
+                            "rtype": "LT",
+                            "ts": 1768442530000,
+                            "ts_quality": "derived_pipe",
+                            "raw": "20260115|090210|0|TEST-QA|RG|T|101|70",
+                            "trade": {
+                                "kode": "TEST-QA",
+                                "papan": "RG",
+                                "harga": 101,
+                                "vol": 70,
+                                "time": "090210"
+                            }
+                        },
+                        {
+                            "v": 2,
+                            "fmt": "obj+rawpipe",
+                            "src": "fixture",
+                            "rtype": "LT",
+                            "ts": 1768442540000,
+                            "ts_quality": "derived_pipe",
+                            "raw": "20260115|090220|0|TEST-QA|RG|T|103|80",
+                            "trade": {
+                                "kode": "TEST-QA",
+                                "papan": "RG",
+                                "harga": 103,
+                                "vol": 80,
+                                "time": "090220"
+                            }
+                        },
+                        {
+                            "v": 2,
+                            "fmt": "obj+rawpipe",
+                            "src": "fixture",
+                            "rtype": "LT",
+                            "ts": 1768442555000,
+                            "ts_quality": "derived_pipe",
+                            "raw": "20260115|090235|0|TEST-QA|RG|T|102|90",
+                            "trade": {
+                                "kode": "TEST-QA",
+                                "papan": "RG",
+                                "harga": 102,
+                                "vol": 90,
+                                "time": "090235"
+                            }
+                        },
+                        {
+                            "v": 2,
+                            "fmt": "obj+rawpipe",
+                            "src": "fixture",
+                            "rtype": "LT",
+                            "ts": 1768442565000,
+                            "ts_quality": "derived_pipe",
+                            "raw": "20260115|090245|0|TEST-QA|RG|T|104|10",
+                            "trade": {
+                                "kode": "TEST-QA",
+                                "papan": "RG",
+                                "harga": 104,
+                                "vol": 10,
+                                "time": "090245"
+                            }
+                        },
+                        {
+                            "v": 2,
+                            "fmt": "obj+rawpipe",
+                            "src": "fixture",
+                            "rtype": "LT",
+                            "ts": 1768442570000,
+                            "ts_quality": "derived_pipe",
+                            "raw": "20260115|090250|0|AADI|RG|T|104|20",
+                            "trade": {
+                                "kode": "AADI",
+                                "papan": "RG",
+                                "harga": 104,
+                                "vol": 20,
+                                "time": "090250"
+                            }
+                        },
+                        {
+                            "v": 2,
+                            "fmt": "obj+rawpipe",
+                            "src": "fixture",
+                            "rtype": "LT",
+                            "ts": 1768442579000,
+                            "ts_quality": "derived_pipe",
+                            "raw": "20260115|090259|0|AADI|RG|T|103|30",
+                            "trade": {
+                                "kode": "AADI",
+                                "papan": "RG",
+                                "harga": 103,
+                                "vol": 30,
+                                "time": "090259"
+                            }
+                        }
+                    ],
+                    "expect": {
+                        "status": 200,
+                        "json": {
+                            "accepted": 12,
+                            "errors": 0
+                        }
+                    }
+                },
+                {
+                    "step_id": "2_wait_for_flush",
+                    "action": "WAIT",
+                    "ms": 6000
+                },
+                {
+                    "step_id": "3_validate_footprint_hour",
+                    "action": "GET",
+                    "url": "{ENGINE_BASE}/debug/hour?ticker=AADI&y=2026&m=01&d=15&h=02",
+                    "assertions": [
+                        {
+                            "field": "key",
+                            "op": "==",
+                            "value": "footprint/AADI/1m/2026/01/15/02.jsonl"
+                        },
+                        {
+                            "field": "linesCount",
+                            "op": ">=",
+                            "value": 3
+                        },
+                        {
+                            "field": "uniqueT0Count",
+                            "op": "==",
+                            "value": 3
+                        },
+                        {
+                            "field": "anyOutOfHourCount",
+                            "op": "==",
+                            "value": 0
+                        }
+                    ]
+                },
+                {
+                    "step_id": "4_validate_processed_timeline",
+                    "action": "GET",
+                    "url": "{AGG_BASE}/debug-r2?key=processed/TEST-QA/intraday.json",
+                    "headers": {
+                        "Cache-Control": "no-cache"
+                    },
+                    "assertions": [
+                        {
+                            "field": "ticker",
+                            "op": "==",
+                            "value": "TEST-QA"
+                        },
+                        {
+                            "field": "timeline.length",
+                            "op": ">=",
+                            "value": 3
+                        }
+                    ]
+                },
+                {
+                    "step_id": "5_verify_candle_stats_0200",
+                    "description": "Verify candle for 02:00 UTC (09:00 WIB)",
+                    "action": "GET",
+                    "url": "{ENGINE_BASE}/debug/hour?ticker=TEST-QA&y=2026&m=01&d=15&h=02",
+                    "manual_check": true,
+                    "expected_logic": "Find candle with t0=1768442400000. Assert o=100, h=101, l=99, c=99, vol=60"
+                },
+                {
+                    "step_id": "6_verify_candle_stats_0201",
+                    "description": "Verify candle for 02:01 UTC (09:01 WIB)",
+                    "action": "GET",
+                    "url": "{ENGINE_BASE}/debug/hour?ticker=TEST-QA&y=2026&m=01&d=15&h=02",
+                    "manual_check": true,
+                    "expected_logic": "Find candle with t0=1768442460000. Assert o=100, h=102, l=100, c=101, vol=150"
+                },
+                {
+                    "step_id": "7_verify_candle_stats_0202",
+                    "description": "Verify candle for 02:02 UTC (09:02 WIB)",
+                    "action": "GET",
+                    "url": "{ENGINE_BASE}/debug/hour?ticker=TEST-QA&y=2026&m=01&d=15&h=02",
+                    "manual_check": true,
+                    "expected_logic": "Find candle with t0=1768442520000. Assert o=101, h=104, l=101, c=103, vol=300"
+                },
+                {
+                    "step_id": "8_idempotency_check",
+                    "action": "REPEAT_STEP",
+                    "ref_step_id": "1_inject_batch",
+                    "description": "Re-inject same batch. Deduplication should prevent data duplication.",
+                    "assertions": [
+                        {
+                            "field": "deduped",
+                            "op": "==",
+                            "value": 12
+                        },
+                        {
+                            "field": "accepted",
+                            "op": "==",
+                            "value": 0
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "id": "SCN_002_BACKFILL_DAY_REBUILD",
+            "description": "Trigger backfill for a past date and verify outputs exist and are stable.",
+            "steps": [
+                {
+                    "step_id": "1_trigger_backfill",
+                    "action": "POST",
+                    "url": "{AGG_BASE}/admin/seed-day?date=2026-01-15",
+                    "expect": {
+                        "status": 200,
+                        "json": {
+                            "ok": true
+                        }
+                    }
+                },
+                {
+                    "step_id": "2_poll_status",
+                    "action": "POLL",
+                    "url": "{AGG_BASE}/debug-r2?key=seed_status/2026-01-15.json",
+                    "interval_ms": 2000,
+                    "max_attempts": 30,
+                    "break_condition": "json.status == 'COMPLETED' or json.status == 'FAILED'"
+                },
+                {
+                    "step_id": "3_verify_footprint_exists",
+                    "action": "GET",
+                    "url": "{ENGINE_BASE}/debug/hour?ticker=TEST-QA&y=2026&m=01&d=15&h=02",
+                    "assertions": [
+                        {
+                            "field": "linesCount",
+                            "op": ">",
+                            "value": 0
+                        }
+                    ]
+                },
+                {
+                    "step_id": "4_verify_processed_exists",
+                    "action": "GET",
+                    "url": "{AGG_BASE}/debug-r2?key=processed/TEST-QA/intraday.json",
+                    "assertions": [
+                        {
+                            "field": "timeline.length",
+                            "op": ">",
+                            "value": 0
+                        }
+                    ]
+                },
+                {
+                    "step_id": "5_idempotency_rerun",
+                    "description": "Run backfill again, confirm it completes and data remains consistent (checking by file output stability if possible, or just successful completion)",
+                    "action": "POST",
+                    "url": "{AGG_BASE}/admin/seed-day?date=2026-01-15",
+                    "expect": {
+                        "status": 200
+                    }
+                }
+            ]
+        }
+    ]
+}

@@ -1,0 +1,73 @@
+🔬 Analisis Step-by-Step: Kenapa Warmup Lama?
+Berdasarkan kode yang saya lihat, berikut adalah flow lengkap satu iterasi loop dalam 
+processWarmupLoop
+:
+
+Flow Satu Loop Iteration
+┌─────────────────────────────────────────────────────────────────┐
+│ STEP 1: Check Time Limit (20s)                                  │
+│ └─> Jika > 20s, YIELD ke queue dan exit                         │
+├─────────────────────────────────────────────────────────────────┤
+│ STEP 2: listAndParse()                                          │
+│ ├─> R2.list({ limit: 5 })           ← 1 API call                │
+│ ├─> For each file (5 files):                                    │
+│ │   └─> R2.get(key)                 ← 5 API calls               │
+│ │   └─> text().split("\n")                                      │
+│ │   └─> regex parse each line                                   │
+│ └─> Return ~500 trades (100 trades/file avg)                    │
+├─────────────────────────────────────────────────────────────────┤
+│ STEP 3: Send to DO /warmup-batch (chunks of 250)                │
+│ ├─> Chunk 1 (250 trades): fetch() ← 1 DO call                   │
+│ ├─> Chunk 2 (250 trades): fetch() ← 1 DO call                   │
+│ └─> Total: 2 DO calls per loop                                  │
+├─────────────────────────────────────────────────────────────────┤
+│ STEP 4: updateStatus() → R2.put()   ← 1 API call                │
+├─────────────────────────────────────────────────────────────────┤
+│ STEP 5: logToD1() (every 25 files)  ← 1 API call (conditional)  │
+├─────────────────────────────────────────────────────────────────┤
+│ STEP 6: flushLogs() → R2.put()      ← 1 API call                │
+└─────────────────────────────────────────────────────────────────┘
+Hitungan per Loop
+Operation	Count	Latency Est.
+R2 List	1	~30ms
+R2 Get (file)	5	~150ms (5x30ms)
+DO Fetch (/warmup-batch)	2	~200ms (high variance!)
+R2 Put (status)	1	~50ms
+R2 Put (logs)	1	~50ms
+Total per loop	10 calls	~500ms best case
+Untuk 748 files (1 hour worth):
+748 files ÷ 5 files/loop = ~150 loops
+150 loops × 500ms = 75,000ms = **75 seconds** (best case)
+Tapi kenyataannya jauh lebih lama karena:
+
+DO /warmup-batch call bisa 500ms-2s jika batch besar atau DO sibuk
+Worker 30s limit → harus yield setiap ~20s → overhead re-queue + cold start
+Retry logic menambah 500ms per retry jika DO timeout
+Root Cause #1: limit: 5 terlalu kecil
+Di 
+listAndParse
+:
+
+javascript
+const listed = await env.DATA_LAKE.list({ prefix, cursor, limit: 5 });
+Ini artinya setiap loop hanya proses 5 file, padahal:
+
+Ada 748 files total
+Butuh 150 loops untuk selesai
+Setiap loop ada overhead ~500ms
+Fix: Naikkan limit ke 50 atau 100.
+
+Root Cause #2: DO call terlalu sering
+Setiap loop mengirim 2x chunk ke DO. Jika limit dinaikkan ke 50 files:
+
+~5000 trades per loop
+5000 ÷ 250 = 20 DO calls per loop 😱
+Fix: Naikkan batch size ke 1000+ ATAU akumulasi di Aggregator dulu, kirim sekali di akhir.
+
+Root Cause #3: Status checkpoint setiap loop
+javascript
+await updateStatus("PROCESSING_WARMUP", cursor, processedCount);
+await flushLogs();
+2 R2 writes setiap 5 file → sangat wasteful.
+
+Fix: Checkpoint setiap 100 files, bukan setiap loop.

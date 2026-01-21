@@ -1,0 +1,50 @@
+{
+    "metadata": {
+        "title": "Manual Backfill Test 2026-01-08",
+        "version": "1.0",
+        "description": "Verifies 7-Engine Backfill for 2026-01-08",
+        "target_system": "LiveTrade Gen-2"
+    },
+    "environment": {
+        "config": {
+            "INGEST_BASE": "https://livetrade-taping.mkemalw.workers.dev",
+            "ENGINE_BASE": "https://livetrade-durable-object.mkemalw.workers.dev",
+            "AGG_BASE": "https://livetrade-taping-agregator.mkemalw.workers.dev",
+            "TIMEOUT_MS": 60000,
+            "RETRY_INTERVAL_MS": 2000
+        }
+    },
+    "scenarios": [
+        {
+            "id": "SCN_MANUAL_08_JAN",
+            "description": "Verify Backfill 2026-01-08 completes and generates footprint.",
+            "steps": [
+                {
+                    "step_id": "1_poll_status",
+                    "action": "POLL",
+                    "url": "{AGG_BASE}/debug-r2?key=seed_status/2026-01-08.json",
+                    "interval_ms": 2000,
+                    "max_attempts": 60,
+                    "break_condition": "json.status == 'COMPLETED' || json.status == 'FAILED' || (json.processed && json.processed > 5000)"
+                },
+                {
+                    "step_id": "2_verify_footprint_engine_1",
+                    "description": "Verify Engine 1 has data (likely for hour 07 or 14)",
+                    "action": "GET",
+                    "url": "{ENGINE_BASE}/debug/hour?ticker=BBCA&y=2026&m=01&d=08&h=07",
+                    "manual_check": true,
+                    "expected_logic": "Check if any lines returned"
+                },
+                {
+                    "step_id": "3_verify_footprint_engine_2",
+                    "description": "Verify Engine 2 has data (likely for hour 01 or 08)",
+                    "action": "GET",
+                    "url": "{ENGINE_BASE}/debug/hour?ticker=BBCA&y=2026&m=01&d=08&h=01",
+                    "expect": {
+                        "status": 200
+                    }
+                }
+            ]
+        }
+    ]
+}

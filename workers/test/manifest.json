@@ -1,0 +1,42 @@
+{
+    "tests": [
+        {
+            "input": "trades_batch_live.ndjson",
+            "utc_date": "2026-01-08",
+            "utc_hour": "03",
+            "expected_footprint_keys": [
+                "footprint/BBCA/1m/2026/01/08/03.jsonl"
+            ],
+            "expected_min_line_count": 2,
+            "expected_buckets": [
+                "03:00",
+                "02:59"
+            ]
+        },
+        {
+            "input": "trades_batch_cross_hour.ndjson",
+            "utc_date": "2026-01-08",
+            "expected_footprint_keys": [
+                "footprint/BBRI/1m/2026/01/08/03.jsonl",
+                "footprint/BBRI/1m/2026/01/08/04.jsonl"
+            ],
+            "expected_min_line_count": 1,
+            "expected_buckets": [
+                "03:59",
+                "04:00"
+            ]
+        },
+        {
+            "input": "trades_batch_two_tickers.ndjson",
+            "utc_date": "2026-01-08",
+            "expected_footprint_keys": [
+                "footprint/ASII/1m/2026/01/08/03.jsonl",
+                "footprint/TLKM/1m/2026/01/08/03.jsonl"
+            ],
+            "expected_min_line_count": 1,
+            "expected_buckets": [
+                "03:00"
+            ]
+        }
+    ]
+}

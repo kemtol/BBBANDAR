@@ -58,6 +58,7 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const pathname = url.pathname;
+    console.log(`📡 [${request.method}] ${pathname} ${url.search}`);
 
     // Cron-checker integration endpoints
     if (request.method === "POST" && pathname === "/run") {
@@ -125,6 +126,87 @@ export default {
       return realtimeSignal(env, url);
     }
 
+    if (request.method === "POST" && pathname === "/admin/seed-all-hours") {
+      const date = url.searchParams.get("date");
+      const reset = url.searchParams.get("reset") === "true";
+      const startHour = parseInt(url.searchParams.get("start") || "2"); // Default: 02 UTC (09:00 WIB)
+      const endHour = parseInt(url.searchParams.get("end") || "10");   // Default: 10 UTC (17:00 WIB)
+      const mode = url.searchParams.get("mode") || "stream"; // Default to stream
+
+      if (!date) return new Response("Missing date", { status: 400 });
+
+      const hours = [];
+      const messages = [];
+
+      for (let h = startHour; h <= endHour; h++) {
+        const hourStr = String(h).padStart(2, "0");
+        hours.push(hourStr);
+
+        // Dispatch to Queue instead of inline ctx.waitUntil
+        messages.push({
+          body: {
+            type: "seed_hour",
+            date,
+            hour: hourStr,
+            reset,
+            mode
+          }
+        });
+      }
+
+      // Batch send to queue
+      if (messages.length > 0) {
+        // Cloudflare Queues batch send
+        await env.BACKFILL_QUEUE.sendBatch(messages);
+      }
+
+      return new Response(JSON.stringify({
+        ok: true,
+        message: "All hours queued to BACKFILL_QUEUE",
+        date,
+        reset,
+        hours,
+        mode,
+        strategy: "queue_dispatch"
+      }), { headers: { "Content-Type": "application/json" } });
+    }
+
+    if (request.method === "POST" && pathname === "/admin/seed-day") {
+      const date = url.searchParams.get("date");
+      if (!date) return new Response("Missing date", { status: 400 });
+      ctx.waitUntil(seedDay(env, date));
+      return new Response(JSON.stringify({ ok: true, message: "Jobs queued", count: 1 }), { headers: { "Content-Type": "application/json" } });
+    }
+
+    if (request.method === "POST" && pathname === "/admin/seed-hour") {
+      const date = url.searchParams.get("date");
+      const hour = url.searchParams.get("hour");
+      const reset = url.searchParams.get("reset") === "true";
+      const mode = url.searchParams.get("mode") || "stream";
+      if (!date || !hour) return new Response("Missing date or hour", { status: 400 });
+      ctx.waitUntil(seedHour(env, date, hour, reset, mode));
+      return new Response(JSON.stringify({ ok: true, message: "Hour job queued", date, hour, reset, mode }), { headers: { "Content-Type": "application/json" } });
+    }
+
+    if (pathname === "/admin/backfill-logs") {
+      try {
+        if (!env.DB) return Response.json({ error: "DB not bound" }, { status: 500 });
+        const { results } = await env.DB.prepare(
+          "SELECT * FROM backfill_stats ORDER BY id DESC LIMIT 50"
+        ).all();
+        return Response.json(results);
+      } catch (e) {
+        return Response.json({ error: e.message }, { status: 500 });
+      }
+    }
+
+    if (pathname === "/admin/read-r2") {
+      const key = url.searchParams.get("key");
+      const obj = await env.DATA_LAKE.get(key);
+      if (!obj) return new Response("Not found", { status: 404 });
+      return new Response(obj.body);
+    }
+
     if (pathname === "/debug-r2") {
       const key = url.searchParams.get("key");
       if (!key) return new Response("Missing ?key=", { status: 400 });
@@ -177,7 +259,7 @@ export default {
     if (request.method === "GET" && pathname === "/debug/coverage") {
       const date = url.searchParams.get("date") || new Date().toISOString().split('T')[0];
       const [y, m, d] = date.split("-"); // ensure YYYY-MM-DD
-      const prefix = `raw_lt/${y}/${m}/${d}/`;
+      const prefix = url.searchParams.get("prefix") || `raw_lt/${y}/${m}/${d}/`;
 
       const listed = await env.DATA_LAKE.list({ prefix, limit: 1000 });
       // Group by Hour
@@ -198,44 +280,21 @@ export default {
       return Response.json({ prefix, total: listed.objects.length, truncated: listed.truncated, coverage, samples: sampleKeys });
     }
 
-    if (request.method === "POST" && pathname === "/admin/seed-day") {
-      try {
-        const dateParam = url.searchParams.get("date");
-        const days = parseInt(url.searchParams.get("days") || "1", 10); // If 7, we queue 7 jobs
-
-        let queued = 0;
-        const now = new Date();
-
-        // Loop for "days" or single date
-        if (days > 1) {
-          for (let i = 0; i < days; i++) {
-            const d = new Date(now.getTime() - i * 24 * 3600 * 1000);
-            const y = d.getUTCFullYear();
-            const m = String(d.getUTCMonth() + 1).padStart(2, '0');
-            const day = String(d.getUTCDate()).padStart(2, '0');
-            const dateStr = `${y}-${m}-${day}`;
-
-            await env.BACKFILL_QUEUE.send({ type: 'seed_day', date: dateStr });
-            queued++;
-          }
-        } else if (dateParam) {
-          await env.BACKFILL_QUEUE.send({ type: 'seed_day', date: dateParam });
-          queued++;
-        } else {
-          return Response.json({ error: "Missing ?date=YYYY-MM-DD or ?days=N" }, { status: 400 });
-        }
-
-        return Response.json({ ok: true, message: "Jobs queued", count: queued });
-      } catch (e) {
-        return Response.json({ ok: false, error: e.message }, { status: 500 });
-      }
-    }
-
     if (request.method === "GET" && pathname === "/admin/seed-status") {
       const date = url.searchParams.get("date") || new Date().toISOString().split('T')[0];
       const key = `seed_status/${date}.json`;
       const obj = await env.DATA_LAKE.get(key);
       if (!obj) return Response.json({ status: "NOT_FOUND", date });
+      return Response.json(await obj.json());
+    }
+
+    if (request.method === "GET" && pathname === "/admin/seed-hour-status") {
+      const date = url.searchParams.get("date");
+      const hour = url.searchParams.get("hour");
+      if (!date || !hour) return Response.json({ error: "Missing date or hour" }, { status: 400 });
+      const key = `seed_status/${date}_h${hour}.json`;
+      const obj = await env.DATA_LAKE.get(key);
+      if (!obj) return Response.json({ status: "NOT_FOUND", date, hour });
       return Response.json(await obj.json());
     }
 
@@ -261,8 +320,15 @@ export default {
 
         // Routing based on Job Type
         if (job.type === 'seed_day') {
-          console.log(`🌱 Processing Seed Job: ${job.date}`);
-          await seedDay(env, job.date);
+          console.log(`🌱 Processing Seed Job: ${job.date} on ${job.engine || 'BACKFILL_ENGINE_1'}`);
+          await seedDay(env, job.date, job.engine);
+          msg.ack();
+          continue;
+        }
+
+        if (job.type === 'seed_hour') {
+          console.log(`⏰ Processing Queue Hour Job: ${job.date} h=${job.hour} (mode=${job.mode})`);
+          await seedHour(env, job.date, job.hour, job.reset, job.mode);
           msg.ack();
           continue;
         }
@@ -462,7 +528,532 @@ async function runDailyCron(env, force = false, dateOverride = null) {
 
 
 // Manually process raw_lt -> footprint & processed for a full day
-async function seedDay(env, dateStr) {
+// NEW: Backfill via StateEngine Dispatch
+// NEW: Backfill via StateEngine Dispatch
+async function seedDay(env, dateStr, engineName = "BACKFILL_ENGINE_1") {
+  const [y, m, d] = dateStr.split("-");
+  const prefix = `raw_lt/${y}/${m}/${d}/`;
+
+  let cursor = undefined;
+  let processedCount = 0;
+  const startTime = Date.now();
+
+  const updateStatus = async (status) => {
+    await env.DATA_LAKE.put(`seed_status/${dateStr}.json`, JSON.stringify({
+      date: dateStr,
+      updated: new Date().toISOString(),
+      processed: processedCount,
+      target_engine: engineName,
+      status: status
+    }));
+  };
+
+  await updateStatus("STARTING");
+
+  // RESUME CHECKPOINT LOGIC
+  try {
+    const cpFile = await env.DATA_LAKE.get(`seed_checkpoint/${dateStr}.json`);
+    if (cpFile) {
+      const cpData = await cpFile.json();
+      if (cpData.cursor) {
+        cursor = cpData.cursor;
+        console.log(`▶️ RESUMING from checkpoint: cursor=${cursor}`);
+        await updateStatus("RESUMED");
+      }
+      if (cpData.processed) {
+        processedCount = cpData.processed;
+        console.log(`📊 RECOVERED processedCount: ${processedCount}`);
+      }
+    }
+  } catch (e) {
+    console.warn("Failed to read checkpoint, starting from scratch", e);
+  }
+
+  // Hourly routing handles binding selection dynamically below.
+
+
+  try {
+    while (true) {
+      // Reduced limit to 50 to prevent OOM
+      const listed = await env.DATA_LAKE.list({ prefix, cursor, limit: 50 });
+      // Persist cursor AND processedCount checkpoint after each page so we can resume on timeout
+      await env.DATA_LAKE.put(`seed_checkpoint/${dateStr}.json`, JSON.stringify({
+        cursor: listed.cursor,
+        processed: processedCount
+      }));
+      console.log(`🗂️ Listed ${listed.objects.length} objects, cursor=${listed.cursor}, totalProcessed=${processedCount}`);
+
+      const processFile = async (obj) => {
+        try {
+          // Extract Date from Path: raw_lt/YYYY/MM/DD/...
+          const pathParts = obj.key.split("/");
+          if (pathParts.length < 5) return []; // Safety check
+          const y = pathParts[1];
+          const m = pathParts[2];
+          const d = pathParts[3];
+
+          const r = await env.DATA_LAKE.get(obj.key);
+          if (!r) return [];
+          const text = await r.text();
+          const lines = text.split("\n");
+          const itemsV2 = [];
+
+          for (const line of lines) {
+            const match = line.match(/"raw"\s*:\s*"([^"]+)"/);
+            if (match) {
+              const rawPipe = match[1];
+              // Format: B|HHMMSS|...
+              const pipeParts = rawPipe.split("|");
+              let ts = Date.now();
+
+              // Format: YYYYMMDD|HHMMSS|... (rawPipe is reliable source of truth)
+              // If pipeParts[0] is date-like (8 chars), use it. timestamp from path is fallback.
+              if (pipeParts.length >= 2) {
+                const dStr = pipeParts[0].length === 8 ? pipeParts[0] : `${y}${m}${d}`;
+                const tStr = pipeParts[1];
+
+                if (dStr.length === 8 && tStr.length === 6) {
+                  const Y = dStr.slice(0, 4);
+                  const M = dStr.slice(4, 6);
+                  const D = dStr.slice(6, 8);
+                  const H = tStr.slice(0, 2);
+                  const Min = tStr.slice(2, 4);
+                  const S = tStr.slice(4, 6);
+
+                  // Force WIB (+07:00) identity
+                  const iso = `${Y}-${M}-${D}T${H}:${Min}:${S}+07:00`;
+                  const parsed = Date.parse(iso);
+                  if (!isNaN(parsed)) ts = parsed;
+                }
+              }
+
+              itemsV2.push({
+                v: 2,
+                fmt: "pipe",
+                src: "backfill_raw_lt",
+                ts: ts,
+                raw: rawPipe
+              });
+            }
+          }
+          return itemsV2;
+        } catch (err) {
+          console.error(`Error reading file ${obj.key}:`, err);
+          return [];
+        }
+      };
+
+      const results = await Promise.all(listed.objects.map(processFile));
+      const batchV2 = results.flat();
+
+      // Helper: Hourly Round-Robin Routing (7 Engines)
+      const getEngineForHour = (h) => {
+        // Map 0..23 hours to 1..7 engines
+        // (h % 7) -> 0..6
+        // +1 -> 1..7
+        const id = (h % 7) + 1;
+        return `BACKFILL_ENGINE_${id}`;
+      };
+
+      if (batchV2.length > 0) {
+        // Group by Hour (UTC)
+        const batchesByHour = {};
+        for (const item of batchV2) {
+          const h = new Date(item.ts).getUTCHours();
+          if (!batchesByHour[h]) batchesByHour[h] = [];
+          batchesByHour[h].push(item);
+        }
+
+        // Dispatch ALL hours in PARALLEL ("Keroyokan")
+        await Promise.all(Object.entries(batchesByHour).map(async ([hourStr, items]) => {
+          const hour = parseInt(hourStr);
+          const engineName = getEngineForHour(hour);
+          console.log(`🚀 Dispatching ${items.length} items for h=${hour} to ${engineName}`);
+          const binding = env[engineName];
+
+          if (!binding) {
+            console.error(`Missing binding for ${engineName}`);
+            return;
+          }
+          const id = binding.idFromName("BACKFILL_ENGINE");
+          const stub = binding.get(id);
+
+          // Process chunks sequentially per engine to respect rate limits/order
+          for (let i = 0; i < items.length; i += 500) {
+            const chunk = items.slice(i, i + 500);
+
+            let attempts = 0;
+            const maxAttempts = 3;
+            while (true) {
+              try {
+                await stub.fetch("https://internal/trade-batch", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify(chunk)
+                });
+                break;
+              } catch (e) {
+                attempts++;
+                if (attempts >= maxAttempts) {
+                  console.error(`Batch dispatch failed to ${engineName}`, e);
+                  break;
+                }
+                const backoff = 50 * Math.pow(2, attempts);
+                await new Promise(r => setTimeout(r, backoff));
+              }
+            }
+            // slight throttle per engine
+            await new Promise(r => setTimeout(r, 20));
+          }
+        }));
+      }
+
+      processedCount += listed.objects.length;
+      if (processedCount % 50 === 0) {
+        console.log(`🔄 Processed ${processedCount} items so far`);
+        await updateStatus("PROCESSING");
+      }
+
+      if (!listed.truncated) break;
+      cursor = listed.cursor;
+    }
+
+    console.log(`✅ seedDay COMPLETED for ${dateStr}. Total processed: ${processedCount}`);
+    await updateStatus("COMPLETED");
+
+  } catch (err) {
+    console.error(`💥 seedDay FATAL ERROR for ${dateStr}:`, err);
+    await updateStatus("FAILED");
+  }
+}
+
+// Targetted Backfill for a single UTC hour
+async function seedHour(env, dateStr, hourStr, reset = false, mode = "stream") {
+  const logKey = `seed_logs/${dateStr}_h${hourStr}.log`;
+  let logBuffer = [];
+  const log = (msg) => {
+    const ts = new Date().toISOString();
+    logBuffer.push(`[${ts}] ${msg}`);
+    console.log(msg); // Also console.log for tail
+  };
+  const flushLogs = async () => {
+    if (logBuffer.length === 0) return;
+    try {
+      // Append to existing log file
+      let existingLog = '';
+      const existing = await env.DATA_LAKE.get(logKey);
+      if (existing) existingLog = await existing.text();
+      await env.DATA_LAKE.put(logKey, existingLog + logBuffer.join('\n') + '\n');
+      logBuffer = [];
+    } catch (e) {
+      console.error('Failed to flush logs:', e);
+    }
+  };
+
+  log(`🌱 seedHour task started for ${dateStr} hour ${hourStr} (reset=${reset}, mode=${mode})`);
+  const [y, m, d] = dateStr.split("-");
+  const prefix = `raw_lt/${y}/${m}/${d}/${hourStr}/`;
+  const hour = parseInt(hourStr);
+  const engineName = `BACKFILL_ENGINE_${(hour % 7) + 1}`;
+
+  const statusKey = `seed_status/${dateStr}_h${hourStr}.json`;
+  let processedCount = 0;
+  let cursor = undefined;
+  let startTime = Date.now(); // Default start time
+
+  if (!reset) {
+    try {
+      const existingStatus = await env.DATA_LAKE.get(statusKey);
+      if (existingStatus) {
+        const data = await existingStatus.json();
+        if (data.cursor) {
+          cursor = data.cursor;
+          processedCount = data.processed || 0;
+          if (data.start_time) startTime = data.start_time; // Keep original start time
+          log(`📡 RESUMING Hour Seed: cursor=${cursor}, processed=${processedCount}, elapsed=${((Date.now() - startTime) / 1000).toFixed(1)}s`);
+        }
+      }
+    } catch (e) {
+      log(`⚠️ Failed to resume seedHour status: ${e.message}`);
+    }
+  } else {
+    // Clear old log file on reset
+    try { await env.DATA_LAKE.delete(logKey); } catch (e) { /* ignore */ }
+  }
+
+  const updateStatus = async (status, newCursor, newProcessed) => {
+    if (newProcessed !== undefined) processedCount = newProcessed;
+    const now = Date.now();
+    const elapsed = ((now - startTime) / 1000).toFixed(1);
+
+    await env.DATA_LAKE.put(statusKey, JSON.stringify({
+      date: dateStr,
+      hour: hourStr,
+      updated: new Date().toISOString(),
+      processed: processedCount,
+      cursor: newCursor || cursor,
+      target_engine: engineName,
+      status: status,
+      mode: mode,
+      start_time: startTime,
+      elapsed_sec: elapsed
+    }));
+  };
+
+  await updateStatus("STARTING");
+
+  try {
+    const binding = env[engineName];
+    if (!binding) throw new Error(`Missing binding for ${engineName}`);
+    const id = binding.idFromName("BACKFILL_ENGINE");
+    const stub = binding.get(id);
+
+    // === PROCESSING LOGIC SPLIT ===
+    if (mode === "warmup") {
+      log(`🚀 Executing WARMUP MODE (Batch Ingest)`);
+      // Implement Warmup Logic Here (Pass-through to DO Storage)
+      // For now, we reuse the loop structure but will change the destination endpoint
+      await processWarmupLoop(env, prefix, cursor, stub, log, updateStatus, flushLogs, processedCount, y, m, d, engineName, startTime);
+    } else {
+      log(`🌊 Executing STREAM MODE (Legacy Read-Merge-Write)`);
+      await processStreamLoop(env, prefix, cursor, stub, log, updateStatus, flushLogs, processedCount, y, m, d, engineName);
+    }
+
+  } catch (err) {
+    log(`💥 Error in seedHour: ${err.message}\n${err.stack}`);
+    await updateStatus("FAILED");
+    await flushLogs();
+  }
+}
+
+// === SHARED HELPERS ===
+async function listAndParse(env, prefix, cursor, y, m, d) {
+  const listed = await env.DATA_LAKE.list({ prefix, cursor, limit: 50 });
+  const processFile = async (obj) => {
+    try {
+      const r = await env.DATA_LAKE.get(obj.key);
+      if (!r) return [];
+      const text = await r.text();
+      const lines = text.split("\n");
+      const itemsV2 = [];
+      for (const line of lines) {
+        const match = line.match(/"raw"\s*:\s*"([^"]+)"/);
+        if (match) {
+          const rawPipe = match[1];
+          const pipeParts = rawPipe.split("|");
+          let ts = Date.now();
+          if (pipeParts.length >= 2) {
+            const dStr = pipeParts[0].length === 8 ? pipeParts[0] : `${y}${m}${d}`;
+            const tStr = pipeParts[1];
+            if (dStr.length === 8 && tStr.length === 6) {
+              const iso = `${dStr.slice(0, 4)}-${dStr.slice(4, 6)}-${dStr.slice(6, 8)}T${tStr.slice(0, 2)}:${tStr.slice(2, 4)}:${tStr.slice(4, 6)}+07:00`;
+              const parsed = Date.parse(iso);
+              if (!isNaN(parsed)) ts = parsed;
+            }
+          }
+          itemsV2.push({ v: 2, fmt: "pipe", src: "backfill_seed_hour", ts: ts, raw: rawPipe });
+        }
+      }
+      return itemsV2;
+    } catch (e) { return []; }
+  };
+  const results = await Promise.all(listed.objects.map(processFile));
+  return { listed, batchV2: results.flat(), fileCount: listed.objects.length };
+}
+
+
+// === STREAM MODE IMPLEMENTATION ===
+async function processStreamLoop(env, prefix, cursor, stub, log, updateStatus, flushLogs, processedCount, y, m, d, engineName) {
+  while (true) {
+    const { listed, batchV2, fileCount } = await listAndParse(env, prefix, cursor, y, m, d);
+
+    log(`📂 seedHour: listed ${fileCount} files (total ${processedCount}), cursor=${cursor || "START"}`);
+    log(`📦 seedHour: parsed ${batchV2.length} trades`);
+
+    if (batchV2.length > 0) {
+      for (let i = 0; i < batchV2.length; i += 500) {
+        const chunk = batchV2.slice(i, i + 500);
+        log(`🚀 seedHour: Dispatching chunk ${i / 500 + 1} (${chunk.length} items) to ${engineName}`);
+        // STANDARD ENDPOINT (Triggers immediate R2 merge)
+        await stub.fetch("https://internal/trade-batch", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(chunk)
+        });
+      }
+    }
+
+    processedCount += fileCount;
+    cursor = listed.cursor;
+    await updateStatus("PROCESSING", cursor);
+    log(`✅ seedHour: Page processed. nextCursor=${cursor || "NONE"}`);
+    await flushLogs();
+
+    if (!listed.truncated) break;
+  }
+  log(`🎉 seedHour COMPLETED. Total processed: ${processedCount}`);
+  await updateStatus("COMPLETED");
+  await flushLogs();
+}
+
+// === WARMUP MODE IMPLEMENTATION (Placeholder for now) ===
+async function processWarmupLoop(env, prefix, cursor, stub, log, updateStatus, flushLogs, processedCount, y, m, d, engineName, startTime) {
+  // Currently re-uses the same flow but we will change the ENDPOINT later
+  const workerStart = Date.now(); // Track execution time of THIS invocation
+  const MAX_FILES_PER_HOUR = 2000; // Hard limit to prevent infinite processing
+  let sessionFilesCount = 0; // Count files processed in THIS invocation only
+  const SESSION_FLUSH_INTERVAL = 100; // Flush every 100 files within session (~10k trades)
+
+  while (true) {
+    // 0. Check Max Files Limit
+    if (processedCount >= MAX_FILES_PER_HOUR) {
+      log(`⚠️ MAX FILES LIMIT REACHED (${processedCount} >= ${MAX_FILES_PER_HOUR}). Forcing FINALIZE...`);
+      break;
+    }
+
+    // 1. Check Time Limit (Queue Chaining)
+    const elapsed = Date.now() - workerStart;
+    if (elapsed > 20000) { // 20 seconds soft limit
+      log(`⏳ Time Limit Reached (${elapsed}ms). Yielding to Queue...`);
+      // Re-enqueue self
+      await env.BACKFILL_QUEUE.send({
+        type: "seed_hour",
+        date: `${y}-${m}-${d}`,
+        hour: prefix.split('/')[4], // raw_lt/2026/01/09/HH/
+        reset: false, // RESUME
+        mode: "warmup"
+      });
+      await updateStatus("YIELDING"); // Mark as yielding
+
+      // D1 LOGGING (YIELD)
+      await logToD1(env, {
+        date: `${y}-${m}-${d}`,
+        hour: prefix.split('/')[4],
+        status: "YIELDING",
+        files_processed: processedCount,
+        elapsed_sec: ((Date.now() - startTime) / 1000).toFixed(1),
+        engine: engineName
+      });
+
+      await flushLogs();
+      return; // Exit gracefully (ACK message)
+    }
+
+    const { listed, batchV2, fileCount } = await listAndParse(env, prefix, cursor, y, m, d);
+
+    log(`📂 seedHour (WARMUP): listed ${fileCount} files, truncated=${listed.truncated}, cursor=${cursor ? cursor.slice(0, 30) : 'START'}`);
+    log(`📦 seedHour (WARMUP): parsed ${batchV2.length} trades`);
+
+    if (batchV2.length > 0) {
+      // Chunk trades to stay under DO 128KB fetch limit (~500 trades = ~70KB)
+      for (let i = 0; i < batchV2.length; i += 500) {
+        const chunk = batchV2.slice(i, i + 500);
+
+        // Retry logic for safety
+        let attempts = 0;
+        let sent = false;
+        while (attempts < 3 && !sent) {
+          try {
+            await stub.fetch("https://internal/warmup-batch", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(chunk)
+            });
+            sent = true;
+          } catch (e) {
+            attempts++;
+            log(`⚠️ Send failed attempt ${attempts}: ${e.message}`);
+            await new Promise(r => setTimeout(r, 500));
+          }
+        }
+        if (!sent) log(`❌ FAILED to send chunk ${i} after 3 attempts`);
+      }
+    }
+    processedCount += fileCount;
+    cursor = listed.cursor;
+    await updateStatus("PROCESSING_WARMUP", cursor, processedCount);
+
+    // D1 LOGGING (Every 100 files)
+    if (processedCount % 100 === 0) {
+      await logToD1(env, {
+        date: `${y}-${m}-${d}`,
+        hour: prefix.split('/')[4],
+        status: "PROCESSING_WARMUP",
+        files_processed: processedCount,
+        elapsed_sec: ((Date.now() - startTime) / 1000).toFixed(1),
+        engine: engineName
+      });
+    }
+
+    // Checkpoint every 100 files (not every loop)
+    if (processedCount % 100 === 0) {
+      await flushLogs();
+    }
+
+    // Track session-local file count
+    sessionFilesCount += fileCount;
+
+    // Periodic flush every SESSION_FLUSH_INTERVAL files within THIS session
+    if (sessionFilesCount >= SESSION_FLUSH_INTERVAL) {
+      log(`🔄 Session flush at ${sessionFilesCount} local / ${processedCount} total files...`);
+      try {
+        await stub.fetch("https://internal/flush-warmup", { method: "POST" });
+        sessionFilesCount = 0; // Reset session counter
+        log(`✅ Session flush completed`);
+      } catch (e) {
+        log(`⚠️ Session flush failed: ${e.message}`);
+      }
+    }
+
+    // Exit conditions: no more pages OR no files found in this batch
+    if (!listed.truncated || fileCount === 0) break;
+  }
+
+  // After all files ingested, trigger FINALIZE
+  log(`🏁 WARMUP Ingest Done. Triggering FINALIZE on ${engineName}...`);
+  try {
+    const finalizeRes = await stub.fetch("https://internal/finalize-warmup", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" }
+    });
+    const finalizeData = await finalizeRes.json();
+    log(`🎉 FINALIZE Result: ${JSON.stringify(finalizeData)}`);
+  } catch (e) {
+    log(`💥 FINALIZE FAILED: ${e.message}`);
+    throw e;
+  }
+
+  log(`🎉 seedHour WARMUP+FINALIZE COMPLETED.`);
+  await updateStatus("COMPLETED", null, processedCount);
+
+  // D1 LOGGING (FINAL)
+  await logToD1(env, {
+    date: `${y}-${m}-${d}`,
+    hour: prefix.split('/')[4],
+    status: "COMPLETED",
+    files_processed: processedCount,
+    elapsed_sec: ((Date.now() - startTime) / 1000).toFixed(1),
+    engine: engineName
+  });
+
+  await flushLogs();
+}
+
+// D1 Logging Helper
+async function logToD1(env, data) {
+  try {
+    if (!env.DB) return;
+    const jobId = `${data.date}_h${data.hour}`;
+    await env.DB.prepare(
+      `INSERT INTO backfill_stats (job_id, date, hour, status, files_processed, elapsed_sec, engine) VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).bind(jobId, data.date, data.hour, data.status, data.files_processed, parseFloat(data.elapsed_sec), data.engine).run();
+  } catch (e) {
+    console.error("D1 Log Error:", e);
+  }
+}
+
+// OLD: Deprecated
+async function _deprecated_seedDay(env, dateStr) {
   const [y, m, d] = dateStr.split("-");
   const prefix = `raw_lt/${y}/${m}/${d}/`;
 
@@ -1050,132 +1641,7 @@ function normalizeTradeFromLine(lineText, defaultDateStr) {
     }
   }
 
-  function buildFinalOutputFromStats(stats, dateStr) {
-    return Object.keys(stats).map((kode) => {
-      const s = stats[kode];
-      const sortedTimes = Object.keys(s.buckets).sort();
 
-      let cumVol = 0;
-      let cumVal = 0;
-
-      // Pakai range harian (high - low)
-      const hasRange =
-        s.high_day > 0 && s.low_day != null && s.high_day !== s.low_day;
-      const dayRange = hasRange ? s.high_day - s.low_day : 0;
-
-      // Profil quadran (buat iceberg / hidden acc)
-      let q1 = 0,
-        q2 = 0,
-        q3 = 0,
-        q4 = 0;
-      let q4Vol = 0;
-      let totalBuckets = 0;
-
-      const timeline = sortedTimes.map((time) => {
-        const b = s.buckets[time];
-
-        const bucketVol = b.vol || 0;
-        const bucketNetVol = b.netVol || 0;
-        const bucketVal = b.valBucket || bucketVol * b.close * 100;
-
-        cumVol += bucketVol;
-        cumVal += bucketVal;
-
-        // Momentum vs open day
-        const momentum =
-          s.open_day > 0 ? ((b.close - s.open_day) / s.open_day) * 100 : 0;
-
-        // Absorption: cumVol / (high - low). Jika range 0 â†’ fallback ke cumVol
-        const absorption = dayRange > 0 ? cumVol / dayRange : cumVol;
-
-        // Money / Haka per bucket
-        let moneyRaw = 0;
-        if (bucketVol > 0) {
-          moneyRaw = bucketNetVol / bucketVol; // -1..+1
-        }
-        const haka = (moneyRaw + 1) * 50; // 0..100
-        const xAxis = haka - 50; // -50..+50
-
-        // Profil quadran: X = xAxis, Y = momentum
-        totalBuckets += 1;
-        if (xAxis >= 0 && momentum >= 0) {
-          q1++;
-        } else if (xAxis < 0 && momentum >= 0) {
-          q2++;
-        } else if (xAxis < 0 && momentum < 0) {
-          q3++;
-        } else if (xAxis >= 0 && momentum < 0) {
-          q4++;
-          q4Vol += bucketVol;
-        }
-
-        return {
-          t: time, // "HH:MM"
-          p: b.close,
-          v: cumVal, // cumulative value sampai bucket ini
-          dv: bucketVal, // value per bucket â†’ bubble size
-          m: Number(momentum.toFixed(2)),
-          a: Number(absorption.toFixed(1)),
-          haka: Number(haka.toFixed(1)),
-          x: Number(xAxis.toFixed(1)),
-        };
-      });
-
-      const lastPoint = timeline[timeline.length - 1] || {};
-
-      const openDay = s.open_day || lastPoint.p || 0;
-      const closeDay = lastPoint.p || openDay;
-      const highDay = s.high_day || closeDay;
-      const lowDay = s.low_day ?? closeDay;
-      const totalVol = s.totalVol;
-      const freq = s.freq;
-      const netVol = s.netVol;
-
-      const moneyFlow = totalVol > 0 ? netVol / totalVol : 0;
-
-      // Profil iceberg / hidden accumulation
-      const totalQ = q1 + q2 + q3 + q4 || 1;
-      const q4Ratio = q4 / totalQ;
-      const volBias = totalVol > 0 ? q4Vol / totalVol : 0;
-      const buyBias = moneyFlow > 0 ? moneyFlow : 0;
-
-      const hiddenAccScore = Number(
-        (q4Ratio * volBias * buyBias).toFixed(4)
-      );
-
-      return {
-        kode,
-        date: dateStr, // Injected Date
-        mode: "swing",
-
-        open: openDay,
-        close: closeDay,
-        high: highDay,
-        low: lowDay,
-        vol: totalVol,
-        freq,
-        net_vol: netVol,
-        money_flow: Number(moneyFlow.toFixed(4)),
-        momentum: lastPoint.m ?? 0,
-        absorption: lastPoint.a ?? 0,
-        val: lastPoint.v ?? 0,
-
-        quadrant_profile: {
-          q1,
-          q2,
-          q3,
-          q4,
-          q4_ratio: Number(q4Ratio.toFixed(3)),
-        },
-        hidden_acc_score: hiddenAccScore,
-
-        history: timeline,
-
-        // âž• raw trade terakhir (kalau mau dipakai di UI)
-        last_raw: s.lastRaw || null,
-      };
-    });
-  }
 
   /**
    * LOGIC UTAMA BACKFILL
@@ -1332,7 +1798,8 @@ function normalizeTradeFromLine(lineText, defaultDateStr) {
 
           // V2 BATCH
           if (env.STATE_ENGINE_V2) {
-            const fullTs = `${dateParam}T${timeRaw.slice(0, 2)}:${timeRaw.slice(2, 4)}:${timeRaw.slice(4, 6)}`;
+            // Fix Timezone: enforce +07:00 (WIB)
+            const fullTs = `${dateParam}T${timeRaw.slice(0, 2)}:${timeRaw.slice(2, 4)}:${timeRaw.slice(4, 6)}+07:00`;
             let v2Side = 'sell';
             if (dir === 1) v2Side = 'buy';
             else if (dir === -1) v2Side = 'sell';
@@ -1343,7 +1810,7 @@ function normalizeTradeFromLine(lineText, defaultDateStr) {
               price: harga,
               amount: vol,
               side: v2Side,
-              timestamp: new Date(fullTs).getTime()
+              timestamp: Date.parse(fullTs) // use parse for reliability
             });
           }
 
@@ -1813,6 +2280,136 @@ function normalizeTradeFromLine(lineText, defaultDateStr) {
 
 // --- INTRADAY PROCESSED PIPELINE ---
 
+
+// --- SHARED HELPERS ---
+
+function buildFinalOutputFromStats(stats, dateStr) {
+  return Object.keys(stats).map((kode) => {
+    const s = stats[kode];
+    const sortedTimes = Object.keys(s.buckets).sort();
+
+    let cumVol = 0;
+    let cumVal = 0;
+
+    // Pakai range harian (high - low)
+    const hasRange =
+      s.high_day > 0 && s.low_day != null && s.high_day !== s.low_day;
+    const dayRange = hasRange ? s.high_day - s.low_day : 0;
+
+    // Profil quadran (buat iceberg / hidden acc)
+    let q1 = 0,
+      q2 = 0,
+      q3 = 0,
+      q4 = 0;
+    let q4Vol = 0;
+    let totalBuckets = 0;
+
+    const timeline = sortedTimes.map((time) => {
+      const b = s.buckets[time];
+
+      const bucketVol = b.vol || 0;
+      const bucketNetVol = b.netVol || 0;
+      const bucketVal = b.valBucket || bucketVol * b.close * 100;
+
+      cumVol += bucketVol;
+      cumVal += bucketVal;
+
+      // Momentum vs open day
+      const momentum =
+        s.open_day > 0 ? ((b.close - s.open_day) / s.open_day) * 100 : 0;
+
+      // Absorption: cumVol / (high - low). Jika range 0 -> fallback ke cumVol
+      const absorption = dayRange > 0 ? cumVol / dayRange : cumVol;
+
+      // Money / Haka per bucket
+      let moneyRaw = 0;
+      if (bucketVol > 0) {
+        moneyRaw = bucketNetVol / bucketVol; // -1..+1
+      }
+      const haka = (moneyRaw + 1) * 50; // 0..100
+      const xAxis = haka - 50; // -50..+50
+
+      // Profil quadran: X = xAxis, Y = momentum
+      totalBuckets += 1;
+      if (xAxis >= 0 && momentum >= 0) {
+        q1++;
+      } else if (xAxis < 0 && momentum >= 0) {
+        q2++;
+      } else if (xAxis < 0 && momentum < 0) {
+        q3++;
+      } else if (xAxis >= 0 && momentum < 0) {
+        q4++;
+        q4Vol += bucketVol;
+      }
+
+      return {
+        t: time, // "HH:MM"
+        p: b.close,
+        v: cumVal, // cumulative value sampai bucket ini
+        dv: bucketVal, // value per bucket -> bubble size
+        m: Number(momentum.toFixed(2)),
+        a: Number(absorption.toFixed(1)),
+        haka: Number(haka.toFixed(1)),
+        x: Number(xAxis.toFixed(1)),
+      };
+    });
+
+    const lastPoint = timeline[timeline.length - 1] || {};
+
+    const openDay = s.open_day || lastPoint.p || 0;
+    const closeDay = lastPoint.p || openDay;
+    const highDay = s.high_day || closeDay;
+    const lowDay = s.low_day ?? closeDay;
+    const totalVol = s.totalVol;
+    const freq = s.freq;
+    const netVol = s.netVol;
+
+    const moneyFlow = totalVol > 0 ? netVol / totalVol : 0;
+
+    // Profil iceberg / hidden accumulation
+    const totalQ = q1 + q2 + q3 + q4 || 1;
+    const q4Ratio = q4 / totalQ;
+    const volBias = totalVol > 0 ? q4Vol / totalVol : 0;
+    const buyBias = moneyFlow > 0 ? moneyFlow : 0;
+
+    const hiddenAccScore = Number(
+      (q4Ratio * volBias * buyBias).toFixed(4)
+    );
+
+    return {
+      kode,
+      date: dateStr, // Injected Date
+      mode: "swing",
+
+      open: openDay,
+      close: closeDay,
+      high: highDay,
+      low: lowDay,
+      vol: totalVol,
+      freq,
+      net_vol: netVol,
+      money_flow: Number(moneyFlow.toFixed(4)),
+      momentum: lastPoint.m ?? 0,
+      absorption: lastPoint.a ?? 0,
+      val: lastPoint.v ?? 0,
+
+      quadrant_profile: {
+        q1,
+        q2,
+        q3,
+        q4,
+        q4_ratio: Number(q4Ratio.toFixed(3)),
+      },
+      hidden_acc_score: hiddenAccScore,
+
+      history: timeline,
+
+      // raw trade terakhir (kalau mau dipakai di UI)
+      last_raw: s.lastRaw || null,
+    };
+  });
+}
+
 async function handleProcessedBatch(batch, env) {
   for (const msg of batch.messages) {
     try {
@@ -1831,17 +2428,19 @@ async function handleProcessedBatch(batch, env) {
 
 async function processIntradayMinute(env, job) {
   const { ticker, timeKey, hourPrefix } = job;
+  console.log(`🧵 processIntradayMinute: ${ticker} @ ${new Date(timeKey).getUTCHours()}:${new Date(timeKey).getUTCMinutes()} (UTC) from ${hourPrefix}`);
 
   // 1. Fetch Footprint Data
   const r2Key = `footprint/${ticker}/1m/${hourPrefix}.jsonl`;
   const obj = await env.DATA_LAKE.get(r2Key);
   if (!obj) {
-    console.warn(`Footprint missing: ${r2Key}`);
+    console.warn(`⚠️ Footprint missing: ${r2Key}`);
     return;
   }
 
   const text = await obj.text();
   const lines = text.split("\n").filter(l => l.trim().length > 0);
+  console.log(`📄 Read ${lines.length} lines from ${r2Key}`);
 
   // Find valid candle for this minute (or all minutes in file to be safe/idempotent)
   // Actually, to be robust, we should merge the *entire file* into the state buckets for that hour
@@ -1866,11 +2465,18 @@ async function processIntradayMinute(env, job) {
   } catch (e) { /* ignore new state */ }
 
   // 3. Update State with new candles
-  const candles = lines.map(l => JSON.parse(l));
+  const candles = lines.map(l => {
+    try { return JSON.parse(l); } catch (e) { return null; }
+  }).filter(c => c !== null);
+
   let updated = false;
 
   for (const c of candles) {
-    // R8: Convert t0 (UTC ms) to HH:mm using UTC (frontend converts to WIB)
+    // C1: Only apply candles with t0 <= job.timeKey (strict minute_finalized semantics)
+    // For backfill or rebuilds, job.timeKey might be huge or null, so we handle that.
+    if (job.timeKey && typeof job.timeKey === "number" && c.t0 > job.timeKey) continue;
+
+    // R8: Convert t0 (UTC ms) to HH:mm using UTC
     const d = new Date(c.t0);
     const hh = String(d.getUTCHours()).padStart(2, '0');
     const mm = String(d.getUTCMinutes()).padStart(2, '0');
@@ -1878,20 +2484,17 @@ async function processIntradayMinute(env, job) {
 
     // Initialize Day Stats if first candle
     if (state.open_day === 0) state.open_day = c.ohlc.o;
-    if (state.low_day === Infinity) state.low_day = c.ohlc.l;
+    if (state.low_day === Infinity || state.low_day === 0) state.low_day = c.ohlc.l;
 
     // Update Day Level
     state.high_day = Math.max(state.high_day, c.ohlc.h);
     state.low_day = Math.min(state.low_day, c.ohlc.l);
-    // Vol/NetVol accumulation is tricky if we process partials. 
-    // Better to re-sum from buckets? Or trust incremental?
-    // Trust incremental for this minute bucket, but day totals should be sum of buckets to be safe.
 
     const bucket = {
       vol: c.vol,
-      netVol: c.delta, // DO provides 'delta'
+      netVol: c.delta,
       close: c.ohlc.c,
-      valBucket: c.vol * c.ohlc.c * 100 // Est value
+      valBucket: c.vol * c.ohlc.c * 100
     };
 
     state.buckets[timeStr] = bucket;

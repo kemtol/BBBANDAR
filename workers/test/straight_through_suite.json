@@ -1,0 +1,141 @@
+{
+    "metadata": {
+        "title": "Straight-Through & Backfill Final Validation",
+        "target_system": "livetrade-pipeline"
+    },
+    "environment": {
+        "config": {
+            "agg_url": "https://livetrade-taping-agregator.mkemalw.workers.dev",
+            "engine_url": "https://livetrade-durable-engine-4.mkemalw.workers.dev"
+        }
+    },
+    "scenarios": [
+        {
+            "id": "scenario_01_merge_idempotency",
+            "description": "Verify that footprint merging is idempotent and sorted by t0",
+            "steps": [
+                {
+                    "step_id": "step_1_ingest_live",
+                    "action": "POST",
+                    "url": "{engine_url}/trade-batch",
+                    "body": [
+                        {
+                            "v": 2,
+                            "fmt": "pipe",
+                            "ts": 1767841200000,
+                            "raw": "20260108|100000|0|TESTTRADE|RG|T|10050|100"
+                        },
+                        {
+                            "v": 2,
+                            "fmt": "pipe",
+                            "ts": 1767841260000,
+                            "raw": "20260108|100100|0|TESTTRADE|RG|T|10100|50"
+                        },
+                        {
+                            "v": 2,
+                            "fmt": "pipe",
+                            "ts": 1767841500000,
+                            "raw": "20260108|100500|0|TESTTRADE|RG|T|10075|75"
+                        },
+                        {
+                            "v": 2,
+                            "fmt": "pipe",
+                            "ts": 1767844740000,
+                            "raw": "20260108|105900|0|TESTTRADE|RG|T|10100|10"
+                        }
+                    ],
+                    "expect": {
+                        "status": 200
+                    }
+                },
+                {
+                    "step_id": "step_2_wait_flush",
+                    "action": "WAIT",
+                    "ms": 10000
+                },
+                {
+                    "step_id": "step_3_verify_footprint",
+                    "action": "GET",
+                    "url": "{engine_url}/debug/hour?ticker=TESTTRADE&y=2026&m=01&d=08&h=03",
+                    "assertions": [
+                        {
+                            "field": "linesCount",
+                            "op": "==",
+                            "value": 4
+                        },
+                        {
+                            "field": "uniqueT0Count",
+                            "op": "==",
+                            "value": 4
+                        },
+                        {
+                            "field": "anyOutOfHourCount",
+                            "op": "==",
+                            "value": 0
+                        }
+                    ]
+                },
+                {
+                    "step_id": "step_4_reproduce_idempotency",
+                    "action": "POST",
+                    "url": "{engine_url}/trade-batch",
+                    "body": [
+                        {
+                            "v": 2,
+                            "fmt": "pipe",
+                            "ts": 1767841200000,
+                            "raw": "20260108|100000|0|TESTTRADE|RG|T|99999|999"
+                        }
+                    ],
+                    "expect": {
+                        "status": 200
+                    }
+                },
+                {
+                    "step_id": "step_5_wait_flush",
+                    "action": "WAIT",
+                    "ms": 10000
+                },
+                {
+                    "step_id": "step_6_verify_idempotency",
+                    "action": "GET",
+                    "url": "{engine_url}/debug/hour?ticker=TESTTRADE&y=2026&m=01&d=08&h=03",
+                    "assertions": [
+                        {
+                            "field": "linesCount",
+                            "op": "==",
+                            "value": 4
+                        },
+                        {
+                            "field": "uniqueT0Count",
+                            "op": "==",
+                            "value": 4
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "id": "scenario_02_backfill_routing",
+            "description": "Verify seed-hour routing to specific engine",
+            "steps": [
+                {
+                    "step_id": "step_1_trigger_seed_hour",
+                    "action": "POST",
+                    "url": "{agg_url}/admin/seed-hour?date=2026-01-08&hour=03",
+                    "expect": {
+                        "status": 200
+                    }
+                },
+                {
+                    "step_id": "step_2_poll_status",
+                    "action": "POLL",
+                    "url": "{agg_url}/admin/seed-hour-status?date=2026-01-08&hour=03",
+                    "break_condition": "json.status == 'COMPLETED' || json.status == 'FAILED'",
+                    "interval_ms": 2000,
+                    "max_attempts": 30
+                }
+            ]
+        }
+    ]
+}

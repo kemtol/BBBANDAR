@@ -1,0 +1,12 @@
+
+Cloudflare collects anonymous telemetry about your usage of Wrangler. Learn more at https://github.com/cloudflare/workers-sdk/tree/main/packages/wrangler/telemetry.md
+
+ ⛅️ wrangler 4.51.0 (update available 4.59.2)
+─────────────────────────────────────────────
+
+[31m✘ [41;31m[[41;97mERROR[41;31m][0m [1mProcessing wrangler.toml configuration:[0m
+
+    - The field "r2_buckets" should be an array but got {"bindings":[{"binding":"DATA_LAKE","bucket_name":"tape-data-saham"}]}.
+
+
+🪵  Logs were written to "/home/mkemalw/.config/.wrangler/logs/wrangler-2026-01-15_15-17-47_502.log"

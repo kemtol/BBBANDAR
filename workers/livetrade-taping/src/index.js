@@ -109,6 +109,7 @@ export class TradeIngestor extends DurableObject {
     this.lastDispatchOk = false;
     this.lastDispatchErr = "";
     this.lastDispatchStats = { accepted: 0, deduped: 0, errors: 0 };
+    this.dispatchFailStreak = 0;  // A1: Track consecutive dispatch failures
 
     // Req C: Flush Locks
     this.isFlushingLT = false;
@@ -279,9 +280,12 @@ export class TradeIngestor extends DurableObject {
     const bufferSizeV2 = JSON.stringify(this.bufferV2).length;
     if (this.bufferV2.length > 0 && !this.isFlushingV2) {
       const timeTrigger = (now - this.lastFlushV2) > 1000; // 1s for realtime
+      // B1: Backoff if consecutive failures, increase effective interval
+      const backoffActive = this.dispatchFailStreak >= 5;
+      const timeTriggerWithBackoff = backoffActive ? (now - this.lastFlushV2) > 5000 : timeTrigger;
       const countTrigger = this.bufferV2.length >= this.BATCH_SIZE_V2;
       const sizeTrigger = bufferSizeV2 >= this.MAX_BYTES_V2;
-      if (timeTrigger || countTrigger || sizeTrigger) {
+      if (timeTriggerWithBackoff || countTrigger || sizeTrigger) {
         this.ctx.waitUntil(this.flushToStateEngineV2());
       }
     }
@@ -616,6 +620,7 @@ export class TradeIngestor extends DurableObject {
         deduped: result.deduped || 0,
         errors: result.errors || 0,
       };
+      this.dispatchFailStreak = 0;  // A1: Reset on success
       this.lastFlushV2 = Date.now();
       console.log(`[V2] Dispatched ${pending.length} trades. Accepted: ${result.accepted}, Deduped: ${result.deduped}`);
     } catch (e) {
@@ -623,8 +628,13 @@ export class TradeIngestor extends DurableObject {
       this.lastDispatchTs = Date.now();
       this.lastDispatchOk = false;
       this.lastDispatchErr = String(e);
+      this.dispatchFailStreak += 1;  // A1: Increment on failure
       console.error("[V2] dispatch failed, rollback:", e);
-      this.bufferV2.unshift(...pending); // rollback
+      // B2: Rollback with cap to avoid memory spiral
+      this.bufferV2 = pending.concat(this.bufferV2);
+      if (this.bufferV2.length > this.MAX_BUFFER_V2) {
+        this.bufferV2 = this.bufferV2.slice(-this.MAX_BUFFER_V2);
+      }
     } finally {
       this.isFlushingV2 = false;
     }

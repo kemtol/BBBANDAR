@@ -30,7 +30,7 @@
         "queue": "livetrade-backfill-queue",
         "max_batch_size": 1,
         "max_batch_timeout": 60,
-        "max_concurrency": 1
+        "max_concurrency": 10
       },
       {
         "queue": "livetrade-processed-queue",
@@ -53,6 +53,41 @@
         "name": "STATE_ENGINE_V2",
         "class_name": "StateEngine",
         "script_name": "livetrade-durable-object"
+      },
+      {
+        "name": "BACKFILL_ENGINE_1",
+        "class_name": "StateEngine",
+        "script_name": "livetrade-durable-engine-1"
+      },
+      {
+        "name": "BACKFILL_ENGINE_2",
+        "class_name": "StateEngine",
+        "script_name": "livetrade-durable-engine-2"
+      },
+      {
+        "name": "BACKFILL_ENGINE_3",
+        "class_name": "StateEngine",
+        "script_name": "livetrade-durable-engine-3"
+      },
+      {
+        "name": "BACKFILL_ENGINE_4",
+        "class_name": "StateEngine",
+        "script_name": "livetrade-durable-engine-4"
+      },
+      {
+        "name": "BACKFILL_ENGINE_5",
+        "class_name": "StateEngine",
+        "script_name": "livetrade-durable-engine-5"
+      },
+      {
+        "name": "BACKFILL_ENGINE_6",
+        "class_name": "StateEngine",
+        "script_name": "livetrade-durable-engine-6"
+      },
+      {
+        "name": "BACKFILL_ENGINE_7",
+        "class_name": "StateEngine",
+        "script_name": "livetrade-durable-engine-7"
       }
     ]
   },
