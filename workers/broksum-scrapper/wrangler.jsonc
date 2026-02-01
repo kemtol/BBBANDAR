@@ -17,6 +17,13 @@
             "preview_id": "9df14ffa735441bdbf5931fa19c4ce09"
         }
     ],
+    "vars": {
+        "IPOT_APPSESSION_URL": "https://indopremier.com/ipc/appsession.js",
+        "IPOT_WS_HTTP_BASE": "https://ipotapp.ipot.id/socketcluster/",
+        "IPOT_ORIGIN": "https://indopremier.com",
+        "IPOT_IDLE_MS": "800",
+        "IPOT_MAX_MS": "8000"
+    },
     "queues": {
         "producers": [
             {

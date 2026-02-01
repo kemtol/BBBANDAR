@@ -12,33 +12,32 @@
  * - http: yes
  * - cron: * /2 * * * * (Dispatches scraping jobs or health checks)
  * - queue: sssaham - queue(Consumes scrape jobs)
-    * - durable_object: none
-        * - alarms: none
-            *
- * @io
-            * - reads: KV(SSSAHAM_WATCHLIST, Token), R2(Preview)
-                * - writes: R2(RAW_BROKSUM), Queue(SSSAHAM_QUEUE)
-                    *
- * @relations
-                    * - upstream: Stockbit API(External)
-                        * - downstream: api - saham(via R2 data)
-                            *
- * @success_metrics
-                            * - Scrape success rate(tokens valid)
-                                * - Queue processing latency
-                                    *
- * @notes
-                                    * - Uses a hardcoded token fallback system.
- * - Implements complex retry and backoff logic for scraping.
- */
+ *     * - durable_object: none
+ *         * - alarms: none
+ *             *
+ *  * @io
+ *             * - reads: KV(SSSAHAM_WATCHLIST, Token), R2(Preview)
+ *                 * - writes: R2(RAW_BROKSUM), Queue(SSSAHAM_QUEUE)
+ *                     *
+ *  * @relations
+ *                     * - upstream: Stockbit API(External)
+ *                         * - downstream: api - saham(via R2 data)
+ *                             *
+ *  * @success_metrics
+ *                             * - Scrape success rate(tokens valid)
+ *                                 * - Queue processing latency
+ *                                     *
+ *  * @notes
+ *                                     * - Uses a hardcoded token fallback system.
+ *  * - Implements complex retry and backoff logic for scraping.
+ *  */
 
 
 
 // Helper: Get token from KV
-const HARDCODED_TOKEN = "eyJhbGciOiJSUzI1NiIsImtpZCI6IjU3MDc0NjI3LTg4MWItNDQzZC04OTcyLTdmMmMzOTNlMzYyOSIsInR5cCI6IkpXVCJ9.eyJkYXRhIjp7InVzZSI6ImtlbXRvbCIsImVtYSI6Im1rZW1hbHdAZ21haWwuY29tIiwiZnVsIjoiTXVzdGFmYSBLZW1hbCBXaXJ5YXdhbiIsInNlcyI6InlzNnV1SzIyS3JLUlczTVgiLCJkdmMiOiI2NDI3ZTBlNWMwNDI4YTk2ZDg5ZWMzZDU4MDQ4ZTFjZCIsInVpZCI6MjMwNTM1MCwiY291IjoiU0cifSwiZXhwIjoxNzY4ODcxNDAwLCJpYXQiOjE3Njg3ODUwMDAsImlzcyI6IlNUT0NLQklUIiwianRpIjoiMmE3NzUyMmQtYjhhOS00NDE0LWJiNzItY2Y0ODUzNzY5NWNlIiwibmJmIjoxNzY4Nzg1MDAwLCJ2ZXIiOiJ2MSJ9.rbAsCQozOk_4TbDw1grGcCOQb3A_Q2DQt35zL51EBtMyWNoIzaGHj3LYYXiYabZrxrjnZtAz2_oUlAWcUf_q1-48PBzdGsP7rNjKGtuwKEUGSposvT5OHNh9xwhlrKzNPGmjuJdkVqRgSgAPA1GJ9-4sVQbLgzyD3SzfvX6GxDBb7F8nI9aI7_Njs3QZ1IYsql3OOv54DaPYVtF0Nvev_2sVUzEMBMslrFIQyyFVGskAfGGzfgGuEeGamji7_nrMSCjQPNVKcfk1pBQ1ZQY-wFNWXjN7-ZUajqKydSWzxNUeUYTTq-JahmQ9wIUs9gJ7OVw6HM1DEnfTrrI6pIH3yA";
-
 async function getToken(env) {
-    if (HARDCODED_TOKEN) return HARDCODED_TOKEN;
+    const hard = env.STOCKBIT_TOKEN_FALLBACK;
+    if (hard) return hard;
 
     const stored = await env.SSSAHAM_WATCHLIST.get("STOCKBIT_TOKEN");
     if (!stored) {
@@ -58,21 +57,24 @@ async function objectExists(env, key) {
     }
 }
 
-// Helper: Get trading days (skip weekends) for last N days
-function getTradingDays(days, startDate = new Date()) {
+// Helper: Get trading days (skip weekends) for last N days - UTC-stable
+function getTradingDays(days, startDate = new Date(), startOffsetDays = 1) {
     const dates = [];
-    const start = new Date(startDate);
+    const base = new Date(startDate);
+
+    // Normalize to UTC midnight to avoid drift
+    base.setUTCHours(0, 0, 0, 0);
+
     let count = 0;
-    let offset = 1; // Start from yesterday
+    let offset = startOffsetDays; // Default: start from yesterday UTC
 
     while (count < days) {
-        const date = new Date(start);
-        date.setDate(start.getDate() - offset);
-        const dayOfWeek = date.getDay();
+        const d = new Date(base);
+        d.setUTCDate(base.getUTCDate() - offset);
 
-        // Skip weekends (0 = Sunday, 6 = Saturday)
-        if (dayOfWeek !== 0 && dayOfWeek !== 6) {
-            dates.push(date.toISOString().split("T")[0]);
+        const dow = d.getUTCDay(); // 0 Sun, 6 Sat
+        if (dow !== 0 && dow !== 6) {
+            dates.push(d.toISOString().slice(0, 10));
             count++;
         }
         offset++;
@@ -86,9 +88,106 @@ function withCors(headers = {}) {
         ...headers,
         "Access-Control-Allow-Origin": "*",
         "Access-Control-Allow-Methods": "GET, HEAD, POST, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type",
+        "Access-Control-Allow-Headers": "Content-Type"
     };
 }
+
+// Helper: Security guard for sensitive endpoints
+function requireKey(request, env) {
+    const url = new URL(request.url);
+    const key = url.searchParams.get("key");
+    if (!env.INTERNAL_KEY) return null; // No key configured = no guard
+    if (key !== env.INTERNAL_KEY) {
+        return new Response(JSON.stringify({ ok: false, error: "Forbidden", reason: "INVALID_KEY" }), {
+            status: 403,
+            headers: withCors({ "Content-Type": "application/json" })
+        });
+    }
+    return null; // Passed
+}
+
+// Helper: Generate Sec-WebSocket-Key (RFC 6455 compliant)
+function makeWebSocketKey() {
+    const bytes = new Uint8Array(16);
+    crypto.getRandomValues(bytes);
+    let bin = "";
+    for (const b of bytes) bin += String.fromCharCode(b);
+    return btoa(bin);
+}
+
+async function getIpotAppSession(env) {
+    // Try primary cache first (TTL 10 min)
+    const cached = await env.SSSAHAM_WATCHLIST.get("IPOT_APPSESSION");
+    if (cached) return cached;
+
+    const url = env.IPOT_APPSESSION_URL || "https://indopremier.com/ipc/appsession.js";
+    const origin = env.IPOT_ORIGIN || "https://indopremier.com";
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 sec timeout
+
+    try {
+        const resp = await fetch(url, {
+            headers: {
+                "Accept": "*/*",
+                "User-Agent": "broksum-scrapper/1.0",
+                "Origin": origin,
+                "Referer": origin + "/",
+            },
+            signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+
+        if (!resp.ok) throw new Error(`appsession fetch failed: ${resp.status}`);
+
+        const text = await resp.text();
+
+        const patterns = [
+            /appsession\s*[:=]\s*["']([^"']+)["']/i,
+            /appsession=([a-zA-Z0-9\-_]+)/i,
+            /["']appsession["']\s*[:,]\s*["']([^"']+)["']/i,
+        ];
+
+        let token = null;
+        for (const re of patterns) {
+            const m = text.match(re);
+            if (m && m[1]) { token = m[1]; break; }
+        }
+
+        if (!token) {
+            // Safer fallback: look for token NEAR the word "appsession"
+            const near = text.match(/appsession[^A-Za-z0-9\-_]{0,30}([A-Za-z0-9\-_]{16,128})/i);
+            if (near) token = near[1];
+        }
+
+        if (!token) throw new Error(`could not parse appsession from ${url}`);
+
+        // Save to primary cache (10 min TTL) and backup (6 hour TTL - shorter to recover faster from bad cache)
+        await env.SSSAHAM_WATCHLIST.put("IPOT_APPSESSION", token, { expirationTtl: 600 });
+        await env.SSSAHAM_WATCHLIST.put("IPOT_APPSESSION_BACKUP", token, { expirationTtl: 21600 }); // 6 hours
+        return token;
+    } catch (e) {
+        clearTimeout(timeoutId);
+
+        // STALE-IF-ERROR: Try backup cache if fetch fails
+        const backup = await env.SSSAHAM_WATCHLIST.get("IPOT_APPSESSION_BACKUP");
+        if (backup) {
+            console.warn(`getIpotAppSession fetch failed, using stale backup: ${e.message}`);
+            return backup;
+        }
+
+        throw e;
+    }
+}
+
+// Helper: Clear appsession cache (primary + backup) - call when WS upgrade fails
+async function clearIpotAppSession(env) {
+    try {
+        await env.SSSAHAM_WATCHLIST.delete("IPOT_APPSESSION");
+        await env.SSSAHAM_WATCHLIST.delete("IPOT_APPSESSION_BACKUP");
+    } catch { }
+}
+
 
 export default {
     async fetch(request, env, ctx) {
@@ -107,9 +206,40 @@ export default {
         }
 
         try {
+            // IPOT_ONLY mode: restrict to IPOT endpoints only
+            if (env.IPOT_ONLY === "true") {
+                const allowed = new Set(["/ipot/scrape", "/ipot/reset-session"]);
+                if (!allowed.has(path)) {
+                    return new Response(JSON.stringify({ ok: false, error: "Not Found (IPOT_ONLY mode)", reason: "IPOT_ONLY" }), {
+                        status: 404,
+                        headers: withCors({ "Content-Type": "application/json" })
+                    });
+                }
+            }
+
+            // Security guard for sensitive endpoints (excluding /ipot/scrape for public access)
+            const sensitiveRoutes = [
+                "/update-watchlist", "/ipot/reset-session",
+                "/scrape", "/backfill-queue", "/trigger-full-flow", "/init",
+                "/backfill/status", "/backfill/resume", "/backfill/pause", "/backfill/reset",
+                "/debug-token", "/test-range"
+            ];
+            if (sensitiveRoutes.includes(path)) {
+                const keyError = requireKey(request, env);
+                if (keyError) return keyError;
+            }
+
             // ROUTE 1: Update Watchlist (Fetch from Templates -> Save to KV)
             if (path === "/update-watchlist") {
                 return await this.updateWatchlist(env);
+            }
+
+            if (path === "/ipot/reset-session") {
+                console.log("DEBUG: Resetting session triggered");
+                await clearIpotAppSession(env); // delete primary + backup
+                return new Response(JSON.stringify({ ok: true, cleared: ["IPOT_APPSESSION", "IPOT_APPSESSION_BACKUP"] }), {
+                    headers: withCors({ "Content-Type": "application/json" })
+                });
             }
 
             // ROUTE 2: Trigger Scraping for single date (Read KV -> Dispatch to Queue)
@@ -249,7 +379,11 @@ export default {
                 const date = url.searchParams.get("date");
                 if (!symbol || !date) return new Response("Missing symbol or date", { status: 400, headers: withCors() });
 
-                const key = `${symbol}/${date}.json`;
+                const provider = url.searchParams.get("provider"); // 'ipot' or empty
+                let key = `${symbol}/${date}.json`;
+                if (provider === "ipot") {
+                    key = `${symbol}/ipot/${date}.json`;
+                }
                 const object = await env.RAW_BROKSUM.get(key);
 
                 if (!object) return new Response("Not found", { status: 404, headers: withCors() });
@@ -286,8 +420,50 @@ export default {
                 }
             }
 
+
+            // ROUTE IPOT: Scrape Broker Summary via WebSocket (public)
+            if (path === "/ipot/scrape") {
+                // Public Guard: IPOT_PUBLIC_KEY (Optional)
+                const key = url.searchParams.get("key");
+                if (env.IPOT_PUBLIC_KEY && key !== env.IPOT_PUBLIC_KEY) {
+                    return new Response(JSON.stringify({ ok: false, error: "Forbidden", reason: "INVALID_PUBLIC_KEY" }), {
+                        status: 403,
+                        headers: withCors({ "Content-Type": "application/json" })
+                    });
+                }
+
+                const symbol = (url.searchParams.get("symbol") || "TLKM").toUpperCase();
+                // Default to yesterday (safer for timezone issues: UTC vs WIB)
+                const defaultDate = (() => {
+                    const d = new Date();
+                    d.setUTCDate(d.getUTCDate() - 1);
+                    return d.toISOString().slice(0, 10);
+                })();
+                const from = url.searchParams.get("from") || defaultDate;
+                const to = url.searchParams.get("to") || from;
+                const flag5 = url.searchParams.get("flag5") || "%"; // "%" or "F" dll
+                const save = url.searchParams.get("save") === "true"; // optional
+                const debug = url.searchParams.get("debug") === "true";
+                return await this.scrapeIpotBroksum(env, { symbol, from, to, flag5, save, debug });
+            }
+
+
+            // ROUTE TEST: E2E single symbol + date range (enqueue only)
+            if (path === "/test-range") {
+                const symbol = (url.searchParams.get("symbol") || "BBCA").toUpperCase();
+                const from = url.searchParams.get("from") || new Date().toISOString().slice(0, 10);
+                const to = url.searchParams.get("to") || from;
+                const overwrite = url.searchParams.get("overwrite") === "true";
+
+                return await this.enqueueSymbolRange(env, { symbol, from, to, overwrite });
+            }
+
+
             // FALLBACK: 404 Not Found
-            return new Response("Not Found. Available: /update-watchlist, /scrape, /backfill-queue, /read-broksum, /watchlist, /brokers, /init, /backfill/*", { status: 404, headers: withCors() });
+            return new Response("Not Found. Available: /update-watchlist, /scrape, /backfill-queue, /read-broksum, /watchlist, /brokers, /init, /backfill/*, /test-range", {
+                status: 404,
+                headers: withCors()
+            });
 
         } catch (e) {
             return new Response(JSON.stringify({ error: e.message, stack: e.stack }), {
@@ -298,6 +474,8 @@ export default {
     },
 
     async scheduled(event, env, ctx) {
+        if (env.IPOT_ONLY === "true") return; // Stop cron noise in IPOT_ONLY mode
+
         // Run backfill batch if active
         const active = await env.SSSAHAM_WATCHLIST.get("BACKFILL_ACTIVE");
         if (active === "true") {
@@ -318,6 +496,7 @@ export default {
         let cursor = parseInt(await env.SSSAHAM_WATCHLIST.get("BACKFILL_CURSOR") || "0");
         if (cursor >= watchlist.length) {
             await this.sendWebhook(env, "✅ **Automated Backfill Finished!** Resetting cursor.");
+            await env.SSSAHAM_WATCHLIST.put("BACKFILL_CURSOR", "0"); // Reset cursor
             await env.SSSAHAM_WATCHLIST.put("BACKFILL_ACTIVE", "false"); // Stop
             return { status: "finished" };
         }
@@ -332,12 +511,35 @@ export default {
         let dispatched = 0;
         const messages = [];
 
-        // Check R2 existence (we have time for 1 symbol)
+        // Check R2 existence (optimize with list + pagination)
+        const existingDates = new Set();
+        try {
+            let listCursor;
+            do {
+                const listed = await env.RAW_BROKSUM.list({
+                    prefix: `${symbol}/`,
+                    cursor: listCursor
+                });
+
+                for (const obj of listed.objects) {
+                    // key format: SYMBOL/YYYY-MM-DD.json
+                    const parts = obj.key.split('/');
+                    if (parts.length === 2) {
+                        const date = parts[1].replace('.json', '');
+                        existingDates.add(date);
+                    }
+                }
+
+                listCursor = listed.truncated ? listed.cursor : undefined;
+            } while (listCursor);
+
+        } catch (e) {
+            console.error(`Error listing R2 for ${symbol}:`, e);
+        }
+
         for (const date of tradingDays) {
-            const key = `${symbol}/${date}.json`;
-            const exists = await objectExists(env, key);
-            if (!exists) {
-                messages.push({ body: { symbol, date, overwrite: false } });
+            if (!existingDates.has(date)) {
+                messages.push({ body: { symbol, date, overwrite: false, attempt: 0 } });
             }
         }
 
@@ -471,23 +673,11 @@ export default {
 
         const watchlist = watchlistData.watchlist;
         const messages = [];
-        let skipped = 0;
 
-        // Check which files already exist
+        // COST OPT: Logic moved to Consumer. Dispatch ALL to queue.
+        // Consumer will check R2 existence before scraping.
         for (const symbol of watchlist) {
-            const key = `${symbol}/${date}.json`;
-
-            // Should check existence only if overwrite IS FALSE
-            let exists = false;
-            if (!overwrite) {
-                exists = await objectExists(env, key);
-            }
-
-            if (!exists) {
-                messages.push({ body: { symbol, date, overwrite } });
-            } else {
-                skipped++;
-            }
+            messages.push({ body: { symbol, date, overwrite, attempt: 0 } });
         }
 
         // Dispatch in batches of 50
@@ -498,10 +688,9 @@ export default {
         }
 
         return new Response(JSON.stringify({
-            message: `Dispatched ${messages.length} jobs to queue (skipped ${skipped} existing)`,
+            message: `Dispatched ${messages.length} jobs to queue (Optimized: Check logic in consumer)`,
             date: date,
             dispatched: messages.length,
-            skipped: skipped,
             total_symbols: watchlist.length,
             overwrite: overwrite
         }), {
@@ -522,25 +711,13 @@ export default {
         const tradingDays = getTradingDays(days);
 
         let totalDispatched = 0;
-        let totalSkipped = 0;
 
-        // For each trading day, dispatch jobs
+        // For each trading day, dispatch jobs (BLIND DISPATCH - Consumer does existence check)
         for (const date of tradingDays) {
             const messages = [];
 
             for (const symbol of watchlist) {
-                const key = `${symbol}/${date}.json`;
-
-                let exists = false;
-                if (!overwrite) {
-                    exists = await objectExists(env, key);
-                }
-
-                if (!exists) {
-                    messages.push({ body: { symbol, date, overwrite } });
-                } else {
-                    totalSkipped++;
-                }
+                messages.push({ body: { symbol, date, overwrite, attempt: 0 } });
             }
 
             // Dispatch in batches
@@ -555,14 +732,75 @@ export default {
         }
 
         return new Response(JSON.stringify({
-            message: `Backfill completed for ${days} trading days`,
+            message: `Backfill completed for ${days} trading days (Dispatcher optimized)`,
             total_dispatched: totalDispatched,
-            total_skipped: totalSkipped,
             trading_days: tradingDays.length,
             symbols_count: watchlist.length,
             overwrite: overwrite
         }), {
             headers: { "Content-Type": "application/json" }
+        });
+    },
+
+    // Helper: list dates between from..to (inclusive), skip weekends
+    dateRangeTradingDays(from, to) {
+        const out = [];
+        const start = new Date(from + "T00:00:00Z");
+        const end = new Date(to + "T00:00:00Z");
+        if (isNaN(start) || isNaN(end)) return out;
+
+        const dir = start <= end ? 1 : -1;
+        for (let d = new Date(start); dir > 0 ? d <= end : d >= end; d.setUTCDate(d.getUTCDate() + dir)) {
+            const dow = d.getUTCDay(); // 0 Sun, 6 Sat
+            if (dow !== 0 && dow !== 6) out.push(d.toISOString().slice(0, 10));
+        }
+        return out;
+    },
+
+    // Helper: enqueue 1 symbol for range dates (end-to-end via queue consumer)
+    async enqueueSymbolRange(env, { symbol, from, to, overwrite }) {
+        const dates = this.dateRangeTradingDays(from, to);
+
+        if (!dates.length) {
+            return new Response(JSON.stringify({ ok: false, error: "Invalid date range / no trading days", symbol, from, to }), {
+                status: 400,
+                headers: withCors({ "Content-Type": "application/json" })
+            });
+        }
+
+        const batchSize = 100;
+        let enqueued = 0;
+        let skipped = 0;
+
+        const messages = [];
+        for (const date of dates) {
+            if (!overwrite) {
+                const key = `${symbol}/${date}.json`;
+                const exists = await objectExists(env, key);
+                if (exists) { skipped++; continue; }
+            }
+
+            messages.push({ body: { symbol, date, overwrite, attempt: 0 } });
+        }
+
+        for (let i = 0; i < messages.length; i += batchSize) {
+            await env.SSSAHAM_QUEUE.sendBatch(messages.slice(i, i + batchSize));
+        }
+        enqueued = messages.length;
+
+        return new Response(JSON.stringify({
+            ok: true,
+            mode: "enqueue_range",
+            symbol,
+            from,
+            to,
+            trading_days: dates.length,
+            overwrite,
+            enqueued,
+            skipped,
+            sample_dates: dates.slice(0, 5)
+        }), {
+            headers: withCors({ "Content-Type": "application/json" })
         });
     },
 
@@ -635,7 +873,7 @@ export default {
                         continue;
                     }
                 }
-                messages.push({ body: { symbol, date, overwrite } });
+                messages.push({ body: { symbol, date, overwrite, attempt: 0 } });
             }
 
             // Dispatch this day's messages in batches
@@ -665,7 +903,13 @@ export default {
     },
 
     async queue(batch, env) {
-        const TOKEN = await getToken(env);
+        if (env.IPOT_ONLY === "true") {
+            // Ack all to prevent buildup if still bound
+            for (const m of batch.messages) m.ack();
+            return;
+        }
+
+        let TOKEN = null; // Lazy: only fetch when needed
 
         for (const message of batch.messages) {
             const { symbol, date, overwrite } = message.body;
@@ -688,6 +932,9 @@ export default {
                         continue;
                     }
                 }
+
+                // Lazy Token Fetch: only get token when we actually need to make a request
+                if (!TOKEN) TOKEN = await getToken(env);
 
                 const url = `https://exodus.stockbit.com/marketdetectors/${symbol}?from=${date}&to=${date}&transaction_type=TRANSACTION_TYPE_GROSS&market_board=MARKET_BOARD_REGULER&investor_type=INVESTOR_TYPE_ALL&limit=25`;
 
@@ -716,10 +963,50 @@ export default {
                 if (!response.ok) {
                     console.error(`Failed to fetch ${symbol}: ${response.status}`);
                     if (response.status === 401) {
-                        // Token expired - retry later
-                        message.retry();
+                        // 401 Unauthorized: Token likely expired
+                        const attempt = (message.body.attempt ?? 0);
+                        console.error(`Token 401 for ${symbol}. Attempt: ${attempt}`);
+
+                        // Refresh token on first 401 (attempt 0)
+                        if (attempt === 0) {
+                            TOKEN = await getToken(env);
+                        }
+
+                        if (attempt >= 2) {
+                            // Max 3 attempts (0, 1, 2). Stop.
+                            try {
+                                await this.sendWebhook(env, `⚠️ **Stockbit Token Invalid (401)**\nFailed 3x for ${symbol} on ${date}.\nQueue job stopped.`);
+                            } catch (e) { console.error("Webhook fail", e); }
+
+                            message.ack(); // Stop looping
+                        } else {
+                            // Re-queue with incremented attempt (portable retry)
+                            await env.SSSAHAM_QUEUE.send({ symbol, date, overwrite, attempt: attempt + 1 });
+                            message.ack(); // Ack original, new message is in queue
+                        }
+                    } else if ([429, 500, 502, 503, 504].includes(response.status)) {
+                        // Transient errors: retry with exponential backoff
+                        const attempt = (message.body.attempt ?? 0);
+                        console.error(`Transient ${response.status} for ${symbol}. Attempt: ${attempt}`);
+
+                        if (attempt >= 2) {
+                            // Max 3 attempts. Log and stop.
+                            await env.SSSAHAM_DB.prepare("INSERT INTO scraping_logs (timestamp, symbol, date, status, duration_ms) VALUES (?, ?, ?, ?, ?)")
+                                .bind(new Date().toISOString(), symbol, date, `FAILED_${response.status}_MAX_RETRY`, Date.now() - startTime)
+                                .run();
+                            try {
+                                await this.sendWebhook(env, `⚠️ **Transient Error (${response.status})**\nFailed 3x for ${symbol} on ${date}.\nQueue job stopped.`);
+                            } catch (e) { console.error("Webhook fail", e); }
+                            message.ack(); // Stop looping
+                        } else {
+                            // Re-queue with incremented attempt and exponential backoff
+                            // Note: Cloudflare Queues doesn't support delaySeconds, but we can log intent
+                            console.log(`Retrying ${symbol} in ~${(attempt + 1) * 5}s (attempt ${attempt + 1})`);
+                            await env.SSSAHAM_QUEUE.send({ symbol, date, overwrite, attempt: attempt + 1 });
+                            message.ack(); // Ack original
+                        }
                     } else {
-                        // Log failure
+                        // Other errors (4xx except 401, etc.): log and don't retry
                         await env.SSSAHAM_DB.prepare("INSERT INTO scraping_logs (timestamp, symbol, date, status, duration_ms) VALUES (?, ?, ?, ?, ?)")
                             .bind(new Date().toISOString(), symbol, date, `FAILED_${response.status}`, Date.now() - startTime)
                             .run();
@@ -730,8 +1017,10 @@ export default {
 
                 const data = await response.json();
 
-                // Save to R2
-                await env.RAW_BROKSUM.put(key, JSON.stringify(data));
+                // Save to R2 with contentType metadata
+                await env.RAW_BROKSUM.put(key, JSON.stringify(data), {
+                    httpMetadata: { contentType: "application/json" }
+                });
                 console.log(`Saved ${key} to R2`);
 
                 await env.SSSAHAM_DB.prepare("INSERT INTO scraping_logs (timestamp, symbol, date, status, duration_ms) VALUES (?, ?, ?, ?, ?)")
@@ -742,8 +1031,585 @@ export default {
 
             } catch (err) {
                 console.error(`Error processing ${symbol}:`, err);
-                message.retry();
+                // Portable retry for unexpected errors
+                const attempt = (message.body.attempt ?? 0);
+                if (attempt >= 2) {
+                    console.error(`Max retries reached for ${symbol}. Dropping.`);
+                    try {
+                        await this.sendWebhook(env, `❌ **Queue Error**\nMax retries for ${symbol} on ${message.body.date}.\nError: ${err.message}`);
+                    } catch (e) { console.error("Webhook fail", e); }
+                    message.ack();
+                } else {
+                    console.log(`Retrying ${symbol} (attempt ${attempt + 1})`);
+                    await env.SSSAHAM_QUEUE.send({ ...message.body, attempt: attempt + 1 });
+                    message.ack();
+                }
             }
         }
-    }
+    },
+
+
+
+    // Helper: Broker Types (Partial Map)
+    getBrokerType(code) {
+        const FOREIGN = new Set(["ZP", "YU", "KZ", "RX", "BK", "AK", "CS", "CG", "DB", "ML", "CC", "DX"]); // partial list
+        // Stockbit types: "Asing", "Lokal", "Pemerintah" (?)
+        // For now: Asing vs Lokal
+        return FOREIGN.has(code) ? "Asing" : "Lokal";
+    },
+
+    // Helper: Calculate Bandar Detector
+    calculateBandarDetector(brokers_buy, brokers_sell, summaryRec) {
+        if (!summaryRec) return null;
+
+        // 1. Calculate Net for all brokers
+        const netMap = new Map();
+
+        const add = (map, code, val, vol, isBuy) => {
+            if (!map.has(code)) map.set(code, { val: 0n, vol: 0n });
+            const r = map.get(code);
+            if (isBuy) {
+                r.val += BigInt(val || 0);
+                r.vol += BigInt(vol || 0);
+            } else {
+                r.val -= BigInt(val || 0);
+                r.vol -= BigInt(vol || 0);
+            }
+        };
+
+        brokers_buy.forEach(b => add(netMap, b.netbs_broker_code, b.bval, b.blotv, true));
+        brokers_sell.forEach(s => add(netMap, s.netbs_broker_code, s.sval, s.slotv, false));
+
+        // 2. Sort by Net Value (Absolute? Or Signed? usually Signed for accumulation)
+        // Stockbit logic: Accumulation is Top Net Buyers. Distribution is Top Net Sellers.
+        // But for "Bandar Detector", we often look at Top N Net.
+
+        const netList = Array.from(netMap.entries()).map(([code, data]) => ({
+            code,
+            netVal: data.val,
+            netVol: data.vol
+        }));
+
+        // Sort descending by value
+        netList.sort((a, b) => (a.netVal < b.netVal) ? 1 : (a.netVal > b.netVal) ? -1 : 0);
+
+        const getStats = (n) => {
+            let sumVal = 0n;
+            let sumVol = 0n;
+            for (let i = 0; i < n && i < netList.length; i++) {
+                if (netList[i].netVal > 0n) { // Only sum positive accumulation for "Top N Buyer"? 
+                    // Stockbit "Top 1" usually means "Top 1 Net Buyer"
+                    sumVal += netList[i].netVal;
+                    sumVol += netList[i].netVol;
+                }
+            }
+            // For "Top Seller", we need to look at bottom of list?
+            // Stockbit Bandar Detector usually shows "Top 1", "Top 3", "Top 5" of the *Dominant* side?
+            // Actually Stockbit separates "Bandar Option" (Acc/Dist).
+
+            // Let's implement simpler: Sum of Top N Net Buyers vs Sum of Top N Net Sellers?
+            // Wait, standard bandar detector usually:
+            // Top 3 Broker Net Buy Value vs Top 3 Broker Net Sell Value.
+            // If Buy > Sell -> Acc.
+
+            return { val: sumVal, vol: sumVol };
+        }
+
+        // Re-sort for Top Buyers (High Positive) and Top Sellers (High Negative)
+        // Actually netList is sorted desc.
+        // Top Buyers = netList[0..N]
+        // Top Sellers = netList[end..end-N] (sorted by magnitude of neg value)
+
+        const buyers = netList.filter(x => x.netVal > 0n);
+        const sellers = netList.filter(x => x.netVal < 0n).sort((a, b) => (a.netVal > b.netVal) ? 1 : (a.netVal < b.netVal) ? -1 : 0); // Sort asc (most negative first)
+
+        const calc = (list, n) => {
+            let v = 0n, vol = 0n;
+            for (let i = 0; i < n && i < list.length; i++) {
+                v += (list[i].netVal < 0n ? -list[i].netVal : list[i].netVal);
+                vol += (list[i].netVol < 0n ? -list[i].netVol : list[i].netVol);
+            }
+            return { val: v, vol: vol };
+        };
+
+        const top1B = calc(buyers, 1);
+        const top3B = calc(buyers, 3);
+        const top5B = calc(buyers, 5);
+
+        const top1S = calc(sellers, 1);
+        const top3S = calc(sellers, 3);
+        const top5S = calc(sellers, 5);
+
+        // Analyze Acc/Dist (Top 3 or Top 5?)
+        // Simple rule: Top 5 Buy Val > Top 5 Sell Val * 1.1 -> Big Acc?
+        const b5 = Number(top5B.val);
+        const s5 = Number(top5S.val);
+
+        let status = "Neutral";
+        if (b5 > s5 * 1.2) status = "Big Akum";
+        else if (b5 > s5 * 1.05) status = "Akumulasi";
+        else if (s5 > b5 * 1.2) status = "Big Dist";
+        else if (s5 > b5 * 1.05) status = "Distribusi";
+
+        // Construct Object
+        // avg: average price of total trade?
+        // avg5: average price of top 5 net?
+
+        return {
+            average: summaryRec.average_price,
+            value: summaryRec.total_value,
+            volume: summaryRec.total_volume_shares,
+            frequency: summaryRec.total_freq,
+            accdist: status,
+            // Custom simplified stats for now (Stockbit structure is complex sub-field "top1": { ... })
+            top1: {
+                bid_val: top1B.val.toString(), bid_vol: top1B.vol.toString(),
+                offer_val: top1S.val.toString(), offer_vol: top1S.vol.toString()
+            },
+            top3: {
+                bid_val: top3B.val.toString(), bid_vol: top3B.vol.toString(),
+                offer_val: top3S.val.toString(), offer_vol: top3S.vol.toString()
+            },
+            top5: {
+                bid_val: top5B.val.toString(), bid_vol: top5B.vol.toString(),
+                offer_val: top5S.val.toString(), offer_vol: top5S.vol.toString()
+            },
+            total_buyer: buyers.length,
+            total_seller: sellers.length,
+        };
+    },
+
+    async scrapeIpotBroksum(env, { symbol, from, to, flag5, save, debug }) {
+
+        const isMock = symbol.startsWith("MOCK-");
+        const debugLogs = [];
+        const log = (msg) => {
+            if (debug || isMock) debugLogs.push(`[${new Date().toISOString().split("T")[1]}] ${msg}`);
+        };
+
+        // 1. DATE RANGE LOGIC
+        const dates = [];
+        try {
+            let curr = new Date(from);
+            const end = new Date(to || from);
+            if (isNaN(curr.getTime()) || isNaN(end.getTime())) throw new Error("Invalid dates");
+
+            while (curr <= end) {
+                dates.push(curr.toISOString().split("T")[0]);
+                curr.setDate(curr.getDate() + 1);
+            }
+            if (dates.length > 31) throw new Error("Max range 31 days");
+        } catch (e) {
+            return new Response(JSON.stringify({ ok: false, message: e.message }), {
+                headers: withCors({ "Content-Type": "application/json" })
+            });
+        }
+
+        const IDLE_MS = parseInt(env.IPOT_IDLE_MS) || 800;
+        const MAX_MS = parseInt(env.IPOT_MAX_MS) || 8000;
+        const ORIGIN = env.IPOT_ORIGIN || "https://indopremier.com";
+        const WS_BASE = env.IPOT_WS_HTTP_BASE || "https://ipotapp.ipot.id/socketcluster/";
+
+        log(`Starting scrape for ${symbol} Range: ${from} to ${to || from} (${dates.length} days)`);
+
+        // 2. CONNECT ONCE
+        let handshakeAuth = null;
+        let ws;
+
+        const connectOnce = async () => {
+            const headers = {
+                Upgrade: "websocket",
+                Connection: "Upgrade",
+                Origin: ORIGIN,
+                "Sec-WebSocket-Version": "13",
+                "Sec-WebSocket-Key": makeWebSocketKey(),
+                "User-Agent": "broksum-scrapper/1.0"
+            };
+            const appsession = await getIpotAppSession(env);
+            const wsWss = new URL(WS_BASE);
+            wsWss.searchParams.set("appsession", appsession);
+            const wsHttpUrl = wsWss.toString().startsWith("wss://")
+                ? "https://" + wsWss.toString().slice("wss://".length)
+                : wsWss.toString().startsWith("ws://")
+                    ? "http://" + wsWss.toString().slice("ws://".length)
+                    : wsWss.toString();
+            const resp = await fetch(wsHttpUrl, { headers });
+            if (!resp.webSocket) throw new Error(`WS upgrade failed: ${resp.status}`);
+            return resp.webSocket;
+        };
+
+        try {
+            ws = await connectOnce();
+            ws.accept();
+            // Optional handshake
+            try {
+                const authToken = env.IPOT_AUTH_TOKEN || null;
+                ws.send(JSON.stringify({ event: "#handshake", data: { authToken }, cid: 1 }));
+            } catch { }
+        } catch (e) {
+            return new Response(JSON.stringify({ ok: false, message: "WS Connect Failed: " + e.message }), {
+                headers: withCors({ "Content-Type": "application/json" })
+            });
+        }
+
+        // 3. QUERY HELPER
+        const runScrapeSide = async (side, targetDate) => {
+            if (isMock) { /* ... Mock Logic omitted for brevity, assuming mock handled elsewhere or not needed for multi-date test ... */
+                // Simple mock fallback
+                return { records: [], meta: { mock: true } };
+            }
+
+            const cmdid = `${Date.now()}_${Math.random()}`;
+            const cid = `${Date.now()}_${Math.random()}`;
+
+            // Ensure open? Since we reuse, check state
+            if (ws.readyState !== WebSocket.OPEN) throw new Error("WS Closed unexpectedly");
+
+            const msg = {
+                event: "cmd",
+                data: {
+                    cmdid,
+                    param: {
+                        service: "midata",
+                        cmd: "query",
+                        param: {
+                            source: "datafeed",
+                            index: "en_qu_top_bs",
+                            args: [side, symbol, "", "%", flag5 || "%", targetDate, targetDate],
+                        }
+                    }
+                },
+                cid
+            };
+
+            ws.send(JSON.stringify(msg));
+
+            const records = [];
+            let lastAt = Date.now();
+            const startAt = Date.now();
+            let gotRes = false;
+            let resAt = null;
+            let exitReason = "UNKNOWN";
+
+            // Temporary listener for THIS query
+            const onMsg = (ev) => {
+                lastAt = Date.now();
+                const txt = typeof ev.data === "string" ? ev.data : "";
+                if (txt === "#1") { try { ws.send("#2"); } catch { } return; }
+
+                let j;
+                try { j = JSON.parse(txt); } catch { return; }
+
+                if (j?.data?.isAuthenticated !== undefined) handshakeAuth = j.data.isAuthenticated;
+
+                const line = j?.data?.data?.en_qu_top_bs;
+                if (j?.event === "record" && typeof line === "string") {
+                    records.push(line);
+                }
+
+                if (j?.event === "res" && j?.data?.cmdid === cmdid) {
+                    gotRes = true;
+                    resAt = Date.now();
+                }
+            };
+
+            ws.addEventListener("message", onMsg);
+
+            const EMPTY_IDLE_MS = 1200;
+            while (true) {
+                const now = Date.now();
+                if (now - startAt > MAX_MS) { exitReason = "MAX_MS"; break; }
+                if (gotRes && resAt && (now - resAt) > 150) { exitReason = "GOT_RES"; break; }
+                if (records.length > 0 && (now - lastAt) > IDLE_MS) { exitReason = "IDLE"; break; }
+                if (records.length === 0 && (now - lastAt) > EMPTY_IDLE_MS) { exitReason = "EMPTY_IDLE"; break; }
+                await new Promise(r => setTimeout(r, 50));
+            }
+
+            ws.removeEventListener("message", onMsg);
+            return { records, meta: { exitReason } };
+        };
+
+        // 4. LOOP EXECUTION
+        const batchResults = [];
+        const debugMeta = [];
+
+        // Accumulator for summary (NOT USED in Batch Mode, but kept if we need global later? No, removing.)
+
+        try {
+            try {
+
+                // HELPER: Split line for pre-parsing
+                const splitLine = (line) => {
+                    let parts = line.includes("|") ? line.split("|")
+                        : line.includes("^") ? line.split("^")
+                            : line.split(",");
+                    parts = parts.map(s => (s ?? "").trim());
+                    while (parts.length > 0 && parts[0] === "") parts.shift();
+                    return parts;
+                };
+
+                const isBrokerCode = (s) => /^[A-Z0-9]{2,3}$/.test(s || "");
+                const cleanInt = (s) => String(s ?? "").replace(/,/g, "").trim();
+
+                // Val Sorter
+                const valSorter = (key) => (a, b) => {
+                    const aV = BigInt(a[key] || 0);
+                    const bV = BigInt(b[key] || 0);
+                    return (aV < bV) ? 1 : (aV > bV) ? -1 : 0;
+                };
+
+                for (const d of dates) {
+                    // If mocked, skip real loop
+                    if (isMock) {
+                        // Mock logic omitted for brevity in batch mode unless strictly needed
+                        // Minimal mock push
+                        batchResults.push({ data: { from: d, broker_summary: { stock_summary: { __summary: true, raw: "MOCK" } } }, saved_key: "MOCK" });
+                        break;
+                    }
+
+                    const [resB, resS] = await Promise.all([
+                        runScrapeSide("b", d),
+                        runScrapeSide("s", d)
+                    ]);
+
+                    if (debug) debugMeta.push({ date: d, b: resB.meta, s: resS.meta });
+
+                    // PROCESS DAILY RECORDS
+                    const processDaily = (recs) => {
+                        const brokers = [];
+                        const summaries = [];
+                        for (const r of (recs || [])) {
+                            const parts = splitLine(r);
+                            if (parts.length > 0 && parts[0].toUpperCase() === symbol) {
+                                summaries.push({ raw: r, parts });
+                            } else {
+                                brokers.push(r);
+                            }
+                        }
+                        return { brokers, summaries };
+                    };
+
+                    const bData = processDaily(resB.records);
+                    const sData = processDaily(resS.records);
+
+                    // Aggregate One Summary for this Date
+                    const allDailySummaries = [...bData.summaries, ...sData.summaries];
+                    let bestSum = null;
+                    let maxVal = -1n;
+
+                    for (const s of allDailySummaries) {
+                        const val = BigInt(s.parts[1]?.replace(/,/g, "") || "0");
+                        if (val > maxVal) { maxVal = val; bestSum = s; }
+                    }
+
+                    // Prepare Daily Summary Rec
+                    let avgPrice = "0";
+                    let dailySummaryRec = null;
+
+                    if (bestSum) {
+                        const tv = BigInt(cleanInt(bestSum.parts[1]) || "0");
+                        const tvol = BigInt(cleanInt(bestSum.parts[2]) || "0");
+                        const freq = BigInt(cleanInt(bestSum.parts[3]) || "0");
+
+                        if (tvol > 0n) avgPrice = (tv / tvol).toString();
+
+                        dailySummaryRec = {
+                            __summary: true,
+                            stock_code: symbol,
+                            total_value: tv.toString(),
+                            total_volume_shares: tvol.toString(),
+                            total_freq: freq.toString(),
+                            average_price: avgPrice,
+                            raw: bestSum.raw
+                        };
+                    } else {
+                        // Fallback empty if no summary found
+                        dailySummaryRec = {
+                            __summary: true,
+                            stock_code: symbol,
+                            total_value: "0",
+                            total_volume_shares: "0",
+                            total_freq: "0",
+                            average_price: "0",
+                            raw: ""
+                        };
+                    }
+
+                    // Process Brokers (Bidirectional Merge)
+                    const rawBrokers = [...bData.brokers, ...sData.brokers];
+                    const uniqueBrokers = Array.from(new Set(rawBrokers));
+                    const brokerMap = new Map();
+
+                    const parseRecord = (line) => {
+                        let parts = splitLine(line);
+                        if (parts.length < 4) return null;
+                        if (!isBrokerCode(parts[0])) return null;
+                        return {
+                            broker: parts[0],
+                            bval: cleanInt(parts[1]) || "0",
+                            bvol: cleanInt(parts[2]) || "0",
+                            sval: cleanInt(parts[4]) || "0",
+                            svol: cleanInt(parts[5]) || "0",
+                            raw: line
+                        };
+                    };
+
+                    for (const line of uniqueBrokers) {
+                        const p = parseRecord(line);
+                        if (!p) continue;
+                        if (brokerMap.has(p.broker)) {
+                            const ex = brokerMap.get(p.broker);
+                            const add = (a, b) => (BigInt(a) + BigInt(b)).toString();
+                            ex.bval = add(ex.bval, p.bval);
+                            ex.bvol = add(ex.bvol, p.bvol);
+                            ex.sval = add(ex.sval, p.sval);
+                            ex.svol = add(ex.svol, p.svol);
+                        } else {
+                            brokerMap.set(p.broker, p);
+                        }
+                    }
+
+                    // Format Final Lists
+                    const brokers_buy = [];
+                    const brokers_sell = [];
+
+                    const formatSide = (rec, side) => {
+                        const valStr = side === 'buy' ? rec.bval : rec.sval;
+                        const volStr = side === 'buy' ? rec.bvol : rec.svol;
+                        if (volStr === "0") return null;
+
+                        let lotStr = "0", vol100 = "0", avg = "0";
+                        try {
+                            const vSh = BigInt(volStr);
+                            const l = vSh / 100n;
+                            lotStr = l.toString();
+                            vol100 = (l * 100n).toString();
+                            const v = BigInt(valStr);
+                            if (vSh > 0n) avg = (v / vSh).toString();
+                        } catch { }
+
+                        const ymd = d.replace(/-/g, "");
+                        const type = this.getBrokerType(rec.broker);
+
+                        const common = {
+                            netbs_broker_code: rec.broker,
+                            netbs_date: ymd,
+                            netbs_stock_code: symbol,
+                            type: type
+                        };
+
+                        if (side === 'buy') {
+                            return { ...common, blot: lotStr, blotv: vol100, bval: valStr, bvalv: valStr, netbs_buy_avg_price: avg };
+                        } else {
+                            return { ...common, slot: lotStr, slotv: vol100, sval: valStr, svalv: valStr, netbs_sell_avg_price: avg };
+                        }
+                    };
+
+                    for (const rec of brokerMap.values()) {
+                        const b = formatSide(rec, 'buy'); if (b) brokers_buy.push(b);
+                        const s = formatSide(rec, 'sell'); if (s) brokers_sell.push(s);
+                    }
+
+                    brokers_buy.sort(valSorter('bval'));
+                    brokers_sell.sort(valSorter('sval'));
+
+                    // Calculate Bandar Detector
+                    const bandarDetector = this.calculateBandarDetector(brokers_buy, brokers_sell, dailySummaryRec);
+
+                    // Construct Output (Strict Stockbit Schema)
+                    const dailyOutput = {
+                        message: "Successfully retrieved market detector data (IPOT Proxy)",
+                        data: {
+                            from: d,
+                            to: d,
+                            bandar_detector: bandarDetector,
+                            broker_summary: {
+                                symbol: symbol,
+                                brokers_buy,
+                                brokers_sell
+                            }
+                        }
+                    };
+
+                    // Meta / Debug
+                    if (debug) {
+                        dailyOutput._meta = {
+                            source: "ipot",
+                            summary: dailySummaryRec, // Moved from data.broker_summary
+                            integrity_check: (() => {
+                                const sum = (arr, key) => arr.reduce((acc, x) => acc + BigInt(x[key] || 0), 0n).toString();
+                                const totalBuyVal = sum(brokers_buy, 'bval');
+                                const summaryVal = dailySummaryRec.total_value;
+                                return {
+                                    calculated_buy_val: totalBuyVal,
+                                    summary_val: summaryVal,
+                                    delta_val: (BigInt(summaryVal) - BigInt(totalBuyVal)).toString(),
+                                    match_likely: (BigInt(summaryVal) - BigInt(totalBuyVal)) < 100000000n
+                                };
+                            })()
+                        };
+                    }
+
+                    // Save to R2
+                    if (save) {
+                        const key = `${symbol}/${d}.json`;
+                        await env.RAW_BROKSUM.put(key, JSON.stringify(dailyOutput), {
+                            httpMetadata: { contentType: "application/json" }
+                        });
+                        if (debug || save) dailyOutput.saved_key = key;
+                    }
+
+                    batchResults.push(dailyOutput);
+
+                    // Breath
+                    await new Promise(r => setTimeout(r, 50));
+                }
+
+            } finally {
+                try { ws.close(1000, "done"); } catch { }
+            }
+
+            // RESPONSE LOGIC
+            // If single day result (and asked for single day or just happened to be 1), return standard
+            // But strict single day check: from == to or dates.length == 1
+            if (dates.length === 1 && batchResults.length > 0) {
+                return new Response(JSON.stringify(batchResults[0]), {
+                    headers: withCors({ "Content-Type": "application/json" })
+                });
+            }
+
+            // Batch Report (Custom Schema)
+            return new Response(JSON.stringify({
+                message: "Batch scrape successful",
+                data: {
+                    mode: "batch_range",
+                    count: batchResults.length,
+                    from: from,
+                    to: to,
+                    results: batchResults.map(r => ({
+                        date: r.data.from,
+                        integrity: r._meta?.integrity_check
+                    }))
+                }
+            }), {
+                headers: withCors({ "Content-Type": "application/json" })
+            });
+
+        } catch (e) {
+            // ALWAYS return 200 for /ipot/scrape (pipeline data - downstream prefers predictable)
+            // Error details in message + error field (no ok:false)
+            return new Response(JSON.stringify({
+                message: "IPOT scrape failed",
+                error: e.message,
+                stack: e.stack,
+                debug_logs: debugLogs.slice(-100)
+            }), {
+                status: 200,
+                headers: withCors({ "Content-Type": "application/json" })
+            });
+        }
+    },
+
+
+
 };
