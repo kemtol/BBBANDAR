@@ -30,7 +30,7 @@
 
 /* ---------- 11) LINKS ---------- */
 .text-center a {
-  color: var(--primary) !important;
+  color: #fff !important;
   text-decoration: none;
 }
 
@@ -157,6 +157,10 @@
   border-radius: 999px;
   background: #eaf4ff;
   color: var(--primary);
+}
+
+.pick-badge i {
+  color: var(--primary) !important;
 }
 
 .pick-cta {

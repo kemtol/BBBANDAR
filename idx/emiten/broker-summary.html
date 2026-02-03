@@ -8,9 +8,9 @@
 
     <title>SSSAHAM - Intraday Orderflow Scanner</title>
 
-    <link rel="apple-touch-icon" sizes="180x180" href="/img/apple-touch-icon.png">
-    <link rel="icon" type="image/png" sizes="32x32" href="/img/favicon-32x32.png">
-    <link rel="icon" type="image/png" sizes="16x16" href="/img/favicon-16x16.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="../img/apple-touch-icon.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="../img/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="../img/favicon-16x16.png">
 
     <!-- Bootstrap & Font Awesome -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
@@ -108,6 +108,24 @@
 
 
 
+        #pull-indicator {
+            position: fixed;
+            top: -60px;
+            left: 0;
+            right: 0;
+            height: 60px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #f6f8fb;
+            transition: top 0.2s ease-out;
+            z-index: 1000;
+        }
+
+        #pull-indicator.visible {
+            top: 0;
+        }
+
         #pull-indicator i {
             font-size: 1.5rem;
             color: #6b7280;
@@ -146,8 +164,8 @@
     </div>
 
     <!-- NAVBAR -->
-    <nav class="navbar sticky-top border-bottom">
-        <div class="container d-flex align-items-center py-2" style="max-width: 1200px;position: relative;">
+    <nav class="navbar sticky-top">
+        <div class="container d-flex align-items-center" style="max-width: 1200px;position: relative;">
             <a href="https://buy.sssaham.com" id="nav-back" class="d-flex align-items-center text-decoration-none me-2">
                 <i class="fa-solid fa-chevron-left me-1"></i>
                 <span class="small d-none">Bandar Radar</span>
@@ -156,19 +174,12 @@
                 <span class="nav-title" id="header-title">Dashboard</span>
             </div>
             <div style="width:72px;" class="text-end">
-                <i class="fa-solid fa-magnifying-glass text-white" style="cursor: pointer; font-size: 1rem;"
-                    onclick="toggleSearch()"></i>
+                <i class="fa-solid fa-magnifying-glass" style="cursor: pointer;" onclick="toggleSearch()"></i>
             </div>
         </div>
     </nav>
 
-    <!-- SEARCH PANEL -->
     <div id="search-panel">
-        <div class="d-flex justify-content-between align-items-center mb-4">
-            <h5 class="mb-0 fw-bold">Cari Emiten</h5>
-            <i class="fa-solid fa-xmark fa-lg" style="cursor: pointer;" onclick="toggleSearch()"></i>
-        </div>
-
         <div class="mb-4">
             <input type="text" id="search-input" class="search-input" placeholder="Masukkan Kode (e.g. BBRI)"
                 autocomplete="off">

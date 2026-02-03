@@ -36,6 +36,17 @@ $(document).ready(function () {
     }
     // Initialize Search
     initSearch();
+
+    // Close Search Panel when clicking outside
+    $(document).on('click', function (e) {
+        const panel = $('#search-panel');
+        // If panel is open and click is not on panel and not on magnifying glass trigger
+        if (panel.hasClass('open')) {
+            if (!$(e.target).closest('#search-panel').length && !$(e.target).closest('.fa-magnifying-glass').length) {
+                toggleSearch();
+            }
+        }
+    });
 });
 
 // =========================================
@@ -83,7 +94,7 @@ function loadSearchHistory() {
 
     list.innerHTML = '';
     if (history.length === 0) {
-        list.innerHTML = '<p class="small opacity-50 fst-italic">Belum ada riwayat.</p>';
+        list.innerHTML = '<p class="small opacity-50">Belum ada riwayat.</p>';
         return;
     }
     history.forEach(sym => {

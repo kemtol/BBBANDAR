@@ -13,7 +13,7 @@ body {
 
 /* Navbar Branding */
 .navbar {
-    background-color: #463CFF !important;
+    background-color: #aeffff !important;
     transition: transform 0.3s ease-in-out;
     position: sticky;
     top: 0;
@@ -26,7 +26,7 @@ body {
 
 .navbar i.fa-chevron-left {
     font-size: 1rem;
-    color: white;
+    color: #644fe5;
 }
 
 .nav-title {
@@ -34,10 +34,10 @@ body {
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%);
-    color: white;
+    color: #644fe5;
     transition: opacity 0.3s ease;
     opacity: 1;
-    font-size: 1rem;
+    font-size: 0.9rem;
     font-weight: 700;
     /* Bold */
 }
@@ -84,7 +84,7 @@ body {
 /* Navbar Icon Sizing */
 .navbar i {
     font-size: 0.9rem;
-    color: white;
+    color: #644fe5;
     cursor: pointer;
 }
 

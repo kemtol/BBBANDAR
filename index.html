@@ -7,15 +7,15 @@
 	<meta name="theme-color" content="#ffffff" />
 	<!-- keep a single manifest file reference -->
 	<link rel="manifest" href="/site.webmanifest">
-	<link rel="apple-touch-icon" sizes="180x180" href="/img/apple-touch-icon.png">
-	<link rel="icon" type="image/png" sizes="32x32" href="/img/favicon-32x32.png">
-	<link rel="icon" type="image/png" sizes="16x16" href="/img/favicon-16x16.png">
+	<link rel="apple-touch-icon" sizes="180x180" href="idx/img/apple-touch-icon.png">
+	<link rel="icon" type="image/png" sizes="32x32" href="idx/img/favicon-32x32.png">
+	<link rel="icon" type="image/png" sizes="16x16" href="idx/img/favicon-16x16.png">
 	<!-- Bootstrap CSS -->
 	<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
 	<link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css" rel="stylesheet">
 	<script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
 
-	<title>BBBANDAR SSSAHAM - Bandar Saham Kolektif Untuk Para Ritel Saham</title>
+	<title>SSSAHAM - Bandar Saham Kolektif Untuk Para Ritel Saham</title>
 	<!-- Open Graph for WhatsApp / Link Previews -->
 	<meta property="og:title" content="SSSAHAM — Bandar Saham Kolektif">
 	<meta property="og:description"
@@ -38,43 +38,422 @@
 	<link rel="stylesheet" href="theme.css?v=1.7.1">
 	<link rel="stylesheet" href="style.css?v=1.7.1">
 </head>
+<style>
+	.hero-bg {
+		background: linear-gradient(135deg, #463CFF 0%, #7B68EE 50%, #463CFF 100%);
+		background-size: 200% 200%;
+		width: 100%;
+		height: 75vh;
+		position: absolute;
+		top: 0;
+		left: 0;
+		clip-path: polygon(0 0, 100% 0, 100% 80%, 0 100%);
+		animation: waveGradient 8s ease-in-out infinite;
+	}
+
+	@keyframes waveGradient {
+		0% {
+			background-position: 0% 50%;
+		}
+
+		50% {
+			background-position: 100% 50%;
+		}
+
+		100% {
+			background-position: 0% 50%;
+		}
+	}
+
+	.hero-bg .dot {
+		width: 200px;
+		height: 200px;
+		position: absolute;
+		background: cyan;
+		top: 59px;
+		left: 65%;
+		transform: translateX(-50%);
+		border-radius: 999px;
+		animation: wobble 15s ease-in-out infinite;
+	}
+
+	@keyframes wobble {
+
+		0%,
+		100% {
+			transform: translateX(-50%) translateY(0);
+		}
+
+		25% {
+			transform: translateX(-52%) translateY(-4px);
+		}
+
+		50% {
+			transform: translateX(-48%) translateY(2px);
+		}
+
+		75% {
+			transform: translateX(-50%) translateY(-2px);
+		}
+	}
+
+	/* Wobble animation for feature images */
+	.wobble-img {
+		animation: wobbleImg 8s ease-in-out infinite;
+	}
+
+	@keyframes wobbleImg {
+
+		0%,
+		100% {
+			transform: translateY(0);
+		}
+
+		25% {
+			transform: translateY(-3px);
+		}
+
+		50% {
+			transform: translateY(2px);
+		}
+
+		75% {
+			transform: translateY(-2px);
+		}
+	}
+
+	.hero-title {
+		position: absolute;
+		display: block;
+		top: 3rem !important;
+		width: 700px;
+		max-width: 90%;
+		text-align: center;
+		left: 50%;
+		transform: translateX(-50%);
+		font-weight: 500;
+		font-variant: small-caps;
+		z-index: 100;
+		font-size: 1.85rem;
+		color: #fff;
+	}
+
+	.hero-title .highlight {
+		color: #fff;
+	}
+
+	.hero-title .highlight strong {
+		color: royalblue;
+		background: yellow;
+	}
+
+	.content-card {
+		position: relative;
+		margin-top: 13rem !important;
+		overflow: hidden;
+		color: #fff;
+		z-index: 5;
+	}
+
+	.content-card h3 {
+		font-weight: 900;
+	}
+
+	.divider {
+		border: 1px solid #ccc;
+		height: 1px;
+		width: 100%;
+	}
+
+	.about-embed {
+		box-shadow: none !important;
+		border-radius: 30px;
+		overflow: hidden;
+	}
+
+	.about-embed iframe {
+		box-shadow: none !important;
+		width: 100%;
+		min-height: 400px;
+		border: none;
+		overflow: hidden;
+	}
+
+	.container {
+		max-width: 640px;
+	}
+
+	/* Status Bar */
+	.status-bar {
+		position: sticky;
+		top: 0;
+		z-index: 60;
+		background: #aeffff;
+		padding: 8px 16px;
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		height: 40px;
+		border-bottom: 1px solid #8affff
+	}
+
+	.status-bar .brand {
+		font-size: 14px;
+		color: #644fe5;
+		font-weight: 700;
+		text-decoration: none;
+	}
+
+	.nav-menu {
+		display: flex;
+		gap: 16px;
+		align-items: center;
+	}
+
+	.nav-item {
+		position: relative;
+	}
+
+	.nav-item>a {
+		color: #1f2937;
+		text-decoration: none;
+		font-size: 12px;
+		font-weight: 700;
+		cursor: pointer;
+		white-space: nowrap;
+	}
+
+	.nav-item:hover .dropdown {
+		display: block;
+	}
+
+	.dropdown {
+		display: none;
+		position: absolute;
+		top: 100%;
+		right: 0;
+		background: #fff;
+		border-radius: 8px;
+		box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+		min-width: 180px;
+		padding: 8px 0;
+		z-index: 100;
+	}
+
+	.dropdown a {
+		display: block;
+		padding: 8px 16px;
+		color: #374151;
+		text-decoration: none;
+		font-size: 13px;
+		font-weight: 600;
+		text-align: center;
+	}
+
+	.dropdown a:hover {
+		background: #f3f4f6;
+	}
+
+	/* Burger Menu */
+	.burger-btn {
+		display: none;
+		background: none;
+		border: none;
+		font-size: 18px;
+		color: #374151;
+		cursor: pointer;
+		padding: 4px 8px;
+	}
+
+	.mobile-menu {
+		display: none;
+		position: fixed;
+		top: 40px;
+		right: 0;
+		width: 250px;
+		height: calc(100vh - 40px);
+		background: #fff;
+		box-shadow: -4px 0 12px rgba(0, 0, 0, 0.1);
+		z-index: 100;
+		padding: 16px 0;
+		overflow-y: auto;
+	}
+
+	.mobile-menu.active {
+		display: block;
+	}
+
+	.mobile-menu .menu-section {
+		padding: 8px 16px;
+		font-weight: 700;
+		color: #1f2937;
+		font-size: 13px;
+		border-bottom: 1px solid #e5e7eb;
+	}
+
+	.mobile-menu a {
+		display: block;
+		padding: 12px 24px;
+		color: #374151;
+		text-decoration: none;
+		font-size: 14px;
+	}
+
+	.mobile-menu a:hover {
+		background: #f3f4f6;
+	}
+
+	.menu-overlay {
+		display: none;
+		position: fixed;
+		top: 40px;
+		left: 0;
+		right: 0;
+		bottom: 0;
+		background: rgba(0, 0, 0, 0.3);
+		z-index: 99;
+	}
+
+	.menu-overlay.active {
+		display: block;
+	}
+
+	/* Responsive - Tablet & Phone */
+	@media (max-width: 768px) {
+		.nav-menu {
+			display: none;
+		}
+
+		.burger-btn {
+			display: block;
+		}
+	}
+</style>
+</head>
 
 <body>
+	<!-- Status Bar -->
+	<nav class="status-bar">
+		<a href="/" class="brand">SSSAHAM</a>
+		<div class="nav-menu">
+			<div class="nav-item">
+				<a href="idx/emiten/broker-summary.html?kode=AADI">AI Broker Summary</a>
+			</div>
+			<div class="nav-item">
+				<a href="idx/index.html">AI Recommendation</a>
+			</div>
+			<div class="nav-item">
+				<a href="idx/emiten/index.html">Real Time API</a>
+			</div>
+			<div class="nav-item">
+				<a href="register.html" style="color: #644fe5">Gabung Komunitas</a>
+			</div>
+		</div>
+		<button class="burger-btn" onclick="toggleMobileMenu()">
+			<i class="fa-solid fa-bars"></i>
+		</button>
+	</nav>
+
+	<!-- Mobile Menu Overlay -->
+	<div class="menu-overlay" id="menuOverlay" onclick="toggleMobileMenu()"></div>
+	<div class="mobile-menu" id="mobileMenu">
+		<div class="menu-section">Layanan</div>
+		<a href="idx/emiten/broker-summary.html">AI Broker Summary</a>
+		<a href="idx/index.html">AI Recommendation</a>
+		<a href="idx/emiten/index.html">Real Time API</a>
+		<div class="menu-section">Komunitas</div>
+		<a href="register.html">Gabung Sekarang</a>
+	</div>
+
 	<div id="app" class="container">
 		<!-- halaman splash -->
 		<section id="splash-page" style="height: max-content;">
-			<div class="d-none bg-overlay"></div>
-			<div style="background: #463CFF;width: 100%;height: 75vh;position: absolute;top: 0px;">
-				<span
-					style="width:200px;height:200px;position: absolute;background: cyan;font-style: italic;top: 59px;left: 50%;border-radius: 999px;text-align: center;font-family: inheritgeorgia !important;font-size: 117px !important;color: yellow;"></span>
-				<h1
-					style="position: absolute;display: block;color: white;top: 53%;width: 760px;text-align: center;left: 50%;margin-left: -380px;font-weight: 400;font-variant: small-caps;margin-top: -239px;">
-					Leading <strong>AI Based</strong> <br> Indonesia Quant Platform</h1>
-				<img alt="Banner promosi di aplikasi trading Pluang"
-					src="https://image-cdn.pluang.com/web/compressed/homeHeroDesktop.webp" loading="lazy" width="100%"
-					height="auto"
-					style="top: 60%;position: relative;margin-top: -25vh;left: 50%;margin-left: -130px;width: 275px !important;"
-					class="">
+			<!-- Hero Background -->
+			<div class="hero-bg" style="top: 40px;">
+				<span class="dot"></span>
+				<h1 class="hero-title">
+					<span class="highlight">Platform Quant <strong>Berbasis AI</strong></span><br>
+					<span class="highlight">Untuk Retail</span><br>
+					<span class="highlight">Pasar Saham Indonesia</span>
+				</h1>
 			</div>
-			<div class="this-page w-100 d-flex flex-column align-items-center p-4 my-4"
-				style="position: relative;margin-top: 50vh!important;overflow: hidden;color: #fff;z-index:5;border: #fff;">
-				<h3 class="text-center mb-3 mt-4" style="font-weight: 900">Solusi dan Data</h3>
-				<!--<img src="android-chrome-192x192.png" id="splash-logo" class="img-fluid my-4">-->
-				<div class="p-1 my-1 w-100 text-center">
-					<a href="https://api.sssaham.com">Real Time API ⟶</a>
-					<p class="mb-1">Single API data pasar saham secara real-time untuk integrasi sistem anda.</p>
+
+			<!-- Box 1: Intro / Dare To Step Ahead -->
+			<div class="this-page content-card w-100 d-flex flex-column align-items-center p-4 my-4">
+				<h5 class="text-center mb-3 mt-4">Bingung Broker Summary <br>& Bandarmology?<br><br>Dengan AI gabung
+					dan jadilah 1%</h5>
+				<p class="text-center my-4">Pantau rekomendasi saham berbasis data, skor, orderflow<br> dan pergerakan
+					asing
+					yang mudah dibaca.</p>
+
+				<a href="register.html" class="btn btn-lg fw-bold mb-2"
+					style="font-size: 1.25rem; background: linear-gradient(135deg, #463CFF 0%, #7B68EE 50%, #463CFF 100%); color: #fff; border: none;">Klaim
+					dan Pakai Gratis!</a>
+				<p class="text-center mb-0 text-muted" style="font-size: 0.85rem;">
+					<s style="color: #666;">Rp 15.000.000</s><br>
+					<strong style="color: #28a745;">GRATIS SELAMANYA</strong>
+				</p>
+			</div>
+
+			<!-- Feature 1: AI Broker Summary -->
+			<div class="this-page w-100 d-flex flex-column align-items-center p-4 my-4">
+				<div class="d-flex align-items-center gap-4 w-100 text-start">
+					<img src="idx/img/bitcoin-ai.jpg" alt="AI Broker Summary" class="img-fluid wobble-img"
+						style="width: 35%; border-radius: 12px;">
+					<div class="flex-fill">
+						<a href="idx/emiten/broker-summary.html?kode=AADI" class="link-features">AI Broker Summary ⟶</a>
+						<p class="mb-2 mt-2 small">Analisis ringkasan broker berbasis AI untuk mengetahui pergerakan
+							bandar.</p>
+						<a href="idx/emiten/broker-summary.html?kode=AADI" class="btn btn-sm fw-bold w-100"
+							style="background: linear-gradient(135deg, #463CFF 0%, #7B68EE 50%, #7B68EE 100%); color: #fff; padding: 0.45rem; margin: 1rem 0;">Biarkan
+							AI Bekerja ⟶</a>
+					</div>
 				</div>
-				<div class="p-1 my-1 w-100 text-center">
-					<a href="https://buy.sssaham.com">AI Recommendation ⟶</a>
-					<p class="mb-1">Rekomendasi saham berbasis LSTM (Long Short-Term Memory) Machine Learning.</p>
+			</div>
+
+			<!-- Feature 2: AI Recs -->
+			<div class="this-page w-100 d-flex flex-column align-items-center p-4 my-4">
+				<div class="d-flex align-items-center gap-4 w-100 flex-row-reverse text-end">
+					<img src="idx/img/orderflow.jpg" alt="AI Recommendation" class="img-fluid wobble-img"
+						style="width: 35%; border-radius: 12px;">
+					<div class="flex-fill">
+						<a href="idx/index.html" class="link-features">AI Recommendation ⟶</a>
+						<p class="mb-2 mt-2 small">Rekomendasi saham berbasis LSTM (Long Short-Term Memory) Machine
+							Learning.</p>
+						<a href="idx/index.html" class="btn btn-sm fw-bold w-100"
+							style="background: linear-gradient(135deg, #463CFF 0%, #7B68EE 50%, #7B68EE 100%); color: #fff; padding: 0.45rem; margin: 1rem 0;">Entry
+							Presisi ⟶</a>
+					</div>
 				</div>
-				<div class="p-1 my-1 w-100 text-center">
-					<a href="https://ai.sssaham.com">AI Broker Summary Analysis ⟶</a>
-					<p class="mb-1">Analisis ringkasan broker berbasis AI untuk mengetahui pergerakan bandar.</p>
+			</div>
+
+			<!-- Feature 3: Real Time API -->
+			<div class="this-page w-100 d-flex flex-column align-items-center p-4 my-4">
+				<div class="d-flex align-items-center gap-4 w-100 text-start">
+					<img src="idx/img/realtime-api.jpg" alt="Real Time API" class="img-fluid wobble-img"
+						style="width: 35%; border-radius: 12px;">
+					<div class="flex-fill">
+						<a href="idx/emiten/index.html" class="link-features">Real Time API ⟶</a>
+						<p class="mb-2 mt-2 small">Single API data pasar saham secara real-time untuk integrasi sistem
+							anda.</p>
+						<a href="idx/emiten/index.html" class="btn btn-sm fw-bold w-100"
+							style="background: linear-gradient(135deg, #463CFF 0%, #7B68EE 50%, #7B68EE 100%); color: #fff; padding: 0.45rem; margin: 1rem 0;">Lihat
+							Dokumentasi ⟶</a>
+					</div>
 				</div>
-				<hr style="border: 1px solid #ccc;height: 1px;width: 100%;" class="my-4">
-				<h3>Training dan Sillabus</h3>
-				<div class="tags my-5">
+			</div>
+
+			<!-- Training & Login Section -->
+			<div class="this-page w-100 d-flex flex-column align-items-center p-4 my-4">
+				<h3>Training dan Syllabus</h3>
+				<p class="text-center mt-3">
+					Alat tanpa pengetahuan bukanlah alat.
+					<br>
+					Anda bisa saja memiliki palu, namun tanpa tahu cara menggunakannya,
+					<br>
+					ia hanyalah sebongkah logam.
+				</p>
+				<div class="tags my-5 text-center">
 					<a href="/training-quant-finance-saham/index.html" class="tag blue">#QuantitativeTrading</a>
 					<a href="/training-quant-finance-saham/index.html" class="tag green">#MarkovChain</a>
 					<a href="/training-quant-finance-saham/index.html" class="tag orange">#BSJP</a>
@@ -84,81 +463,47 @@
 					<a href="/training-quant-finance-saham/index.html" class="tag pink">#DataDriven</a>
 				</div>
 
-				<form id="login-form" class="w-100">
-					<div class="mb-3 d-none">
-						<label style="color:#fff;font-size:0.9rem" for="Handphone" class="form-label">No
-							Handphone</label>
-						<input type="text" class="form-control" id="phone" class="form-control">
-					</div>
-					<div class="mb-3 d-none">
-						<label style="color:#fff;font-size:0.9rem" for="OTP" class="form-label">OTP</label>
-						<input type="text" class="form-control" id="OTP">
-					</div>
-					<small class=" d-none d-block text-center m-2 p-2 mb-4" style="background-color:beige;">Versi Beta
-						1.0:
-						Tulis Saja Asal Dulu</small>
-					<button type="submit" class="btn btn-primary w-100">Masuk</button>
-				</form>
-				<!-- Join Komunitas: default fallback goes to register section, JS will route to login if user appears registered -->
-				<a href="#register-page" id="start-onboard" class="btn btn-outline-primary my-2 w-100">Join
-					Komunitas</a>
+				<div class="d-flex gap-2 w-75">
+					<a href="#login-page" onclick="navigate('login-page'); return false;"
+						class="btn btn-primary flex-fill w-50">Masuk</a>
+					<a href="register.html" id="start-onboard" class="btn btn-outline-primary w-50 flex-fill">Gabung
+						Komunitas</a>
+				</div>
 			</div>
-			<h2 style="font-size: larger;font-weight: 700;" class="text-center my-4 mb-2">Bagaimana SSSAHAM Bekerja?
+
+			<h2 class="text-center mt-5 mb-2" style="font-size: larger; font-weight: 700;">Bagaimana SSSAHAM Bekerja?
 			</h2>
-			<p class="text-center">SSSAHAM Menggunakan Pendekatan Machine Learning dan AI yang Auditable</p>
-			<div class="this-page w-100 d-flex flex-column  my-4 mt-2"
-				style="box-shadow: none !important;border: none;border-radius: 30px;overflow: hidden;">
-				<!--<iframe id="about-us-embed" src="about-us.html#model" loading="lazy">-->
-				<iframe id="about-us-embed" style="box-shadow: none !important;" src="about-us.html#model"
-					loading="lazy"></iframe>
+			<p class="text-center mb-5">SSSAHAM Menggunakan Pendekatan Machine Learning dan AI yang Auditable</p>
+
+			<div class="this-page about-embed w-100 d-flex flex-column my-4 mt-2">
+				<iframe id="about-us-embed" src="about-us.html#model" loading="lazy" scrolling="no"></iframe>
 			</div>
 		</section>
 
 		<!-- halaman login -->
 		<section id="login-page">
 			<div class="this-page d-flex flex-column align-items-center p-4 my-4 w-100">
-				<h3 class="text-center mb-4 fw-700">Login</h3>
-				<small class="p-3 m-3 w-100 text-center" style="background-color: aliceblue;">We are using no fee
-					oTP</small>
+				<h3 class="text-center mb-4 fw-700">Masuk</h3>
+				<small class="p-3 m-3 w-100 text-center" style="background-color: aliceblue; border-radius: 8px;">Masuk
+					tanpa biaya OTP</small>
 				<form id="login-form-page-main" class="w-100">
 					<div class="mb-3" id="noHp" style="position: relative;">
-						<label style="color:#fff;font-weight: 700;" for="Handphone" class="form-label">No
-							Handphone</label>
-						<input type="text" class="form-control" required>
+						<label for="Handphone" class="form-label">Nomor Handphone</label>
+						<input type="text" class="form-control" required placeholder="08xxxx...">
 						<a href="https://wa.me/6285281757731?text=GETOTP" class="d-block p-2"
 							style="position:absolute;bottom:0px;right: 0.125rem;background-color: #10c210;color:white;border-radius: 0px 10px 10px 0px;text-decoration: none;">
-							<strong>Get OTP <i class="fa-brands fa-whatsapp"></i></strong>
+							<strong>Dapatkan OTP <i class="fa-brands fa-whatsapp"></i></strong>
 						</a>
 					</div>
 					<div class="mb-3">
-						<label style="color:#fff;font-weight: 700;" for="OTP" class="form-label">OTP</label>
+						<label for="OTP" class="form-label">OTP</label>
 						<input type="OTP" class="form-control" id="OTP" required>
 					</div>
-					<button type="submit" class="btn btn-primary w-100">Login</button>
+					<button type="submit" class="btn btn-primary w-100">Masuk</button>
 				</form>
 			</div>
 		</section>
 
-		<!-- register page -->
-		<section id="register-page" class="d-flex align-items-center justify-content-center min-vh-100">
-			<div class="this-page d-flex flex-column align-items-center border-bottom p-4 my-0 w-100">
-				<h2 style="font-size: 24px;font-weight: 700;" class="text-center my-4 mb-4">Register</h2>
-				<form id="register-form" class="w-100" style="max-width:480px;">
-					<div class="mb-3">
-						<label for="new-name" class="form-label">Nama Lengkap</label>
-						<input type="text" class="form-control tbe" id="new-name" required placeholder="Nama Anda">
-					</div>
-					<div class="mb-3">
-						<label for="new-phone" class="form-label">Nomor Handphone</label>
-						<input type="tel" pattern="[0-9+ ]{6,20}" class="form-control tbe" id="new-phone" required
-							placeholder="08xxxx...">
-					</div>
-					<div id="device-footprint"></div>
-					<div id="device-footprint-encrypted"></div>
-					<button type="submit" class="btn btn-primary">Register</button>
-				</form>
-			</div>
-		</section>
 
 		<!-- liveness -->
 		<section id="liveness-check" class="w-100">
@@ -678,8 +1023,38 @@
 				});
 			} catch (e) { console.warn('register-form handler error', e); }
 		})();
-	</script>
 
+		// Toggle mobile menu
+		function toggleMobileMenu() {
+			document.getElementById('mobileMenu').classList.toggle('active');
+			document.getElementById('menuOverlay').classList.toggle('active');
+		}
+
+		// Auto-resize iframe to fit content seamlessly
+		function resizeIframe() {
+			const iframe = document.getElementById('about-us-embed');
+			if (iframe && iframe.contentWindow) {
+				try {
+					const height = iframe.contentWindow.document.body.scrollHeight;
+					if (height > 0) {
+						iframe.style.height = height + 'px';
+					}
+				} catch (e) {
+					// Cross-origin restriction, use default height
+					iframe.style.height = '800px';
+				}
+			}
+		}
+
+		// Resize on load and on window resize
+		(function () {
+			const iframe = document.getElementById('about-us-embed');
+			if (iframe) {
+				iframe.addEventListener('load', resizeIframe);
+				window.addEventListener('resize', resizeIframe);
+			}
+		})();
+	</script>
 </body>
 
 </html>

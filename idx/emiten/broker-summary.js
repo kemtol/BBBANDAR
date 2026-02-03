@@ -26,6 +26,51 @@ $(document).ready(function () {
             }
         });
 
+    // Pull to Refresh Logic
+    let startY = 0;
+    let pulling = false;
+    const pullIndicator = document.getElementById('pull-indicator');
+    const pullText = document.getElementById('pull-text');
+    const threshold = 80;
+
+    document.addEventListener('touchstart', function (e) {
+        if (window.scrollY === 0) {
+            startY = e.touches[0].clientY;
+            pulling = true;
+        }
+    }, { passive: true });
+
+    document.addEventListener('touchmove', function (e) {
+        if (!pulling) return;
+        const currentY = e.touches[0].clientY;
+        const diff = currentY - startY;
+
+        if (diff > 0 && diff < threshold * 2) {
+            pullIndicator.classList.add('visible');
+            if (diff > threshold) {
+                pullIndicator.classList.add('ready');
+                pullText.textContent = 'Lepas untuk refresh';
+            } else {
+                pullIndicator.classList.remove('ready');
+                pullText.textContent = 'Tarik untuk refresh';
+            }
+        }
+    }, { passive: true });
+
+    document.addEventListener('touchend', function (e) {
+        if (!pulling) return;
+        pulling = false;
+
+        if (pullIndicator.classList.contains('ready')) {
+            pullText.textContent = 'Memuat...';
+            setTimeout(() => {
+                window.location.reload();
+            }, 300);
+        } else {
+            pullIndicator.classList.remove('visible');
+        }
+    }, { passive: true });
+
     // Search now in component.js
 });
 
