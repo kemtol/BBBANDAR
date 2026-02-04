@@ -120,6 +120,7 @@ async function calculateRangeData(env, symbol, startDate, endDate) {
 
           const summary = {
             detector: bd,
+            price: bs?.stock_summary?.average_price ? parseInt(bs.stock_summary.average_price) : 0,
             foreign: { buy_val: foreignBuy, sell_val: foreignSell, net_val: foreignBuy - foreignSell },
             retail: { buy_val: retailBuy, sell_val: retailSell, net_val: retailBuy - retailSell },
             local: { buy_val: localBuy, sell_val: localSell, net_val: localBuy - localSell }
@@ -186,6 +187,7 @@ export default {
   async fetch(req, env) {
     try {
       const url = new URL(req.url);
+      console.log(`[API-SAHAM] Request: ${req.method} ${url.pathname} (v2026-02-04-A)`);
 
       // CORS
       if (req.method === "OPTIONS") return withCORS(new Response(null, { status: 204 }));
@@ -209,6 +211,54 @@ export default {
           return withCORS(new Response(JSON.stringify(data), { headers: { "Content-Type": "application/json" } }));
         } catch (e) {
           return json({ error: "Failed to fetch screener", details: e.message }, 500);
+        }
+      }
+
+      // 1.5 GET /logo?symbol=XXXX - Serve logo from R2
+      if ((url.pathname === "/logo" || url.pathname === "/logo/") && req.method === "GET") {
+        console.log("LOG: /logo request received for", url.searchParams.get("symbol"));
+        const symbol = url.searchParams.get("symbol");
+        if (!symbol) return json({ error: "Missing symbol" }, 400);
+
+        try {
+          const key = `comp-profile/logo/${symbol.toUpperCase()}.png`;
+          const obj = await env.SSSAHAM_EMITEN.get(key);
+
+          if (!obj) {
+            // Return 1x1 transparent PNG as fallback
+            return new Response(null, { status: 404 });
+          }
+
+          return withCORS(new Response(obj.body, {
+            headers: {
+              "Content-Type": "image/png",
+              "Cache-Control": "public, max-age=86400" // Cache for 24 hours
+            }
+          }));
+        } catch (e) {
+          return json({ error: "Failed to fetch logo", details: e.message }, 500);
+        }
+      }
+
+
+      // 1.6 GET /audit/logs - Get scraping logs from D1
+      if (url.pathname === "/audit/logs" && req.method === "GET") {
+        try {
+          const limit = parseInt(url.searchParams.get("limit") || "100");
+
+          if (!env.SSSAHAM_DB) {
+            return json({ error: "DB binding missing" }, 500);
+          }
+
+          const { results } = await env.SSSAHAM_DB.prepare(
+            `SELECT * FROM scraping_logs ORDER BY timestamp DESC LIMIT ?`
+          ).bind(limit).all();
+
+          return withCORS(new Response(JSON.stringify(results || []), {
+            headers: { "Content-Type": "application/json" }
+          }));
+        } catch (e) {
+          return json({ error: "Failed to fetch logs", details: e.message }, 500);
         }
       }
 
@@ -258,7 +308,7 @@ export default {
 
         if (!symbol || !from || !to) return json({ error: "Missing params (symbol, from, to)" }, 400);
 
-        const key = `broker/summary/${symbol}/${from}_${to}.json`;
+        const key = `broker/summary/v4/${symbol}/${from}_${to}.json`;
         const ttl = 172800; // 48 hours
 
         // Try Cache
@@ -330,11 +380,33 @@ export default {
         return json(data, 200, { "X-Cache": reload ? "RELOAD" : "MISS" });
       }
 
-      // 4. Docs/Health
+      // 5. GET /audit-trail (Proxy to R2)
+      if (url.pathname === "/audit-trail" && req.method === "GET") {
+        const symbol = url.searchParams.get("symbol");
+        const limit = parseInt(url.searchParams.get("limit") || "100");
+        if (!symbol) return json({ error: "Missing symbol" }, 400);
+
+        try {
+          const key = `audit/${symbol}.json`;
+          const obj = await env.SSSAHAM_EMITEN.get(key);
+          if (!obj) return json({ ok: true, symbol, entries: [], count: 0 });
+
+          const data = await obj.json();
+          let entries = data.entries || [];
+          // Slice limit & Reverse (newest first)
+          entries = entries.slice(-limit).reverse();
+
+          return json({ ok: true, symbol, entries, count: entries.length });
+        } catch (e) {
+          return json({ error: "Fetch error", details: e.message }, 500);
+        }
+      }
+
+      // 6. Docs/Health
       if (url.pathname === "/health") return json({ ok: true, service: "api-saham" });
 
       // Fallback
-      return withCORS(new Response("Not Found", { status: 404 }));
+      return withCORS(new Response(`Not Found. You requested: ${req.method} ${url.pathname}`, { status: 404 }));
 
     } catch (err) {
       return withCORS(

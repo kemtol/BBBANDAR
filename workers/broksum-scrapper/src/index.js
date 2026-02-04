@@ -10,7 +10,7 @@
  *
  * @triggers
  * - http: yes
- * - cron: * /2 * * * * (Dispatches scraping jobs or health checks)
+ * - cron: * / 2 * * * * (Dispatches scraping jobs or health checks)
  * - queue: sssaham - queue(Consumes scrape jobs)
  *     * - durable_object: none
  *         * - alarms: none
@@ -206,9 +206,21 @@ export default {
         }
 
         try {
+            // ROUTE 0: Health Check (Always Available)
+            if (path === "/health") {
+                return new Response(JSON.stringify({
+                    ok: true,
+                    timestamp: new Date().toISOString(),
+                    service: "broksum-scrapper",
+                    version: "2.0.0"
+                }), {
+                    headers: withCors({ "Content-Type": "application/json" })
+                });
+            }
+
             // IPOT_ONLY mode: restrict to IPOT endpoints only
             if (env.IPOT_ONLY === "true") {
-                const allowed = new Set(["/ipot/scrape", "/ipot/reset-session"]);
+                const allowed = new Set(["/ipot/scrape", "/ipot/reset-session", "/health"]);
                 if (!allowed.has(path)) {
                     return new Response(JSON.stringify({ ok: false, error: "Not Found (IPOT_ONLY mode)", reason: "IPOT_ONLY" }), {
                         status: 404,
@@ -222,7 +234,7 @@ export default {
                 "/update-watchlist", "/ipot/reset-session",
                 "/scrape", "/backfill-queue", "/trigger-full-flow", "/init",
                 "/backfill/status", "/backfill/resume", "/backfill/pause", "/backfill/reset",
-                "/debug-token", "/test-range"
+                "/debug-token", "/test-range", "/auto-backfill"
             ];
             if (sensitiveRoutes.includes(path)) {
                 const keyError = requireKey(request, env);
@@ -458,6 +470,102 @@ export default {
                 return await this.enqueueSymbolRange(env, { symbol, from, to, overwrite });
             }
 
+            // ROUTE: Check Missing Dates for Single Symbol
+            if (path === "/check-missing-dates") {
+                const symbol = url.searchParams.get("symbol");
+                if (!symbol) {
+                    return new Response(JSON.stringify({ ok: false, error: "Missing required parameter: symbol" }), {
+                        status: 400,
+                        headers: withCors({ "Content-Type": "application/json" })
+                    });
+                }
+                const days = parseInt(url.searchParams.get("days") || "30");
+                const missingDates = await this.getMissingDatesForSymbol(env, symbol.toUpperCase(), days);
+                return new Response(JSON.stringify({
+                    ok: true,
+                    symbol: symbol.toUpperCase(),
+                    days_checked: days,
+                    missing_dates: missingDates,
+                    missing_count: missingDates.length
+                }), {
+                    headers: withCors({ "Content-Type": "application/json" })
+                });
+            }
+
+            // ROUTE: Auto Backfill for All Watchlist Symbols (or single symbol)
+            if (path === "/auto-backfill") {
+                const days = parseInt(url.searchParams.get("days") || "30");
+                const dryRun = url.searchParams.get("dry_run") === "true";
+                const targetSymbol = url.searchParams.get("symbol"); // Optional single symbol
+                const force = url.searchParams.get("force") === "true"; // Force re-scrape even if exists
+                return await this.autoBackfillAllSymbols(env, days, dryRun, targetSymbol, force);
+            }
+
+            // ROUTE: Scrape Logo for Symbol
+            if (path === "/scrape-logo") {
+                const symbol = url.searchParams.get("symbol");
+                if (!symbol) return new Response("Missing symbol", { status: 400 });
+                const result = await this.scrapeLogo(env, symbol);
+                return new Response(JSON.stringify(result, null, 2), {
+                    headers: { "Content-Type": "application/json" }
+                });
+            }
+
+            // ROUTE: Bulk Scrape Logos for All Watchlist Symbols
+            if (path === "/scrape-all-logos") {
+                const watchlist = await this.getWatchlistFromKV(env);
+                const results = { scraped: 0, skipped: 0, failed: 0, details: [] };
+
+                for (const symbol of watchlist) {
+                    const result = await this.scrapeLogo(env, symbol);
+                    if (result.ok) {
+                        if (result.message.includes("already exists")) {
+                            results.skipped++;
+                        } else {
+                            results.scraped++;
+                        }
+                    } else {
+                        results.failed++;
+                    }
+                    results.details.push({ symbol, ...result });
+
+                    // Small delay to avoid rate limiting
+                    await new Promise(r => setTimeout(r, 100));
+                }
+
+                return new Response(JSON.stringify({
+                    ok: true,
+                    total: watchlist.length,
+                    scraped: results.scraped,
+                    skipped: results.skipped,
+                    failed: results.failed,
+                    details: results.details
+                }, null, 2), {
+                    headers: { "Content-Type": "application/json" }
+                });
+            }
+
+            // ROUTE: Audit Trail for a Symbol
+            if (path === "/audit-trail") {
+                const symbol = url.searchParams.get("symbol");
+                if (!symbol) {
+                    return new Response(JSON.stringify({ ok: false, error: "Missing required parameter: symbol" }), {
+                        status: 400,
+                        headers: withCors({ "Content-Type": "application/json" })
+                    });
+                }
+                const limit = parseInt(url.searchParams.get("limit") || "100");
+                const auditTrail = await this.getAuditTrail(env, symbol.toUpperCase(), limit);
+                return new Response(JSON.stringify({
+                    ok: true,
+                    symbol: symbol.toUpperCase(),
+                    entries: auditTrail,
+                    count: auditTrail.length
+                }), {
+                    headers: withCors({ "Content-Type": "application/json" })
+                });
+            }
+
 
             // FALLBACK: 404 Not Found
             return new Response("Not Found. Available: /update-watchlist, /scrape, /backfill-queue, /read-broksum, /watchlist, /brokers, /init, /backfill/*, /test-range", {
@@ -473,16 +581,150 @@ export default {
         }
     },
 
+    // Cron Handler
     async scheduled(event, env, ctx) {
-        if (env.IPOT_ONLY === "true") return; // Stop cron noise in IPOT_ONLY mode
+        console.log(`🕐 Scheduled cron triggered at: ${new Date().toISOString()}`);
 
-        // Run backfill batch if active
-        const active = await env.SSSAHAM_WATCHLIST.get("BACKFILL_ACTIVE");
-        if (active === "true") {
-            console.log("Cron Triggered: Processing next backfill batch...");
-            await this.processNextBackfillBatch(env);
-        } else {
-            console.log("Cron Triggered but Backfill is PAUSED.");
+        // Get today's date (WIB = UTC+7)
+        const now = new Date();
+        const wibOffset = 7 * 60 * 60 * 1000;
+        const wibDate = new Date(now.getTime() + wibOffset);
+        const today = wibDate.toISOString().slice(0, 10);
+        const currentHour = wibDate.getUTCHours();
+
+        console.log(`📅 Today (WIB): ${today}, Hour: ${currentHour}`);
+
+        // Skip weekends (WIB)
+        const dow = wibDate.getUTCDay();
+        if (dow === 0 || dow === 6) {
+            console.log(`⏭️ Skipping weekend (day ${dow})`);
+            return;
+        }
+
+        try {
+            // 1. Get Watchlist
+            const watchlist = await this.getWatchlistFromKV(env);
+            if (!watchlist || watchlist.length === 0) {
+                console.log("⚠️ No watchlist found, skipping scheduled scrape.");
+                return;
+            }
+
+            console.log(`📊 Processing ${watchlist.length} symbols from watchlist`);
+
+            // 2. Scrape Today's Data for Missing Symbols (via IPOT)
+            let todayScraped = 0;
+            let todaySkipped = 0;
+            let todayFailed = 0;
+            const failedSymbols = [];
+
+            for (const symbol of watchlist) {
+                // Check if today's data already exists
+                const key = `${symbol}/${today}.json`;
+                const exists = await objectExists(env, key);
+
+                if (exists) {
+                    todaySkipped++;
+                    continue;
+                }
+
+                // Scrape via IPOT
+                try {
+                    const result = await this.scrapeIpotBroksum(env, {
+                        symbol,
+                        from: today,
+                        to: today,
+                        flag5: "%",
+                        save: true,
+                        debug: false
+                    });
+
+                    // Check result
+                    const resultData = await result.json();
+                    if (resultData.ok !== false && !resultData.error) {
+                        todayScraped++;
+                        console.log(`✅ Scraped ${symbol} for ${today}`);
+                    } else {
+                        todayFailed++;
+                        failedSymbols.push(symbol);
+                        console.log(`❌ Failed ${symbol}: ${resultData.error || resultData.message}`);
+                    }
+                } catch (e) {
+                    todayFailed++;
+                    failedSymbols.push(symbol);
+                    console.error(`❌ Error scraping ${symbol}: ${e.message}`);
+                }
+
+                // Delay between symbols to avoid rate limiting
+                await new Promise(r => setTimeout(r, 100));
+            }
+
+            console.log(`✅ Today: Scraped ${todayScraped}, Skipped ${todaySkipped}, Failed ${todayFailed}`);
+
+            // 3. Auto-Backfill Missing Dates (Last 7 Days - smaller window for frequent runs)
+            const backfillDays = 7;
+            let totalBackfillScraped = 0;
+            let totalBackfillSkipped = 0;
+            const backfillDetails = [];
+
+            for (const symbol of watchlist) {
+                const missingDates = await this.getMissingDatesForSymbol(env, symbol, backfillDays);
+
+                if (missingDates.length > 0) {
+                    console.log(`🔍 Found ${missingDates.length} missing dates for ${symbol}`);
+
+                    for (const date of missingDates) {
+                        try {
+                            const result = await this.scrapeIpotBroksum(env, {
+                                symbol,
+                                from: date,
+                                to: date,
+                                flag5: "%",
+                                save: true,
+                                debug: false
+                            });
+
+                            const resultData = await result.json();
+                            if (resultData.ok !== false && !resultData.error) {
+                                totalBackfillScraped++;
+                                console.log(`✅ Backfilled ${symbol} for ${date}`);
+                            } else {
+                                console.log(`⚠️ Backfill skip ${symbol}/${date}: ${resultData.message}`);
+                                totalBackfillSkipped++;
+                            }
+                        } catch (e) {
+                            console.error(`❌ Backfill error ${symbol}/${date}: ${e.message}`);
+                        }
+
+                        // Delay between dates
+                        await new Promise(r => setTimeout(r, 100));
+                    }
+
+                    backfillDetails.push({
+                        symbol,
+                        missing_count: missingDates.length,
+                        missing_dates: missingDates
+                    });
+                }
+
+                // Small delay between symbols
+                await new Promise(r => setTimeout(r, 50));
+            }
+
+            console.log(`✅ Backfill: Scraped ${totalBackfillScraped}, Skipped ${totalBackfillSkipped}`);
+
+            // 4. Send Summary Notification
+            const summaryMsg = `📊 **Cron Summary** (${today} ${currentHour}:00 WIB)\n` +
+                `• Symbols: ${watchlist.length}\n` +
+                `• Today: ✅${todayScraped} ⏭️${todaySkipped} ❌${todayFailed}\n` +
+                `• Backfill (${backfillDays}d): ✅${totalBackfillScraped} ⏭️${totalBackfillSkipped}\n` +
+                (failedSymbols.length > 0 ? `• Failed: ${failedSymbols.slice(0, 5).join(', ')}${failedSymbols.length > 5 ? '...' : ''}` : '');
+            await this.sendWebhook(env, summaryMsg);
+
+            console.log(`✅ Cron completed successfully`);
+
+        } catch (e) {
+            console.error(`❌ Scheduled cron error: ${e.message}`);
+            await this.sendWebhook(env, `❌ **Cron Failed**\nError: ${e.message}`);
         }
     },
 
@@ -817,6 +1059,311 @@ export default {
         }
     },
 
+    // Helper: Get Watchlist from KV (V2 or fallback to LATEST)
+    async getWatchlistFromKV(env) {
+        try {
+            // Try V2 first (preferred key for auto-backfill)
+            let data = await env.SSSAHAM_WATCHLIST.get("SSSAHAM_WATCHLIST_V2", { type: "json" });
+            if (data && Array.isArray(data)) {
+                return data;
+            }
+
+            // Fallback to LATEST (legacy format)
+            data = await env.SSSAHAM_WATCHLIST.get("LATEST", { type: "json" });
+            if (data && data.watchlist && Array.isArray(data.watchlist)) {
+                return data.watchlist;
+            }
+
+            // Last resort: try D1
+            return await this.getActiveEmiten(env);
+        } catch (e) {
+            console.error("Error fetching watchlist from KV:", e);
+            return [];
+        }
+    },
+
+    // Helper: Get Missing Dates for a Symbol (Check R2)
+    async getMissingDatesForSymbol(env, symbol, days = 30) {
+        const tradingDays = getTradingDays(days);
+        const missingDates = [];
+
+        // List existing files for this symbol
+        const existingDates = new Set();
+        try {
+            let listCursor;
+            do {
+                const listed = await env.RAW_BROKSUM.list({
+                    prefix: `${symbol}/`,
+                    cursor: listCursor
+                });
+
+                for (const obj of listed.objects) {
+                    // key format: SYMBOL/YYYY-MM-DD.json or SYMBOL/ipot/YYYY-MM-DD.json
+                    const parts = obj.key.split('/');
+                    if (parts.length >= 2) {
+                        // Extract date from filename
+                        const filename = parts[parts.length - 1];
+                        const date = filename.replace('.json', '');
+                        if (/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+                            existingDates.add(date);
+                        }
+                    }
+                }
+
+                listCursor = listed.truncated ? listed.cursor : undefined;
+            } while (listCursor);
+        } catch (e) {
+            console.error(`Error listing R2 for ${symbol}:`, e);
+        }
+
+        // Find missing dates
+        for (const date of tradingDays) {
+            if (!existingDates.has(date)) {
+                missingDates.push(date);
+            }
+        }
+
+        return missingDates;
+    },
+
+    // Helper: Auto Backfill All Symbols (via IPOT)
+    async autoBackfillAllSymbols(env, days = 30, dryRun = false, targetSymbol = null, force = false) {
+        const timestamp = new Date().toISOString();
+        const watchlist = await this.getWatchlistFromKV(env);
+
+        if (!watchlist || watchlist.length === 0) {
+            return new Response(JSON.stringify({
+                ok: false,
+                error: "No watchlist found. Please run /update-watchlist first."
+            }), {
+                status: 404,
+                headers: withCors({ "Content-Type": "application/json" })
+            });
+        }
+
+        // If filtering by symbol
+        if (targetSymbol) {
+            const s = targetSymbol.toUpperCase();
+            if (watchlist.includes(s)) {
+                // Replace watchlist with just this one symbol
+                // We restart the array, but it's fine since we loop it
+                watchlist.length = 0;
+                watchlist.push(s);
+            } else {
+                return new Response(JSON.stringify({ ok: false, error: `${s} not in watchlist` }), {
+                    status: 400,
+                    headers: withCors({ "Content-Type": "application/json" })
+                });
+            }
+        }
+
+        const details = [];
+        let totalMissingDates = 0;
+        let totalScraped = 0;
+        let totalFailed = 0;
+
+        for (const symbol of watchlist) {
+            let missingDates = [];
+            if (force) {
+                // Force mode: Generate all dates for last N days (excluding weekends)
+                const today = new Date();
+                for (let i = 0; i < days; i++) {
+                    const d = new Date(today);
+                    d.setDate(d.getDate() - i);
+                    if (d.getDay() !== 0 && d.getDay() !== 6) {
+                        missingDates.push(d.toISOString().split('T')[0]);
+                    }
+                }
+            } else {
+                missingDates = await this.getMissingDatesForSymbol(env, symbol, days);
+            }
+
+            if (missingDates.length > 0) {
+                const symbolDetail = {
+                    symbol,
+                    missing_count: missingDates.length,
+                    missing_dates: missingDates,
+                    scraped: 0,
+                    failed: 0
+                };
+
+                totalMissingDates += missingDates.length;
+
+                // Scrape via IPOT if not dry run
+                if (!dryRun) {
+                    for (const date of missingDates) {
+                        try {
+                            const result = await this.scrapeIpotBroksum(env, {
+                                symbol,
+                                from: date,
+                                to: date,
+                                flag5: "%",
+                                save: true,
+                                debug: false
+                            });
+
+                            const resultData = await result.json();
+                            if (resultData.ok !== false && !resultData.error) {
+                                totalScraped++;
+                                symbolDetail.scraped++;
+                            } else {
+                                totalFailed++;
+                                symbolDetail.failed++;
+                            }
+                        } catch (e) {
+                            totalFailed++;
+                            symbolDetail.failed++;
+                            console.error(`Backfill error ${symbol}/${date}: ${e.message}`);
+                        }
+
+                        // Delay between dates
+                        await new Promise(r => setTimeout(r, 100));
+                    }
+                }
+
+                details.push(symbolDetail);
+            }
+
+            // Small delay to avoid overwhelming R2
+            await new Promise(r => setTimeout(r, 50));
+        }
+
+        const report = {
+            timestamp,
+            days_checked: days,
+            total_symbols: watchlist.length,
+            symbols_with_missing: details.length,
+            total_missing_dates: totalMissingDates,
+            total_scraped: totalScraped,
+            total_failed: totalFailed,
+            dry_run: dryRun,
+            details
+        };
+
+        const message = dryRun
+            ? "Backfill report generated (dry run - no scraping performed)"
+            : `Backfill completed: ${totalScraped} scraped, ${totalFailed} failed`;
+
+        // Send notification if not dry run
+        if (!dryRun && totalMissingDates > 0) {
+            await this.sendWebhook(env, `🔄 **Auto Backfill Completed**\n` +
+                `• Total Symbols: ${watchlist.length}\n` +
+                `• Symbols with missing: ${details.length}\n` +
+                `• Scraped: ${totalScraped}\n` +
+                `• Failed: ${totalFailed}`);
+        }
+
+        return new Response(JSON.stringify({
+            ok: true,
+            message,
+            report
+        }), {
+            headers: withCors({ "Content-Type": "application/json" })
+        });
+    },
+
+    // Helper: Get Audit Trail for a Symbol (from R2)
+    async getAuditTrail(env, symbol, limit = 100) {
+        try {
+            const key = `audit/${symbol}.json`;
+            const obj = await env.SSSAHAM_EMITEN.get(key);
+            if (!obj) return [];
+
+            const data = await obj.json();
+            if (!data || !Array.isArray(data.entries)) return [];
+
+            // Return most recent first, limited
+            return data.entries.slice(-limit).reverse();
+        } catch (e) {
+            console.error(`Error getting audit trail for ${symbol}:`, e);
+            return [];
+        }
+    },
+
+    // Helper: Record Audit Trail Entry (to R2)
+    async recordAuditTrail(env, stockCode, dataDate, action, status, source) {
+        const key = `audit/${stockCode}.json`;
+        let history = [];
+
+        try {
+            const existing = await env.SSSAHAM_EMITEN.get(key);
+            if (existing) {
+                history = await existing.json();
+            }
+        } catch (e) { }
+
+        // Add new entry
+        // Add new entry
+        const entry = {
+            timestamp: new Date().toISOString(),
+            date: new Date().toISOString().split('T')[0], // Job run date
+            data_date: dataDate,
+            action,
+            status,
+            source
+        };
+
+        history.push(entry);
+
+        // Keep last 100 entries (Increased from 50)
+        if (history.length > 100) history = history.slice(-100);
+
+        // Update Audit File in R2
+        await env.SSSAHAM_EMITEN.put(key, JSON.stringify(history), {
+            httpMetadata: { contentType: "application/json" }
+        });
+
+        // P0 Feature: Log to D1 for monitoring
+        try {
+            if (env.SSSAHAM_DB) {
+                const d1Status = status === 'SUCCESS' ? 'SCRAPE_SUCCESS' : 'SCRAPE_FAILED';
+                await env.SSSAHAM_DB.prepare(
+                    "INSERT INTO scraping_logs (timestamp, symbol, date, status, duration_ms) VALUES (?, ?, ?, ?, ?)"
+                ).bind(
+                    entry.timestamp,
+                    stockCode,
+                    dataDate,
+                    d1Status,
+                    0 // Duration placeholder
+                ).run();
+            }
+        } catch (e) {
+            // Non-blocking error
+            console.error(`Failed to log D1 audit for ${stockCode}:`, e);
+        }
+    },
+
+    // Helper: Scrape Logo (Stockbit -> R2, no resize)
+    async scrapeLogo(env, symbol) {
+        const targetPath = `comp-profile/logo/${symbol}.png`;
+
+        try {
+            // 1. Check if exists
+            const existing = await env.SSSAHAM_EMITEN.head(targetPath);
+            if (existing) {
+                return { ok: true, message: "Logo already exists", path: targetPath };
+            }
+
+            // 2. Fetch from Stockbit
+            const sourceUrl = `https://assets.stockbit.com/logos/companies/${symbol}.png`;
+            const resp = await fetch(sourceUrl);
+            if (!resp.ok) {
+                return { ok: false, error: `Failed to fetch from Stockbit: ${resp.status}` };
+            }
+            const arrayBuffer = await resp.arrayBuffer();
+
+            // 3. Save directly to R2 (no processing)
+            await env.SSSAHAM_EMITEN.put(targetPath, arrayBuffer, {
+                httpMetadata: { contentType: "image/png" }
+            });
+
+            return { ok: true, message: "Logo scraped and saved", path: targetPath };
+
+        } catch (e) {
+            return { ok: false, error: e.message };
+        }
+    },
+
     // Helper: Send Webhook Notification (via Service Binding)
     async sendWebhook(env, message) {
         if (!env.NOTIF_SERVICE) {
@@ -834,13 +1381,66 @@ export default {
         }
     },
 
+    // Helper: Get All Emiten from D1 (fallback/source of truth)
+    async getAllEmitenFromDB(env) {
+        try {
+            if (!env.SSSAHAM_DB) return [];
+            console.log("DEBUG: Fetching emiten from D1...");
+            // Fetch all tickers
+            const { results } = await env.SSSAHAM_DB.prepare("SELECT ticker FROM emiten").all();
+            if (!results) return [];
+
+            // Strip .JK suffix
+            const symbols = results.map(r => r.ticker.replace(".JK", "")).filter(s => s && s.length >= 4);
+            console.log(`DEBUG: Fetched ${symbols.length} emiten from D1`);
+            return symbols;
+        } catch (e) {
+            console.error("Failed to fetch emiten from D1:", e);
+            return [];
+        }
+    },
+
+    // Helper: Get Watchlist from KV (with D1 Fallback/Merge)
+    async getWatchlistFromKV(env) {
+        let watchlist = [];
+        try {
+            // 1. Try KV V2 (User Curated)
+            const v2 = await env.SSSAHAM_WATCHLIST.get("SSSAHAM_WATCHLIST_V2");
+            if (v2) {
+                watchlist = JSON.parse(v2);
+            } else {
+                // 2. Try Latest (Legacy)
+                const latest = await env.SSSAHAM_WATCHLIST.get("LATEST");
+                if (latest) {
+                    const data = JSON.parse(latest);
+                    watchlist = data.data || [];
+                }
+            }
+        } catch (e) {
+            console.error("KV Watchlist Error:", e);
+        }
+
+        // 3. Always merge with D1 if available (User Request: "farming db from here")
+        // This ensures fully comprehensive coverage
+        const dbList = await this.getAllEmitenFromDB(env);
+        if (dbList.length > 0) {
+            // Merge and deduplicate
+            const set = new Set([...watchlist, ...dbList]);
+            watchlist = Array.from(set).sort();
+        }
+
+        return watchlist;
+    },
+
     // Helper: Backfill Active Emiten (D1 source, N days)
     async backfillActiveEmiten(env, days = 5, overwrite = false, fromDate = null) {
         const startMsg = `🚀 **Starting INIT Backfill**\nDays: ${days}\nOverwrite: ${overwrite}\nStart Date: ${fromDate || 'Today'}\nSource: D1 (Active Emiten)`;
         console.log(startMsg);
         await this.sendWebhook(env, startMsg);
 
-        const watchlist = await this.getActiveEmiten(env);
+        // USE THE NEW D1 HELPER (User Requested Fallback)
+        const watchlist = await this.getAllEmitenFromDB(env);
+
         if (watchlist.length === 0) {
             await this.sendWebhook(env, "⚠️ **Backfill Aborted**: No active emiten found in D1.");
             return new Response("No active emiten found in D1. Please seed database first.", { status: 404 });
@@ -852,17 +1452,9 @@ export default {
         let totalSkipped = 0;
         const batchSize = 100; // Queue batch size
 
-        // Optimization: Create all messages first? No, memory limit.
         // Process day by day.
-
         for (const date of tradingDays) {
             const messages = [];
-
-            // Check existence logic can be slow if we do it one by one for 700*300 items.
-            // But we must do it if not overwriting.
-            // Optimization: Maybe listing R2 is faster? No, too many files.
-            // We'll stick to strict checking or just blind dispatch if overwrite is true?
-            // If overwrite=true, we skip checking.
 
             for (const symbol of watchlist) {
                 if (!overwrite) {
@@ -903,19 +1495,17 @@ export default {
     },
 
     async queue(batch, env) {
-        if (env.IPOT_ONLY === "true") {
-            // Ack all to prevent buildup if still bound
-            for (const m of batch.messages) m.ack();
-            return;
-        }
+        // P0 Fix #4: UPSTREAM switch for IPOT vs STOCKBIT
+        const upstream = (env.UPSTREAM || "IPOT").toUpperCase();
+        const useIpot = upstream === "IPOT";
 
-        let TOKEN = null; // Lazy: only fetch when needed
+        let TOKEN = null; // Lazy: only fetch when needed for Stockbit
 
         for (const message of batch.messages) {
             const { symbol, date, overwrite } = message.body;
 
             const startTime = Date.now();
-            console.log(`Processing ${symbol} for ${date} (overwrite: ${overwrite})`);
+            console.log(`[Queue] Processing ${symbol} for ${date} (overwrite: ${overwrite}, upstream: ${upstream})`);
 
             try {
                 // Check if already exists (double-check), UNLESS overwrite is true
@@ -933,6 +1523,43 @@ export default {
                     }
                 }
 
+                // === IPOT PATH ===
+                if (useIpot) {
+                    const result = await this.scrapeIpotBroksum(env, {
+                        symbol,
+                        from: date,
+                        to: date,
+                        flag5: "%",
+                        save: true,
+                        debug: false
+                    });
+
+                    const resultData = await result.json();
+                    const status = resultData.ok !== false && !resultData.error ? "SUCCESS_IPOT" : "FAILED_IPOT";
+
+                    await env.SSSAHAM_DB.prepare("INSERT INTO scraping_logs (timestamp, symbol, date, status, duration_ms) VALUES (?, ?, ?, ?, ?)")
+                        .bind(new Date().toISOString(), symbol, date, status, Date.now() - startTime)
+                        .run();
+
+                    if (status === "FAILED_IPOT") {
+                        const attempt = (message.body.attempt ?? 0);
+                        if (attempt >= 2) {
+                            console.error(`[Queue] Max retries for ${symbol}/${date} via IPOT`);
+                            await this.sendWebhook(env, `⚠️ **IPOT Scrape Failed**\nMax retries for ${symbol} on ${date}.\nError: ${resultData.message || 'Unknown'}`);
+                            message.ack();
+                        } else {
+                            console.log(`[Queue] Retrying ${symbol} via IPOT (attempt ${attempt + 1})`);
+                            await env.SSSAHAM_QUEUE.send({ symbol, date, overwrite, attempt: attempt + 1 });
+                            message.ack();
+                        }
+                    } else {
+                        console.log(`[Queue] ✅ ${symbol}/${date} scraped via IPOT`);
+                        message.ack();
+                    }
+                    continue;
+                }
+
+                // === STOCKBIT PATH (Legacy) ===
                 // Lazy Token Fetch: only get token when we actually need to make a request
                 if (!TOKEN) TOKEN = await getToken(env);
 
@@ -1247,9 +1874,22 @@ export default {
                 ws.send(JSON.stringify({ event: "#handshake", data: { authToken }, cid: 1 }));
             } catch { }
         } catch (e) {
-            return new Response(JSON.stringify({ ok: false, message: "WS Connect Failed: " + e.message }), {
-                headers: withCors({ "Content-Type": "application/json" })
-            });
+            // P1 Fix: Auto-recover once if session is stale
+            log(`WS connect failed: ${e.message}, attempting session reset...`);
+            try {
+                await clearIpotAppSession(env);
+                ws = await connectOnce();
+                ws.accept();
+                try {
+                    const authToken = env.IPOT_AUTH_TOKEN || null;
+                    ws.send(JSON.stringify({ event: "#handshake", data: { authToken }, cid: 1 }));
+                } catch { }
+                log(`WS reconnect successful after session reset`);
+            } catch (e2) {
+                return new Response(JSON.stringify({ ok: false, message: "WS Connect Failed (after retry): " + e2.message }), {
+                    headers: withCors({ "Content-Type": "application/json" })
+                });
+            }
         }
 
         // 3. QUERY HELPER
@@ -1349,7 +1989,12 @@ export default {
                 };
 
                 const isBrokerCode = (s) => /^[A-Z0-9]{2,3}$/.test(s || "");
-                const cleanInt = (s) => String(s ?? "").replace(/,/g, "").trim();
+                // P0 Fix #2: cleanInt now validates numeric input
+                const cleanInt = (s) => {
+                    if (s === null || s === undefined) return "";
+                    const t = String(s).replace(/,/g, "").trim();
+                    return /^[0-9]+$/.test(t) ? t : "";
+                };
 
                 // Val Sorter
                 const valSorter = (key) => (a, b) => {
@@ -1367,10 +2012,10 @@ export default {
                         break;
                     }
 
-                    const [resB, resS] = await Promise.all([
-                        runScrapeSide("b", d),
-                        runScrapeSide("s", d)
-                    ]);
+                    // P0 Fix #1: Sequential scraping to avoid race condition
+                    const resB = await runScrapeSide("b", d);
+                    await new Promise(r => setTimeout(r, 80)); // small gap to reduce interleaving
+                    const resS = await runScrapeSide("s", d);
 
                     if (debug) debugMeta.push({ date: d, b: resB.meta, s: resS.meta });
 
@@ -1442,7 +2087,8 @@ export default {
 
                     const parseRecord = (line) => {
                         let parts = splitLine(line);
-                        if (parts.length < 4) return null;
+                        // P0 Fix #2: need at least 6 parts because we access [4] & [5]
+                        if (parts.length < 6) return null;
                         if (!isBrokerCode(parts[0])) return null;
                         return {
                             broker: parts[0],
@@ -1516,7 +2162,7 @@ export default {
                     // Calculate Bandar Detector
                     const bandarDetector = this.calculateBandarDetector(brokers_buy, brokers_sell, dailySummaryRec);
 
-                    // Construct Output (Strict Stockbit Schema)
+                    // Construct Output (Stockbit-compatible Schema)
                     const dailyOutput = {
                         message: "Successfully retrieved market detector data (IPOT Proxy)",
                         data: {
@@ -1525,6 +2171,8 @@ export default {
                             bandar_detector: bandarDetector,
                             broker_summary: {
                                 symbol: symbol,
+                                // P0 Fix #3: Include stock_summary for downstream compatibility
+                                stock_summary: dailySummaryRec,
                                 brokers_buy,
                                 brokers_sell
                             }
@@ -1557,6 +2205,9 @@ export default {
                             httpMetadata: { contentType: "application/json" }
                         });
                         if (debug || save) dailyOutput.saved_key = key;
+
+                        // Record Audit Trail
+                        await this.recordAuditTrail(env, symbol, d, "SCRAPE_BROKSUM", "SUCCESS", "IPOT");
                     }
 
                     batchResults.push(dailyOutput);

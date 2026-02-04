@@ -33,14 +33,37 @@ import { SmartMoney } from './smart-money';
 export default {
     async scheduled(event, env, ctx) {
         // CRON HANDLER
-        // 1. Fetch Active Emiten (From DB or KV)
-        // 2. Dispatch Jobs to Queue
-        console.log("Cron Triggered: Dispatching Feature Calculation Jobs...");
+        // 11:30 -> Dispatch Logic (Calculate)
+        // 11:45 -> Aggregation Logic (Aggregate)
 
-        const date = (event && event.date) ? event.date : new Date().toISOString().split("T")[0];
+        const cron = event.cron;
+        console.log(`Cron Triggered: ${cron}`);
+
+        const date = new Date().toISOString().split("T")[0]; // Today (UTC)
+
+        // 1. Dispatch Job (Calculations) - 11:30 UTC
+        if (cron === "30 11 * * 1-5" || cron === "30 11 * * *") {
+            await this.dispatchJobs(env, date);
+        }
+
+        // 2. Aggregation Job - 11:45 UTC
+        else if (cron === "45 11 * * 1-5" || cron === "45 11 * * *") {
+            await this.aggregateDaily(env, date);
+        }
+
+        // Fallback for manual test trigger (unknown cron)
+        else {
+            console.log("Unknown cron, running Dispatch...");
+            await this.dispatchJobs(env, date);
+        }
+    },
+
+    async dispatchJobs(env, date) {
+        console.log(`Dispatching Feature Calculation Jobs for ${date}...`);
 
         let tickers = [];
         try {
+            // Updated to strip .JK just in case
             const { results } = await env.SSSAHAM_DB.prepare("SELECT ticker FROM emiten WHERE status = 'ACTIVE'").all();
             if (results) tickers = results.map(r => r.ticker.replace(/\.JK$/, ''));
         } catch (e) {
@@ -65,15 +88,6 @@ export default {
         }
 
         console.log(`Dispatched ${messages.length} jobs.`);
-
-        // OPTIONAL: Trigger Aggregator immediately? No, wait for queue.
-        // We can schedule another cron for aggregation or run it at the end of queue?
-        // Distributed systems make "end of queue" hard.
-        // We will trust the daily cron flow: 
-        // 11:00 UTC -> Dispatch
-        // Queue Process -> D1
-        // 11:30 UTC -> Aggregate (Another Cron?)
-        // For now, let's implement an endpoint to trigger aggregation manually or via second cron.
     },
 
     async fetch(req, env) {
@@ -91,6 +105,76 @@ export default {
             const date = url.searchParams.get("date");
             await this.scheduled({ date }, env, null);
             return new Response(`Triggered all for ${date || "TODAY"}`);
+        }
+
+        // Feature Rebuild (Backfill History)
+        if (url.pathname === "/rebuild-history") {
+            const ticker = url.searchParams.get("ticker");
+            if (!ticker) return new Response("Missing ticker param", { status: 400 });
+
+            // Safety: If ticker="ALL", we might need to dispatch to queue instead.
+            // For now, allow single ticker rebuild.
+
+            console.log(`Rebuilding history for ${ticker}...`);
+
+            // 1. List all raw files
+            // Pattern: raw-broksum/[ticker]/[date].json OR [symbol]/[date].json
+            // We need to know the prefix. broksum-scrapper uses `${symbol}/${date}.json`
+
+            let objects = [];
+            let cursor;
+            try {
+                do {
+                    const listed = await env.RAW_BROKSUM.list({
+                        prefix: `${ticker}/`,
+                        cursor: cursor
+                    });
+                    objects.push(...listed.objects);
+                    cursor = listed.cursor;
+                } while (cursor);
+            } catch (e) {
+                return new Response(`Error listing R2: ${e.message}`, { status: 500 });
+            }
+
+            if (objects.length === 0) return new Response(`No raw data found for ${ticker}`, { status: 404 });
+
+            // Sort by Date (filenames have date)
+            objects.sort((a, b) => a.key.localeCompare(b.key));
+
+            console.log(`Found ${objects.length} raw files.`);
+
+            // 2. Process Sequentially
+            const engine = new SmartMoney();
+            let history = [];
+
+            for (const obj of objects) {
+                // key format: TICKER/YYYY-MM-DD.json
+                const parts = obj.key.split('/');
+                const filename = parts[parts.length - 1];
+                const date = filename.replace('.json', '');
+
+                const rawObj = await env.RAW_BROKSUM.get(obj.key);
+                if (!rawObj) continue;
+                const rawData = await rawObj.json();
+
+                const processed = engine.processSingleDay(ticker, date, rawData, history);
+                if (processed) {
+                    history.push(processed);
+                    // Keep window size
+                    if (history.length > 365) history.shift();
+                }
+            }
+
+            // 3. Save Result
+            const historyKey = `features/z_score/emiten/${ticker}.json`;
+            const finalData = { ticker, history };
+            await env.SSSAHAM_EMITEN.put(historyKey, JSON.stringify(finalData));
+
+            return new Response(JSON.stringify({
+                message: `Rebuilt history for ${ticker}`,
+                days_processed: objects.length,
+                final_history_len: history.length
+            }), { headers: { "Content-Type": "application/json" } });
         }
 
         return new Response("Features Service OK");

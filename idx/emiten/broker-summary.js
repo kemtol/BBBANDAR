@@ -62,9 +62,23 @@ $(document).ready(function () {
         pulling = false;
 
         if (pullIndicator.classList.contains('ready')) {
-            pullText.textContent = 'Memuat...';
+            pullText.textContent = 'Memuat ulang data...';
             setTimeout(() => {
-                window.location.reload();
+                if (kodeParam) {
+                    // Detail Mode: Force fetch new data (bypass cache)
+                    const fromDateVal = $('#date-from').val();
+                    const toDateVal = $('#date-to').val();
+                    const s = new Date(fromDateVal);
+                    const e = new Date(toDateVal);
+
+                    loadDetailData(kodeParam, s, e, true) // reload=true
+                        .then(() => {
+                            pullIndicator.classList.remove('visible');
+                        });
+                } else {
+                    // Index Mode: Regular reload
+                    window.location.reload();
+                }
             }, 300);
         } else {
             pullIndicator.classList.remove('visible');
@@ -172,10 +186,14 @@ function renderScreenerTable(candidates) {
 
     candidates.forEach((item, idx) => {
         const m = item.metrics;
+        const logoUrl = `https://api-saham.mkemalw.workers.dev/logo?symbol=${item.symbol}`;
         const row = `
             <tr onclick="window.location.href='?kode=${item.symbol}'" style="cursor:pointer;">
                 <td class="text-center text-muted small">${idx + 1}</td>
-                <td class="fw-bold">${item.symbol}</td>
+                <td class="fw-bold">
+                    <img src="${logoUrl}" alt="" style="height: 20px; width: auto; margin-right: 6px; vertical-align: middle; border-radius: 3px;" onerror="this.style.display='none'">
+                    <a href="?kode=${item.symbol}" style="color: inherit; text-decoration: none;">${item.symbol}</a>
+                </td>
                 <td class="text-center">${getBadge(m.effortZ, 'effort')}</td>
                 <td class="text-center">${getBadge(m.resultZ, 'result')}</td>
                 <td class="text-center">${getBadge(m.ngr, 'ngr')}</td>
@@ -193,12 +211,18 @@ function renderScreenerTable(candidates) {
 async function initDetailMode(symbol) {
     $('#index-view').hide();
     $('#detail-view').show();
-    $('.nav-title').text(symbol);
+
+    // Set header with logo + symbol anchor
+    const logoUrl = `https://api-saham.mkemalw.workers.dev/logo?symbol=${symbol}`;
+    $('.nav-title').html(`
+        <img src="${logoUrl}" alt="${symbol}" style="height: 24px; width: auto; margin-right: 8px; vertical-align: middle; border-radius: 4px;" onerror="this.style.display='none'">
+        <a href="?kode=${symbol}" style="color: inherit; text-decoration: none;">${symbol}</a>
+    `);
     $('#nav-back').removeClass('d-none').attr('href', '?'); // Show back button, link to index
 
     let endDate = endParam ? new Date(endParam) : new Date();
     let startDate = startParam ? new Date(startParam) : new Date();
-    if (!startParam) startDate.setDate(endDate.getDate() - 30);
+    if (!startParam) startDate.setDate(endDate.getDate() - 14); // Default 14 days per user request
 
     $('#date-from').val(startDate.toISOString().split('T')[0]);
     $('#date-to').val(endDate.toISOString().split('T')[0]);
@@ -227,13 +251,15 @@ async function initDetailMode(symbol) {
     });
 }
 
-async function loadDetailData(symbol, start, end) {
+async function loadDetailData(symbol, start, end, reload = false) {
     $('#loading-indicator').show();
     const fromDate = start.toISOString().split('T')[0];
     const toDate = end.toISOString().split('T')[0];
 
     try {
-        const url = `${WORKER_BASE_URL}/cache-summary?symbol=${symbol}&from=${fromDate}&to=${toDate}`;
+        let url = `${WORKER_BASE_URL}/cache-summary?symbol=${symbol}&from=${fromDate}&to=${toDate}`;
+        if (reload) url += '&reload=true';
+
         const response = await fetch(url);
         const result = await response.json();
 
@@ -261,8 +287,69 @@ async function loadDetailData(symbol, start, end) {
     }
 }
 
-function loadAuditTrail(symbol) {
-    // Logic placeholder if needed
+async function loadAuditTrail(symbol) {
+    const container = $('#audit-trail-list');
+    container.html('<p class="text-muted small">Loading audit trail...</p>');
+
+    try {
+        const response = await fetch(`${WORKER_BASE_URL}/audit-trail?symbol=${symbol}&limit=100`);
+        const data = await response.json();
+
+        if (!data.ok || !data.entries || data.entries.length === 0) {
+            container.html('<p class="text-muted small">No audit trail entries found for this symbol.</p>');
+            return;
+        }
+
+        let html = '<div class="table-responsive"><table class="table table-sm small">';
+        html += `<thead>
+            <tr class="text-muted">
+                <th>Timestamp</th>
+                <th>Action</th>
+                <th>Data Date</th>
+                <th class="d-none d-md-table-cell">Status</th>
+            </tr>
+        </thead>`;
+        html += '<tbody>';
+
+        // Action badge colors
+        const getActionBadge = (action) => {
+            const colors = {
+                'SCRAPE_BROKSUM': 'bg-primary',
+                'CALCULATE_SCORE': 'bg-info',
+                'BACKFILL': 'bg-warning text-dark',
+                'MANUAL_SCRAPE': 'bg-success'
+            };
+            const color = colors[action] || 'bg-secondary';
+            const label = action ? action.replace(/_/g, ' ') : 'UNKNOWN';
+            return `<span class="badge ${color}">${label}</span>`;
+        };
+
+        for (const entry of data.entries) {
+            const timestamp = new Date(entry.timestamp);
+            const localTime = timestamp.toLocaleString('id-ID', {
+                day: '2-digit', month: 'short', year: 'numeric',
+                hour: '2-digit', minute: '2-digit'
+            });
+            const statusIcon = entry.status === 'SUCCESS' ? '✅' : '❌';
+
+            html += `
+                <tr>
+                    <td class="text-muted">${localTime}</td>
+                    <td>${getActionBadge(entry.action)}</td>
+                    <td class="fw-bold">${entry.data_date || '-'}</td>
+                    <td class="d-none d-md-table-cell">${statusIcon}</td>
+                </tr>
+            `;
+        }
+
+        html += '</tbody></table></div>';
+        html += `<p class="text-muted small mt-2">Showing ${data.count} entries</p>`;
+        container.html(html);
+
+    } catch (e) {
+        console.error('Error loading audit trail:', e);
+        container.html('<p class="text-danger small">Failed to load audit trail.</p>');
+    }
 }
 
 function renderAuditTrail(history) {
@@ -607,14 +694,28 @@ function renderChart(history) {
     const rData = validHistory.map(h => { accR += (h.data.retail?.net_val || 0); return accR; });
     const lData = validHistory.map(h => { accL += (h.data.local?.net_val || 0); return accL; });
 
+    // Price Data (Avg Price)
+    const priceData = validHistory.map(h => h.data.price || null);
+
     myChart = new Chart(ctx, {
         type: 'line',
         data: {
             labels,
             datasets: [
-                { label: 'Foreign', data: fData, borderColor: '#198754', tension: 0.1, borderWidth: 2, pointRadius: 0 },
-                { label: 'Retail', data: rData, borderColor: '#dc3545', tension: 0.1, borderWidth: 2, pointRadius: 0 },
-                { label: 'Local', data: lData, borderColor: '#0d6efd', tension: 0.1, borderWidth: 2, pointRadius: 0 }
+                {
+                    label: 'Price (Avg)',
+                    data: priceData,
+                    borderColor: '#f59e0b', // Amber/Gold
+                    backgroundColor: '#f59e0b',
+                    borderWidth: 2,
+                    pointRadius: 2, // Visible points
+                    borderDash: [5, 5], // Dotted Line
+                    yAxisID: 'y1',
+                    tension: 0.1
+                },
+                { label: 'Foreign', data: fData, borderColor: '#198754', tension: 0.1, borderWidth: 2, pointRadius: 0, yAxisID: 'y' },
+                { label: 'Retail', data: rData, borderColor: '#dc3545', tension: 0.1, borderWidth: 2, pointRadius: 0, yAxisID: 'y' },
+                { label: 'Local', data: lData, borderColor: '#0d6efd', tension: 0.1, borderWidth: 2, pointRadius: 0, yAxisID: 'y' }
             ]
         },
         options: {
@@ -631,6 +732,9 @@ function renderChart(history) {
                     border: { color: '#ffffff' }
                 },
                 y: {
+                    type: 'linear',
+                    display: true,
+                    position: 'left',
                     grid: { display: false },
                     ticks: {
                         color: '#9ca3af',
@@ -639,6 +743,19 @@ function renderChart(history) {
                         }
                     },
                     border: { color: '#ffffff' }
+                },
+                y1: {
+                    type: 'linear',
+                    display: true,
+                    position: 'right',
+                    grid: { display: false },
+                    ticks: {
+                        color: '#f59e0b', // Gold color for price ticks
+                        callback: function (value) {
+                            return value.toLocaleString();
+                        }
+                    },
+                    border: { display: false } // No border line for clean look
                 }
             }
         },
@@ -657,8 +774,8 @@ function renderChart(history) {
                     ctx.save();
                     ctx.beginPath();
                     ctx.setLineDash([5, 5]); // Dashed line
-                    ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
-                    ctx.lineWidth = 1;
+                    ctx.strokeStyle = '#9ca3af'; // Grey for visibility on white bg
+                    ctx.lineWidth = 1.5;
                     ctx.moveTo(xScale.left, yPos);
                     ctx.lineTo(xScale.right, yPos);
                     ctx.stroke();
