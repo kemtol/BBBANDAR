@@ -207,27 +207,61 @@
             <!-- DASHBOARD TABS -->
             <ul class="nav nav-tabs mb-3" role="tablist">
                 <li class="nav-item" role="presentation">
-                    <a class="nav-link" href="#">Feed</a>
+                    <a class="nav-link" href="../index.html">Feed</a>
                 </li>
                 <li class="nav-item" role="presentation">
-                    <a class="nav-link" href="index.html">Swing Scanner</a>
+                    <a class="nav-link" href="index.html">Orderflow</a>
                 </li>
                 <li class="nav-item" role="presentation">
-                    <span class="nav-link active">Smart Screener</span>
+                    <span class="nav-link active">Brokerflow</span>
                 </li>
             </ul>
+            <!-- MARKET BREADTH WIDGET -->
+            <div id="market-breadth-widget" class="p-4 mb-3 bg-white rounded-3 shadow-sm d-none">
+                <div class="row align-items-center">
+                    <div class="col-md-4 text-center border-end">
+                        <h6 class="text-muted mb-1">Market Sentiment</h6>
+                        <h2 class="mb-0 fw-bold" id="market-sentiment-text">Neutral</h2>
+                        <small class="text-muted" id="market-date">Today</small>
+                    </div>
+                    <div class="col-md-8">
+                        <div class="d-flex justify-content-between mb-1 small text-muted">
+                            <span>Distribution (Bearish)</span>
+                            <span>Accumulation (Bullish)</span>
+                        </div>
+                        <div class="progress" style="height: 24px;">
+                            <div id="bar-dist" class="progress-bar bg-danger" role="progressbar" style="width: 0%">0
+                            </div>
+                            <div id="bar-neut" class="progress-bar bg-secondary opacity-50" role="progressbar"
+                                style="width: 100%">0</div>
+                            <div id="bar-accum" class="progress-bar bg-success" role="progressbar" style="width: 0%">0
+                            </div>
+                        </div>
+                        <div class="d-flex justify-content-between mt-2 small">
+                            <span class="text-danger fw-bold" id="count-dist">0 Stocks</span>
+                            <span class="text-success fw-bold" id="count-accum">0 Stocks</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
             <div class="card card-swing">
                 <div class="table-responsive">
                     <table class="table table-hover mb-0 table-orderflow align-middle">
                         <thead>
                             <tr>
                                 <th class="text-center">#</th>
-                                <th>Emiten</th>
-                                <th class="text-center">Effort</th>
-                                <th class="text-center">Price Response</th>
-                                <th class="text-center">Net Quality</th>
-                                <th class="text-center">Elasticity</th>
-                                <th class="text-center">State</th>
+                                <th data-sort="symbol" style="cursor:pointer">Emiten <i
+                                        class="fa-solid fa-sort small text-muted"></i></th>
+                                <th class="text-center" data-sort="effort" style="cursor:pointer">Effort <i
+                                        class="fa-solid fa-sort small text-muted"></i></th>
+                                <th class="text-center" data-sort="response" style="cursor:pointer">Price Response <i
+                                        class="fa-solid fa-sort small text-muted"></i></th>
+                                <th class="text-center" data-sort="quality" style="cursor:pointer">Net Quality <i
+                                        class="fa-solid fa-sort small text-muted"></i></th>
+                                <th class="text-center" data-sort="elasticity" style="cursor:pointer">Elasticity <i
+                                        class="fa-solid fa-sort small text-muted"></i></th>
+                                <th class="text-center" data-sort="state" style="cursor:pointer">State <i
+                                        class="fa-solid fa-sort small text-muted"></i></th>
                             </tr>
                         </thead>
                         <tbody id="tbody-index">
@@ -331,7 +365,7 @@
     <script src="component.js"></script>
 
     <!-- MAIN APP LOGIC -->
-    <script src="broker-summary.js?v=5"></script>
+    <script src="broker-summary.js?v=12"></script>
 </body>
 
 </html>

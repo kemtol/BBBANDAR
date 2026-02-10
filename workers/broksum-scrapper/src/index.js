@@ -34,18 +34,7 @@
 
 
 
-// Helper: Get token from KV
-async function getToken(env) {
-    const hard = env.STOCKBIT_TOKEN_FALLBACK;
-    if (hard) return hard;
 
-    const stored = await env.SSSAHAM_WATCHLIST.get("STOCKBIT_TOKEN");
-    if (!stored) {
-        throw new Error("No token found in KV. Please update token via rpa-auth.");
-    }
-    const data = JSON.parse(stored);
-    return data.access_token;
-}
 
 // Helper: Check if R2 object exists
 async function objectExists(env, key) {
@@ -329,52 +318,12 @@ export default {
                 return new Response(JSON.stringify({ message: "Cursor Reset to 0" }), { headers: { "Content-Type": "application/json" } });
             }
 
-            // ROUTE 5: Debug token - test API with stored token
+            // ROUTE 5: Debug token - REMOVED (Stockbit Deprecated)
             if (path === "/debug-token") {
-                try {
-                    const TOKEN = await getToken(env);
-                    const symbol = url.searchParams.get("symbol") || "BBCA";
-                    const dateParam = url.searchParams.get("date");
-                    const date = dateParam || new Date().toISOString().split('T')[0];
-
-                    const targetUrl = `https://exodus.stockbit.com/marketdetectors/${symbol}?from=${date}&to=${date}&transaction_type=TRANSACTION_TYPE_GROSS&market_board=MARKET_BOARD_REGULER&investor_type=INVESTOR_TYPE_ALL&limit=25`;
-
-                    const response = await fetch(targetUrl, {
-                        method: "GET",
-                        headers: {
-                            "Host": "exodus.stockbit.com",
-                            "Connection": "keep-alive",
-                            "X-Platform": "desktop",
-                            "Authorization": `Bearer ${TOKEN}`,
-                            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0",
-                            "Accept": "application/json, text/plain, */*",
-                            "Origin": "https://tauri.localhost",
-                            "Referer": "https://tauri.localhost/",
-                            "Sec-Fetch-Site": "cross-site",
-                            "Sec-Fetch-Mode": "cors",
-                            "Sec-Fetch-Dest": "empty",
-                            "sec-ch-ua-platform": '"Windows"',
-                            "sec-ch-ua-mobile": "?0",
-                            "Accept-Encoding": "gzip, deflate, br"
-                        }
-                    });
-
-                    const data = await response.json();
-
-                    return new Response(JSON.stringify({
-                        token_preview: TOKEN.substring(0, 50) + "...",
-                        token_length: TOKEN.length,
-                        api_status: response.status,
-                        api_response: data
-                    }), {
-                        headers: { "Content-Type": "application/json" }
-                    });
-                } catch (e) {
-                    return new Response(JSON.stringify({ error: e.message }), {
-                        status: 500,
-                        headers: { "Content-Type": "application/json" }
-                    });
-                }
+                return new Response(JSON.stringify({ error: "Endpoint deprecated (Stockbit removed)" }), {
+                    status: 410,
+                    headers: { "Content-Type": "application/json" }
+                });
             }
 
             // ROUTE 6: Read Watchlist (for frontend index)
@@ -567,6 +516,45 @@ export default {
             }
 
 
+            // ROUTE: Clean Specific Date (Delete from R2 for all active emiten)
+            if (path === "/clean-date") {
+                const keyError = requireKey(request, env);
+                if (keyError) return keyError;
+
+                const date = url.searchParams.get("date");
+                if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+                    return new Response("Invalid date format YYYY-MM-DD", { status: 400 });
+                }
+
+                // 1. Get List
+                const watchlist = await this.getAllEmitenFromDB(env);
+                if (watchlist.length === 0) return new Response("No active emiten", { status: 404 });
+
+                // 2. Delete Loop
+                let deleted = 0;
+                let failed = 0;
+
+                // R2 delete is fast, we can do parallel batches
+                const batchSize = 50;
+                for (let i = 0; i < watchlist.length; i += batchSize) {
+                    const chunk = watchlist.slice(i, i + batchSize);
+                    const promises = chunk.map(symbol => {
+                        const key = `${symbol}/${date}.json`;
+                        return env.RAW_BROKSUM.delete(key).then(() => 1).catch(() => 0);
+                    });
+                    const results = await Promise.all(promises);
+                    deleted += results.reduce((a, b) => a + b, 0);
+                }
+
+                return new Response(JSON.stringify({
+                    message: `Cleaned date ${date}`,
+                    total_symbols: watchlist.length,
+                    deleted_ops: deleted // Note: R2 delete returns success even if key didn't exist
+                }), {
+                    headers: { "Content-Type": "application/json" }
+                });
+            }
+
             // FALLBACK: 404 Not Found
             return new Response("Not Found. Available: /update-watchlist, /scrape, /backfill-queue, /read-broksum, /watchlist, /brokers, /init, /backfill/*, /test-range", {
                 status: 404,
@@ -584,15 +572,19 @@ export default {
     // Cron Handler
     async scheduled(event, env, ctx) {
         console.log(`🕐 Scheduled cron triggered at: ${new Date().toISOString()}`);
+        console.log(`🕐 Cron Schedule: ${event.cron}`);
 
-        // Get today's date (WIB = UTC+7)
+        // Get details
         const now = new Date();
+        const utcHour = now.getUTCHours();
+
+        // WIB logic for logging
         const wibOffset = 7 * 60 * 60 * 1000;
         const wibDate = new Date(now.getTime() + wibOffset);
         const today = wibDate.toISOString().slice(0, 10);
-        const currentHour = wibDate.getUTCHours();
+        const wibHour = wibDate.getUTCHours();
 
-        console.log(`📅 Today (WIB): ${today}, Hour: ${currentHour}`);
+        console.log(`📅 UTC Hour: ${utcHour}, WIB Date: ${today}, WIB Hour: ${wibHour}`);
 
         // Skip weekends (WIB)
         const dow = wibDate.getUTCDay();
@@ -605,122 +597,86 @@ export default {
             // 1. Get Watchlist
             const watchlist = await this.getWatchlistFromKV(env);
             if (!watchlist || watchlist.length === 0) {
-                console.log("⚠️ No watchlist found, skipping scheduled scrape.");
                 return;
             }
 
-            console.log(`📊 Processing ${watchlist.length} symbols from watchlist`);
+            // MODE SELECTION
+            // If cron is "0 11 * * *" (11:00 UTC / 18:00 WIB) -> DAILY REWRITE
+            // Checks strictly if UTC Hour is 11
+            const isDailyRewrite = (utcHour === 11);
 
-            // 2. Scrape Today's Data for Missing Symbols (via IPOT)
-            let todayScraped = 0;
-            let todaySkipped = 0;
-            let todayFailed = 0;
-            const failedSymbols = [];
+            if (isDailyRewrite) {
+                console.log("🚀 MODE: DAILY REWRITE (18:00 WIB) - Overwriting Today's Data");
 
-            for (const symbol of watchlist) {
-                // Check if today's data already exists
-                const key = `${symbol}/${today}.json`;
-                const exists = await objectExists(env, key);
+                // Queuing "Today" with overwrite=true for ALL symbols
+                let dispatched = 0;
+                const batchSize = 50;
+                let messages = [];
 
-                if (exists) {
-                    todaySkipped++;
-                    continue;
-                }
+                for (const symbol of watchlist) {
+                    messages.push({ body: { symbol, date: today, overwrite: true, attempt: 0 } });
 
-                // Scrape via IPOT
-                try {
-                    const result = await this.scrapeIpotBroksum(env, {
-                        symbol,
-                        from: today,
-                        to: today,
-                        flag5: "%",
-                        save: true,
-                        debug: false
-                    });
-
-                    // Check result
-                    const resultData = await result.json();
-                    if (resultData.ok !== false && !resultData.error) {
-                        todayScraped++;
-                        console.log(`✅ Scraped ${symbol} for ${today}`);
-                    } else {
-                        todayFailed++;
-                        failedSymbols.push(symbol);
-                        console.log(`❌ Failed ${symbol}: ${resultData.error || resultData.message}`);
+                    if (messages.length >= batchSize) {
+                        await env.SSSAHAM_QUEUE.sendBatch(messages);
+                        dispatched += messages.length;
+                        messages = [];
                     }
-                } catch (e) {
-                    todayFailed++;
-                    failedSymbols.push(symbol);
-                    console.error(`❌ Error scraping ${symbol}: ${e.message}`);
+                }
+                if (messages.length > 0) {
+                    await env.SSSAHAM_QUEUE.sendBatch(messages);
+                    dispatched += messages.length;
                 }
 
-                // Delay between symbols to avoid rate limiting
-                await new Promise(r => setTimeout(r, 100));
-            }
+                const msg = `✅ **Daily Rewrite Dispatched**\nDate: ${today}\nSymbols: ${dispatched} (Overwrite: True)`;
+                console.log(msg);
+                await this.sendWebhook(env, msg);
 
-            console.log(`✅ Today: Scraped ${todayScraped}, Skipped ${todaySkipped}, Failed ${todayFailed}`);
+            } else {
+                console.log("🧹 MODE: SWEEPING (Backfill Holes) - Last 90 Days (Excl. Today)");
 
-            // 3. Auto-Backfill Missing Dates (Last 7 Days - smaller window for frequent runs)
-            const backfillDays = 7;
-            let totalBackfillScraped = 0;
-            let totalBackfillSkipped = 0;
-            const backfillDetails = [];
+                // Sweeping Logic: Check missing dates 90 days back, EXCLUDING today
+                // overwrite=false
+                const lookbackDays = 90;
+                let totalMissingQueued = 0;
+                let processedSymbols = 0;
 
-            for (const symbol of watchlist) {
-                const missingDates = await this.getMissingDatesForSymbol(env, symbol, backfillDays);
+                for (const symbol of watchlist) {
+                    // Check missing
+                    const missingDates = await this.getMissingDatesForSymbol(env, symbol, lookbackDays);
 
-                if (missingDates.length > 0) {
-                    console.log(`🔍 Found ${missingDates.length} missing dates for ${symbol}`);
+                    // Filter out TODAY if it slipped in (though getMissingDatesForSymbol logic might include it depending on "getTradingDays")
+                    // Verification: getTradingDays starts from "startDate", offset 1 (yesterday). 
+                    // Let's ensure we are strict.
+                    const finalMissing = missingDates.filter(d => d !== today);
 
-                    for (const date of missingDates) {
-                        try {
-                            const result = await this.scrapeIpotBroksum(env, {
-                                symbol,
-                                from: date,
-                                to: date,
-                                flag5: "%",
-                                save: true,
-                                debug: false
-                            });
+                    if (finalMissing.length > 0) {
+                        console.log(`🔍 ${symbol} missing ${finalMissing.length} days. Queuing...`);
 
-                            const resultData = await result.json();
-                            if (resultData.ok !== false && !resultData.error) {
-                                totalBackfillScraped++;
-                                console.log(`✅ Backfilled ${symbol} for ${date}`);
-                            } else {
-                                console.log(`⚠️ Backfill skip ${symbol}/${date}: ${resultData.message}`);
-                                totalBackfillSkipped++;
-                            }
-                        } catch (e) {
-                            console.error(`❌ Backfill error ${symbol}/${date}: ${e.message}`);
+                        const messages = finalMissing.map(d => ({
+                            body: { symbol, date: d, overwrite: false, attempt: 0 }
+                        }));
+
+                        // Send batch
+                        // Chunking if needed (queue limits)
+                        for (let i = 0; i < messages.length; i += 50) {
+                            await env.SSSAHAM_QUEUE.sendBatch(messages.slice(i, i + 50));
                         }
-
-                        // Delay between dates
-                        await new Promise(r => setTimeout(r, 100));
+                        totalMissingQueued += finalMissing.length;
                     }
 
-                    backfillDetails.push({
-                        symbol,
-                        missing_count: missingDates.length,
-                        missing_dates: missingDates
-                    });
+                    processedSymbols++;
+                    // Yield slightly
+                    if (processedSymbols % 10 === 0) await new Promise(r => setTimeout(r, 20));
                 }
 
-                // Small delay between symbols
-                await new Promise(r => setTimeout(r, 50));
+                if (totalMissingQueued > 0) {
+                    const msg = `🧹 **Sweeping Complete**\nQueued ${totalMissingQueued} missing dates for backfill.`;
+                    console.log(msg);
+                    await this.sendWebhook(env, msg);
+                } else {
+                    console.log("🧹 Sweeping clean. No missing dates found.");
+                }
             }
-
-            console.log(`✅ Backfill: Scraped ${totalBackfillScraped}, Skipped ${totalBackfillSkipped}`);
-
-            // 4. Send Summary Notification
-            const summaryMsg = `📊 **Cron Summary** (${today} ${currentHour}:00 WIB)\n` +
-                `• Symbols: ${watchlist.length}\n` +
-                `• Today: ✅${todayScraped} ⏭️${todaySkipped} ❌${todayFailed}\n` +
-                `• Backfill (${backfillDays}d): ✅${totalBackfillScraped} ⏭️${totalBackfillSkipped}\n` +
-                (failedSymbols.length > 0 ? `• Failed: ${failedSymbols.slice(0, 5).join(', ')}${failedSymbols.length > 5 ? '...' : ''}` : '');
-            await this.sendWebhook(env, summaryMsg);
-
-            console.log(`✅ Cron completed successfully`);
 
         } catch (e) {
             console.error(`❌ Scheduled cron error: ${e.message}`);
@@ -806,61 +762,26 @@ export default {
         return { symbol, cursor, dispatched };
     },
 
-    // Helper: Update Watchlist
+    // Helper: Update Watchlist (From D1)
     async updateWatchlist(env) {
-        const TOKEN = await getToken(env);
-        const TEMPLATE_IDS = [97, 96, 92, 106, 63, 108];
-        const uniqueSymbols = new Set();
+        console.log("Starting watchlist update (Source: D1)...");
         const errors = [];
+        let watchlist = [];
 
-        console.log("Starting watchlist update...");
-
-        await Promise.all(TEMPLATE_IDS.map(async (id) => {
-            const url = `https://exodus.stockbit.com/screener/templates/${id}?type=1&limit=50`;
-            try {
-                const response = await fetch(url, {
-                    method: "GET",
-                    headers: {
-                        "Host": "exodus.stockbit.com",
-                        "Connection": "keep-alive",
-                        "X-Platform": "desktop",
-                        "Authorization": `Bearer ${TOKEN}`,
-                        "sec-ch-ua-platform": "\"Windows\"",
-                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0",
-                        "Accept": "application/json, text/plain, */*",
-                        "sec-ch-ua": "\"Microsoft Edge WebView2\";v=\"143\", \"Microsoft Edge\";v=\"143\", \"Chromium\";v=\"143\", \"Not A(Brand\";v=\"24\"",
-                        "sec-ch-ua-mobile": "?0",
-                        "Origin": "https://tauri.localhost",
-                        "Sec-Fetch-Site": "cross-site",
-                        "Sec-Fetch-Mode": "cors",
-                        "Sec-Fetch-Dest": "empty",
-                        "Referer": "https://tauri.localhost/",
-                        "Accept-Encoding": "gzip, deflate, br, zstd",
-                        "Accept-Language": "en-US,en;q=0.9"
-                    }
-                });
-
-                if (!response.ok) {
-                    console.error(`Failed to fetch template ${id}: ${response.status}`);
-                    errors.push(`Template ${id} failed: ${response.status}`);
-                    return;
-                }
-
-                const data = await response.json();
-                if (data && data.data && data.data.calcs) {
-                    for (const item of data.data.calcs) {
-                        if (item.company && item.company.symbol) {
-                            uniqueSymbols.add(item.company.symbol);
-                        }
-                    }
-                }
-            } catch (err) {
-                console.error(`Error fetching template ${id}:`, err);
-                errors.push(`Template ${id} error: ${err.message}`);
+        try {
+            // 1. Fetch from D1
+            const { results } = await env.SSSAHAM_DB.prepare("SELECT ticker FROM emiten WHERE status = 'ACTIVE'").all();
+            if (results && results.length > 0) {
+                // Strip .JK if present
+                watchlist = results.map(r => r.ticker.replace(/\.JK$/, '')).sort();
+                console.log(`Fetched ${watchlist.length} symbols from D1`);
+            } else {
+                errors.push("D1 returned no symbols or error.");
             }
-        }));
-
-        const watchlist = Array.from(uniqueSymbols).sort();
+        } catch (e) {
+            console.error("D1 Fetch Error:", e);
+            errors.push(`D1 Error: ${e.message}`);
+        }
 
         // FALLBACK: If screener API fails, list existing symbols from R2
         let finalWatchlist = watchlist;
@@ -1055,29 +976,6 @@ export default {
             return results.map(r => r.ticker.replace(/\.JK$/, ''));
         } catch (e) {
             console.error("Error fetching active emiten from D1:", e);
-            return [];
-        }
-    },
-
-    // Helper: Get Watchlist from KV (V2 or fallback to LATEST)
-    async getWatchlistFromKV(env) {
-        try {
-            // Try V2 first (preferred key for auto-backfill)
-            let data = await env.SSSAHAM_WATCHLIST.get("SSSAHAM_WATCHLIST_V2", { type: "json" });
-            if (data && Array.isArray(data)) {
-                return data;
-            }
-
-            // Fallback to LATEST (legacy format)
-            data = await env.SSSAHAM_WATCHLIST.get("LATEST", { type: "json" });
-            if (data && data.watchlist && Array.isArray(data.watchlist)) {
-                return data.watchlist;
-            }
-
-            // Last resort: try D1
-            return await this.getActiveEmiten(env);
-        } catch (e) {
-            console.error("Error fetching watchlist from KV:", e);
             return [];
         }
     },
@@ -1495,17 +1393,14 @@ export default {
     },
 
     async queue(batch, env) {
-        // P0 Fix #4: UPSTREAM switch for IPOT vs STOCKBIT
-        const upstream = (env.UPSTREAM || "IPOT").toUpperCase();
-        const useIpot = upstream === "IPOT";
-
-        let TOKEN = null; // Lazy: only fetch when needed for Stockbit
+        // P0 Refactor: STRICTLY IPOT ONLY
+        // Removed Stockbit support completely.
 
         for (const message of batch.messages) {
             const { symbol, date, overwrite } = message.body;
 
             const startTime = Date.now();
-            console.log(`[Queue] Processing ${symbol} for ${date} (overwrite: ${overwrite}, upstream: ${upstream})`);
+            console.log(`[Queue] Processing ${symbol} for ${date} (overwrite: ${overwrite})`);
 
             try {
                 // Check if already exists (double-check), UNLESS overwrite is true
@@ -1523,138 +1418,38 @@ export default {
                     }
                 }
 
-                // === IPOT PATH ===
-                if (useIpot) {
-                    const result = await this.scrapeIpotBroksum(env, {
-                        symbol,
-                        from: date,
-                        to: date,
-                        flag5: "%",
-                        save: true,
-                        debug: false
-                    });
-
-                    const resultData = await result.json();
-                    const status = resultData.ok !== false && !resultData.error ? "SUCCESS_IPOT" : "FAILED_IPOT";
-
-                    await env.SSSAHAM_DB.prepare("INSERT INTO scraping_logs (timestamp, symbol, date, status, duration_ms) VALUES (?, ?, ?, ?, ?)")
-                        .bind(new Date().toISOString(), symbol, date, status, Date.now() - startTime)
-                        .run();
-
-                    if (status === "FAILED_IPOT") {
-                        const attempt = (message.body.attempt ?? 0);
-                        if (attempt >= 2) {
-                            console.error(`[Queue] Max retries for ${symbol}/${date} via IPOT`);
-                            await this.sendWebhook(env, `⚠️ **IPOT Scrape Failed**\nMax retries for ${symbol} on ${date}.\nError: ${resultData.message || 'Unknown'}`);
-                            message.ack();
-                        } else {
-                            console.log(`[Queue] Retrying ${symbol} via IPOT (attempt ${attempt + 1})`);
-                            await env.SSSAHAM_QUEUE.send({ symbol, date, overwrite, attempt: attempt + 1 });
-                            message.ack();
-                        }
-                    } else {
-                        console.log(`[Queue] ✅ ${symbol}/${date} scraped via IPOT`);
-                        message.ack();
-                    }
-                    continue;
-                }
-
-                // === STOCKBIT PATH (Legacy) ===
-                // Lazy Token Fetch: only get token when we actually need to make a request
-                if (!TOKEN) TOKEN = await getToken(env);
-
-                const url = `https://exodus.stockbit.com/marketdetectors/${symbol}?from=${date}&to=${date}&transaction_type=TRANSACTION_TYPE_GROSS&market_board=MARKET_BOARD_REGULER&investor_type=INVESTOR_TYPE_ALL&limit=25`;
-
-                const response = await fetch(url, {
-                    method: "GET",
-                    headers: {
-                        "Host": "exodus.stockbit.com",
-                        "Connection": "keep-alive",
-                        "X-Platform": "desktop",
-                        "Authorization": `Bearer ${TOKEN}`,
-                        "sec-ch-ua-platform": "\"Windows\"",
-                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0",
-                        "Accept": "application/json, text/plain, */*",
-                        "sec-ch-ua": "\"Microsoft Edge WebView2\";v=\"143\", \"Microsoft Edge\";v=\"143\", \"Chromium\";v=\"143\", \"Not A(Brand\";v=\"24\"",
-                        "sec-ch-ua-mobile": "?0",
-                        "Origin": "https://tauri.localhost",
-                        "Sec-Fetch-Site": "cross-site",
-                        "Sec-Fetch-Mode": "cors",
-                        "Sec-Fetch-Dest": "empty",
-                        "Referer": "https://tauri.localhost/",
-                        "Accept-Encoding": "gzip, deflate, br, zstd",
-                        "Accept-Language": "en-US,en;q=0.9"
-                    }
+                // === IPOT PATH (ONLY) ===
+                const result = await this.scrapeIpotBroksum(env, {
+                    symbol,
+                    from: date,
+                    to: date,
+                    flag5: "%",
+                    save: true,
+                    debug: false
                 });
 
-                if (!response.ok) {
-                    console.error(`Failed to fetch ${symbol}: ${response.status}`);
-                    if (response.status === 401) {
-                        // 401 Unauthorized: Token likely expired
-                        const attempt = (message.body.attempt ?? 0);
-                        console.error(`Token 401 for ${symbol}. Attempt: ${attempt}`);
-
-                        // Refresh token on first 401 (attempt 0)
-                        if (attempt === 0) {
-                            TOKEN = await getToken(env);
-                        }
-
-                        if (attempt >= 2) {
-                            // Max 3 attempts (0, 1, 2). Stop.
-                            try {
-                                await this.sendWebhook(env, `⚠️ **Stockbit Token Invalid (401)**\nFailed 3x for ${symbol} on ${date}.\nQueue job stopped.`);
-                            } catch (e) { console.error("Webhook fail", e); }
-
-                            message.ack(); // Stop looping
-                        } else {
-                            // Re-queue with incremented attempt (portable retry)
-                            await env.SSSAHAM_QUEUE.send({ symbol, date, overwrite, attempt: attempt + 1 });
-                            message.ack(); // Ack original, new message is in queue
-                        }
-                    } else if ([429, 500, 502, 503, 504].includes(response.status)) {
-                        // Transient errors: retry with exponential backoff
-                        const attempt = (message.body.attempt ?? 0);
-                        console.error(`Transient ${response.status} for ${symbol}. Attempt: ${attempt}`);
-
-                        if (attempt >= 2) {
-                            // Max 3 attempts. Log and stop.
-                            await env.SSSAHAM_DB.prepare("INSERT INTO scraping_logs (timestamp, symbol, date, status, duration_ms) VALUES (?, ?, ?, ?, ?)")
-                                .bind(new Date().toISOString(), symbol, date, `FAILED_${response.status}_MAX_RETRY`, Date.now() - startTime)
-                                .run();
-                            try {
-                                await this.sendWebhook(env, `⚠️ **Transient Error (${response.status})**\nFailed 3x for ${symbol} on ${date}.\nQueue job stopped.`);
-                            } catch (e) { console.error("Webhook fail", e); }
-                            message.ack(); // Stop looping
-                        } else {
-                            // Re-queue with incremented attempt and exponential backoff
-                            // Note: Cloudflare Queues doesn't support delaySeconds, but we can log intent
-                            console.log(`Retrying ${symbol} in ~${(attempt + 1) * 5}s (attempt ${attempt + 1})`);
-                            await env.SSSAHAM_QUEUE.send({ symbol, date, overwrite, attempt: attempt + 1 });
-                            message.ack(); // Ack original
-                        }
-                    } else {
-                        // Other errors (4xx except 401, etc.): log and don't retry
-                        await env.SSSAHAM_DB.prepare("INSERT INTO scraping_logs (timestamp, symbol, date, status, duration_ms) VALUES (?, ?, ?, ?, ?)")
-                            .bind(new Date().toISOString(), symbol, date, `FAILED_${response.status}`, Date.now() - startTime)
-                            .run();
-                        message.ack(); // Don't retry for other errors
-                    }
-                    continue;
-                }
-
-                const data = await response.json();
-
-                // Save to R2 with contentType metadata
-                await env.RAW_BROKSUM.put(key, JSON.stringify(data), {
-                    httpMetadata: { contentType: "application/json" }
-                });
-                console.log(`Saved ${key} to R2`);
+                const resultData = await result.json();
+                const status = resultData.ok !== false && !resultData.error ? "SUCCESS_IPOT" : "FAILED_IPOT";
 
                 await env.SSSAHAM_DB.prepare("INSERT INTO scraping_logs (timestamp, symbol, date, status, duration_ms) VALUES (?, ?, ?, ?, ?)")
-                    .bind(new Date().toISOString(), symbol, date, "SUCCESS", Date.now() - startTime)
+                    .bind(new Date().toISOString(), symbol, date, status, Date.now() - startTime)
                     .run();
 
-                message.ack();
+                if (status === "FAILED_IPOT") {
+                    const attempt = (message.body.attempt ?? 0);
+                    if (attempt >= 2) {
+                        console.error(`[Queue] Max retries for ${symbol}/${date} via IPOT`);
+                        await this.sendWebhook(env, `⚠️ **IPOT Scrape Failed**\nMax retries for ${symbol} on ${date}.\nError: ${resultData.message || 'Unknown'}`);
+                        message.ack();
+                    } else {
+                        console.log(`[Queue] Retrying ${symbol} via IPOT (attempt ${attempt + 1})`);
+                        await env.SSSAHAM_QUEUE.send({ symbol, date, overwrite, attempt: attempt + 1 });
+                        message.ack();
+                    }
+                } else {
+                    console.log(`[Queue] ✅ ${symbol}/${date} scraped via IPOT`);
+                    message.ack();
+                }
 
             } catch (err) {
                 console.error(`Error processing ${symbol}:`, err);

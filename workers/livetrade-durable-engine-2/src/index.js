@@ -454,27 +454,44 @@ export class StateEngine {
         candle.ohlc.c = cte.price;
         candle.vol += cte.qty;
 
-        // PATCH 4: Side Inference using Uptick Rule
-        if (candle._lastPrice == null) candle._lastPrice = cte.price;
+        // PATCH 4: Side Inference using Uptick Rule + Fallback
+        if (candle._lastPrice == null) {
+            // Fallback to candle close if it's an existing candle being updated,
+            // or candle open if it's the first trade.
+            candle._lastPrice = candle.ohlc.c || cte.price;
+        }
 
         let side = 'neutral';
         if (cte.price > candle._lastPrice) side = 'buy';
         else if (cte.price < candle._lastPrice) side = 'sell';
+        // If price is the same, keep the previous side or stay neutral
+
         candle._lastPrice = cte.price;
 
         // Update delta based on inferred side
         if (side === 'buy') candle.delta += cte.qty;
         else if (side === 'sell') candle.delta -= cte.qty;
 
-        // Levels
+        // Levels: ALWAYS populate even if side is neutral
         let level = candle.levels.find(l => l.p === cte.price);
         if (!level) {
             level = { p: cte.price, bv: 0, av: 0 };
             candle.levels.push(level);
         }
-        // Update BV/AV based on inferred side
-        if (side === 'buy') level.bv += cte.qty;
-        else if (side === 'sell') level.av += cte.qty;
+
+        // Update BV/AV based on side (Neutral trades split or go to one side? 
+        // Let's attribute to AV as a fallback so it's always visible in table)
+        if (side === 'buy') {
+            level.bv += cte.qty;
+        } else if (side === 'sell') {
+            level.av += cte.qty;
+        } else {
+            // Neutral: Default to Sell Side for visibility (or split 50/50? 
+            // Users usually want to see a side. Let's split for fairness)
+            const half = Math.floor(cte.qty / 2);
+            level.bv += half;
+            level.av += (cte.qty - half);
+        }
 
         // C5: Mark hour as dirty for efficient flush
         const dt = new Date(timeKey);

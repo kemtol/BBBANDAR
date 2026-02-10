@@ -73,7 +73,11 @@ function initSearch() {
                 saveSearchHistory(symbol);
                 // Preserve current start/end/nett params if they exist, or just go to kode
                 // But simplified: just update kode, default others.
-                window.location.href = `?kode=${symbol}`;
+                if (window.location.pathname.includes('/emiten/')) {
+                    window.location.href = `?kode=${symbol}`;
+                } else {
+                    window.location.href = `emiten/broker-summary.html?kode=${symbol}`;
+                }
             }
         }
     });
@@ -103,7 +107,11 @@ function loadSearchHistory() {
         div.innerHTML = `<span class="fw-bold">${sym}</span><i class="fa-solid fa-chevron-right small opacity-50"></i>`;
         div.onclick = () => {
             saveSearchHistory(sym);
-            window.location.href = `?kode=${sym}`;
+            if (window.location.pathname.includes('/emiten/')) {
+                window.location.href = `?kode=${sym}`;
+            } else {
+                window.location.href = `emiten/broker-summary.html?kode=${sym}`;
+            }
         };
         list.appendChild(div);
     });

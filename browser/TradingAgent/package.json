@@ -1,0 +1,34 @@
+{
+  "name": "tradingagent",
+  "version": "1.0.0",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "devDependencies": {
+    "electron": "^40.2.1",
+    "electron-builder": "^26.7.0"
+  },
+  "build": {
+    "appId": "com.kemal.tradingagent",
+    "linux": {
+      "target": [
+        "dir"
+      ]
+    },
+    "win": {
+      "target": "portable"
+    }
+  },
+  "dependencies": {
+    "bootstrap": "^5.3.8",
+    "jquery": "^4.0.0",
+    "node-cron": "^4.2.1",
+    "ws": "^8.19.0"
+  }
+}

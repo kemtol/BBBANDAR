@@ -99,6 +99,10 @@ async function initIndexMode() {
     loadScreenerData();
 }
 
+// Global state for sorting
+let currentCandidates = [];
+let sortState = { key: 'score', desc: true };
+
 async function loadScreenerData() {
     try {
         $('#loading-indicator').show();
@@ -106,7 +110,7 @@ async function loadScreenerData() {
         const data = await response.json();
 
         if (data && data.items) {
-            const candidates = data.items.map(i => ({
+            currentCandidates = data.items.map(i => ({
                 symbol: i.t,
                 state: mapState(i.s),
                 score: i.sc,
@@ -114,17 +118,16 @@ async function loadScreenerData() {
                     effortZ: i.z["20"]?.e || 0,
                     resultZ: i.z["20"]?.r || 0,
                     ngr: i.z["20"]?.n || 0,
-                    elasticity: 0
+                    elasticity: i.z["20"]?.el || 0 // Mapped (default 0 if backend older)
                 }
             }));
 
-            candidates.sort((a, b) => b.score - a.score);
+            // Initial sort by Score DESC
+            sortCandidates('score', true);
 
-            renderScreenerTable(candidates);
+            // Calculate & Render Market Breadth
+            renderMarketBreadth(currentCandidates, data.date);
 
-            if (data.date) {
-                $('#index-view h5').html(`<small class='text-muted ms-2' style='font-size:0.7rem'>${data.date}</small>`);
-            }
         } else {
             $('#tbody-index').html('<tr><td colspan="7" class="text-center text-muted">No data available.</td></tr>');
         }
@@ -137,6 +140,94 @@ async function loadScreenerData() {
         $('#app').fadeIn();
     }
 }
+
+function calculateMarketBreadth(candidates) {
+    const total = candidates.length;
+    if (total === 0) return { accum: 0, dist: 0, neut: 0, sentiment: 'Neutral' };
+
+    const accum = candidates.filter(c => c.state === 'OFF_THE_LOW' || c.state === 'ACCUMULATION' || c.state === 'READY_MARKUP').length;
+    const dist = candidates.filter(c => c.state === 'POTENTIAL_TOP' || c.state === 'DISTRIBUTION').length;
+    const neut = total - accum - dist;
+
+    // Determine Sentiment
+    let sentiment = 'Neutral';
+    if (accum > dist * 1.5) sentiment = 'Bullish';
+    if (dist > accum * 1.5) sentiment = 'Bearish';
+
+    return { accum, dist, neut, sentiment, total };
+}
+
+function renderMarketBreadth(candidates, dateStr) {
+    const stats = calculateMarketBreadth(candidates);
+
+    // Show Widget
+    $('#market-breadth-widget').removeClass('d-none');
+
+    // Update Text
+    $('#market-sentiment-text').text(stats.sentiment);
+    if (stats.sentiment === 'Bullish') $('#market-sentiment-text').addClass('text-success').removeClass('text-danger text-dark');
+    else if (stats.sentiment === 'Bearish') $('#market-sentiment-text').addClass('text-danger').removeClass('text-success text-dark');
+    else $('#market-sentiment-text').addClass('text-dark').removeClass('text-success text-danger');
+
+    $('#market-date').text(dateStr || 'Today');
+
+    // Update Bars
+    const pAccum = (stats.accum / stats.total) * 100;
+    const pDist = (stats.dist / stats.total) * 100;
+    const pNeut = (stats.neut / stats.total) * 100;
+
+    $('#bar-accum').css('width', `${pAccum}%`).text(stats.accum > 0 ? stats.accum : '');
+    $('#bar-dist').css('width', `${pDist}%`).text(stats.dist > 0 ? stats.dist : '');
+    $('#bar-neut').css('width', `${pNeut}%`).text(stats.neut > 0 ? stats.neut : '');
+
+    // Counts
+    $('#count-accum').text(`${stats.accum} Stocks`);
+    $('#count-dist').text(`${stats.dist} Stocks`);
+}
+
+function sortCandidates(key, desc) {
+    currentCandidates.sort((a, b) => {
+        let valA, valB;
+
+        // Extract values based on key
+        if (key === 'symbol') { valA = a.symbol; valB = b.symbol; }
+        else if (key === 'state') { valA = a.state; valB = b.state; } // String comparison for state
+        else if (key === 'score') { valA = a.score; valB = b.score; }
+        else if (key === 'effort') { valA = a.metrics.effortZ; valB = b.metrics.effortZ; }
+        else if (key === 'response') { valA = a.metrics.resultZ; valB = b.metrics.resultZ; }
+        else if (key === 'quality') { valA = a.metrics.ngr; valB = b.metrics.ngr; }
+        else if (key === 'elasticity') { valA = a.metrics.elasticity; valB = b.metrics.elasticity; }
+        else { valA = 0; valB = 0; }
+
+        if (typeof valA === 'string') {
+            return desc ? valB.localeCompare(valA) : valA.localeCompare(valB);
+        }
+        return desc ? valB - valA : valA - valB;
+    });
+
+    renderScreenerTable(currentCandidates);
+    updateSortIcons(key, desc);
+}
+
+function updateSortIcons(activeKey, desc) {
+    $('th[data-sort] i').attr('class', 'fa-solid fa-sort small text-muted opacity-50'); // Reset all
+    const activeHeader = $(`th[data-sort="${activeKey}"]`);
+    const icon = activeHeader.find('i');
+    icon.removeClass('opacity-50 fa-sort').addClass(desc ? 'fa-sort-down' : 'fa-sort-up');
+}
+
+// Attach Sort Handlers
+$(document).on('click', 'th[data-sort]', function () {
+    const key = $(this).data('sort');
+    if (sortState.key === key) {
+        sortState.desc = !sortState.desc; // Toggle
+    } else {
+        sortState.key = key;
+        sortState.desc = true; // Default DESC for new column
+    }
+    sortCandidates(sortState.key, sortState.desc);
+});
+
 
 function mapState(s) {
     const map = {
@@ -155,20 +246,28 @@ function renderScreenerTable(candidates) {
     tbody.empty();
 
     const getBadge = (val, type) => {
+        const score = `<span class="small text-muted ms-1">(${val.toFixed(2)})</span>`;
         if (type === 'effort') {
-            if (val > 1.0) return '<span class="badge bg-danger">Extreme</span>';
-            if (val > 0.5) return '<span class="badge bg-warning text-dark">High</span>';
-            if (val < -0.5) return '<span class="badge bg-secondary">Low</span>';
-            return '<span class="badge bg-light text-dark border">Normal</span>';
+            if (val > 1.0) return `<span class="badge bg-danger">Extreme</span>${score}`;
+            if (val > 0.5) return `<span class="badge bg-warning text-dark">High</span>${score}`;
+            if (val < -0.5) return `<span class="badge bg-secondary">Low</span>${score}`;
+            return `<span class="badge bg-light text-dark border">Normal</span>${score}`;
         }
         if (type === 'result') {
-            if (val > 1.0) return '<span class="text-danger fw-bold">Volatile</span>';
-            if (val < -0.5) return '<span class="text-muted">Quiet</span>';
-            return '<span class="text-dark">Normal</span>';
+            if (val > 1.0) return `<span class="text-danger fw-bold">Volatile</span>${score}`;
+            if (val < -0.5) return `<span class="text-muted">Quiet</span>${score}`;
+            return `<span class="text-dark">Normal</span>${score}`;
         }
         if (type === 'ngr') {
-            if (val < 0.15) return '<span class="text-muted">Noise</span>';
-            return '<span class="text-success fw-bold">Valid</span>';
+            if (val < 0.15) return `<span class="text-muted">Noise</span>${score}`;
+            return `<span class="text-success fw-bold">Valid</span>${score}`;
+        }
+        // Elasticity Badge (New)
+        if (type === 'elasticity') {
+            if (val === 0) return `<span class="text-muted">-</span>${score}`;
+            if (val > 1.5) return `<span class="badge bg-success">Elastic</span>${score}`; // Very responsive
+            if (val < 0.5) return `<span class="badge bg-danger">Rigid</span>${score}`; // Hard to move
+            return `<span class="text-dark small">Normal</span>${score}`;
         }
         return val;
     };
@@ -192,12 +291,12 @@ function renderScreenerTable(candidates) {
                 <td class="text-center text-muted small">${idx + 1}</td>
                 <td class="fw-bold">
                     <img src="${logoUrl}" alt="" style="height: 20px; width: auto; margin-right: 6px; vertical-align: middle; border-radius: 3px;" onerror="this.style.display='none'">
-                    <a href="?kode=${item.symbol}" style="color: inherit; text-decoration: none;">${item.symbol}</a>
+                    <a href="?kode=${item.symbol}">${item.symbol}</a>
                 </td>
                 <td class="text-center">${getBadge(m.effortZ, 'effort')}</td>
                 <td class="text-center">${getBadge(m.resultZ, 'result')}</td>
                 <td class="text-center">${getBadge(m.ngr, 'ngr')}</td>
-                <td class="text-center">-</td> <!-- Elas hidden for now -->
+                <td class="text-center">${getBadge(m.elasticity, 'elasticity')}</td>
                 <td class="text-center">${getStateBadge(item.state)}</td>
             </tr>
         `;
@@ -215,7 +314,6 @@ async function initDetailMode(symbol) {
     // Set header with logo + symbol anchor
     const logoUrl = `https://api-saham.mkemalw.workers.dev/logo?symbol=${symbol}`;
     $('.nav-title').html(`
-        <img src="${logoUrl}" alt="${symbol}" style="height: 24px; width: auto; margin-right: 8px; vertical-align: middle; border-radius: 4px;" onerror="this.style.display='none'">
         <a href="?kode=${symbol}" style="color: inherit; text-decoration: none;">${symbol}</a>
     `);
     $('#nav-back').removeClass('d-none').attr('href', '?'); // Show back button, link to index
@@ -242,6 +340,13 @@ async function initDetailMode(symbol) {
 
     await loadDetailData(symbol, startDate, endDate);
 
+    // Handle URL hash for auto-tab switching
+    if (window.location.hash === '#audit') {
+        setTimeout(() => {
+            $('#audit-tab').click();
+        }, 100);
+    }
+
     $('#btn-apply-range').on('click', () => {
         const newFrom = $('#date-from').val();
         const newTo = $('#date-to').val();
@@ -251,7 +356,10 @@ async function initDetailMode(symbol) {
     });
 }
 
-async function loadDetailData(symbol, start, end, reload = false) {
+// Enhanced Load Data with Retry Limit and Partial Data Support
+async function loadDetailData(symbol, start, end, reload = false, retryCount = 0) {
+    const MAX_RETRIES = 60; // Increased to 60 retries (approx 10 minutes) upon user request
+
     $('#loading-indicator').show();
     const fromDate = start.toISOString().split('T')[0];
     const toDate = end.toISOString().split('T')[0];
@@ -260,19 +368,106 @@ async function loadDetailData(symbol, start, end, reload = false) {
         let url = `${WORKER_BASE_URL}/cache-summary?symbol=${symbol}&from=${fromDate}&to=${toDate}`;
         if (reload) url += '&reload=true';
 
+        console.log(`[API] Fetching: ${url}`);
         const response = await fetch(url);
         const result = await response.json();
 
+        // DEBUG: Log entire response
+        console.log(`[API] Response for ${symbol}:`, result);
+        console.log(`[API] backfill_active: ${result.backfill_active}`);
+        console.log(`[API] history length: ${result.history ? result.history.length : 0}`);
+
+        // 1. COMPLETENESS & BACKFILL CHECK (BEFORE RENDERING)
+        // Calculate expected trading days (rough estimate: 70% of days)
+        const diffTime = Math.abs(end - start);
+        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+        const expectedDays = Math.floor(diffDays * 0.7);
+        const actualDays = result.history ? result.history.length : 0;
+
+        const completeness = expectedDays > 0 ? actualDays / expectedDays : 0;
+
+        // Conditions: 
+        // A. Explicit backfill flag from backend
+        // B. Empty data
+        // C. Partial data (< 70% complete)
+        const isBackfillActive = result.backfill_active === true;
+        const hasMinimalData = !result.history || result.history.length === 0 || completeness < 0.7;
+
+        console.log(`[DATA COMPLETENESS] Expected: ${expectedDays}, Actual: ${actualDays}, Completeness: ${(completeness * 100).toFixed(1)}%`);
+        console.log(`[BACKFILL CHECK] hasMinimalData: ${hasMinimalData}, isBackfillActive: ${isBackfillActive}`);
+
+        if (isBackfillActive || hasMinimalData) {
+
+            // CHECK RETRY LIMIT
+            if (retryCount >= MAX_RETRIES) {
+                console.error(`[BACKFILL] Max retries (${MAX_RETRIES}) reached for ${symbol}`);
+                $('#broker-table-container').html(`
+                    <div class="alert alert-warning text-center">
+                        <i class="fa-solid fa-triangle-exclamation fa-2x mb-2"></i>
+                        <div><strong>⏱️ Backfill Masih Berjalan</strong></div>
+                        <div class="small text-muted mt-2">
+                            Server masih memproses data untuk <strong>${symbol}</strong>.<br>
+                            Proses ini dapat memakan waktu 2-3 menit untuk data 90 hari.
+                        </div>
+                        <button class="btn btn-sm btn-primary mt-3" onclick="location.reload()">
+                            <i class="fa-solid fa-rotate-right me-1"></i> Coba Lagi
+                        </button>
+                    </div>
+                `);
+                $('#loading-indicator').hide(); // Hide loading indicator if max retries reached
+                $('#app').fadeIn(); // Ensure app is visible
+                return; // STOP RETRYING
+            }
+
+            console.log(`[BACKFILL] Active for ${symbol}. Retry ${retryCount + 1}/${MAX_RETRIES} in 5s...`);
+
+            // Progress Text
+            const progressText = actualDays > 0
+                ? `Progres: ${actualDays} / ~${expectedDays} hari (${(completeness * 100).toFixed(0)}%)`
+                : 'Memulai proses backfill...';
+
+            $('#loading-indicator').addClass('d-none'); // Force hide using Bootstrap class
+            $('#loading-indicator').hide(); // Standard jQuery hide
+
+            $('#app').show(); // Force app container to show
+            $('#broker-table-container').show(); // Force table container to show
+
+            // HIDE Chart Container during backfill to prevent whitespace/gap
+            $('.chart-container-responsive').hide();
+
+            $('#broker-table-container').html(`
+                <div class="text-center py-5">
+                    <div class="spinner-border text-primary mb-3" role="status"></div>
+                    <h5 class="fw-bold text-dark">Data Sedang Di-Backfill</h5>
+                    <p class="text-muted small mb-1">Server sedang mengambil data historis untuk <strong>${symbol}</strong></p>
+                    <p class="text-primary fw-bold mb-3 small">${progressText}</p>
+                    
+                    <div class="progress mx-auto" style="height: 6px; max-width: 400px;">
+                        <div class="progress-bar progress-bar-striped progress-bar-animated bg-primary" role="progressbar" style="width: ${(completeness * 100).toFixed(0)}%"></div>
+                    </div>
+                </div>
+            `);
+
+            // Retry Logic (No countdown UI)
+            setTimeout(() => {
+                console.log(`[BACKFILL] Retrying fetch for ${symbol} (Attempt ${retryCount + 1})...`);
+                loadDetailData(symbol, start, end, true, retryCount + 1); // Retry with reload=true & increment count
+            }, 5000);
+            return;
+        }
+
+        // If we reach here, data is considered sufficient or backfill is not active.
         $('#loading-indicator').hide();
         $('#app').fadeIn();
+        $('.chart-container-responsive').show(); // Show chart again
 
-        if (result.history) {
+        // 2. RENDER CHART (Only if passed checks)
+        if (result.history && result.history.length > 0) {
             renderChart(result.history);
         } else {
             console.warn('No Chart Data');
         }
 
-        // Render Summary with correct mode
         if (result.summary) {
             renderDetailSummary(result.summary);
             renderProportionalBar(result.summary);
@@ -478,8 +673,8 @@ function renderBrokerTable(summary, isNet = true) {
         return num.toLocaleString();
     };
 
-    const STYLE_BUY_TEXT = 'color: #0dcaf0;';
-    const STYLE_SELL_TEXT = 'color: #fd7e14;';
+    const STYLE_BUY_TEXT = 'color: #20f00dff;';
+    const STYLE_SELL_TEXT = 'color: #ff3232ff;';
 
     const getTextClass = (code) => {
         const broker = brokersMap[code];

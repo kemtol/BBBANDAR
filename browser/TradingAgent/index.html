@@ -1,0 +1,1029 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trading Agent Console</title>
+    <link href="./node_modules/bootstrap/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link
+        href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Inter:wght@400;600&display=swap"
+        rel="stylesheet">
+    <style>
+        :root {
+            --bg-dark: #000000;
+            --bg-card: #000000;
+            --accent-orange: #ff9900;
+            --accent-green: #00ff00;
+            --accent-red: #ff3333;
+            --text-main: #ffffff;
+            --text-muted: #cccccc;
+            --border-color: #333333;
+        }
+
+        body {
+            background-color: var(--bg-dark);
+            font-family: 'JetBrains Mono', 'Inter', monospace;
+            color: var(--text-main);
+            padding: 10px;
+            margin: 0;
+            overflow-x: hidden;
+        }
+
+        /* Sharp Corners Everywhere except switches */
+        *:not(.form-check-input):not(.form-check-label):not(.form-switch) {
+            border-radius: 0 !important;
+        }
+
+        .form-check-input:checked {
+            background-color: var(--accent-orange);
+            border-color: var(--accent-orange);
+        }
+
+        /* Card Styling - Flat Bloomberg Look */
+        .card {
+            background-color: var(--bg-card);
+            border: 1px solid var(--border-color);
+            margin-bottom: 15px;
+            box-shadow: none;
+        }
+
+        .card-header {
+            background-color: #ea8623;
+            border-bottom: 1px solid var(--border-color);
+            font-weight: bold;
+            color: #1a1a1a;
+            font-size: 0.85rem;
+            padding: 8px 12px;
+            text-transform: uppercase;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        /* Form Inputs */
+        label {
+            font-size: 0.75rem;
+            color: var(--accent-orange);
+            margin-bottom: 5px;
+            text-transform: uppercase;
+            font-weight: bold;
+        }
+
+        .form-select,
+        .form-control {
+            background-color: transparent;
+            border: 1px solid var(--border-color);
+            color: var(--accent-orange);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.85rem;
+            padding: 6px 10px;
+        }
+
+        .form-select {
+            background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='none' stroke='%23ff9900' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='m4 6 4-4 4 4m0 4-4 4-4-4'/%3e%3c/svg%3e");
+            background-size: 10px;
+            background-position: right 0.75rem center;
+        }
+
+        .form-select:focus,
+        .form-control:focus {
+            background-color: #000000;
+            border-color: var(--accent-orange);
+            color: var(--accent-orange);
+            box-shadow: none;
+        }
+
+        /* Buttons - Professional Flat Look */
+        .btn {
+            font-family: 'JetBrains Mono', monospace;
+            font-weight: bold;
+            text-transform: uppercase;
+            font-size: 0.85rem;
+            padding: 10px 20px;
+            border: 1px solid var(--border-color);
+        }
+
+        .btn-primary {
+            background-color: #000000;
+            color: var(--accent-orange);
+            border-color: var(--accent-orange);
+        }
+
+        .btn-primary:hover {
+            background-color: var(--accent-orange);
+            color: #000000;
+            border-color: var(--accent-orange);
+
+        }
+
+        .btn-success {
+            background-color: #000000;
+            color: var(--accent-green);
+            border-color: var(--accent-green);
+        }
+
+        .btn-success:hover {
+            background-color: var(--accent-green);
+            color: #000000;
+        }
+
+        .btn-danger {
+            background-color: #000000;
+            color: var(--accent-red);
+            border-color: var(--accent-red);
+        }
+
+        /* Helper Tooltip Icon */
+        .help-tooltip {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 14px;
+            height: 14px;
+            padding: 0 !important;
+            font-size: 8px !important;
+            background-color: #444 !important;
+            color: #fff !important;
+            border: none !important;
+            border-radius: 50% !important;
+            position: relative;
+            top: -2px;
+            cursor: help;
+            vertical-align: middle;
+            margin-left: 4px;
+        }
+
+        /* Status & Sonar */
+        .status-dot {
+            height: 10px;
+            width: 10px;
+            background-color: #444;
+            display: inline-block;
+            margin-right: 8px;
+        }
+
+        .status-dot.connected {
+            background-color: var(--accent-green);
+            animation: sonar 2s infinite;
+        }
+
+        @keyframes sonar {
+            0% {
+                box-shadow: 0 0 0 0 rgba(0, 255, 0, 0.4);
+            }
+
+            70% {
+                box-shadow: 0 0 0 8px rgba(0, 255, 0, 0);
+            }
+
+            100% {
+                box-shadow: 0 0 0 0 rgba(0, 255, 0, 0);
+            }
+        }
+
+        .status-dot.waiting {
+            background-color: var(--accent-orange);
+            box-shadow: 0 0 5px var(--accent-orange);
+        }
+
+        .text-waiting {
+            color: var(--accent-orange) !important;
+            font-weight: bold;
+        }
+
+        .text-success {
+            color: var(--accent-green) !important;
+            font-weight: bold;
+        }
+
+        /* Override Bootstrap Muted text for better visibility on black */
+        .text-muted {
+            color: var(--text-muted) !important;
+        }
+
+        /* Utility */
+        hr {
+            border-color: var(--border-color);
+            opacity: 1;
+            margin: 15px 0;
+        }
+
+        .input-group-text {
+            background-color: #1a1a1a;
+            border: 1px solid var(--border-color);
+            color: var(--accent-orange);
+            font-size: 0.75rem;
+        }
+
+        /* Autocomplete Results */
+        #autocomplete-results {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            z-index: 1000;
+            background: #111;
+            border: 1px solid var(--accent-orange);
+            max-height: 200px;
+            overflow-y: auto;
+            display: none;
+        }
+
+        .autocomplete-item {
+            padding: 8px 12px;
+            cursor: pointer;
+            border-bottom: 1px solid #222;
+            font-size: 0.8rem;
+        }
+
+        .autocomplete-item:hover {
+            background: #222;
+            color: var(--accent-orange);
+        }
+
+        .autocomplete-item .sector {
+            font-size: 0.7rem;
+            color: #888;
+            display: block;
+        }
+
+        /* Ticker Badge Custom Style */
+        .ticker-badge {
+            background: #111;
+            border: 1px solid var(--accent-orange);
+            color: var(--accent-orange);
+            padding: 4px 8px;
+            font-size: 0.75rem;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            cursor: pointer;
+        }
+
+        .ticker-badge:hover {
+            background: var(--accent-orange);
+            color: #000;
+        }
+
+        .ticker-badge .remove-icon {
+            font-size: 10px;
+            opacity: 0.6;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container-fluid">
+
+        <div class="row">
+            <div class="col-12">
+                <div class="mb-4" style="border: none;">
+                    <div class="d-flex align-items-center justify-content-between">
+                        <div class="d-flex align-items-center gap-3">
+                            <select class="form-select form-select-sm" id="broker-select" style="width: 200px;">
+                                <option value="ipot" selected>Indo Premier (IPOT)</option>
+                                <option value="stockbit">Stockbit Pro</option>
+                                <option value="ajaib">Ajaib Sekuritas</option>
+                                <option value="mirae">Mirae HOTS Web</option>
+                            </select>
+                        </div>
+                        <div class="d-flex align-items-center">
+                            <span class="status-dot waiting" id="connection-dot"></span>
+                            <span class="small text-waiting" id="connection-text">Waiting Connection</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row align-items-stretch">
+            <div class="col-md-7 mb-3">
+                <div class="card">
+                    <div class="card-header">
+                        <span>STRATEGY CONFIGURATION</span>
+                    </div>
+
+                    <div class="card-body">
+                        <label class="fw-bold text-white">Select Personality (Preset)</label>
+                        <div class="input-group mb-1">
+                            <select class="form-select" id="preset-select">
+                                <option value="manual">-- Custom Manual --</option>
+                                <option value="bekti">🚀 Bekti Sutikna (Frequency/Burst)</option>
+                                <option value="john">🐋 John Wijaya/MG (Whale/Value)</option>
+                                <option value="john_openlow">☀️ Koh John (Open=Low)</option>
+                            </select>
+                            <button class="btn btn-warning fw-bold" id="btn-load-preset"
+                                style="font-size: 11px;">LOAD</button>
+                        </div>
+                        <small class="text-muted d-block mt-2" id="preset-desc" style="font-size: 10px;">Pilih preset
+                            untuk memuat parameter.</small>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-body">
+                        <div id="group-whale" class="setting-group mb-4">
+                            <div class="d-flex justify-content-between align-items-center mb-3">
+                                <label class="small fw-bold d-block text-white m-0">LIVETRADE SCANNER</label>
+                                <div class="form-check form-switch p-0 m-0 d-flex align-items-center gap-2">
+                                    <span class="small text-muted" style="font-size: 10px;">OFF</span>
+                                    <input class="form-check-input ms-0 group-toggle" type="checkbox" id="toggle-whale">
+                                    <span class="small text-warning" style="font-size: 10px;">ON</span>
+                                </div>
+                            </div>
+                            <div class="row g-3">
+                                <div class="col-md-12">
+                                    <label>Minimal Nilai Transaksi</label>
+                                    <div class="input-group input-group-sm">
+                                        <span class="input-group-text">Rp</span>
+                                        <input type="text" class="form-control" id="var-whale-val" value="500.000.000">
+                                    </div>
+                                    <small class="text-muted mt-2" style="font-size: 10px;">Hanya terpantau jika nilai
+                                        satu
+                                        kali transaksi melebihi angka ini.</small>
+                                </div>
+                                <div class="col-md-6">
+                                    <label>Aggressor Filter</label>
+                                    <select class="form-select form-select-sm" id="var-whale-side">
+                                        <option value="buy">HAKA Only (Buy on Offer)</option>
+                                        <option value="both">Both Buy & Sell</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-6">
+                                    <label>Volume Minimal (Lot)</label>
+                                    <input type="number" class="form-control form-control-sm" id="var-whale-lot"
+                                        value="1000">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-body">
+                        <div id="group-frequency" class="setting-group mb-4">
+                            <div class="d-flex justify-content-between align-items-center mb-3">
+                                <label class="small fw-bold d-block text-white m-0">ORDER FLOW PARAMETER</label>
+                                <div class="form-check form-switch p-0 m-0 d-flex align-items-center gap-2">
+                                    <span class="small text-muted" style="font-size: 10px;">OFF</span>
+                                    <input class="form-check-input ms-0 group-toggle" type="checkbox" id="toggle-freq">
+                                    <span class="small text-warning" style="font-size: 10px;">ON</span>
+                                </div>
+                            </div>
+                            <div class="row g-3">
+                                <div class="col-md-6">
+                                    <label>Transaksi Beruntun <span class="help-tooltip" data-bs-toggle="tooltip"
+                                            title="Jumlah transaksi minimal dalam durasi singkat untuk dianggap sebagai sinyal ledakan.">?</span></label>
+                                    <div class="input-group input-group-sm">
+                                        <input type="number" class="form-control" id="var-freq-count" value="15">
+                                        <span class="input-group-text">Trades</span>
+                                    </div>
+                                    <small class="text-muted" style="font-size: 10px;">Min trades per
+                                        window.</small>
+                                </div>
+                                <div class="col-md-6">
+                                    <label>Dalam Waktu</label>
+                                    <div class="input-group input-group-sm">
+                                        <input type="number" class="form-control" id="var-freq-time" value="3">
+                                        <span class="input-group-text">Detik</span>
+                                    </div>
+                                </div>
+                                <div class="col-md-12">
+                                    <label>Kepekaan Anomali Diluar Kebiasaan<span class="help-tooltip"
+                                            data-bs-toggle="tooltip"
+                                            title="Semakin ketat (kanan), semakin sedikit sinyal yang lolos karena bot hanya mencari anomali data yang sangat ekstrem.">?</span></label>
+                                    <input type="range" class="form-range" min="1" max="5" step="0.1" id="var-zscore"
+                                        value="2.5">
+                                    <div class="d-flex justify-content-between small text-muted">
+                                        <span>Loose (1.0)</span>
+                                        <span id="zscore-val" class="text-white">2.5</span>
+                                        <span>Strict (5.0)</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-body">
+                        <div id="group-quality" class="setting-group mb-4">
+                            <div class="d-flex justify-content-between align-items-center mb-3">
+                                <label class="small fw-bold d-block text-white m-0">TRADE QUALITY & CONTEXT</label>
+                                <div class="form-check form-switch p-0 m-0 d-flex align-items-center gap-2">
+                                    <span class="small text-muted" style="font-size: 10px;">OFF</span>
+                                    <input class="form-check-input ms-0 group-toggle" type="checkbox"
+                                        id="toggle-quality">
+                                    <span class="small text-warning" style="font-size: 10px;">ON</span>
+                                </div>
+                            </div>
+                            <div class="row g-3">
+                                <div class="col-md-6">
+                                    <label>Price Action</label>
+                                    <select class="form-select form-select-sm" id="var-price-action">
+                                        <option value="uptrend">Uptrend Only (Strict)</option>
+                                        <option value="stable" selected>Stable or Up (Normal)</option>
+                                    </select>
+                                    <small class="text-muted mt-2" style="font-size: 10px;">Filter panic selling
+                                        bursts.</small>
+                                </div>
+
+                                <div class="col-md-6">
+                                    <label>Avg. Lot / Trade</label>
+                                    <div class="input-group input-group-sm">
+                                        <input type="number" class="form-control" id="var-avg-lot" value="10">
+                                        <span class="input-group-text">Lot</span>
+                                    </div>
+                                </div>
+
+                                <div class="col-md-12">
+                                    <label>HAKA Dominance (Buy Aggressor %)</label>
+                                    <div class="d-flex align-items-center gap-2">
+                                        <input type="range" class="form-range" min="0" max="100" step="5"
+                                            id="var-haka-ratio" value="70">
+                                        <span class="badge bg-info text-dark" id="val-haka">70%</span>
+                                    </div>
+                                    <small class="text-muted" style="font-size: 10px;">Min % of trades hitting
+                                        Offer.</small>
+                                </div>
+
+                                <div class="col-md-6">
+                                    <label>Max Spread</label>
+                                    <div class="input-group input-group-sm">
+                                        <input type="number" class="form-control" id="var-max-spread" value="2">
+                                        <span class="input-group-text">Ticks</span>
+                                    </div>
+                                </div>
+                                <div class="col-md-6 d-flex align-items-end">
+                                    <div class="form-check form-switch mb-1">
+                                        <input class="form-check-input" type="checkbox" id="var-wall-check" checked>
+                                        <label class="form-check-label text-white small" for="var-wall-check">Check
+                                            Offer Wall</label>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="group-openlow" class="setting-group mb-4">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <label class="small fw-bold d-block text-white m-0">TIME PARAMETER</label>
+                        <div class="form-check form-switch p-0 m-0 d-flex align-items-center gap-2">
+                            <span class="small text-muted" style="font-size: 10px;">OFF</span>
+                            <input class="form-check-input ms-0 group-toggle" type="checkbox" id="toggle-time-param">
+                            <span class="small text-warning" style="font-size: 10px;">ON</span>
+                        </div>
+                    </div>
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label>Max Time (Morning)</label>
+                            <input type="time" class="form-control form-control-sm" id="var-ol-time" value="09:15">
+                        </div>
+                        <div class="col-md-6">
+                            <label>Min Increase (%)</label>
+                            <div class="input-group input-group-sm">
+                                <input type="number" class="form-control" id="var-ol-min-chg" value="2.0">
+                                <span class="input-group-text">%</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-5 d-flex flex-column mb-3">
+                <div class="card">
+                    <div class="card-header">
+                        RISK MANAGEMENT
+                    </div>
+
+                    <div class="card-body">
+                        <label class="text-white fw-bold mb-2" style="font-size: 0.75rem; letter-spacing: 1px;">TARGET
+                            UNIVERSE (WATCHLIST)</label>
+
+                        <div class="d-flex gap-2 mb-2">
+                            <button class="btn btn-sm btn-outline-info py-0" style="font-size: 10px;"
+                                id="btn-pre-lq45">LQ45</button>
+                            <button class="btn btn-sm btn-outline-info py-0" style="font-size: 10px;"
+                                id="btn-pre-kompas">KOMPAS100</button>
+                            <button class="btn btn-sm btn-outline-warning py-0" style="font-size: 10px;"
+                                id="btn-pre-volatile">⚡
+                                VOLATILE</button>
+                        </div>
+
+                        <div class="input-group input-group-sm my-3 position-relative">
+                            <input type="text" class="form-control" id="stock-ticker-input"
+                                placeholder="CODE (e.g. BBCA)" maxlength="4"
+                                style="text-transform: uppercase; color: white; border-color: #475569;"
+                                autocomplete="off">
+                            <button class="btn btn-outline-warning" type="button" id="btn-add-ticker">➕
+                                ADD</button>
+                            <div id="autocomplete-results"></div>
+                        </div>
+
+                        <div id="watchlist-container" class="d-flex flex-wrap gap-2 p-2 rounded"
+                            style="min-height: 50px; border: 1px dashed #475569;">
+                            <small class="text-muted fst-italic w-100 text-center mt-1 align-self-center" id="empty-msg"
+                                style="font-size: 11px;">
+                                Empty. System will scan ALL MARKET (High Load).
+                            </small>
+                        </div>
+
+                        <input type="hidden" id="final-watchlist" value="">
+                    </div>
+                </div>
+
+                <div class="card">
+
+                    <div class="card-body">
+                        <div class="row g-3">
+                            <div class="col-6">
+                                <label class="text-success fw-bold">Take Profit (TP)</label>
+                                <div class="input-group input-group-sm">
+                                    <input type="number" class="form-control" id="risk-tp" value="2.0">
+                                    <span class="input-group-text">%</span>
+                                </div>
+                            </div>
+                            <div class="col-6">
+                                <label class="text-danger fw-bold">Stop Loss (SL)</label>
+                                <div class="input-group input-group-sm">
+                                    <input type="number" class="form-control" id="risk-sl" value="-2.0">
+                                    <span class="input-group-text">%</span>
+                                </div>
+                            </div>
+                            <div class="col-12">
+                                <label>Capital Allocation per Trade</label>
+                                <div class="input-group input-group-sm">
+                                    <span class="input-group-text">Rp</span>
+                                    <input type="text" class="form-control" id="risk-allocation" value="5.000.000">
+                                </div>
+                            </div>
+                            <div class="col-12 mt-3">
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="auto-cutloss" checked>
+                                    <label class="form-check-label" for="auto-cutloss">Enable Auto-Cutloss (Hard
+                                        Stop)</label>
+                                </div>
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="trailing-stop">
+                                    <label class="form-check-label" for="trailing-stop">Enable Trailing Stop
+                                        (Follow
+                                        Trend)</label>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="d-grid gap-2">
+                    <button class="btn btn-primary py-2" id="btn-save">
+                        💾 SAVE PARAMETERS
+                    </button>
+                    <button class="btn btn-primary py-2" id="btn-dry-run">
+                        🧪 DRY RUN (Simulation)
+                    </button>
+                    <button class="btn btn-success py-3 fw-bold" id="btn-start" disabled>
+                        ▶ START AGENT
+                    </button>
+                </div>
+
+                <div class="card mt-3 mb-0 flex-grow-1 d-flex flex-column">
+                    <div class="card-body p-2 bg-black flex-grow-1"
+                        style="font-family: monospace; font-size: 0.75rem; overflow-y: auto;" id="system-log">
+                        <div class="text-muted">> System initialized...</div>
+                        <div class="text-muted">> Waiting for broker connection...</div>
+                    </div>
+                </div>
+            </div> <!-- Close col-md-5 -->
+        </div>
+
+    </div>
+
+    <script src="./node_modules/bootstrap/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // Check if we are in Electron to avoid "require is not defined" in browser preview
+        if (typeof require !== 'undefined') {
+            window.$ = window.jQuery = require('./node_modules/jquery/dist/jquery.min.js');
+        } else {
+            console.warn("RENDERER: Running in browser mode. Node.js features (require/Electron) are disabled.");
+        }
+    </script>
+    <script>
+        // Move window.onerror to the very top, before ANY other logic
+        window.onerror = function (msg, url, line, col, error) {
+            const errStr = `RENDERER ERROR: ${msg} at ${line}:${col}`;
+            console.error(errStr);
+            if (window.ipcRenderer) {
+                window.ipcRenderer.send('log-to-terminal', errStr);
+            }
+            return false;
+        };
+
+        console.log("RENDERER: Starting script execution...");
+
+        // Safety check for Electron IPC
+        if (typeof require !== 'undefined') {
+            const { ipcRenderer } = require('electron');
+            window.ipcRenderer = ipcRenderer;
+        } else {
+            // Mock ipcRenderer for browser preview
+            window.ipcRenderer = { send: (channel, msg) => console.log(`[MOCK IPC] ${channel}:`, msg) };
+        }
+
+        // Helper Log
+        function log(msg) {
+            const time = new Date().toLocaleTimeString();
+            if ($('#system-log').length) {
+                $('#system-log').prepend(`<div class="text-white"><span class="text-muted">[${time}]</span> ${msg}</div>`);
+            }
+            ipcRenderer.send('log-to-terminal', msg);
+        }
+
+        $(document).ready(function () {
+            // Initialize Bootstrap Tooltips
+            var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'))
+            var tooltipList = tooltipTriggerList.map(function (tooltipTriggerEl) {
+                return new bootstrap.Tooltip(tooltipTriggerEl)
+            })
+
+            log("UI: System initialized...");
+
+            // IPC Listener for system-log messages from main process
+            if (window.ipcRenderer && window.ipcRenderer.on) {
+                ipcRenderer.on('system-log', (event, msg) => {
+                    log(msg);
+                });
+            }
+
+            // 1. LOGIC PRESET SWITCHING (Preview & Toggle Visibility)
+            $('#preset-select').on('change', function () {
+                const preset = $(this).val();
+                $('.setting-group').removeClass('active');
+
+                if (preset === 'bekti') {
+                    $('#group-frequency').addClass('active');
+                    $('#preset-desc').text("Mode Scalping: Mencari ledakan transaksi (Burst) dengan Z-Score tinggi.");
+                } else if (preset === 'john') {
+                    $('#group-whale').addClass('active');
+                    $('#preset-desc').text("Mode Whale: Mencari transaksi Jumbo (Min 500jt) yang memakan Offer.");
+                } else if (preset === 'john_openlow') {
+                    $('#group-openlow').addClass('active');
+                    $('#preset-desc').text("Mode Pagi: Mencari saham Open=Low yang baru mulai naik.");
+                } else {
+                    $('#group-frequency').addClass('active');
+                    $('#group-whale').addClass('active');
+                    $('#preset-desc').text("Manual Mode: Semua parameter bisa diatur sendiri.");
+                }
+            });
+
+            // 1b. LOGIC LOAD PRESET (Apply Values)
+            $('#btn-load-preset').on('click', function () {
+                const preset = $('#preset-select').val();
+                log(`UI: Loading preset ${preset.toUpperCase()}...`);
+
+                if (preset === 'bekti') {
+                    $('#var-freq-count').val(15);
+                    $('#var-freq-time').val(3);
+                    $('#var-zscore').val(2.5).trigger('input');
+                    $('#risk-tp').val(1.5);
+                    $('#risk-sl').val(-1.5);
+                } else if (preset === 'john') {
+                    $('#var-whale-val').val("500.000.000");
+                    $('#risk-tp').val(3.0);
+                    $('#risk-sl').val(-3.0);
+                } else if (preset === 'john_openlow') {
+                    $('#var-ol-time').val("09:15");
+                    $('#risk-tp').val(2.0);
+                    $('#risk-sl').val(-1.0);
+                }
+
+                // Visual feedback flash
+                $('.setting-group.active').css('background-color', '#333');
+                setTimeout(() => $('.setting-group.active').css('background-color', 'transparent'), 200);
+            });
+
+            // Trigger change di awal biar defaultnya Bekti/Manual kelihatan
+            $('#preset-select').val('manual').trigger('change');
+
+            // 2. LOGIC Z-SCORE SLIDER (Visual Feedback)
+            $('#var-zscore').on('input', function () {
+                $('#zscore-val').text($(this).val());
+            });
+
+            // 3. LOGIC SWITCH BROKER
+            $('#broker-select').on('change', function () {
+                const broker = $(this).val();
+                log(`UI: Requesting broker switch to ${broker.toUpperCase()}...`);
+                ipcRenderer.send('switch-broker', broker);
+            });
+
+            // 4. LOGIC CONNECT BROKER (AUTO-READY)
+            window.updateConnectionStatus = function (isConnected) {
+                if (isConnected) {
+                    $('#connection-dot').removeClass('waiting').addClass('connected');
+                    $('#connection-text').text('Connected Ready').removeClass('text-waiting').addClass('text-success');
+                    $('#btn-start').prop('disabled', false);
+                    log("Broker Connection: READY");
+                } else {
+                    $('#connection-dot').removeClass('connected').addClass('waiting');
+                    $('#connection-text').text('Waiting Connection').removeClass('text-success').addClass('text-waiting');
+                    $('#btn-start').prop('disabled', true);
+                }
+            };
+
+            // 4b. LOGIC GROUP TOGGLES
+            $('#toggle-quality').on('change', function () {
+                const isOn = $(this).is(':checked');
+                const $group = $('#group-quality');
+                if (isOn) {
+                    $group.removeClass('disabled');
+                    $group.find('input, select').not('#toggle-quality').prop('disabled', false);
+                } else {
+                    $group.addClass('disabled');
+                    $group.find('input, select').not('#toggle-quality').prop('disabled', true);
+                }
+            });
+
+            $('#toggle-time-param').on('change', function () {
+                const isOn = $(this).is(':checked');
+                const $group = $('#group-openlow');
+                if (isOn) {
+                    $group.removeClass('disabled');
+                    $group.find('input, select').not('#toggle-time-param').prop('disabled', false);
+                } else {
+                    $group.addClass('disabled');
+                    $group.find('input, select').not('#toggle-time-param').prop('disabled', true);
+                }
+            });
+
+            // Initial State
+            updateConnectionStatus(false);
+
+            // Simulation: Scroll/Click title to toggle
+            $('#app-title').on('click', function () {
+                const isWaiting = $('#connection-dot').hasClass('waiting');
+                updateConnectionStatus(isWaiting);
+            });
+
+            // 4. LOGIC SAVE & START
+            $('#btn-save').on('click', function () {
+                const config = gatherConfig();
+                log("Configuration Saved: " + JSON.stringify(config));
+                // Disini nanti kirim config ke backend logic
+                ipcRenderer.send('update-config', config);
+
+                const $btn = $(this);
+                const originalText = $btn.text();
+                $btn.text("✅ SAVED!").addClass('btn-outline-primary').removeClass('btn-primary');
+                setTimeout(() => $btn.text(originalText).addClass('btn-primary').removeClass('btn-outline-primary'), 1000);
+            });
+
+            // --- LOGIC START / FLATTEN ENGINE ---
+            $('#btn-start').on('click', function () {
+                const $btn = $(this);
+                const isRunning = $btn.hasClass('btn-danger'); // Cek apakah sedang jalan (Merah)
+
+                if (!isRunning) {
+                    // === ACTION: STARTING AGENT ===
+
+                    // 1. Validasi Koneksi
+                    const isConnected = $('#connection-dot').hasClass('connected');
+                    if (!isConnected) {
+                        alert("Please connect to a broker first!");
+                        return;
+                    }
+
+                    // 2. Kunci UI (Locking Mechanism)
+                    // Kita disable semua input konfigurasi agar user tidak ubah strategi saat jalan
+                    $('#broker-select').prop('disabled', true);
+                    $('#preset-select').prop('disabled', true);
+                    $('.setting-group input, .setting-group select').prop('disabled', true);
+                    $('#btn-save').prop('disabled', true);
+
+                    // 3. Ubah Tampilan Tombol jadi PANIC BUTTON
+                    $btn.removeClass('btn-success').addClass('btn-danger');
+                    $btn.html('⛔ <b>FLATTEN & STOP</b> (Panic Exit)');
+
+                    // 4. Kirim Sinyal Start
+                    const strategy = $('#preset-select').val();
+                    ipcRenderer.send('agent-control', {
+                        action: 'START',
+                        strategy: strategy
+                    });
+
+                    // Visual Log
+                    const activeStrat = $('#preset-select option:selected').text();
+                    log(`🚀 AGENT STARTED with [${activeStrat}]. Inputs Locked.`);
+                    $('#connection-text').html('<span class="spinner-grow spinner-grow-sm me-2"></span>AGENT RUNNING').css('color', '#4ade80');
+
+                } else {
+                    // === ACTION: FLATTENING & STOPPING ===
+                    log("⚠️ FLATTEN SIGNAL SENT! Closing all positions...");
+
+                    // 2. Kirim Sinyal FLATTEN ke Main Process -> Pane Kiri
+                    ipcRenderer.send('agent-control', { action: 'FLATTEN' });
+
+                    // 3. UI Feedback (Loading sebentar seolah lagi jual barang)
+                    $btn.prop('disabled', true).text('⏳ FLATTENING...');
+
+                    setTimeout(() => {
+                        // 4. Reset UI setelah Flatten Selesai
+                        $btn.prop('disabled', false);
+                        $btn.removeClass('btn-danger').addClass('btn-success');
+                        $btn.html('▶ START AGENT');
+
+                        // 5. Buka Kunci UI (Unlock)
+                        $('#broker-select').prop('disabled', false);
+                        $('#preset-select').prop('disabled', false);
+                        $('.setting-group input, .setting-group select').prop('disabled', false);
+                        $('#btn-save').prop('disabled', false);
+
+                        log("🛑 AGENT STOPPED. System Safe.");
+                        $('#connection-text').text('Connected Ready').css('color', '#00ff00');
+                    }, 1500); // Simulasi waktu eksekusi flatten 1.5 detik
+                }
+            });
+
+            // 4c. LOGIC DRY RUN
+            $('#btn-dry-run').on('click', async function () {
+                const $btn = $(this);
+                $btn.addClass('btn-warning').removeClass('btn-primary').text('🧪 FETCHING TARGET PRICES...');
+                log("--- TARGET PRICE FETCH (DRY RUN) ---");
+
+                try {
+                    if (window.ipcRenderer && window.ipcRenderer.invoke) {
+                        const result = await ipcRenderer.invoke('fetch-target-prices');
+                        if (result.success) {
+                            log(`✅ ${result.message}`);
+                            log(`💾 Data saved to data/target-price-by-emiten.json`);
+                        } else {
+                            log(`❌ Error: ${result.error}`);
+                        }
+                    } else {
+                        log("⚠️ Not in Electron. Cannot fetch target prices.");
+                    }
+                } catch (err) {
+                    log(`❌ Fetch failed: ${err.message}`);
+                }
+
+                $btn.removeClass('btn-warning').addClass('btn-primary').text('🧪 DRY RUN (Simulation)');
+            });
+
+            // Helper Gather Data
+            function gatherConfig() {
+                return {
+                    preset: $('#preset-select').val(),
+                    whale: {
+                        minVal: $('#var-whale-val').val(),
+                        side: $('#var-whale-side').val(),
+                        minLot: $('#var-whale-lot').val(),
+                        enabled: $('#toggle-whale').is(':checked')
+                    },
+                    freq: {
+                        count: $('#var-freq-count').val(),
+                        time: $('#var-freq-time').val(),
+                        zscore: $('#var-zscore').val(),
+                        enabled: $('#toggle-freq').is(':checked')
+                    },
+                    quality: {
+                        enabled: $('#toggle-quality').is(':checked'),
+                        priceAction: $('#var-price-action').val(),
+                        avgLot: $('#var-avg-lot').val(),
+                        hakaRatio: $('#var-haka-ratio').val(),
+                        maxSpread: $('#var-max-spread').val(),
+                        wallCheck: $('#var-wall-check').is(':checked')
+                    },
+                    timeParam: {
+                        enabled: $('#toggle-time-param').is(':checked'),
+                        maxTime: $('#var-ol-time').val(),
+                        minChg: $('#var-ol-min-chg').val()
+                    },
+                    risk: {
+                        tp: $('#risk-tp').val(),
+                        sl: $('#risk-sl').val(),
+                        allocation: $('#risk-allocation').val()
+                    },
+                    watchlist: $('#final-watchlist').val().split(',')
+                };
+            }
+
+            // 5. LOGIC TICKER AUTOCOMPLETE & WATCHLIST
+            let masterEmiten = [];
+            const emitenPath = './data/master-emiten.json';
+
+            // Load Master Emiten Data
+            fetch(emitenPath)
+                .then(response => response.json())
+                .then(data => {
+                    masterEmiten = data;
+                    log(`UI: Loaded ${masterEmiten.length} emiten data for autocomplete.`);
+                })
+                .catch(err => console.warn("UI: Browser mode, autocomplete data will be loaded via IPC if needed or skipped."));
+
+            const $tickerInput = $('#stock-ticker-input');
+            const $results = $('#autocomplete-results');
+            const $container = $('#watchlist-container');
+
+            $tickerInput.on('input', function () {
+                const query = $(this).val().toUpperCase();
+                $results.empty().hide();
+
+                if (query.length < 2) return;
+
+                const filtered = masterEmiten.filter(e => e.ticker.includes(query)).slice(0, 10);
+                if (filtered.length > 0) {
+                    filtered.forEach(e => {
+                        const cleanTicker = e.ticker.replace('.JK', '');
+                        $results.append(`
+                            <div class="autocomplete-item" data-ticker="${cleanTicker}">
+                                <strong>${cleanTicker}</strong>
+                                <span class="sector">${e.sector || 'N/A'}</span>
+                            </div>
+                        `);
+                    });
+                    $results.show();
+                }
+            });
+
+            // Click suggestion
+            $(document).on('click', '.autocomplete-item', function () {
+                const ticker = $(this).data('ticker');
+                addTicker(ticker);
+                $tickerInput.val('');
+                $results.hide();
+            });
+
+            // Close results when clicking outside
+            $(document).on('click', function (e) {
+                if (!$(e.target).closest('.input-group').length) {
+                    $results.hide();
+                }
+            });
+
+            // Manual Add Button
+            $('#btn-add-ticker').on('click', function () {
+                const ticker = $tickerInput.val().toUpperCase();
+                if (ticker) {
+                    addTicker(ticker);
+                    $tickerInput.val('');
+                }
+            });
+
+            function addTicker(ticker) {
+                ticker = ticker.trim().toUpperCase();
+                if (!ticker) return;
+
+                // Check duplicate
+                if ($(`.ticker-badge[data-ticker="${ticker}"]`).length) return;
+
+                $('#empty-msg').hide();
+                const $badge = $(`
+                    <div class="ticker-badge" data-ticker="${ticker}">
+                        ${ticker} <span class="remove-icon">✕</span>
+                    </div>
+                `);
+                $container.append($badge);
+                updateFinalWatchlist();
+            }
+
+            // Remove Ticker
+            $(document).on('click', '.ticker-badge', function () {
+                $(this).remove();
+                if ($container.children('.ticker-badge').length === 0) {
+                    $('#empty-msg').show();
+                }
+                updateFinalWatchlist();
+            });
+
+            function updateFinalWatchlist() {
+                const tickers = [];
+                $container.find('.ticker-badge').each(function () {
+                    tickers.push($(this).data('ticker'));
+                });
+                $('#final-watchlist').val(tickers.join(','));
+            }
+
+            // PRESET WATCHLIST
+            $('#btn-pre-lq45').on('click', () => {
+                const lq45 = ["ASII", "BBCA", "BBNI", "BBRI", "BMRI", "TLKM", "ASII", "UNTR", "ADRO", "PGAS", "ITMG", "PTBA", "INCO", "ANTM", "KLBF", "UNVR", "INDF", "ICBP"];
+                lq45.forEach(t => addTicker(t));
+            });
+
+            $('#btn-pre-kompas').on('click', () => {
+                const stocks = ["BBCA", "BBRI", "BMRI", "BBNI", "TLKM", "ASII", "ADRO", "UNTR", "GOTO", "AMRT"];
+                stocks.forEach(t => addTicker(t));
+            });
+
+            $('#btn-pre-volatile').on('click', () => {
+                const volatile = ["BREN", "TPIA", "BRPT", "PANI", "DSSA", "CUAN", "PTRO"];
+                volatile.forEach(t => addTicker(t));
+            });
+
+            // Pre-fill default watchlist if any
+            updateFinalWatchlist();
+        });
+    </script>
+</body>
+
+</html>

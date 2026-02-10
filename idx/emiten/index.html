@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#ffffff" />
 
-    <title>SSSAHAM - Swing Orderflow Scanner</title>
+    <title>SSSAHAM - Orderflow Scanner</title>
 
     <!-- (opsional) samain dengan index.html -->
     <link rel="manifest" href="/site.webmanifest" />
@@ -92,6 +92,32 @@
             font-size: 0.7rem;
             color: #6b7280;
         }
+
+        .heartbeat-pulse {
+            width: 8px;
+            height: 8px;
+            background-color: #22c55e;
+            border-radius: 50%;
+            display: inline-block;
+            animation: pulse-animation 2s infinite;
+        }
+
+        @keyframes pulse-animation {
+            0% {
+                transform: scale(0.95);
+                box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7);
+            }
+
+            70% {
+                transform: scale(1);
+                box-shadow: 0 0 0 10px rgba(34, 197, 94, 0);
+            }
+
+            100% {
+                transform: scale(0.95);
+                box-shadow: 0 0 0 0 rgba(34, 197, 94, 0);
+            }
+        }
     </style>
 </head>
 
@@ -108,17 +134,24 @@
         </div>
     </nav>
 
+    <div id="loading-indicator" class="text-center my-5">
+        <div class="spinner-border text-primary" role="status">
+            <span class="visually-hidden">Loading...</span>
+        </div>
+        <p class="small text-muted mt-2">Memuat data orderflow...</p>
+    </div>
+
     <div id="app" class="container mb-3">
         <!-- NAVIGATION TABS -->
         <ul class="nav nav-tabs mb-3" role="tablist">
             <li class="nav-item" role="presentation">
-                <a class="nav-link" href="#">Feed</a>
+                <a class="nav-link" href="../index.html">Feed</a>
             </li>
             <li class="nav-item" role="presentation">
-                <span class="nav-link active">Swing Scanner</span>
+                <span class="nav-link active">Orderflow</span>
             </li>
             <li class="nav-item" role="presentation">
-                <a class="nav-link" href="broker-summary.html">Smart Screener</a>
+                <a class="nav-link" href="broker-summary.html">Brokerflow</a>
             </li>
         </ul>
 
@@ -137,51 +170,29 @@
         </div>
 
         <!-- HEADER + FILTER -->
-        <div class="d-flex flex-wrap justify-content-between align-items-center mb-3 gap-2">
-            <div class="d-none">
-                <div class="page-title">Daftar Emiten – Swing Bias</div>
-                <div class="small text-muted">
-                    Window: <span id="label-range">-</span>
-                </div>
+        <div id="filter-row" class="d-flex flex-wrap justify-content-between align-items-center mb-3 gap-2">
+            <div>
+                <div class="h5 fw-bold">Orderflow Scanner</div>
+                <div class="text-muted small mb-4">Market Participant Analysis</div>
             </div>
 
-            <div class="d-flex flex-wrap gap-2 align-items-end">
-                <div>
-                    <label for="date-from" class="small text-muted mb-0">Dari tanggal</label>
-                    <input type="date" id="date-from" class="form-control form-control-sm" />
+            <div class="d-flex flex-wrap gap-2 align-items-center">
+                <div id="heartbeat-indicator" class="text-muted small d-flex align-items-center gap-1"
+                    title="Automated heartbeat check">
+                    <div class="heartbeat-pulse"></div>
+                    <span id="last-updated">Updating...</span>
                 </div>
-                <div>
-                    <label for="time-from" class="small text-muted mb-0">Jam</label>
-                    <input type="time" id="time-from" class="form-control form-control-sm" />
-                </div>
-
-                <div>
-                    <label for="date-to" class="small text-muted mb-0">Sampai tanggal</label>
-                    <input type="date" id="date-to" class="form-control form-control-sm" />
-                </div>
-                <div>
-                    <label for="time-to" class="small text-muted mb-0">Jam</label>
-                    <input type="time" id="time-to" class="form-control form-control-sm" />
-                </div>
-
-                <button id="btn-apply-range" class="btn btn-sm btn-primary">
-                    Apply
-                </button>
-                <button id="btn-refresh" class="btn btn-sm btn-outline-primary">
-                    <i class="fa-solid fa-rotate-right me-1"></i> Refresh
-                </button>
+                <select id="limit-select" class="form-select form-select-sm" style="width: auto;">
+                    <option value="25">Top 25</option>
+                    <option value="50" selected>Top 50</option>
+                    <option value="100">Top 100</option>
+                </select>
             </div>
         </div>
 
 
         <!-- TABLE CARD -->
         <div class="card card-swing mb-5">
-            <div class="card-swing-header d-flex justify-content-between align-items-center">
-                <div class="small text-muted" style="visibility: hidden;">
-                    Top emiten by value
-                </div>
-                <div class="small text-muted" id="last-updated" style="visibility: hidden;">Last update: -</div>
-            </div>
             <div class="card-body p-0">
                 <div class="table-responsive">
                     <table class="table table-hover mb-0 table-orderflow align-middle">
@@ -192,15 +203,7 @@
                                 <th class="sortable" data-sort="kode">
                                     Kode <span class="sort-icon">↕</span>
                                 </th>
-                                <th class="text-end sortable" data-sort="close">
-                                    Close <span class="sort-icon">↕</span>
-                                </th>
-                                <th class="text-end sortable" data-sort="high">
-                                    High <span class="sort-icon">↕</span>
-                                </th>
-                                <th class="text-end sortable" data-sort="low">
-                                    Low <span class="sort-icon">↕</span>
-                                </th>
+                                <!-- Close/High/Low Removed -->
                                 <th class="text-end sortable" data-sort="vol">
                                     Vol <span class="sort-icon">↕</span>
                                 </th>
@@ -210,11 +213,20 @@
                                 <th class="text-end sortable" data-sort="haka_pct">
                                     % Haka <span class="sort-icon">↕</span>
                                 </th>
-                                <th class="text-end sortable" data-sort="fluktuasi">
-                                    Fluktuasi <span class="sort-icon">↕</span>
+                                <th class="text-end sortable" data-sort="range">
+                                    Range <span class="sort-icon">↕</span>
                                 </th>
-                                <th class="text-center sortable" data-sort="quadrant">
-                                    &nbsp;
+                                <th class="text-end sortable" data-sort="fluktuasi">
+                                    Volatilitas <span class="sort-icon">↕</span>
+                                </th>
+                                <th class="text-end sortable" data-sort="div">
+                                    ABS(CVD) <span class="sort-icon">↕</span>
+                                </th>
+                                <th class="text-center sortable" data-sort="score">
+                                    Accum Score <span class="sort-icon">↕</span>
+                                </th>
+                                <th class="text-end sortable" data-sort="score">
+                                    Prediksi <span class="sort-icon">↕</span>
                                 </th>
                             </tr>
                         </thead>
@@ -246,7 +258,6 @@
     <!-- SCRIPTS -->
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0"></script>
     <script src="component.js"></script>
@@ -256,163 +267,272 @@
         const isLocal = false; // Force remote for now
         const API_BASE = isLocal
             ? "http://127.0.0.1:8787"
-            : "https://api-bandar.sssaham.com";   // domain worker ini
-
-        let quadChartInstance = null;
-        let currentRows = [];              // ✅ penting
-
-        // plugin untuk gambar garis silang (sumbu X=0, Y=0)
-        const quadrantLinesPlugin = {
-            id: "quadrantLines",
-            afterDraw(chart) {
-                const { ctx, chartArea, scales } = chart;
-                const xScale = scales.x;
-                const yScale = scales.y;
-
-                const xZero = xScale.getPixelForValue(0);
-                const yZero = yScale.getPixelForValue(0);
-
-                ctx.save();
-                ctx.strokeStyle = "rgba(148,163,184,0.9)";
-                ctx.lineWidth = 1;
-                ctx.setLineDash([4, 3]);
-
-                // vertical
-                ctx.beginPath();
-                ctx.moveTo(xZero, chartArea.top);
-                ctx.lineTo(xZero, chartArea.bottom);
-                ctx.stroke();
-
-                // horizontal
-                ctx.beginPath();
-                ctx.moveTo(chartArea.left, yZero);
-                ctx.lineTo(chartArea.right, yZero);
-                ctx.stroke();
-
-                ctx.restore();
-            }
-        };
+            : "https://api-saham.mkemalw.workers.dev"; // Fixed worker URL
 
         $(function () {
-            function formatRangeLabel(range) {
-                if (!range) return "-";
-                return `${range.from.replace("T", " ")} → ${range.to.replace("T", " ")}`;
-            }
 
-            function initRecentBubbleRange() {
-                const now = new Date();
-                const dStr = now.toISOString().slice(0, 10);  // yyyy-mm-dd
-                const timeNow = now.toTimeString().slice(0, 5); // HH:MM
-
-                // set default ke input
-                $("#date-from").val(dStr);
-                $("#date-to").val(dStr);
-                $("#time-from").val("09:00");
-                $("#time-to").val(timeNow);
-
-                const range = {
-                    from: `${dStr}T09:00:00`,
-                    to: `${dStr}T${timeNow}:00`
-                };
-
-                $("#label-range").text(formatRangeLabel(range));
-                return range;
-            }
-
-            function getCurrentRangeFromInput() {
-                const df = $("#date-from").val();
-                const dt = $("#date-to").val();
-                const tf = $("#time-from").val() || "09:00";
-                const tt = $("#time-to").val() || "23:59";
-
-                if (!df || !dt) return null;
-
-                const range = {
-                    from: `${df}T${tf}:00`,
-                    to: `${dt}T${tt}:00`
-                };
-
-                $("#label-range").text(formatRangeLabel(range));
-                return range;
-            }
-
-            let currentSort = { key: null, dir: 'desc' }; // default: desc
+            // --- HELPERS ---
 
             function formatNum(n) {
                 if (n === null || n === undefined || isNaN(n)) return "-";
                 return n.toLocaleString("id-ID");
             }
 
+            function formatRangeLabel(range) {
+                if (!range) return "-";
+                return `${range.from.replace("T", " ")} → ${range.to.replace("T", " ")}`;
+            }
 
-            function renderQuadrantChart(rows) {
+            function initRecentBubbleRange() {
+                // Heartbeat placeholder
+            }
+
+            // Init Date Inputs
+            initRecentBubbleRange();
+
+            // --- FOOTPRINT QUADRANT LOGIC ---
+
+            let currentRows = [];
+            let currentSort = { key: 'score', dir: 'desc' };
+            let quadChartInstance = null;
+
+            // Quadrant Lines Plugin
+            const quadrantLinesPlugin = {
+                id: 'quadrantLines',
+                beforeDraw: (chart) => {
+                    const { ctx, chartArea, scales: { x, y } } = chart;
+                    const { left, right, top, bottom } = chartArea;
+                    // Zero lines
+                    const x0 = x.getPixelForValue(0);
+                    const y0 = y.getPixelForValue(0);
+
+                    ctx.save();
+                    ctx.beginPath();
+                    ctx.strokeStyle = '#2563eb'; // Solid Blue
+                    ctx.lineWidth = 2;
+                    // Removed setLineDash for solid lines
+
+                    // Vertical
+                    if (x0 >= left && x0 <= right) {
+                        ctx.moveTo(x0, top);
+                        ctx.lineTo(x0, bottom);
+                    }
+                    // Horizontal
+                    if (y0 >= top && y0 <= bottom) {
+                        ctx.moveTo(left, y0);
+                        ctx.lineTo(right, y0);
+                    }
+                    ctx.stroke();
+                    ctx.restore();
+                }
+            };
+
+            function computeQuadrantStandard(x, y) {
+                if (x >= 0 && y >= 0) return 1;
+                if (x < 0 && y >= 0) return 2;
+                if (x < 0 && y < 0) return 3;
+                return 4;
+            }
+
+            function loadData(retry = 0) {
+                const url = `${API_BASE}/footprint/summary`;
+                // Keep loading indicator visible during retries
+                if (retry === 0) $("#loading-indicator").show();
+
+                $.ajax({
+                    url: url,
+                    dataType: "json",
+                    timeout: 20000, // 20s timeout for Cold Start
+                    success: function (resp) {
+                        const rawItems = resp.items || [];
+                        const generatedAt = resp.generated_at;
+
+                        currentRows = rawItems
+                            .filter(item => item.t && item.t.length <= 4 && (item.v || 0) >= 1000) // Filter warrants & illiquid (<1000 lots)
+                            .map((item, idx) => {
+                                const deltaPct = item.d || 0;
+                                const priceChg = item.p || 0;
+                                const vol = item.v || 0;
+
+                                const netVol = (deltaPct * vol) / 100;
+                                const hakaPct = (deltaPct + 100) / 2;
+                                const quadrant = computeQuadrantStandard(deltaPct, priceChg);
+
+                                return {
+                                    _index: idx,
+                                    kode: item.t,
+                                    close: item.c || 0,
+                                    high: item.h || item.c || 0,
+                                    low: item.l || item.c || 0,
+                                    vol: vol,
+                                    net_vol: netVol,
+                                    haka_pct: hakaPct,
+                                    range: item.r || 0,
+                                    fluktuasi: item.f || 0,
+                                    div: item.div || 0,
+
+                                    money: deltaPct,
+                                    momentum: priceChg,
+                                    quadrant: quadrant,
+
+                                    score: item.sc || 0,
+                                    signal: item.sig || '-',
+                                    ctx_st: item.ctx_st || '-',
+                                    ctx_net: item.ctx_net || 0
+                                };
+                            });
+
+                        currentRows.sort((a, b) => b.score - a.score);
+
+                        updateDisplay(); // Render with current limit
+                        $("#loading-indicator").hide();
+                        /* Error Banner cleanup */
+                        $("#error-banner").remove();
+
+                        if (generatedAt) {
+                            $("#last-updated").text("Last update: " + new Date(generatedAt).toLocaleTimeString());
+                        }
+                    },
+                    error: function (xhr, status, error) {
+                        console.error("Failed load footprint summary:", status, error, "Retry:", retry);
+
+                        // Auto-retry once for Cold Starts (Timeout or 500)
+                        if (retry < 1) {
+                            console.log("Retrying in 2s...");
+                            setTimeout(() => loadData(retry + 1), 2000);
+                            return;
+                        }
+
+                        $("#loading-indicator").hide();
+                        $("#stat-count").text("Error");
+
+                        // Final Error State
+                        const msg = status === 'timeout' ? "Connection Timeout (Cold Start)" : "Failed to load data";
+                        if ($("#error-banner").length === 0) {
+                            // Insert error banner before the filters
+                            $(`<div id="error-banner" class="alert alert-warning my-3 text-center">
+                                ${msg}. <br>
+                                <button class="btn btn-sm btn-outline-dark mt-2" onclick="loadData(0)">Try Again</button>
+                               </div>`).insertBefore("#filter-row");
+                        }
+                    }
+                });
+            }
+
+            function renderTable(rows) {
+                const $tbody = $("#tbody-swing");
+                $tbody.empty();
+
+                rows.forEach((s, idx) => {
+                    const netClass = s.net_vol > 0 ? "text-success" : "text-danger";
+                    const score = s.score.toFixed(2);
+                    let sigClass = "badge bg-secondary";
+
+                    if (s.signal === 'STRONG_BUY') sigClass = "badge bg-success";
+                    else if (s.signal === 'BUY') sigClass = "badge bg-primary";
+                    else if (s.signal === 'STRONG_SELL') sigClass = "badge bg-danger";
+                    else if (s.signal === 'TRAP_WARNING') sigClass = "badge bg-warning text-dark";
+                    else if (s.signal === 'HIDDEN_ACCUM') sigClass = "badge bg-info text-dark";
+
+                    const $tr = $(`
+                        <tr data-kode="${s.kode}">
+                            <td class="text-center text-muted">${idx + 1}</td>
+                            <td>
+                                <div class="d-flex align-items-center">
+                                    <img src="${API_BASE}/logo?symbol=${s.kode}" 
+                                         style="width: 24px; height: 24px; object-fit: contain; margin-right: 8px; border-radius: 50%; background: #fff;" 
+                                         onerror="this.style.display='none'">
+                                    <a href="detail.html?kode=${encodeURIComponent(s.kode)}&mode=footprint" class="text-decoration-none fw-bold">${s.kode}</a>
+                                </div>
+                            </td>
+                            <!-- High/Low Removed -->
+                            <td class="text-end">${s.vol.toLocaleString()}</td>
+                            <td class="text-end ${netClass}">${Math.round(s.net_vol).toLocaleString()}</td>
+                            <td class="text-end">${s.haka_pct.toFixed(0)}%</td>
+                            <td class="text-end">${s.range.toLocaleString()}</td>
+                            <td class="text-end fw-bold text-primary">
+                                ${s.fluktuasi.toFixed(2)}%
+                            </td>
+                            <td class="text-end fw-bold">${s.div.toFixed(1)}</td>
+                            <td class="text-center">
+                                <div class="fw-bold" style="color: ${score >= 0.7 ? '#16a34a' : score >= 0.5 ? '#2563eb' : '#64748b'};">
+                                    ${score}
+                                </div>
+                                <div style="font-size:10px; color:#94a3b8;">${s.signal}</div>
+                            </td>
+                            <td class="text-end fw-bold">
+                                ${(() => {
+                            const pct = (s.score * 100).toFixed(0);
+                            let label = '';
+                            let color = '#64748b';
+
+                            if (s.div > 5 && s.money > 2 && s.momentum >= -3) {
+                                label = 'BREAKOUT';
+                                color = '#16a34a'; // Green
+                            } else if (s.momentum < -5) {
+                                label = 'FALLING';
+                                color = '#ef4444'; // Red
+                            } else if (s.div > 5 && s.money < -2) {
+                                label = 'HEAVY SELL';
+                                color = '#dc2626'; // Red
+                            } else if (s.div > 3 && s.momentum >= -3) {
+                                label = 'WATCHING';
+                                color = '#2563eb'; // Blue
+                            } else {
+                                label = s.signal.replace('_', ' ');
+                            }
+
+                            return `<span style="color: ${color}">${pct}% ${label}</span>`;
+                        })()}
+                            </td>
+                        </tr>
+                    `);
+                    $tbody.append($tr);
+                });
+
+                $("#stat-count").text(rows.length);
+            }
+
+            function renderQuadrantChart(points) {
                 const canvas = document.getElementById("quadChart");
                 if (!canvas) return;
 
-                if (!rows || !rows.length) {
-                    if (quadChartInstance) {
-                        quadChartInstance.destroy();
-                        quadChartInstance = null;
+                // NOISE FILTERING: Showcase high-conviction or high-absorption gems
+                const filtered = points.filter(p => Math.abs(p.money) > 2 || p.div > 5);
+
+                const xVals = filtered.map(p => p.money);
+                const yVals = filtered.map(p => p.div);
+
+                // Add padding for largest bubble (25px radius ~ 3 units on typical scale)
+                const bubblePadding = 3;
+                const xMax = xVals.length ? Math.max(10, Math.max(...xVals) + bubblePadding) : 10;
+                const xMin = xVals.length ? Math.min(-10, Math.min(...xVals) - bubblePadding) : -10;
+                const yMax = yVals.length ? Math.max(10, Math.max(...yVals) + bubblePadding) : 10;
+
+                const colorByContext = (p) => {
+                    const delta = p.money;
+                    const ctx = p.ctx_st;
+
+                    if (delta > 2) {
+                        // Absorption Gems (Dark Green if ctx is Accum, else Bright Green for New Markup)
+                        if (ctx === 'ACCUMULATION' || ctx === 'WATCH_ACCUM') return "rgba(21, 128, 61, 0.9)"; // Dark Green
+                        return "rgba(34, 197, 94, 0.8)"; // Bright Green
                     }
-                    return;
-                }
-
-                // --- normalisasi volume → radius 8–30 px ---
-                const vols = rows.map(r => r.vol || 0);
-                const minVol = Math.min(...vols);
-                const maxVol = Math.max(...vols);
-                const volRange = Math.max(1, maxVol - minVol);
-
-                const points = rows.map(row => {
-                    const x = row.money;
-                    const y = row.momentum;
-                    const volNorm = ((row.vol || 0) - minVol) / volRange;
-                    const r = 8 + volNorm * 22;
-
-                    return {
-                        x,
-                        y,
-                        r,
-                        kode: row.kode,
-                        quadrant: row.quadrant
-                    };
-                });
-
-
-                const xVals = points.map(p => p.x);
-                const yVals = points.map(p => p.y);
-
-                const xRange = Math.max(...xVals) - Math.min(...xVals);
-                const yRange = Math.max(...yVals) - Math.min(...yVals);
-
-                const xMin = Math.min(...xVals) - xRange * 0.15;
-                const xMax = Math.max(...xVals) + xRange * 0.15;
-
-                const yMin = Math.min(...yVals) - yRange * 0.20;
-                const yMax = Math.max(...yVals) + yRange * 0.20;
-
-
-                const colorByQuadrant = (q) => {
-                    if (q === 1) return "rgba(34,197,94,0.7)";
-                    if (q === 2) return "rgba(59,130,246,0.7)";
-                    if (q === 3) return "rgba(239,68,68,0.7)";
-                    if (q === 4) return "rgba(234,179,8,0.8)";
-                    return "rgba(148,163,184,0.7)";
-                };
-
-                const borderByQuadrant = (q) => {
-                    if (q === 1) return "rgba(22,163,74,1)";
-                    if (q === 2) return "rgba(37,99,235,1)";
-                    if (q === 3) return "rgba(220,38,38,1)";
-                    if (q === 4) return "rgba(202,138,4,1)";
-                    return "rgba(100,116,139,1)";
+                    if (delta < -2) return "rgba(239, 68, 68, 0.7)"; // Heavy Selling
+                    return "rgba(148, 163, 184, 0.5)"; // Neutral Noise
                 };
 
                 const data = {
                     datasets: [{
                         label: "Emiten",
-                        data: points,
-                        backgroundColor: points.map(p => colorByQuadrant(p.quadrant)),
-                        borderColor: points.map(p => borderByQuadrant(p.quadrant)),
+                        data: filtered.map(p => ({
+                            x: p.money,
+                            y: p.div,
+                            r: Math.min(Math.max(5, Math.sqrt(Math.abs(p.net_vol)) / 5), 25),
+                            ...p
+                        })),
+                        backgroundColor: filtered.map(p => colorByContext(p)),
+                        borderColor: '#fff',
                         borderWidth: 1
                     }]
                 };
@@ -426,7 +546,12 @@
                             callbacks: {
                                 label: (ctx) => {
                                     const d = ctx.raw;
-                                    return `${d.kode} · Q${d.quadrant} · Money: ${d.x.toFixed(1)} · Mom: ${d.y.toFixed(2)}%`;
+                                    return [
+                                        `${d.kode} (${d.ctx_st})`,
+                                        `Score: ${d.score.toFixed(2)} · Delta: ${d.money.toFixed(1)}%`,
+                                        `Absorption: ${d.div.toFixed(2)}`,
+                                        `Context Net: ${d.ctx_net}`
+                                    ];
                                 }
                             }
                         },
@@ -436,41 +561,26 @@
                             color: "#475569",
                             font: { size: 10, weight: "600" },
                             formatter: (v) => v.kode,
-                            offset: 6,
+                            offset: 2,
                             clip: false
                         }
                     },
                     scales: {
                         x: {
-                            title: {
-                                display: true,
-                                text: "Money ( %Haka - 50 )"
-                            },
-                            min: xMin,
-                            max: xMax,
-                            grid: {
-                                color: "rgba(226,232,240,0.7)",
-                                lineWidth: 1
-                            }
+                            title: { display: true, text: "Power (Net Delta %)" },
+                            min: xMin, max: xMax,
+                            grid: { display: false }
                         },
                         y: {
-                            title: {
-                                display: true,
-                                text: "Momentum (Fluktuasi %)"
-                            },
-                            min: yMin,
-                            max: yMax,
-                            grid: {
-                                color: "rgba(226,232,240,0.7)",
-                                lineWidth: 1
-                            }
+                            title: { display: true, text: "Absorption Score (ABS(CVD))" },
+                            min: 0, max: yMax,
+                            grid: { display: false }
                         }
                     }
                 };
 
-                if (quadChartInstance) {
-                    quadChartInstance.destroy();
-                }
+                if (quadChartInstance) quadChartInstance.destroy();
+                // canvas defined at top of function
 
                 quadChartInstance = new Chart(canvas, {
                     type: "bubble",
@@ -480,263 +590,58 @@
                 });
             }
 
-
-            function renderTable(rows) {
-                const $tbody = $("#tbody-swing");
-                $tbody.empty();
-
-                rows.forEach((s, idx) => {
-                    const netClass = s.net_vol > 0 ? "text-success" : s.net_vol < 0 ? "text-danger" : "";
-                    const quadClass =
-                        s.quadrant === 1 ? "bg-success text-white" :
-                            s.quadrant === 2 ? "bg-info text-dark" :
-                                s.quadrant === 3 ? "bg-danger text-white" :
-                                    s.quadrant === 4 ? "bg-warning text-dark" : "bg-secondary text-white";
-
-                    const $tr = $(`
-            <tr data-kode="${s.kode}">
-                <td class="text-center text-muted">${idx + 1}</td>
-                <td>
-                    <a href="detail.html?kode=${encodeURIComponent(s.kode)}&mode=swing" class="text-decoration-none fw-semibold">${s.kode}</a>
-                </td>
-                <td class="text-end">${formatNum(s.close)}</td>
-                <td class="text-end">${formatNum(s.high)}</td>
-                <td class="text-end">${formatNum(s.low)}</td>
-                <td class="text-end">${formatNum(s.vol)}</td>
-                <td class="text-end ${netClass}">${formatNum(s.net_vol)}</td>
-                <td class="text-end">
-                    ${s.haka_pct != null ? Number(s.haka_pct).toFixed(0) : "-"}%
-                </td>
-                <td class="text-end">
-                    ${s.fluktuasi != null ? Number(s.fluktuasi).toFixed(2) : "-"}%
-                </td>
-                <td class="text-center">
-                    <span class="quadrant-badge ${quadClass}">${s.quadrant || "-"}</span>
-                </td>
-            </tr>
-        `);
-                    $tbody.append($tr);
-                });
-
-                $("#stat-count").text(rows.length);
-                $("#last-updated").text("Last update: dummy · nanti diisi dari API");
-            }
-
-
-            function renderDetail(row) {
-                if (!row) {
-                    $("#detail-card").hide();
-                    return;
-                }
-
-                $("#detail-kode").text(row.kode);
-
-                const $qb = $("#detail-quadrant");
-                $qb
-                    .text(row.quadrant || "-")
-                    .removeClass("bg-success bg-info bg-danger bg-warning bg-secondary text-dark text-white");
-
-                if (row.quadrant === 1) $qb.addClass("bg-success text-white");
-                else if (row.quadrant === 2) $qb.addClass("bg-info text-dark");
-                else if (row.quadrant === 3) $qb.addClass("bg-danger text-white");
-                else if (row.quadrant === 4) $qb.addClass("bg-warning text-dark");
-                else $qb.addClass("bg-secondary text-white");
-
-                $("#detail-body").html(`
-          <div>Close: <strong>${formatNum(row.close)}</strong></div>
-          <div>Volume: <strong>${formatNum(row.vol)}</strong> · Net: <strong>${formatNum(row.net_vol)}</strong> (${row.haka_pct}% Haka)</div>
-          <div>Range: <strong>${formatNum(row.low)}</strong> – <strong>${formatNum(row.high)}</strong> (${row.fluktuasi}% fluktuasi)</div>
-          <div class="mt-2 text-muted">
-            Nanti di sini bisa diisi narasi singkat dari state engine:
-            money side (haka/haki), momentum, dan pergerakan kuadran terakhir.
-          </div>
-        `);
-
-                $("#detail-card").show();
-            }
-
-            $("#tbody-swing").on("click", "tr", function () {
-                const kode = $(this).data("kode");
-                const row = currentRows.find(r => r.kode === kode);
-                renderDetail(row);
-            });
-
-            function computeQuadrant(money, momentum) {
-                if (money >= 0 && momentum >= 0) return 1; // kanan atas
-                if (money < 0 && momentum >= 0) return 2; // kiri atas
-                if (money < 0 && momentum < 0) return 3; // kiri bawah
-                return 4;                                  // kanan bawah
-            }
-
             function sortRows(key) {
-                if (!key) return;
-
-                if (currentSort.key === key) {
-                    // klik kolom yang sama → toggle asc/desc
+                if (key === 'score') {
                     currentSort.dir = currentSort.dir === 'asc' ? 'desc' : 'asc';
+                    currentRows.sort((a, b) => currentSort.dir === 'asc' ? a.score - b.score : b.score - a.score);
                 } else {
                     currentSort.key = key;
-                    currentSort.dir = 'desc'; // default pertama kali klik: terbesar dulu
+                    currentSort.dir = currentSort.dir === 'asc' ? 'desc' : 'asc';
+                    const factor = currentSort.dir === 'asc' ? 1 : -1;
+
+                    currentRows.sort((a, b) => {
+                        let va = a[key]; let vb = b[key];
+                        if (typeof va === 'string') return va.localeCompare(vb) * factor;
+                        return (va - vb) * factor;
+                    });
                 }
-
-                const factor = currentSort.dir === 'asc' ? 1 : -1;
-                $(".sort-icon").removeClass("active").text("↕");
-
-                const th = $(`th[data-sort='${key}'] .sort-icon`);
-                th.addClass("active");
-
-                if (currentSort.dir === "asc") th.text("↑");
-                else th.text("↓");
-
-
-                currentRows.sort((a, b) => {
-                    let va = a[key];
-                    let vb = b[key];
-
-                    // khusus index → pakai urutan asli (via _index)
-                    if (key === 'index') {
-                        va = a._index;
-                        vb = b._index;
-                    }
-
-                    // string vs number
-                    if (typeof va === 'string' || typeof vb === 'string') {
-                        return va.toString().localeCompare(vb.toString()) * factor;
-                    }
-
-                    va = (va === null || va === undefined || isNaN(va)) ? 0 : Number(va);
-                    vb = (vb === null || vb === undefined || isNaN(vb)) ? 0 : Number(vb);
-
-                    if (va === vb) return 0;
-                    return va > vb ? factor : -factor;
-                });
-
                 renderTable(currentRows);
             }
 
-            function normalize(v, min, max) {
-                if (max === min) return 0.5; // kalau range 0, taruh di tengah
-                return (v - min) / (max - min);
-            }
-
-            function applyBestRanking(rows) {
-                if (!rows.length) return rows;
-
-                const moneyArr = rows.map(r => r.money || 0);
-                const momArr = rows.map(r => r.momentum || 0);
-                const hiddenArr = rows.map(r => r.hidden_acc || 0); // nanti isi dari API
-
-                const minMoney = Math.min(...moneyArr);
-                const maxMoney = Math.max(...moneyArr);
-                const minMom = Math.min(...momArr);
-                const maxMom = Math.max(...momArr);
-                const minHidden = Math.min(...hiddenArr);
-                const maxHidden = Math.max(...hiddenArr);
-
-                const withScore = rows.map(r => {
-                    const moneyN = normalize(r.money || 0, minMoney, maxMoney);
-                    const momN = normalize(r.momentum || 0, minMom, maxMom);
-                    const hiddenN = normalize(r.hidden_acc || 0, minHidden, maxHidden);
-
-                    // 1) momentum + money terbaik (visible bubble)
-                    const scoreVisible = 0.5 * moneyN + 0.5 * momN;
-
-                    // 2) momentum + money + hidden accumulation
-                    const scoreSmart = 0.4 * moneyN + 0.3 * momN + 0.3 * hiddenN;
-
-                    return {
-                        ...r,
-                        scoreVisible,
-                        scoreSmart
-                    };
-                });
-
-                // default: pakai scoreSmart (kalau hidden_acc belum ada, efeknya identik scoreVisible)
-                withScore.sort((a, b) => (b.scoreSmart - a.scoreSmart));
-
-                return withScore;
-            }
-
-
-            function loadData(range) {
-                let url = `${API_BASE}/summary?mode=swing`;
-
-                if (range && range.from && range.to) {
-                    const params = new URLSearchParams();
-                    params.set("from", range.from);
-                    params.set("to", range.to);
-                    url += `&${params.toString()}`;
-                }
-
-                $.getJSON(url, function (resp) {
-                    const rawRows = resp.items || [];
-
-                    currentRows = rawRows.map((row, idx) => {
-                        let haka = row.haka_pct;
-                        if (haka === undefined || haka === null) {
-                            if (typeof row.money_flow === "number") {
-                                haka = Math.round((row.money_flow + 1) * 50);
-                            }
-                        }
-                        if (haka === undefined || haka === null || Number.isNaN(haka)) {
-                            haka = 50;
-                        }
-
-                        let fluk = row.fluktuasi;
-                        if (fluk === undefined || fluk === null) {
-                            if (typeof row.momentum === "number") {
-                                fluk = Number((row.momentum * 100).toFixed(2));
-                            }
-                        }
-                        if (fluk === undefined || fluk === null || Number.isNaN(fluk)) {
-                            fluk = 0;
-                        }
-
-                        const money = haka - 50;
-                        const mom = fluk;
-                        const quadrant = computeQuadrant(money, mom);
-
-                        return {
-                            _index: idx,
-                            ...row,
-                            haka_pct: haka,
-                            fluktuasi: fluk,
-                            money,
-                            momentum: mom,
-                            quadrant,
-                        };
-                    });
-
-                    // ⬇⬇ default: urutkan berdasarkan "best emiten" (lihat bagian 3)
-                    currentRows = applyBestRanking(currentRows);
-
-                    renderTable(currentRows);
-                    renderQuadrantChart(currentRows);
-                }).fail(function (xhr) {
-                    console.error("Failed load summary:", xhr.status, xhr.responseText);
-                });
-            }
-
-
-            $("#btn-apply-range").on("click", function () {
-                const range = getCurrentRangeFromInput();
-                loadData(range);
-            });
-
-            $("#btn-refresh").on("click", function () {
-                const range = getCurrentRangeFromInput() || initRecentBubbleRange();
-                loadData(range);
-            });
-
-            $(".table-orderflow thead").on("click", "th.sortable", function () {
+            $(".sortable").on("click", function () {
                 const key = $(this).data("sort");
                 sortRows(key);
             });
 
-            // init → default recent bubble: hari ini 09:00 – sekarang
-            const initialRange = initRecentBubbleRange();
-            loadData(initialRange);
+            $("#tbody-swing").on("click", "tr", function () {
+                const kode = $(this).data("kode");
+                window.location.href = `detail.html?kode=${kode}&mode=footprint`;
+            });
 
+
+            function updateDisplay() {
+                const limit = parseInt($("#limit-select").val()) || 50;
+                const topRows = currentRows.slice(0, limit);
+
+                renderTable(topRows);
+                renderQuadrantChart(topRows);
+
+                // Update badge/count if needed
+                // $("#stat-count").text(topRows.length);
+            }
+
+            $("#limit-select").on("change", function () {
+                updateDisplay();
+            });
+
+            // Heartbeat Logic
+            let lastDataTime = null;
+            setInterval(() => {
+                loadData();
+            }, 60000); // Check every 1 minute
+
+            // Init
+            loadData();
         });
     </script>
 

@@ -1,293 +1,369 @@
 <!DOCTYPE html>
-<html lang="id">
+<html lang="en">
 
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="theme-color" content="#463CFF">
+    <title>SSSAHAM - Dashboard</title>
 
-    <title>Bandar Radar – Orderflow Profiler</title>
-
-    <!-- Favicon & Manifest -->
-    <link rel="manifest" href="img/site.webmanifest">
     <link rel="apple-touch-icon" sizes="180x180" href="img/apple-touch-icon.png">
     <link rel="icon" type="image/png" sizes="32x32" href="img/favicon-32x32.png">
     <link rel="icon" type="image/png" sizes="16x16" href="img/favicon-16x16.png">
 
-    <!-- Auth Redirect -->
-    <script>
-        (function () {
-            var user = localStorage.getItem('username');
-            if (!user) {
-                // Not logged in -> Register
-                window.location.href = '../index.html#register-page';
-            } else {
-                // Logged in -> App (Intraday)
-                window.location.href = 'intraday.html';
-            }
-        })();
-    </script>
-
-    <!-- Bootstrap & Font Awesome -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css" rel="stylesheet">
+    <link href="css/styles.css" rel="stylesheet">
 
-    <style>
-        /* ========================================
-           BASE STYLES
-           ======================================== */
-        body {
-            background-color: #f6f8fb;
-        }
+    <script>
+        // ========================================
+        // DEV_MODE: Set to true to skip auth guard
+        // ========================================
+        const DEV_MODE = true;
 
-        /* ========================================
-           HERO BANNER
-           ======================================== */
-        .hero-banner {
-            background: #463CFF;
-            width: 100%;
-            height: 10rem;
-            position: absolute;
-            top: 0;
-        }
-
-        .hero-banner .decorative-circle {
-            width: 200px;
-            height: 200px;
-            position: absolute;
-            top: -14px;
-            left: 50%;
-            transform: translateX(-50%);
-            background: cyan;
-            border-radius: 50%;
-        }
-
-        .hero-banner .hero-title {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            width: 100%;
-            max-width: 760px;
-            margin-top: -80px;
-            color: white;
-            text-align: center;
-            font-weight: 400;
-            font-variant: small-caps;
-            font-size: 1.5rem;
-        }
-
-        /* ========================================
-           MAIN CONTENT
-           ======================================== */
-        .main-content {
-            position: relative;
-        }
-
-        /* ========================================
-           WRAPPER & CARDS
-           ======================================== */
-        .wrapper,
-        .chat-wrapper {
-            max-width: 460px;
-            margin: 0 auto;
-            position: relative;
-            background: #fff;
-            border-radius: 1rem;
-        }
-
-        .section-title {
-            font-weight: 900;
-        }
-
-        .crystal-img {
-            width: 7rem;
-        }
-
-        /* ========================================
-           CHAT COMPONENTS
-           ======================================== */
-        .chat-shell {
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
-            padding-bottom: 80px;
-        }
-
-        .msg-row {
-            display: flex;
-            width: 100%;
-        }
-
-        .msg-row.assistant {
-            justify-content: flex-start;
-        }
-
-        .msg-row.user,
-        .msg-row.reply-right {
-            justify-content: flex-end;
-        }
-
-        /* ========================================
-           CHAT BUBBLES
-           ======================================== */
-        .bubble {
-            max-width: 85%;
-            padding: 1rem;
-            border-radius: 14px;
-            line-height: 1.4;
-            background: #ffffff;
-            color: #111827;
-            border: 1px solid #e5e7eb;
-            font-size: 1rem;
-            box-shadow: 0 0 10px aliceblue;
-            margin: 0.35rem 0;
-        }
-
-        .assistant .bubble {
-            border-top-left-radius: 4px;
-        }
-
-        .user .bubble {
-            border-top-right-radius: 4px;
-            background: #2563eb;
-            color: #ffffff;
-            border: none;
-        }
-
-        /* ========================================
-           QUICK REPLIES
-           ======================================== */
-        .quick-replies {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 6px;
-        }
-
-        .quick-replies .btn {
-            border-radius: 999px;
-            font-size: 1rem;
-            padding: 0.5rem 1rem;
-            margin: 1rem 0;
-        }
-
-        /* ========================================
-           CHAT COMPOSER
-           ======================================== */
-        .chat-composer {
-            position: fixed;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            margin: 0 auto;
-            width: min(460px, calc(100% - 2rem));
-            z-index: 50;
-            background: #ffffff;
-            border-radius: 12px 12px 0 0;
-            border-top: 1px solid rgba(15, 23, 42, 0.12);
-            box-shadow: 0 -2px 10px rgba(15, 23, 42, 0.08);
-            padding: 8px 10px;
-            display: none;
-        }
-
-        .chat-composer.disabled {
-            opacity: 0.35;
-            pointer-events: none;
-        }
-
-        .chat-composer textarea {
-            resize: none;
-            max-height: 100px;
-        }
-
-        /* ========================================
-           RESPONSIVE
-           ======================================== */
-        @media (max-width: 460px) {
-            .chat-composer {
-                width: calc(100% - 1.5rem);
+        // Auth Guard: Check if token exists
+        if (!DEV_MODE) {
+            const token = localStorage.getItem("qqquanta_token");
+            if (!token) {
+                window.location.href = "login.html";
             }
         }
-    </style>
+    </script>
 </head>
 
 <body>
-    <!-- Hero Banner -->
-    <div class="hero-banner">
-        <span class="decorative-circle"></span>
-        <h1 class="d-none hero-title">
-            <strong>Stock Market</strong> Almanac<br>
-            Just Like<br>
-            <strong>Back to The Future</strong>
-        </h1>
+
+    <!-- NAVBAR -->
+    <nav class="navbar sticky-top">
+        <div class="container d-flex align-items-center" style="max-width: 1200px;position: relative;">
+            <a href="https://buy.sssaham.com" id="nav-back" class="d-flex align-items-center text-decoration-none me-2">
+                <i class="fa-solid fa-chevron-left me-1"></i>
+                <span class="small d-none">Bandar Radar</span>
+            </a>
+            <div class="flex-grow-1 text-center">
+                <span class="nav-title" id="header-title">Dashboard</span>
+            </div>
+            <div style="width:72px;" class="text-end">
+                <i class="fa-solid fa-magnifying-glass" style="cursor: pointer;" onclick="toggleSearch()"></i>
+            </div>
+        </div>
+    </nav>
+
+    <div id="search-panel">
+        <div class="mb-4">
+            <input type="text" id="search-input" class="search-input" placeholder="Masukkan Kode (e.g. BBRI)"
+                autocomplete="off">
+        </div>
+
+        <div>
+            <p class="small opacity-75 mb-2 fw-bold">RIWAYAT PENCARIAN</p>
+            <div id="search-history-list">
+                <!-- Populated by JS -->
+            </div>
+        </div>
     </div>
 
-    <!-- Main Content -->
-    <main class="container my-4 main-content">
-        <!-- How It Works Section -->
-        <section class="wrapper p-4 text-center mb-4">
-            <h3 class="section-title mb-3 mt-4">How it works?!</h3>
-            <img src="img/crystal.gif" alt="Crystal Ball" class="crystal-img">
-            <p>We analyze market data tick-by-tick to predict prices 15 minutes ahead.</p>
-            <p>The system instantly compares its predictions with reality, learning from every movement.</p>
-            <p>This means our AI gets smarter and more accurate with every passing second.</p>
+    <div id="loading-indicator" class="text-center my-5">
+        <div class="spinner-border text-primary" role="status">
+            <span class="visually-hidden">Loading...</span>
+        </div>
+        <p class="small text-muted mt-2">Memuat data...</p>
+    </div>
+
+    <div id="app" class="container" style="display:none;">
+        <!-- VIEW 1: INDEX (DAFTAR EMITEN) -->
+        <div id="index-view">
+            <!-- DASHBOARD TABS -->
+            <ul class="nav nav-tabs mb-3" role="tablist">
+                <li class="nav-item" role="presentation">
+                    <a class="nav-link active" href="#">Feed</a>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <a class="nav-link" href="emiten/index.html">Orderflow</a>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <a class="nav-link" href="emiten/broker-summary.html">Brokerflow</a>
+                </li>
+            </ul>
+        </div>
+
+        <!-- Filter Section -->
+        <section id="filters" class="filter-section mb-4 d-none">
+            <div class="container ps-0">
+                <div class="filter-scroll">
+                    <div class="filter-icon">
+                        <i class="fa-solid fa-sliders text-secondary small"></i>
+                        <span class="filter-divider"></span>
+                    </div>
+                    <button class="filter-pill active">All</button>
+                    <button class="filter-pill">Nasdaq</button>
+                    <button class="filter-pill">S&P500</button>
+                    <button class="filter-pill">Gold</button>
+                    <button class="filter-pill">BTC Futures</button>
+                    <button class="filter-pill">EUR/USD</button>
+                    <button class="filter-pill">GBP/USD</button>
+                    <button class="filter-pill">USD/JPY</button>
+                </div>
+            </div>
         </section>
 
-        <!-- Try It Now Section -->
-        <section class="chat-wrapper p-3 mb-4">
-            <h3 class="section-title text-center mb-4 mt-4">Try It Now!</h3>
-            <div class="chat-shell">
-                <!-- Message 1 -->
-                <div class="msg-row assistant">
-                    <div class="bubble">
-                        <div>👋 Hai, trader! Are you a swinger or day trader?</div>
-                    </div>
-                </div>
+        <section id="content" class="content-section mt-0 pt-0">
+            <div class="container ps-0">
+                <div class="row">
+                    <!-- Feed Section (Left) -->
+                    <div class="col-md-6 mb-4">
+                        <strong class="text-dark mb-3 d-block text-center ">Feed</strong>
+                        <div class="timeline timeline-right">
+                            <div class="timeline-line"></div>
 
-                <!-- Message 2 -->
-                <div class="msg-row assistant reply-right">
-                    <div class="bubble">
-                        <div>Swing traders hold their positions for a few days (usually 1 to 5). Day traders, on the
-                            other hand, close everything out within 24 hours.</div>
-                    </div>
-                </div>
+                            <!-- Latest Item (Top) -->
+                            <div class="timeline-item">
+                                <div class="timeline-dot primary"></div>
+                                <div class="timeline-time">2 minutes ago</div>
+                                <div class="timeline-card">
+                                    <div class="timeline-title primary">QQQUANTA AI</div>
+                                    <p class="timeline-text">
+                                        🚀 <strong>ES Futures</strong> showing bullish divergence on footprint. High
+                                        volume
+                                        at 5250
+                                        support level. Watch for breakout above 5265.
+                                    </p>
+                                    <div class="timeline-tags">
+                                        <span>#Futures</span>
+                                        <span class="tag-hot">#Hot</span>
+                                    </div>
+                                </div>
+                            </div>
 
-                <!-- Message 3 with Quick Replies -->
-                <div class="msg-row assistant">
-                    <div class="bubble">
-                        <div>You can try and discover it anyway..</div>
-                        <div class="quick-replies">
-                            <a href="swing.html" class="btn btn-outline-primary btn-sm">Swing Scanner</a>
-                            <a href="intraday.html" class="btn btn-outline-primary btn-sm">Intraday</a>
+                            <div class="timeline-item">
+                                <div class="timeline-dot warning"></div>
+                                <div class="timeline-time">15 minutes ago</div>
+                                <div class="timeline-card">
+                                    <div class="timeline-title warning">Crypto Alert</div>
+                                    <p class="timeline-text">
+                                        📊 <strong>BTC/USDT</strong> large buy imbalance detected at $42,500. Delta
+                                        positive
+                                        on 15m
+                                        timeframe. Potential long opportunity.
+                                    </p>
+                                    <div class="timeline-tags">
+                                        <span>#Crypto</span>
+                                        <span class="tag-bullish">#Bullish</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="timeline-item">
+                                <div class="timeline-dot success"></div>
+                                <div class="timeline-time">1 hour ago</div>
+                                <div class="timeline-card">
+                                    <div class="timeline-title success">AI Sentiment</div>
+                                    <p class="timeline-text">
+                                        🤖 Daily sentiment analysis complete. <strong>NQ</strong> sentiment: 72%
+                                        bullish.
+                                        <strong>CL</strong> sentiment: 58% bearish. Full report available in AI
+                                        Analytics.
+                                    </p>
+                                    <div class="timeline-tags">
+                                        <span>#AI</span>
+                                        <span>#Daily</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Catalyst Section (Right) -->
+                    <div class="col-md-6 mb-4">
+                        <strong class="text-dark mb-3 text-center d-block ">Catalyst</strong>
+                        <div class="timeline">
+                            <div class="timeline-line"></div>
+
+                            <!-- Nearest Upcoming (Top) -->
+                            <div class="timeline-item">
+                                <div class="timeline-dot" style="background: #3b82f6;"></div>
+                                <div class="timeline-time">In 30 minutes</div>
+                                <div class="timeline-card" style="background: #eff6ff;">
+                                    <div class="timeline-title" style="color: #3b82f6;">FOMC Member Speaks</div>
+                                    <p class="timeline-text">
+                                        🗣️ <strong>Bowman</strong> speaking at 10:00 AM EST. Watch for comments on
+                                        interest
+                                        rate path.
+                                    </p>
+                                    <div class="timeline-tags">
+                                        <span>#Macro</span>
+                                        <span>#USD</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="timeline-item upcoming">
+                                <div class="timeline-dot" style="background: #ef4444;"></div>
+                                <div class="timeline-time">In 4 hours</div>
+                                <div class="timeline-card" style="background: #fef2f2;">
+                                    <div class="timeline-title" style="color: #ef4444;">CPI Data Release</div>
+                                    <p class="timeline-text">
+                                        🇺🇸 <strong>US CPI</strong> YoY Forecast: 3.1%. Previous: 3.2%. High impact on
+                                        USD
+                                        pairs and Gold.
+                                    </p>
+                                    <div class="timeline-tags">
+                                        <span>#Forex</span>
+                                        <span style="color: #ef4444;">#HighImpact</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Furthest Future (Bottom) -->
+                            <div class="timeline-item upcoming">
+                                <div class="timeline-dot" style="background: #8b5cf6;"></div>
+                                <div class="timeline-time">Tomorrow, 08:30 AM</div>
+                                <div class="timeline-card" style="background: #fdf4ff;">
+                                    <div class="timeline-title" style="color: #8b5cf6;">Unlock: Token XYZ</div>
+                                    <p class="timeline-text">
+                                        🔓 <strong>XYZ</strong> token unlock of 50M tokens (approx. $10M) occurring
+                                        tomorrow.
+                                        Expect potential volatility.
+                                    </p>
+                                    <div class="timeline-tags">
+                                        <span>#Crypto</span>
+                                        <span>#Unlock</span>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
             </div>
         </section>
+    </div>
 
-        <!-- Future Composer (Hidden) -->
-        <section class="chat-wrapper p-3 d-none">
-            <div class="chat-shell"></div>
-            <div id="chat-composer" class="chat-composer disabled">
-                <div class="d-flex align-items-end gap-2">
-                    <div class="flex-grow-1">
-                        <textarea id="composer-input" class="form-control form-control-sm" rows="1"
-                            placeholder="Wizard akan aktif di versi berikutnya..." disabled></textarea>
+    <!-- Init Script to Simulate Loading -->
+    <script>
+        document.addEventListener("DOMContentLoaded", () => {
+            // Slight delay to smoother transition or immediate
+            setTimeout(() => {
+                const loader = document.getElementById("loading-indicator");
+                const app = document.getElementById("app");
+                if (loader) loader.style.display = "none";
+                if (app) app.style.display = "block";
+            }, 500); // 500ms delay for visual feedback
+        });
+    </script>
+
+    <script>
+        // Page specific logic updates
+        const userStr = localStorage.getItem("qqquanta_user");
+        if (userStr) {
+            try {
+                const user = JSON.parse(userStr);
+                // Update Header Name
+                const userNameEl = document.getElementById("user-name");
+                if (userNameEl) userNameEl.textContent = user.name || "User";
+
+                // Update Page Details
+                const details = document.getElementById("user-details");
+                if (details) {
+                    details.innerHTML = `
+                    ${user.picture ? `<img src="${user.picture}" alt="Profile">` : ''}
+                    <div>
+                        <h5 class="mb-1">${user.name}</h5>
+                        <p class="mb-0 text-muted">${user.email}</p>
                     </div>
-                    <button id="composer-send" class="btn btn-primary btn-sm" disabled>
-                        <i class="fa-solid fa-paper-plane"></i>
-                    </button>
+                `;
+                }
+            } catch (e) { console.error(e); }
+        } else {
+            // DEV_MODE: Show placeholder
+            const details = document.getElementById("user-details");
+            if (details) {
+                details.innerHTML = `
+                <img src="https://via.placeholder.com/64" alt="Profile">
+                <div>
+                    <h5 class="mb-1">Dev User</h5>
+                    <p class="mb-0 text-muted">dev@qqquanta.com</p>
                 </div>
-                <div class="form-text small mt-1" id="composer-hint">
-                    Versi ini masih skeleton. Nanti diisi pertanyaan profil seperti time horizon, modal, dan gaya entry.
-                </div>
-            </div>
-        </section>
-    </main>
+            `;
+            }
+            const userNameEl = document.getElementById("user-name");
+            if (userNameEl) userNameEl.textContent = "Dev User";
+        }
 
-    <!-- Scripts -->
+        function logout() {
+            if (confirm("Are you sure you want to logout?")) {
+                localStorage.removeItem("qqquanta_token");
+                localStorage.removeItem("qqquanta_user");
+                window.location.href = "login.html";
+            }
+        }
+
+        function toggleMobileMenu() {
+            // TODO: Implement mobile menu
+            alert("Mobile menu coming soon!");
+        }
+
+        // Trading Hours Clock Logic
+        const tradingSessions = {
+            tokyo: { open: 9, close: 15, tz: 'Asia/Tokyo' },
+            london: { open: 8, close: 16, tz: 'Europe/London' },
+            newyork: { open: 9, close: 16, tz: 'America/New_York' }
+        };
+
+        function getTimeInTimezone(tz) {
+            const now = new Date();
+            const options = { timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false };
+            const timeStr = now.toLocaleTimeString('en-GB', options);
+            const [hours, minutes] = timeStr.split(':').map(Number);
+            return { hours, minutes, timeStr };
+        }
+
+        function isMarketOpen(session, hours) {
+            // Check if weekday (Mon-Fri)
+            const now = new Date();
+            const dayOptions = { timeZone: session.tz, weekday: 'short' };
+            const day = now.toLocaleDateString('en-US', dayOptions);
+            const isWeekday = !['Sat', 'Sun'].includes(day);
+
+            return isWeekday && hours >= session.open && hours < session.close;
+        }
+
+        function updateClocks() {
+            Object.keys(tradingSessions).forEach(city => {
+                const session = tradingSessions[city];
+                const { hours, minutes, timeStr } = getTimeInTimezone(session.tz);
+
+                // Update time display
+                document.getElementById(`${city}-time`).textContent = timeStr;
+
+                // Update clock hands
+                const hourDeg = (hours % 12) * 30 + minutes * 0.5;
+                const minuteDeg = minutes * 6;
+
+                document.getElementById(`${city}-hour`).style.transform = `rotate(${hourDeg}deg)`;
+                document.getElementById(`${city}-minute`).style.transform = `rotate(${minuteDeg}deg)`;
+
+                // Update market status
+                const statusEl = document.getElementById(`${city}-status`);
+                const isOpen = isMarketOpen(session, hours);
+                statusEl.textContent = isOpen ? 'OPEN' : 'CLOSED';
+                statusEl.className = `clock-status ${isOpen ? 'open' : 'closed'}`;
+
+                // Update Wrapper Opacity
+                const wrapper = document.getElementById(`clock-wrapper-${city}`);
+                if (wrapper) {
+                    wrapper.style.opacity = isOpen ? '1' : '0.7';
+                }
+            });
+        }
+
+        // Initial update and set interval
+        updateClocks();
+        setInterval(updateClocks, 1000);
+    </script>
+
+    <!-- SCRIPTS -->
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="emiten/component.js"></script>
 </body>
 
 </html>

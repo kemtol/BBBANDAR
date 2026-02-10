@@ -27,11 +27,18 @@
     "r2_buckets": [
         {
             "binding": "RAW_BROKSUM",
-            "bucket_name": "raw-broksum"
+            "bucket_name": "raw-broksum",
+            "preview_bucket_name": "raw-broksum"
         },
         {
             "binding": "SSSAHAM_EMITEN",
-            "bucket_name": "sssaham-emiten"
+            "bucket_name": "sssaham-emiten",
+            "preview_bucket_name": "sssaham-emiten"
+        },
+        {
+            "binding": "TAPE_DATA_SAHAM",
+            "bucket_name": "tape-data-saham",
+            "preview_bucket_name": "tape-data-saham"
         }
     ],
     "d1_databases": [
@@ -50,7 +57,8 @@
     "triggers": {
         "crons": [
             "30 11 * * 1-5",
-            "45 11 * * 1-5"
+            "45 11 * * 1-5",
+            "*/5 * * * *"
         ]
     }
 }

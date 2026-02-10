@@ -12,32 +12,66 @@ export class SmartMoney {
     }
 
     processSingleDay(ticker, dateStr, rawData, existingHistory) {
-        // 1. Unpack Raw Data
-        // rawData structure from broksum-scrapper: { data: { foreign: {...}, retail: {...}, local: {...}, broker_summary: {...} } }
-        // We need 'close' price. rawData usually doesn't have OHLC unless we fetch it.
-        // Wait, `broksum-scrapper` raw data is from `marketdetectors` endpoint which DOES NOT have OHLC usually.
-        // BUT `data.bandar_detector` usually has `close` price?
-        // Let's check `broksum-scrapper` logic:
-        // "const currClose = d.close || (d.data && d.data.close) || 0;"
-
-        // I need to be sure where `close` comes from.
-        // `marketdetectors` endpoint returns `close` inside `data`?
-        // Let's assume `data.close` or `data.bandar_detector.close`.
-
+        // 1. Unpack Raw Data (Hybrid Support: IPOT vs Stockbit)
         const d = rawData.data || rawData;
-        const bd = d.bandar_detector || {};
-        const close = bd.price_close || d.close || 0; // Check data shape if fails
+        let foreign = { buy_val: 0, sell_val: 0 };
+        let local = { buy_val: 0, sell_val: 0 };
+        let retail = { buy_val: 0, sell_val: 0 };
+        let close = 0;
 
-        // Calculate Metrics
-        const foreign = d.foreign || { buy_val: 0, sell_val: 0 };
-        const retail = d.retail || { buy_val: 0, sell_val: 0 };
-        const local = d.local || { buy_val: 0, sell_val: 0 };
+        // CHECK IF IPOT STRUCTURE (has broker_summary with arrays)
+        if (d.broker_summary && (Array.isArray(d.broker_summary.brokers_buy) || Array.isArray(d.broker_summary.brokers_sell))) {
+            const bs = d.broker_summary;
+
+            // Extract Price (VWAP as Close Proxy)
+            if (bs.stock_summary && bs.stock_summary.average_price) {
+                close = parseFloat(bs.stock_summary.average_price);
+            } else if (d.bandar_detector && d.bandar_detector.average) {
+                close = parseFloat(d.bandar_detector.average);
+            }
+
+            // Aggregate Brokers
+            const aggregate = (list, isBuy) => {
+                if (!list) return;
+                list.forEach(b => {
+                    const val = parseFloat(isBuy ? b.bval : b.sval) || 0;
+                    const type = b.type || "Lokal";
+                    if (type === "Asing") {
+                        if (isBuy) foreign.buy_val += val; else foreign.sell_val += val;
+                    } else {
+                        // All non-Asing is Local (including Retail for now)
+                        if (isBuy) local.buy_val += val; else local.sell_val += val;
+                    }
+                });
+            };
+
+            aggregate(bs.brokers_buy, true);
+            aggregate(bs.brokers_sell, false);
+
+        } else {
+            // LEGACY / STOCKBIT STRUCTURE
+            const bd = d.bandar_detector || {};
+            close = bd.price_close || d.close || 0;
+            foreign = d.foreign || { buy_val: 0, sell_val: 0 };
+            retail = d.retail || { buy_val: 0, sell_val: 0 };
+            local = d.local || { buy_val: 0, sell_val: 0 };
+        }
 
         const grossBuy = (foreign.buy_val || 0) + (retail.buy_val || 0) + (local.buy_val || 0);
         const grossSell = (foreign.sell_val || 0) + (retail.sell_val || 0) + (local.sell_val || 0);
 
-        const effort = grossBuy + grossSell;
-        const net = grossBuy - grossSell;
+        const effort = grossBuy + grossSell; // Total Volume (Value)
+
+        // CORRECTION: Net should be Net Foreign Flow for Z_NGR?
+        // Or Net Accumulation (Top N)?
+        // The standard NGR metric is Net Foreign / Total Value.
+        // Existing code (grossBuy - grossSell) is always 0 for market-wide data.
+        // We switch to Net Foreign for valid NGR.
+        const net = (foreign.buy_val || 0) - (foreign.sell_val || 0);
+
+        // DEBUG LOGGING
+        console.log(`[SmartMoney] ${ticker} ${dateStr} - F.Buy: ${foreign.buy_val}, F.Sell: ${foreign.sell_val}, Net: ${net}, Effort: ${effort}`);
+        console.log(`[SmartMoney] Brokers array check: Buy=${d.broker_summary?.brokers_buy?.length}, Sell=${d.broker_summary?.brokers_sell?.length}`);
 
         // 2. Determine Previous Close for Return
         // We need the last entry from history
@@ -107,38 +141,41 @@ export class SmartMoney {
         }
 
         // 5. Classification (Based on Window 20)
-        const primaryZ = z_scores["20"] || z_scores["10"] || { effort: 0, result: 0, elas: 0 }; // Fallback
-        const effortZ = primaryZ.effort;
+        // Store Real Z-Scores (Actual Calculation for Day T) to ensure history integrity
+        const real_z_scores = JSON.parse(JSON.stringify(z_scores));
+
+        const primaryZ = z_scores["20"] || z_scores["10"] || { effort: 0, result: 0, elas: 0, ngr: 0 };
+
+        // --- EFFORT SHIFT LOGIC (User Request) ---
+        // Use Yesterday's Effort Z-Score if available.
+        // Logic: "Did Big Money enter yesterday?" (D-1 Effort) vs "Price Stability Today" (D Result)
+        let effortZ = primaryZ.effort;
+        if (lastEntry) {
+            // Check for real_z_scores (New Format) or fallback to z_scores (Old Format/Legacy)
+            const prevZ = lastEntry.real_z_scores ? lastEntry.real_z_scores["20"] : (lastEntry.z_scores ? lastEntry.z_scores["20"] : null);
+
+            if (prevZ) {
+                effortZ = prevZ.effort; // Override with D-1
+                // Also update the object that will be exposed to Frontend/DB
+                if (z_scores["20"]) z_scores["20"].effort = effortZ;
+                if (z_scores["10"]) z_scores["10"].effort = prevZ.effort; // Apply to 10 too for consistency? Or just used 20.
+            }
+        }
+        // ------------------------------------------
+
         const resultZ = primaryZ.result;
         const elasZ = primaryZ.elas;
         const ngrZ = primaryZ.ngr;
 
-        // Determine if effort is declining (Trend)
-        // Need previous Z-score? Or just check if current effort < mean?
-        // Check if Z is decreasing compared to yesterday?
-        // We can check if effortZ < previous day's effortZ (needs re-calculation of prev day z? expensive)
-        // Simplification: Effort Declining if Effort Z < 0 (Below average) or strictly declining?
-        // Original logic: "prevEffortZ = (prevEffort - Mean) / Std".
-        // Let's implement previous Z calc for 20 day window if possible.
+        // Determine if effort is declining (Trend) - using effective effortZ (D-1)
+        // Actually, if effortZ is D-1, then "Declining" means "D-1 Effort < D-2 Effort"?
+        // Or "D-1 Effort < Average".
+        // Let's stick to using effortZ as the proxy for "Current Relevant Effort".
 
         let effortDeclining = false;
-        if (n > 1) {
-            const slice20 = fullSeries.slice(Math.max(0, n - 20), n);
-            const prevMetric = fullSeries[n - 2];
-            // Re-calc mean/std for the slice ending yesterday?
-            // Taking a shortcut: Compare current effort to Mean of LAST 20.
-            // If effort < PrevEffort? No.
-            // Let's stick to strict Z logic:
-            // Construct slice for yesterday: slice(n-21, n-1)
-            // This is computationally exp.
-            // Simple proxy: effortZ < 0 means below average.
-            // Or compare raw effort: currentMetrics.effort < prevMetric.metrics.effort
-            effortDeclining = currentMetrics.metrics.effort < prevMetric.metrics.effort;
-        }
-
-        const slice20 = fullSeries.slice(Math.max(0, n - 20), n);
-        const elasVals = slice20.map(s => s.metrics.elas);
-        const elasMean20 = elasVals.reduce((a, b) => a + b, 0) / elasVals.length;
+        // Logic simplification: Effort Declining if current relevant Effort Z is negative?
+        // Or strictly declining trend.
+        // For D-1 logic, we just check if the Effective Effort is high or low.
 
         let state = 'NEUTRAL';
         const isEffortHigh = effortZ > 0.5;
@@ -146,14 +183,19 @@ export class SmartMoney {
         const isResultLow = resultZ < 0;
 
         // READY MARKUP: Effort Declining (selling pressure gone?), Price Stable (Result Low), Elasticty High (Price moves easily with little net)
+        // D-1 Logic: Effort (D-1) was High, Result (D) is Stable.
+        // That sounds like Accumulation. 
+        // Ready Markup: Maybe Effort (D-1) Low? 
+        // Let's trust the variables: `effortZ` is now D-1.
+
         if (effortDeclining && resultZ > -0.5 && elasticity > elasMean20 * 1.1) {
             state = 'READY_MARKUP';
         } else if (isEffortHigh && Math.abs(resultZ) < 0.5) {
             state = 'TRANSITION';
         } else if (isEffortHigh && resultZ < -0.5 && ret >= 0) {
-            state = 'ACCUMULATION'; // High effort, price stable/up (absorption)
+            state = 'ACCUMULATION'; // High effort (yesterday), price stable/up (today) -> Accumulation
         } else if (isEffortHigh && ret < -0.01) {
-            state = 'DISTRIBUTION'; // High effort, price drop
+            state = 'DISTRIBUTION'; // High effort (yesterday), price drop (today) -> Distribution
         }
 
         if (state === 'NEUTRAL' && isEffortLow && isResultLow) state = 'NEUTRAL';
@@ -165,7 +207,8 @@ export class SmartMoney {
             date: dateStr,
             close,
             metrics: currentMetrics.metrics,
-            z_scores: z_scores, // Map { "5": {...}, "20": {...} }
+            z_scores: z_scores, // Map { "5": {...}, "20": {...} } (Contains D-1 Effort)
+            real_z_scores: real_z_scores, // HIDDEN: True Day T Z-Scores (For next day's D-1 lookup)
             state,
             internal_score: score
         };

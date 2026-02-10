@@ -89,6 +89,10 @@
         <button class="nav-link active" id="tab-monitoring-btn" data-bs-toggle="tab" data-bs-target="#tab-monitoring"
           type="button" role="tab" aria-controls="tab-monitoring" aria-selected="true">Service Monitoring</button>
       </li>
+      <li class="nav-item" role="presentation">
+        <button class="nav-link" id="tab-audit-btn" data-bs-toggle="tab" data-bs-target="#tab-audit" type="button"
+          role="tab" aria-controls="tab-audit" aria-selected="false">Audit Trail</button>
+      </li>
     </ul>
 
     <div class="tab-content">
@@ -252,6 +256,106 @@
             </div>
           </div>
         </div>
+      </div>
+
+      <!-- AUDIT TAB -->
+      <div class="tab-pane fade" id="tab-audit" role="tabpanel" aria-labelledby="tab-audit-btn">
+        <div class="card mb-3 shadow-sm">
+          <div class="card-header bg-white d-flex justify-content-between align-items-center py-2">
+            <h6 class="mb-0 fw-bold">Scraping Logs (Last 100)</h6>
+            <button id="btn-refresh-audit" class="btn btn-sm btn-outline-primary">Refresh</button>
+          </div>
+          <div class="table-responsive">
+            <table class="table table-sm table-hover align-middle mb-0" id="table-audit" style="font-size: 0.85rem;">
+              <thead class="table-light">
+                <tr>
+                  <th>Time</th>
+                  <th>Action</th>
+                  <th>Emiten</th>
+                  <th>Target Date</th>
+                  <th>Status</th>
+                  <th>Duration</th>
+                </tr>
+              </thead>
+              <tbody id="tbody-audit">
+                <tr>
+                  <td colspan="6" class="text-center text-muted py-3">Click refresh to load logs...</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <script>
+          // Scoped Script for Audit Tab
+          (function () {
+            // Wait for DOM
+            document.addEventListener('DOMContentLoaded', () => {
+              const $btn = document.getElementById('btn-refresh-audit');
+              const $tbody = document.getElementById('tbody-audit');
+              const $tabBtn = document.getElementById('tab-audit-btn');
+
+              async function loadAuditLogs() {
+                if (!$btn || !$tbody) return;
+                $btn.disabled = true;
+                $btn.innerText = 'Loading...';
+                $tbody.innerHTML = '<tr><td colspan="6" class="text-center text-secondary py-3">Loading logs...</td></tr>';
+
+                try {
+                  // Use correct worker domain
+                  const res = await fetch('https://api-saham.mkemalw.workers.dev/audit/logs?limit=100');
+                  if (!res.ok) throw new Error('Failed to fetch logs');
+                  const data = await res.json();
+
+                  if (data.length === 0) {
+                    $tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-3">No logs found.</td></tr>';
+                    return;
+                  }
+
+                  let html = '';
+                  data.forEach(row => {
+                    const date = new Date(row.timestamp).toLocaleString('id-ID');
+
+                    let statusBadge = '';
+                    if (row.status === 'SCRAPE_SUCCESS') statusBadge = '<span class="badge bg-success-subtle text-success border border-success-subtle">SUCCESS</span>';
+                    else if (row.status === 'SCRAPE_FAILED') statusBadge = '<span class="badge bg-danger-subtle text-danger border border-danger-subtle">FAILED</span>';
+                    else statusBadge = `<span class="badge bg-secondary">${row.status}</span>`;
+
+                    html += `
+                                   <tr>
+                                     <td class="text-nowrap">${date}</td>
+                                     <td class="text-nowrap text-secondary small text-uppercase">Backfill Broker Summary</td>
+                                     <td class="fw-bold"><span class="badge bg-light text-dark border">${row.symbol}</span></td>
+                                     <td>${row.date}</td>
+                                     <td>${statusBadge}</td>
+                                     <td class="text-muted small">${row.duration_ms || '-'} ms</td>
+                                   </tr>
+                                 `;
+                  });
+                  $tbody.innerHTML = html;
+
+                } catch (e) {
+                  $tbody.innerHTML = `<tr><td colspan="6" class="text-center text-danger py-3">Error: ${e.message}</td></tr>`;
+                } finally {
+                  $btn.disabled = false;
+                  $btn.innerText = 'Refresh';
+                }
+              }
+
+              if ($btn) $btn.addEventListener('click', loadAuditLogs);
+
+              // Auto load when tab shown
+              if ($tabBtn) {
+                $tabBtn.addEventListener('shown.bs.tab', () => {
+                  // Check if empty or pristine
+                  if ($tbody.innerHTML.includes('Click refresh')) {
+                    loadAuditLogs();
+                  }
+                });
+              }
+            });
+          })();
+        </script>
       </div>
 
       <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>

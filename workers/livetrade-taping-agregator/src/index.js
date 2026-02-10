@@ -59,20 +59,140 @@ export default {
     const url = new URL(request.url);
     const pathname = url.pathname;
     console.log(`📡 [${request.method}] ${pathname} ${url.search}`);
+    console.log("ENV KEYS:", Object.keys(env));
+
+    // START: SMART REPAIR ENDPOINT
+    if (request.method === "POST" && pathname === "/repair-footprint") {
+      const ticker = url.searchParams.get("kode") || url.searchParams.get("symbol");
+      const date = url.searchParams.get("date"); // YYYY-MM-DD
+
+      if (!ticker || !date) {
+        return Response.json({ error: "Missing ticker or date" }, { status: 400 });
+      }
+
+      // Run in background
+      ctx.waitUntil((async () => {
+        try {
+          await repairTickerFootprint(env, ticker, date);
+        } catch (e) {
+          console.error(`[REPAIR] Failed for ${ticker} @ ${date}:`, e);
+          await recordAuditEntry(env, ticker, date, "REPAIR_FOOTPRINT", "FAILED", e.message);
+        }
+      })());
+
+      return Response.json({ ok: true, message: `Repair triggered for ${ticker} @ ${date}` });
+    }
+    // END: SMART REPAIR ENDPOINT
 
     // Cron-checker integration endpoints
+    if (request.method === "POST" && pathname === "/footprint-hourly-dump") {
+      try {
+        const date = url.searchParams.get("date"); // YYYY-MM-DD
+        const hour = url.searchParams.get("hour"); // HH
+        const filterPrefix = url.searchParams.get("filter_prefix") ?? "A"; // Default to A, but allow "" for all
+
+        if (!date || !hour) {
+          return Response.json({ error: "Missing date or hour" }, { status: 400 });
+        }
+
+        const jobId = `agg_hour_${date}_${hour}`;
+
+        // 1. Init Checkpoint
+        await env.SSSAHAM_DB.prepare(`
+          INSERT INTO job_checkpoint (job_id, date, hour, status, processed_tickers, total_tickers)
+          VALUES (?, ?, ?, 'PENDING', 0, 0)
+          ON CONFLICT(job_id) DO UPDATE SET status='PENDING', processed_tickers=0
+        `).bind(jobId, date, parseInt(hour)).run();
+
+        // 2. List Tickers (Folders) from R2 - Paginated
+        let allTickers = [];
+        let cursor = undefined;
+        let truncated = true;
+
+        while (truncated) {
+          const listed = await env.DATA_LAKE.list({
+            prefix: "footprint/",
+            delimiter: "/",
+            cursor,
+            limit: 1000
+          });
+
+          const batch = listed.delimitedPrefixes.map(p => {
+            const parts = p.split("/");
+            return parts[1];
+          });
+
+          allTickers.push(...batch);
+          truncated = listed.truncated;
+          cursor = listed.cursor;
+
+          if (allTickers.length > 5000) break; // Guard
+        }
+
+        // 3. Filter Alphabet (Pilot)
+        const targetTickers = allTickers.filter(t => {
+          if (!t) return false;
+          // Filter out noise (only real tickers are usually 4 letters, though some 5-6)
+          // But let's be inclusive and just use the startsWith filter
+          return t.startsWith(filterPrefix);
+        });
+
+        if (targetTickers.length === 0) {
+          console.log("Empty targetTickers. allTickers sample:", allTickers.slice(0, 10));
+          return Response.json({ message: "No tickers found key for filter", filterPrefix, allTickersSample: allTickers.slice(0, 5) });
+        }
+        console.log(`🚀 Dispatching ${targetTickers.length} tickers for filter "${filterPrefix}"`);
+
+        // 4. Update Total Count
+        await env.SSSAHAM_DB.prepare(`
+          UPDATE job_checkpoint SET total_tickers = ? WHERE job_id = ?
+        `).bind(targetTickers.length, jobId).run();
+
+        // 5. Dispatch Batches (50 per batch)
+        const batchSize = 50;
+        const messages = [];
+        for (let i = 0; i < targetTickers.length; i += batchSize) {
+          const chunk = targetTickers.slice(i, i + batchSize);
+          messages.push({
+            body: {
+              type: 'aggregate_batch',
+              jobId,
+              date,
+              hour,
+              tickers: chunk
+            }
+          });
+        }
+
+        // Send to Queue
+        await env.BACKFILL_QUEUE.sendBatch(messages);
+
+        return Response.json({
+          ok: true,
+          jobId,
+          total_tickers: targetTickers.length,
+          batches: messages.length,
+          message: "Aggregation jobs dispatched"
+        });
+
+      } catch (e) {
+        return Response.json({ error: e.message }, { status: 500 });
+      }
+    }
+
     if (request.method === "POST" && pathname === "/run") {
       try {
         const force = url.searchParams.get("force") === "1";
         const dateOverride = url.searchParams.get("date"); // e.g., "2026-01-07"
         console.log(`ðŸš€ /run endpoint triggered (force=${force}, date=${dateOverride || 'today'})`);
-        await runDailyCron(env, force, dateOverride);
+        const result = await runDailyCron(env, force, dateOverride);
         // TODO: Add compression logic
 
         return Response.json({
           ok: true,
           message: "Aggregation completed",
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
+          details: result
         });
       } catch (error) {
         console.error("Error in /run:", error);
@@ -280,6 +400,14 @@ export default {
       return Response.json({ prefix, total: listed.objects.length, truncated: listed.truncated, coverage, samples: sampleKeys });
     }
 
+    if (request.method === "GET" && pathname === "/debug/get-object") {
+      const key = url.searchParams.get("key");
+      if (!key) return new Response("Missing key", { status: 400 });
+      const obj = await env.DATA_LAKE.get(key);
+      if (!obj) return new Response("Not found", { status: 404 });
+      return new Response(obj.body);
+    }
+
     if (request.method === "GET" && pathname === "/admin/seed-status") {
       const date = url.searchParams.get("date") || new Date().toISOString().split('T')[0];
       const key = `seed_status/${date}.json`;
@@ -314,7 +442,26 @@ export default {
 
     // Backfill Queue (Shared)
     console.log(`📥 Queue Batch Received: ${batch.messages.length} messages`);
+
+    // Split batch by type
+    const aggMessages = [];
+    const legacyMessages = [];
+
     for (const msg of batch.messages) {
+      if (msg.body && msg.body.type === 'aggregate_batch') {
+        aggMessages.push(msg);
+      } else {
+        legacyMessages.push(msg);
+      }
+    }
+
+    // 1. Process New Aggregation Jobs
+    if (aggMessages.length > 0) {
+      await processAggregationBatch(env, aggMessages);
+    }
+
+    // 2. Process Legacy Jobs
+    for (const msg of legacyMessages) {
       try {
         const job = msg.body; // { date, cursor, limit, force, type }
 
@@ -409,8 +556,8 @@ async function runDailyCron(env, force = false, dateOverride = null) {
   const params = new URLSearchParams();
   params.set("date", dateStr);
 
-  // Limit 2500 prevents timeout; Queue chaining handles EOD speed
-  params.set("limit", "2500");
+  // Limit 100 prevents timeout/subrequest limit; Queue chaining handles EOD speed
+  params.set("limit", "100");
 
   if (!state.cursor) {
     params.set("reset", "true");
@@ -435,11 +582,11 @@ async function runDailyCron(env, force = false, dateOverride = null) {
     await env.DATA_LAKE.put(stateKey, JSON.stringify(state));
 
     if (env.BACKFILL_QUEUE) {
-      console.log(`🚀 Kickstarting Queue Chain (limit=2500)...`);
+      console.log(`🚀 Kickstarting Queue Chain (limit=100)...`);
       await env.BACKFILL_QUEUE.send({
         date: dateStr,
         cursor: data.next_cursor,
-        limit: 2500,
+        limit: 100,
         force: force
       });
     }
@@ -521,9 +668,9 @@ async function runDailyCron(env, force = false, dateOverride = null) {
     await env.DATA_LAKE.put(stateKey, JSON.stringify(state));
   } else {
     console.error("❌ Unknown status dari stepBackfill:", data);
-    // Jangan ubah done, tapi tetap simpan state terbaru
     await env.DATA_LAKE.put(stateKey, JSON.stringify(state));
   }
+  return { status: data.status, processed: data.processed, total_items: data.total_items, stateKey };
 }
 
 
@@ -1395,628 +1542,596 @@ function normalizeTradeFromLine(lineText, defaultDateStr) {
   }
 
   return null;
+}
 
+// ======= MOMENTUM & INTENTION SCORING (SIMPLE) =======
+function computeMomentumFromTrades(trades) {
+  // trades: array { ts, raw }
+  if (!trades || trades.length < 2) return 0;
 
-  // ======= MOMENTUM & INTENTION SCORING (SIMPLE) =======
-  function computeMomentumFromTrades(trades) {
-    // trades: array { ts, raw }
-    if (!trades || trades.length < 2) return 0;
+  const parsePrice = (raw) => {
+    const parts = String(raw).split("|");
+    const h = parseInt(parts[6], 10);
+    return Number.isNaN(h) ? null : h;
+  };
 
-    const parsePrice = (raw) => {
-      const parts = String(raw).split("|");
-      const h = parseInt(parts[6], 10);
-      return Number.isNaN(h) ? null : h;
+  const firstValid = trades.find((t) => parsePrice(t.raw) !== null);
+  const lastValid = [...trades].reverse().find((t) => parsePrice(t.raw) !== null);
+
+  if (!firstValid || !lastValid) return 0;
+
+  const p0 = parsePrice(firstValid.raw);
+  const p1 = parsePrice(lastValid.raw);
+  if (!p0 || !p1 || p0 === 0) return 0;
+
+  // momentum sederhana: % change
+  const pct = (p1 - p0) / p0;
+
+  // clamp biar ga kebangetan
+  const clamped = Math.max(-0.05, Math.min(0.05, pct)); // -5%..+5%
+
+  // normalisasi ke -1..+1
+  return clamped / 0.05;
+}
+
+// Helper: ambil objek-objek R2 paling recent untuk suatu prefix
+async function listRecentObjects(env, prefix, maxObjects = 50, pageSize = 100) {
+  let cursor = undefined;
+  let all = [];
+
+  while (true) {
+    const opts = { prefix, limit: pageSize };
+    if (cursor) opts.cursor = cursor;
+
+    const listed = await env.DATA_LAKE.list(opts);
+
+    if (listed.objects && listed.objects.length > 0) {
+      all.push(...listed.objects);
+    }
+
+    if (!listed.truncated) break;     // sudah page terakhir
+    cursor = listed.cursor;
+
+    // kalau sudah numpuk banyak banget, cukup simpan ekornya saja
+    if (all.length >= maxObjects * 3) break;
+  }
+
+  // Ambil ekor saja (yang paling baru)
+  if (all.length > maxObjects) {
+    all = all.slice(-maxObjects);
+  }
+
+  return all;
+}
+
+async function loadLatestTradesForKode(env, kode, maxTrades = 50) {
+  const now = new Date();
+  const y = now.getUTCFullYear();
+  const m = String(now.getUTCMonth() + 1).padStart(2, "0");
+  const d = String(now.getUTCDate()).padStart(2, "0");
+  const H = String(now.getUTCHours()).padStart(2, "0");
+
+  const prefixesToTry = [
+    `raw_lt/${y}/${m}/${d}/${H}/`,
+    `raw_lt/${y}/${m}/${d}/`,
+  ];
+
+  const trades = [];
+
+  for (const prefix of prefixesToTry) {
+    // ambil objek PALING BARU
+    const maxObjects = Math.max(10, Math.ceil(maxTrades / 5));
+    const objs = await listRecentObjects(env, prefix, maxObjects, 100);
+    if (!objs || objs.length === 0) continue;
+
+    for (const obj of objs) {
+      const r = await env.DATA_LAKE.get(obj.key);
+      const text = await r.text();
+      const trimmed = text.trim();
+      if (!trimmed) continue;
+
+      const lines = trimmed.split("\n");
+      for (const line of lines) {
+        // Patch 2.2: Use normalizeTradeFromLine
+        const trade = normalizeTradeFromLine(line, `${y}-${m}-${d}`);
+        if (!trade) continue;
+        if (trade.kode !== kode) continue;
+
+        const hhmmss = String(trade.timeRaw || "000000").padStart(6, '0');
+
+        // Build canonical raw string for MOMENTUM & HAKA calc
+        // Format: YYYYMMDD|HHMMSS|X|CODE|RG|T|PRICE|VOL
+        const canonicalRaw = `${y}${m}${d}|${hhmmss}|0|${kode}|RG|T|${trade.harga}|${trade.vol}`;
+        const tsMs = Number.isFinite(trade.tsMs) ? trade.tsMs : (obj.uploaded || Date.now());
+
+        trades.push({ ts: tsMs, raw: canonicalRaw });
+      }
+      // Cannot easily break early due to unsorted nature of files, 
+      // but we limit objects at list level.
+    }
+    if (trades.length > 0) break;
+  }
+
+  if (trades.length === 0) return [];
+
+  // Sort by timestamp
+  trades.sort((a, b) => a.ts - b.ts);
+  return trades.slice(-maxTrades);
+}
+
+// End of Helpers
+
+async function realtimeSignal(env, url) {
+  try {
+    const kode = (url.searchParams.get("kode") || "GOTO").toUpperCase();
+    const lite = url.searchParams.get("lite") === "1";
+
+    // 1. Ambil data LT (trades)
+    const maxTrades = lite ? 40 : 100;
+    const trades = await loadLatestTradesForKode(env, kode, maxTrades);
+
+    // 2. Ambil OB snapshot hanya kalau mode FULL
+    let obSnapshot = null;
+    let intentionScore = 0;
+
+    if (!lite) {
+      try {
+        const obResp = await env.ORDERBOOK_AGG.fetch(
+          "https://internal/intention?kode=" + kode
+        );
+        if (obResp.ok) {
+          const obData = await obResp.json();
+          intentionScore = obData.intention_score || 0;
+          obSnapshot = obData.snapshot || null; // kalau mau sekalian kirim snapshot ringkas
+        }
+      } catch (e) {
+        console.warn("Gagal fetch intention dari worker OB:", e);
+      }
+    }
+
+    // 3. Hitung volume & HAKA dari raw_lt
+    let totalVol = 0;
+    let buyVol = 0;
+    let lastPrice = null;
+    let lastTrade = null;
+
+    for (const t of trades) {
+      const rawLine = String(t.raw || "");
+      const parts = rawLine.split("|");
+      if (parts.length < 8) continue;
+
+      const papan = parts[4];
+      if (papan !== "RG") continue;
+
+      const harga = Number(parts[6]);
+      const vol = Number(parts[7]);
+      if (!Number.isFinite(harga) || !Number.isFinite(vol)) continue;
+
+      totalVol += vol;
+
+      let dir = 0;
+      if (lastPrice === null) {
+        dir = 0;
+      } else if (harga > lastPrice) {
+        dir = 1;
+      } else if (harga < lastPrice) {
+        dir = -1;
+      }
+
+      if (dir > 0) {
+        buyVol += vol;
+      }
+
+      lastPrice = harga;
+      lastTrade = {
+        ts: t.ts,
+        price: harga,
+        volume: vol,
+        dir,
+      };
+    }
+
+    const hakaRatio = totalVol > 0 ? buyVol / totalVol : 0.5;
+
+    // 4. Momentum (dari trades)
+    const momentumScore = computeMomentumFromTrades(trades); // -1..+1
+
+    // 6. Fused signal
+    const hakaNorm = (hakaRatio - 0.5) * 2; // 0.5 â†’ 0, 1 â†’ +1, 0 â†’ -1
+    let fused = lite
+      ? hakaNorm // mode ringan: pakai HAKA saja
+      : 0.6 * hakaNorm + 0.4 * intentionScore;
+
+    if (!Number.isFinite(fused)) fused = 0;
+
+    let side = "NONE";
+    if (fused > 0.2) side = "BUY";
+    else if (fused < -0.2) side = "SELL";
+
+    const payload = {
+      status: "OK",
+      kode,
+      mode: lite ? "lite" : "full",
+
+      haka_ratio: Number(hakaRatio.toFixed(3)),
+      momentum_score: Number(momentumScore.toFixed(3)),
+      intention_score: Number(intentionScore.toFixed(3)),
+      fused_signal: Number(fused.toFixed(3)),
+      side,
+
+      sample_counts: {
+        trades: totalVol,
+        has_orderbook: !!obSnapshot,
+      },
+      last_trade: lastTrade,
+      ob_snapshot: lite ? null : obSnapshot,
+
+      debug: {
+        trades_count: trades.length,
+        first_ts: trades[0]?.ts || null,
+        first_raw: trades[0]?.raw || null,
+        last_ts: lastTrade?.ts || null,
+        last_price: lastTrade?.price || null,
+      },
     };
 
-    const firstValid = trades.find((t) => parsePrice(t.raw) !== null);
-    const lastValid = [...trades].reverse().find((t) => parsePrice(t.raw) !== null);
+    return new Response(JSON.stringify(payload, null, 2), {
+      headers: { "Content-Type": "application/json" },
+    });
+  } catch (err) {
+    console.error("realtimeSignal error:", err);
+    return new Response(
+      JSON.stringify({ status: "ERROR", message: String(err) }, null, 2),
+      { status: 500, headers: { "Content-Type": "application/json" } }
+    );
+  }
+}
 
-    if (!firstValid || !lastValid) return 0;
 
-    const p0 = parsePrice(firstValid.raw);
-    const p1 = parsePrice(lastValid.raw);
-    if (!p0 || !p1 || p0 === 0) return 0;
 
-    // momentum sederhana: % change
-    const pct = (p1 - p0) / p0;
+/**
+ * LOGIC UTAMA BACKFILL
+ * isQueue: jika true, fungsi ini tidak return Response tpi melakukan chain ke queue (atau throw error)
+ */
+async function stepBackfill(env, url, isQueue = false) {
+  const dateParam = url.searchParams.get("date");
+  const cursor = url.searchParams.get("cursor");
+  const reset = url.searchParams.get("reset");
+  // Snapshot Policy: "none" | "final" | "periodic" (default: "periodic" for today, "none" for past)
+  let snapshotMode = url.searchParams.get("snapshotMode");
 
-    // clamp biar ga kebangetan
-    const clamped = Math.max(-0.05, Math.min(0.05, pct)); // -5%..+5%
-
-    // normalisasi ke -1..+1
-    return clamped / 0.05;
+  if (!snapshotMode) {
+    // Auto-detect default
+    const todayStr = new Date().toISOString().split('T')[0];
+    if (dateParam === todayStr) snapshotMode = "periodic";
+    else snapshotMode = "none";
   }
 
+  const noSnapshot = snapshotMode === "none"; // Compatibility alias for legacy noSnapshot flag
 
+  let limit = parseInt(url.searchParams.get("limit"), 10);
+  if (!limit || Number.isNaN(limit)) limit = 100;
 
+  if (!dateParam) {
+    return new Response("Error: Butuh param ?date=YYYY-MM-DD", {
+      status: 400,
+    });
+  }
 
-  // Helper: ambil objek-objek R2 paling recent untuk suatu prefix
-  async function listRecentObjects(env, prefix, maxObjects = 50, pageSize = 100) {
-    let cursor = undefined;
-    let all = [];
+  const [y, m, d] = dateParam.split("-");
+  const prefix = `raw_lt/${y}/${m}/${d}/`;
+  const tempFile = `temp_state_${dateParam}.json`;
 
-    while (true) {
-      const opts = { prefix, limit: pageSize };
-      if (cursor) opts.cursor = cursor;
-
-      const listed = await env.DATA_LAKE.list(opts);
-
-      if (listed.objects && listed.objects.length > 0) {
-        all.push(...listed.objects);
+  let stats = {};
+  if (!reset) {
+    const existing = await env.DATA_LAKE.get(tempFile);
+    if (existing) {
+      try {
+        stats = await existing.json();
+      } catch (e) {
+        stats = {};
       }
-
-      if (!listed.truncated) break;     // sudah page terakhir
-      cursor = listed.cursor;
-
-      // kalau sudah numpuk banyak banget, cukup simpan ekornya saja
-      if (all.length >= maxObjects * 3) break;
     }
-
-    // Ambil ekor saja (yang paling baru)
-    if (all.length > maxObjects) {
-      all = all.slice(-maxObjects);
-    }
-
-    return all;
   }
 
-  async function loadLatestTradesForKode(env, kode, maxTrades = 50) {
-    const now = new Date();
-    const y = now.getUTCFullYear();
-    const m = String(now.getUTCMonth() + 1).padStart(2, "0");
-    const d = String(now.getUTCDate()).padStart(2, "0");
-    const H = String(now.getUTCHours()).padStart(2, "0");
+  const listParams = { prefix, limit };
+  if (cursor) listParams.cursor = cursor;
 
-    const prefixesToTry = [
-      `raw_lt/${y}/${m}/${d}/${H}/`,
-      `raw_lt/${y}/${m}/${d}/`,
-    ];
+  const listed = await env.DATA_LAKE.list(listParams);
 
-    const trades = [];
-
-    for (const prefix of prefixesToTry) {
-      // ambil objek PALING BARU
-      const maxObjects = Math.max(10, Math.ceil(maxTrades / 5));
-      const objs = await listRecentObjects(env, prefix, maxObjects, 100);
-      if (!objs || objs.length === 0) continue;
-
-      for (const obj of objs) {
-        const r = await env.DATA_LAKE.get(obj.key);
-        const text = await r.text();
-        const trimmed = text.trim();
-        if (!trimmed) continue;
-
-        const lines = trimmed.split("\n");
-        for (const line of lines) {
-          // Patch 2.2: Use normalizeTradeFromLine
-          const trade = normalizeTradeFromLine(line, `${y}-${m}-${d}`);
-          if (!trade) continue;
-          if (trade.kode !== kode) continue;
-
-          const hhmmss = String(trade.timeRaw || "000000").padStart(6, '0');
-
-          // Build canonical raw string for MOMENTUM & HAKA calc
-          // Format: YYYYMMDD|HHMMSS|X|CODE|RG|T|PRICE|VOL
-          const canonicalRaw = `${y}${m}${d}|${hhmmss}|0|${kode}|RG|T|${trade.harga}|${trade.vol}`;
-          const tsMs = Number.isFinite(trade.tsMs) ? trade.tsMs : (obj.uploaded || Date.now());
-
-          trades.push({ ts: tsMs, raw: canonicalRaw });
-        }
-        // Cannot easily break early due to unsorted nature of files, 
-        // but we limit objects at list level.
-      }
-      if (trades.length > 0) break;
-    }
-
-    if (trades.length === 0) return [];
-
-    // Sort by timestamp
-    trades.sort((a, b) => a.ts - b.ts);
-    return trades.slice(-maxTrades);
+  if (listed.objects.length === 0 && !cursor) {
+    return new Response(
+      JSON.stringify(
+        { status: "EMPTY", message: "Tidak ada data." },
+        null,
+        2
+      ),
+      { headers: { "Content-Type": "application/json" } }
+    );
   }
+  // Bounded Concurrency & Sequential Processing (Hardened)
+  const FETCH_CONCURRENCY = 10; // Reduced from 50 to prevent OOM
 
-  async function realtimeSignal(env, url) {
-    try {
-      const kode = (url.searchParams.get("kode") || "GOTO").toUpperCase();
-      const lite = url.searchParams.get("lite") === "1";
+  // Counters
+  let totalLines = 0;
+  let parsedOk = 0;
+  let skipped = 0;
+  let countRegex = 0;
+  let countJsonLegacy = 0;
+  let countJsonObject = 0;
+  const MAX_LOG_SAMPLE = 5;
+  let logSampleCount = 0;
 
-      // 1. Ambil data LT (trades)
-      const maxTrades = lite ? 40 : 100;
-      const trades = await loadLatestTradesForKode(env, kode, maxTrades);
+  const v2GlobalBatch = [];
 
-      // 2. Ambil OB snapshot hanya kalau mode FULL
-      let obSnapshot = null;
-      let intentionScore = 0;
+  for (let i = 0; i < listed.objects.length; i += FETCH_CONCURRENCY) {
+    const chunk = listed.objects.slice(i, i + FETCH_CONCURRENCY);
 
-      if (!lite) {
-        try {
-          const obResp = await env.ORDERBOOK_AGG.fetch(
-            "https://internal/intention?kode=" + kode
-          );
-          if (obResp.ok) {
-            const obData = await obResp.json();
-            intentionScore = obData.intention_score || 0;
-            obSnapshot = obData.snapshot || null; // kalau mau sekalian kirim snapshot ringkas
+    // Fetch chunk in parallel
+    const chunkResults = await Promise.all(
+      chunk.map(obj => env.DATA_LAKE.get(obj.key).then(r => r.text()).catch(e => ""))
+    );
+
+    // Process chunk immediately (do not store)
+    chunkResults.forEach((content) => {
+      const text = content.trim();
+      if (!text) return;
+
+      const lines = text.split("\n");
+      lines.forEach((line) => {
+        if (!line) return;
+        totalLines++;
+
+        const trade = normalizeTradeFromLine(line, dateParam);
+
+        if (!trade) {
+          skipped++;
+          if (logSampleCount < MAX_LOG_SAMPLE) {
+            console.warn(`âš ï¸  Skip Line: ${line.slice(0, 200)}`);
+            logSampleCount++;
           }
-        } catch (e) {
-          console.warn("Gagal fetch intention dari worker OB:", e);
+          return;
         }
-      }
 
-      // 3. Hitung volume & HAKA dari raw_lt
-      let totalVol = 0;
-      let buyVol = 0;
-      let lastPrice = null;
-      let lastTrade = null;
+        parsedOk++;
+        // P0 FIX: Match Source with normalizeTradeFromLine
+        if (trade.source === "FAST_RAW" || trade.source === "PIPE_LINE") countRegex++;
+        else if (trade.source === "JSON_PIPE") countJsonLegacy++;
+        else if (trade.source === "JSON_OBJ") countJsonObject++;
 
-      for (const t of trades) {
-        const rawLine = String(t.raw || "");
-        const parts = rawLine.split("|");
-        if (parts.length < 8) continue;
+        const { timeRaw, kode, harga, vol } = trade;
 
-        const papan = parts[4];
-        if (papan !== "RG") continue;
+        // Logic Statistik
+        if (!stats[kode]) {
+          stats[kode] = {
+            open_day: 0,
+            high_day: 0,
+            low_day: null,
+            totalVol: 0,
+            freq: 0,
+            lastPrice: null,
+            lastDir: 0,
+            netVol: 0,
+            buckets: {},
+            lastRaw: null,
+          };
+        }
 
-        const harga = Number(parts[6]);
-        const vol = Number(parts[7]);
-        if (!Number.isFinite(harga) || !Number.isFinite(vol)) continue;
+        const s = stats[kode];
 
-        totalVol += vol;
+        // OHLC harian
+        if (s.open_day === 0) s.open_day = harga;
+        if (harga > s.high_day) s.high_day = harga;
+        if (s.low_day == null || harga < s.low_day) s.low_day = harga;
+
+        s.totalVol += vol;
+        s.freq += 1;
 
         let dir = 0;
-        if (lastPrice === null) {
+        if (s.lastPrice == null) {
           dir = 0;
-        } else if (harga > lastPrice) {
+        } else if (harga > s.lastPrice) {
           dir = 1;
-        } else if (harga < lastPrice) {
+        } else if (harga < s.lastPrice) {
           dir = -1;
+        } else {
+          dir = s.lastDir || 0;
         }
 
-        if (dir > 0) {
-          buyVol += vol;
+        s.netVol += dir * vol;
+        s.lastPrice = harga;
+        s.lastDir = dir;
+        // s.lastRaw = raw; // Disabled to save memory/complexity in hybrid
+
+        // V2 BATCH
+        if (env.STATE_ENGINE_V2) {
+          // Fix Timezone: enforce +07:00 (WIB)
+          const fullTs = `${dateParam}T${timeRaw.slice(0, 2)}:${timeRaw.slice(2, 4)}:${timeRaw.slice(4, 6)}+07:00`;
+          let v2Side = 'sell';
+          if (dir === 1) v2Side = 'buy';
+          else if (dir === -1) v2Side = 'sell';
+          else if (s.lastDir === 1) v2Side = 'buy';
+
+          v2GlobalBatch.push({
+            ticker: kode,
+            price: harga,
+            amount: vol,
+            side: v2Side,
+            timestamp: Date.parse(fullTs) // use parse for reliability
+          });
         }
 
-        lastPrice = harga;
-        lastTrade = {
-          ts: t.ts,
-          price: harga,
-          volume: vol,
-          dir,
-        };
-      }
+        const bucketTime = getTimeBucket(timeRaw);
 
-      const hakaRatio = totalVol > 0 ? buyVol / totalVol : 0.5;
+        if (!s.buckets[bucketTime]) {
+          s.buckets[bucketTime] = {
+            close: harga,
+            vol: 0,
+            netVol: 0,
+            valBucket: 0,
+          };
+        }
 
-      // 4. Momentum (dari trades)
-      const momentumScore = computeMomentumFromTrades(trades); // -1..+1
+        const b = s.buckets[bucketTime];
+        b.vol += vol;
+        b.close = harga;
+        b.netVol += dir * vol;
+        b.valBucket += vol * harga * 100;
 
-      // 6. Fused signal
-      const hakaNorm = (hakaRatio - 0.5) * 2; // 0.5 â†’ 0, 1 â†’ +1, 0 â†’ -1
-      let fused = lite
-        ? hakaNorm // mode ringan: pakai HAKA saja
-        : 0.6 * hakaNorm + 0.4 * intentionScore;
-
-      if (!Number.isFinite(fused)) fused = 0;
-
-      let side = "NONE";
-      if (fused > 0.2) side = "BUY";
-      else if (fused < -0.2) side = "SELL";
-
-      const payload = {
-        status: "OK",
-        kode,
-        mode: lite ? "lite" : "full",
-
-        haka_ratio: Number(hakaRatio.toFixed(3)),
-        momentum_score: Number(momentumScore.toFixed(3)),
-        intention_score: Number(intentionScore.toFixed(3)),
-        fused_signal: Number(fused.toFixed(3)),
-        side,
-
-        sample_counts: {
-          trades: totalVol,
-          has_orderbook: !!obSnapshot,
-        },
-        last_trade: lastTrade,
-        ob_snapshot: lite ? null : obSnapshot,
-
-        debug: {
-          trades_count: trades.length,
-          first_ts: trades[0]?.ts || null,
-          first_raw: trades[0]?.raw || null,
-          last_ts: lastTrade?.ts || null,
-          last_price: lastTrade?.price || null,
-        },
-      };
-
-      return new Response(JSON.stringify(payload, null, 2), {
-        headers: { "Content-Type": "application/json" },
       });
-    } catch (err) {
-      console.error("realtimeSignal error:", err);
-      return new Response(
-        JSON.stringify({ status: "ERROR", message: String(err) }, null, 2),
-        { status: 500, headers: { "Content-Type": "application/json" } }
-      );
+    });
+
+    // Free memory for this chunk
+  }
+
+
+  // Flush V2 Batch (Global)
+  if (v2GlobalBatch.length > 0 && env.STATE_ENGINE_V2) {
+    try {
+      const idV2 = env.STATE_ENGINE_V2.idFromName("GLOBAL_V2_ENGINE");
+      const stubV2 = env.STATE_ENGINE_V2.get(idV2);
+      // Fire and forget (await if strictly necessary, but catch handles error)
+      stubV2.fetch("https://internal/batch-update", {
+        method: "POST",
+        body: JSON.stringify(v2GlobalBatch)
+      }).catch(err => console.warn("V2 Global Batch Failed", err));
+    } catch (errSync) {
+      console.warn("V2 Global Batch Setup Failed", errSync);
     }
+  }
+
+  // LOG SUMMARY
+  console.log(`ðŸ“Š [Parsed] OK: ${parsedOk}, Skipped: ${skipped} (Total: ${totalLines}). Sources -> Regex: ${countRegex}, JSON-Legacy: ${countJsonLegacy}, JSON-Object: ${countJsonObject}`);
+  console.log("âš ï¸  netVol uses uptick dir based on processing order; may vary across reruns unless strict sorting is enabled.");
+
+
+  const hasMore = listed.truncated;
+  const nextCursor = listed.cursor;
+  // âš ï¸ MODE RINGAN: kalau noSnapshot = true, JANGAN build finalOutput sama sekali
+  // if (noSnapshot) { ... } // DISABLED: Always save snapshot
+
+  const status = hasMore ? "PROGRESS" : "DONE";
+
+  // QUEUE LOGIC: If hasMore, push next task to queue
+  if (isQueue && hasMore) {
+    // Construct next job
+    const job = {
+      date: dateParam,
+      cursor: nextCursor,
+      limit: limit,
+      force: true // Always force in queue to bypass checks
+    };
+    console.log(`ðŸ”„ Queue Chain: Sending next batch (cursor=${nextCursor})`);
+    await env.BACKFILL_QUEUE.send(job);
+    return; // Void return for queue consumer
+  }
+
+  if (isQueue && !hasMore) {
+    console.log("âœ… Queue Job Done: No more data.");
+    // Lanjut ke logic DONE di bawah (buildFinalOutput) untuk cleanup
+  }
+
+  if (!isQueue && noSnapshot) { // Legacy HTTP mode with noSnapshot
+    // ... existing HTTP logic ...
+    await env.DATA_LAKE.put(tempFile, JSON.stringify(stats));
+    return new Response(JSON.stringify({
+      status, processed: listed.objects.length, next_cursor: hasMore ? nextCursor : null, limit_used: limit
+    }, null, 2), { headers: { "Content-Type": "application/json" } });
   }
 
 
 
-  /**
-   * LOGIC UTAMA BACKFILL
-   * isQueue: jika true, fungsi ini tidak return Response tpi melakukan chain ke queue (atau throw error)
-   */
-  async function stepBackfill(env, url, isQueue = false) {
-    const dateParam = url.searchParams.get("date");
-    const cursor = url.searchParams.get("cursor");
-    const reset = url.searchParams.get("reset");
-    // Snapshot Policy: "none" | "final" | "periodic" (default: "periodic" for today, "none" for past)
-    let snapshotMode = url.searchParams.get("snapshotMode");
+  // Di sini hanya:
+  // - batch terakhir dari cron (noSnapshot=true tapi hasMore=false), atau
+  // - pemanggilan manual tanpa noSnapshot (misal HTTP)
+  const finalOutput = buildFinalOutputFromStats(stats, dateParam);
 
-    if (!snapshotMode) {
-      // Auto-detect default
-      const todayStr = new Date().toISOString().split('T')[0];
-      if (dateParam === todayStr) snapshotMode = "periodic";
-      else snapshotMode = "none";
-    }
+  if (hasMore) {
+    await env.DATA_LAKE.put(tempFile, JSON.stringify(stats));
 
-    const noSnapshot = snapshotMode === "none"; // Compatibility alias for legacy noSnapshot flag
+    // Snapshot Policy Check
+    if (snapshotMode === "periodic") {
+      // Throttle: Only write partial snapshot every 1 minute or so
+      const snapKey = `snapshot_state_${dateParam}.json`;
+      let snapState = { lastSnapshotTs: 0 };
 
-    let limit = parseInt(url.searchParams.get("limit"), 10);
-    if (!limit || Number.isNaN(limit)) limit = 250;
+      // Try read existing state
+      const stored = await env.DATA_LAKE.get(snapKey);
+      if (stored) {
+        try { snapState = await stored.json(); } catch (e) { }
+      }
 
-    if (!dateParam) {
-      return new Response("Error: Butuh param ?date=YYYY-MM-DD", {
-        status: 400,
-      });
-    }
+      const nowMs = Date.now();
+      // Write if first time OR > 60s since last
+      if (!snapState.lastSnapshotTs || (nowMs - snapState.lastSnapshotTs) >= 60000) {
+        await env.DATA_LAKE.put("snapshot_latest.json", JSON.stringify(finalOutput));
 
-    const [y, m, d] = dateParam.split("-");
-    const prefix = `raw_lt/${y}/${m}/${d}/`;
-    const tempFile = `temp_state_${dateParam}.json`;
-
-    let stats = {};
-    if (!reset) {
-      const existing = await env.DATA_LAKE.get(tempFile);
-      if (existing) {
-        try {
-          stats = await existing.json();
-        } catch (e) {
-          stats = {};
-        }
+        // Update state
+        snapState.lastSnapshotTs = nowMs;
+        await env.DATA_LAKE.put(snapKey, JSON.stringify(snapState));
+        // console.log("ðŸ“¸ Snapshot updated (Throttled)");
+      } else {
+        // console.log(`â ³ Snapshot throttled. Next in ${60000 - (nowMs - snapState.lastSnapshotTs)}ms`);
       }
     }
 
-    const listParams = { prefix, limit };
-    if (cursor) listParams.cursor = cursor;
+    // If snapshotMode is 'final', we DO NOT write here.
 
-    const listed = await env.DATA_LAKE.list(listParams);
+    // (Legacy STATE_ENGINE write removed)
 
-    if (listed.objects.length === 0 && !cursor) {
-      return new Response(
-        JSON.stringify(
-          { status: "EMPTY", message: "Tidak ada data." },
-          null,
-          2
-        ),
-        { headers: { "Content-Type": "application/json" } }
-      );
-    }
-    // Bounded Concurrency & Sequential Processing
-    const FETCH_CONCURRENCY = 50;
+    // ============================================
+    // V2 PARALLEL DISPATCH (Double Write)
+    // ============================================
+    try {
+      if (env.STATE_ENGINE_V2) {
+        // We need to send parsed trades, not aggregated swings.
+        // We have `parsed` items above (line 981).
+        // Let's send them in batch or individually. DO expects single update or batch?
+        // My DO impl handles `/update` with single trade object: { ticker, price, side, vol, timestamp }
+        // Let's adapt `parsed` items which are { s, p, v, t, type }.
 
-    // Counters
-    let totalLines = 0;
-    let parsedOk = 0;
-    let skipped = 0;
-    let countRegex = 0;
-    let countJsonLegacy = 0;
-    let countJsonObject = 0;
-    const MAX_LOG_SAMPLE = 5;
-    let logSampleCount = 0;
-
-    const v2GlobalBatch = [];
-
-    for (let i = 0; i < listed.objects.length; i += FETCH_CONCURRENCY) {
-      const chunk = listed.objects.slice(i, i + FETCH_CONCURRENCY);
-
-      // Fetch chunk in parallel
-      const chunkResults = await Promise.all(
-        chunk.map(obj => env.DATA_LAKE.get(obj.key).then(r => r.text()).catch(e => ""))
-      );
-
-      // Process chunk immediately (do not store)
-      chunkResults.forEach((content) => {
-        const text = content.trim();
-        if (!text) return;
-
-        const lines = text.split("\n");
-        lines.forEach((line) => {
-          if (!line) return;
-          totalLines++;
-
-          const trade = normalizeTradeFromLine(line, dateParam);
-
-          if (!trade) {
-            skipped++;
-            if (logSampleCount < MAX_LOG_SAMPLE) {
-              console.warn(`âš ï¸  Skip Line: ${line.slice(0, 200)}`);
-              logSampleCount++;
-            }
-            return;
-          }
-
-          parsedOk++;
-          if (trade.source === "REGEX") countRegex++;
-          else if (trade.source === "JSON_LEGACY") countJsonLegacy++;
-          else if (trade.source === "JSON_OBJECT") countJsonObject++;
-
-          const { timeRaw, kode, harga, vol } = trade;
-
-          // Logic Statistik
-          if (!stats[kode]) {
-            stats[kode] = {
-              open_day: 0,
-              high_day: 0,
-              low_day: null,
-              totalVol: 0,
-              freq: 0,
-              lastPrice: null,
-              lastDir: 0,
-              netVol: 0,
-              buckets: {},
-              lastRaw: null,
-            };
-          }
-
-          const s = stats[kode];
-
-          // OHLC harian
-          if (s.open_day === 0) s.open_day = harga;
-          if (harga > s.high_day) s.high_day = harga;
-          if (s.low_day == null || harga < s.low_day) s.low_day = harga;
-
-          s.totalVol += vol;
-          s.freq += 1;
-
-          let dir = 0;
-          if (s.lastPrice == null) {
-            dir = 0;
-          } else if (harga > s.lastPrice) {
-            dir = 1;
-          } else if (harga < s.lastPrice) {
-            dir = -1;
-          } else {
-            dir = s.lastDir || 0;
-          }
-
-          s.netVol += dir * vol;
-          s.lastPrice = harga;
-          s.lastDir = dir;
-          // s.lastRaw = raw; // Disabled to save memory/complexity in hybrid
-
-          // V2 BATCH
-          if (env.STATE_ENGINE_V2) {
-            // Fix Timezone: enforce +07:00 (WIB)
-            const fullTs = `${dateParam}T${timeRaw.slice(0, 2)}:${timeRaw.slice(2, 4)}:${timeRaw.slice(4, 6)}+07:00`;
-            let v2Side = 'sell';
-            if (dir === 1) v2Side = 'buy';
-            else if (dir === -1) v2Side = 'sell';
-            else if (s.lastDir === 1) v2Side = 'buy';
-
-            v2GlobalBatch.push({
-              ticker: kode,
-              price: harga,
-              amount: vol,
-              side: v2Side,
-              timestamp: Date.parse(fullTs) // use parse for reliability
-            });
-          }
-
-          const bucketTime = getTimeBucket(timeRaw);
-
-          if (!s.buckets[bucketTime]) {
-            s.buckets[bucketTime] = {
-              close: harga,
-              vol: 0,
-              netVol: 0,
-              valBucket: 0,
-            };
-          }
-
-          const b = s.buckets[bucketTime];
-          b.vol += vol;
-          b.close = harga;
-          b.netVol += dir * vol;
-          b.valBucket += vol * harga * 100;
-
-        });
-      });
-
-      // Free memory for this chunk
-    }
-
-
-    // Flush V2 Batch (Global)
-    if (v2GlobalBatch.length > 0 && env.STATE_ENGINE_V2) {
-      try {
+        // Optimization: Create a batch endpoint in DO V2 later. For now, Promise.all.
+        // Actually, let's just fire and forget loop to avoid timeout.
         const idV2 = env.STATE_ENGINE_V2.idFromName("GLOBAL_V2_ENGINE");
         const stubV2 = env.STATE_ENGINE_V2.get(idV2);
-        // Fire and forget (await if strictly necessary, but catch handles error)
-        stubV2.fetch("https://internal/batch-update", {
-          method: "POST",
-          body: JSON.stringify(v2GlobalBatch)
-        }).catch(err => console.warn("V2 Global Batch Failed", err));
-      } catch (errSync) {
-        console.warn("V2 Global Batch Setup Failed", errSync);
+
+        // Limit V2 concurrency/load for now?
+        // Doing full dual-write might be heavy. Let's do it.
+        const v2Promises = finalOutput.flatMap(item => {
+          // Wait, `finalOutput` is aggregated swings. We want RAW TRADES `parsed`.
+          // `parsed` variable is not available here scope-wise easily unless we look up.
+          // Ah, `parsed` is inside the loop. 
+          // Better strategy: We should do this INSIDE the `processRawFile` logic or iterate `parsed` array if accessible.
+          // `listed.objects` loop processes files.
+          // I will insert this logic deep inside the file processing loop.
+          return [];
+        });
       }
+    } catch (errV2) {
+      console.error("Failed dispatch V2", errV2);
     }
 
-    // LOG SUMMARY
-    console.log(`ðŸ“Š [Parsed] OK: ${parsedOk}, Skipped: ${skipped} (Total: ${totalLines}). Sources -> Regex: ${countRegex}, JSON-Legacy: ${countJsonLegacy}, JSON-Object: ${countJsonObject}`);
-    console.log("âš ï¸  netVol uses uptick dir based on processing order; may vary across reruns unless strict sorting is enabled.");
-
-
-    const hasMore = listed.truncated;
-    const nextCursor = listed.cursor;
-    // âš ï¸ MODE RINGAN: kalau noSnapshot = true, JANGAN build finalOutput sama sekali
-    // if (noSnapshot) { ... } // DISABLED: Always save snapshot
-
-    const status = hasMore ? "PROGRESS" : "DONE";
-
     // QUEUE LOGIC: If hasMore, push next task to queue
-    if (isQueue && hasMore) {
-      // Construct next job
+    if (isQueue) {
       const job = {
         date: dateParam,
         cursor: nextCursor,
         limit: limit,
-        force: true // Always force in queue to bypass checks
+        force: true
       };
-      console.log(`ðŸ”„ Queue Chain: Sending next batch (cursor=${nextCursor})`);
+      console.log(`ðŸ”„ Queue Chain: Sending next batch (middle of cron)`);
       await env.BACKFILL_QUEUE.send(job);
-      return; // Void return for queue consumer
+      return;
     }
 
-    if (isQueue && !hasMore) {
-      console.log("âœ… Queue Job Done: No more data.");
-      // Lanjut ke logic DONE di bawah (buildFinalOutput) untuk cleanup
-    }
-
-    if (!isQueue && noSnapshot) { // Legacy HTTP mode with noSnapshot
-      // ... existing HTTP logic ...
-      await env.DATA_LAKE.put(tempFile, JSON.stringify(stats));
-      return new Response(JSON.stringify({
-        status, processed: listed.objects.length, next_cursor: hasMore ? nextCursor : null, limit_used: limit
-      }, null, 2), { headers: { "Content-Type": "application/json" } });
-    }
-
-
-
-    // Di sini hanya:
-    // - batch terakhir dari cron (noSnapshot=true tapi hasMore=false), atau
-    // - pemanggilan manual tanpa noSnapshot (misal HTTP)
-    const finalOutput = buildFinalOutputFromStats(stats, dateParam);
-
-    if (hasMore) {
-      await env.DATA_LAKE.put(tempFile, JSON.stringify(stats));
-
-      // Snapshot Policy Check
-      if (snapshotMode === "periodic") {
-        // Throttle: Only write partial snapshot every 1 minute or so
-        const snapKey = `snapshot_state_${dateParam}.json`;
-        let snapState = { lastSnapshotTs: 0 };
-
-        // Try read existing state
-        const stored = await env.DATA_LAKE.get(snapKey);
-        if (stored) {
-          try { snapState = await stored.json(); } catch (e) { }
-        }
-
-        const nowMs = Date.now();
-        // Write if first time OR > 60s since last
-        if (!snapState.lastSnapshotTs || (nowMs - snapState.lastSnapshotTs) >= 60000) {
-          await env.DATA_LAKE.put("snapshot_latest.json", JSON.stringify(finalOutput));
-
-          // Update state
-          snapState.lastSnapshotTs = nowMs;
-          await env.DATA_LAKE.put(snapKey, JSON.stringify(snapState));
-          // console.log("ðŸ“¸ Snapshot updated (Throttled)");
-        } else {
-          // console.log(`â ³ Snapshot throttled. Next in ${60000 - (nowMs - snapState.lastSnapshotTs)}ms`);
-        }
-      }
-
-      // If snapshotMode is 'final', we DO NOT write here.
-
-      // (Legacy STATE_ENGINE write removed)
-
-      // ============================================
-      // V2 PARALLEL DISPATCH (Double Write)
-      // ============================================
-      try {
-        if (env.STATE_ENGINE_V2) {
-          // We need to send parsed trades, not aggregated swings.
-          // We have `parsed` items above (line 981).
-          // Let's send them in batch or individually. DO expects single update or batch?
-          // My DO impl handles `/update` with single trade object: { ticker, price, side, vol, timestamp }
-          // Let's adapt `parsed` items which are { s, p, v, t, type }.
-
-          // Optimization: Create a batch endpoint in DO V2 later. For now, Promise.all.
-          // Actually, let's just fire and forget loop to avoid timeout.
-          const idV2 = env.STATE_ENGINE_V2.idFromName("GLOBAL_V2_ENGINE");
-          const stubV2 = env.STATE_ENGINE_V2.get(idV2);
-
-          // Limit V2 concurrency/load for now?
-          // Doing full dual-write might be heavy. Let's do it.
-          const v2Promises = finalOutput.flatMap(item => {
-            // Wait, `finalOutput` is aggregated swings. We want RAW TRADES `parsed`.
-            // `parsed` variable is not available here scope-wise easily unless we look up.
-            // Ah, `parsed` is inside the loop. 
-            // Better strategy: We should do this INSIDE the `processRawFile` logic or iterate `parsed` array if accessible.
-            // `listed.objects` loop processes files.
-            // I will insert this logic deep inside the file processing loop.
-            return [];
-          });
-        }
-      } catch (errV2) {
-        console.error("Failed dispatch V2", errV2);
-      }
-
-      // QUEUE LOGIC: If hasMore, push next task to queue
-      if (isQueue) {
-        const job = {
-          date: dateParam,
-          cursor: nextCursor,
-          limit: limit,
-          force: true
-        };
-        console.log(`ðŸ”„ Queue Chain: Sending next batch (middle of cron)`);
-        await env.BACKFILL_QUEUE.send(job);
-        return;
-      }
-
-      // HTTP Response
-      return new Response(
-        JSON.stringify(
-          {
-            status: "PROGRESS",
-            processed: listed.objects.length,
-            next_cursor: nextCursor,
-            limit_used: limit,
-          },
-          null,
-          2
-        ),
-        { headers: { "Content-Type": "application/json" } }
-      );
-    }
-
-    // Batch terakhir â†’ FINAL EOD
-    if (finalOutput.length === 0) {
-      await env.DATA_LAKE.delete(tempFile).catch(() => { });
-      return new Response(
-        JSON.stringify({ status: "DONE", total_items: 0 }, null, 2),
-        { headers: { "Content-Type": "application/json" } }
-      );
-    }
-
-    await env.DATA_LAKE.put("snapshot_latest.json", JSON.stringify(finalOutput));
-    await env.DATA_LAKE.put(
-      `processed/${dateParam}.json`,
-      JSON.stringify(finalOutput)
-    );
-    await env.DATA_LAKE.delete(tempFile).catch(() => { });
-
-    // (Legacy STATE_ENGINE write removed)
-
+    // HTTP Response
     return new Response(
       JSON.stringify(
         {
-          status: "DONE",
-          total_items: finalOutput.length,
-          message: "Selesai!",
+          status: "PROGRESS",
+          processed: listed.objects.length,
+          next_cursor: nextCursor,
+          limit_used: limit,
         },
         null,
         2
@@ -2025,258 +2140,312 @@ function normalizeTradeFromLine(lineText, defaultDateStr) {
     );
   }
 
-  /**
-   * Compress all raw_lt files for a specific date into a single gzipped file
-   * @param {Object} env - Worker environment bindings
-   * @param {string} dateStr - Date in YYYY-MM-DD format
-   * @returns {Object} - Compression result with stats
-   */
-  async function compressRawLtForDate(env, dateStr) {
-    const [y, m, d] = dateStr.split('-');
-    const prefix = `raw_lt/${y}/${m}/${d}/`;
-    const outputKey = `raw_lt_compressed/${dateStr}.jsonl.gz`;
-
-    console.log(`ðŸ—œï¸ Starting compression for ${dateStr}...`);
-
-    // Check if already compressed
-    const existing = await env.DATA_LAKE.head(outputKey);
-    if (existing) {
-      console.log(`âœ… Already compressed: ${outputKey}`);
-      return { compressed: true, skipReason: 'already_exists', outputKey };
-    }
-
-    // List files with a reasonable limit to avoid API issues
-    const MAX_FILES = 500; // Limit to avoid "Too many API requests" error
-    const files = [];
-    let cursor;
-    let listCount = 0;
-    const MAX_LIST_CALLS = 5; // Limit list operations
-
-    do {
-      const listed = await env.DATA_LAKE.list({ prefix, cursor, limit: 100 });
-      files.push(...listed.objects);
-      cursor = listed.truncated ? listed.cursor : null;
-      listCount++;
-
-      // Stop if we have enough files or made too many list calls
-      if (files.length >= MAX_FILES || listCount >= MAX_LIST_CALLS) {
-        console.log(`âš ï¸ Reached limit: ${files.length} files listed in ${listCount} calls`);
-        break;
-      }
-    } while (cursor);
-
-    if (files.length === 0) {
-      console.log(`âš ï¸ No files to compress for ${dateStr}`);
-      return { compressed: false, skipReason: 'no_files' };
-    }
-
-    // Fetch and concatenate files (limit to MAX_FILES to avoid memory/API issues)
-    const filesToProcess = files.slice(0, MAX_FILES);
-    const allLines = [];
-    let originalSize = 0;
-
-    for (const file of filesToProcess) {
-      const obj = await env.DATA_LAKE.get(file.key);
-      const text = await obj.text();
-      const trimmed = text.trim();
-      if (trimmed) {
-        allLines.push(trimmed);
-      }
-      originalSize += file.size;
-    }
-
-    const combined = allLines.join('\n');
-
-    // Compress using CompressionStream and collect into ArrayBuffer
-    const stream = new ReadableStream({
-      start(controller) {
-        controller.enqueue(new TextEncoder().encode(combined));
-        controller.close();
-      }
-    });
-
-    const compressedStream = stream.pipeThrough(
-      new CompressionStream('gzip')
+  // Batch terakhir â†’ FINAL EOD
+  if (finalOutput.length === 0) {
+    await env.DATA_LAKE.delete(tempFile).catch(() => { });
+    return new Response(
+      JSON.stringify({ status: "DONE", total_items: 0 }, null, 2),
+      { headers: { "Content-Type": "application/json" } }
     );
+  }
 
-    // Collect stream into buffer
-    const reader = compressedStream.getReader();
-    const chunks = [];
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      chunks.push(value);
+  // Write intraday.json for each ticker (Required by features-service)
+  await Promise.all(finalOutput.map(item => {
+    const publicData = {
+      ticker: item.kode,
+      last_updated: new Date().toISOString(),
+      day_stats: {
+        o: item.open,
+        c: item.close,
+        h: item.high,
+        l: item.low,
+        v: item.vol,
+        nv: item.net_vol
+      },
+      timeline: item.history
+    };
+    return env.DATA_LAKE.put(
+      `processed/${item.kode}/intraday.json`,
+      JSON.stringify(publicData),
+      { httpMetadata: { contentType: "application/json", cacheControl: "max-age=60" } }
+    ).catch(e => console.error(`Failed to write intraday for ${item.kode}`, e));
+  }));
+
+  await env.DATA_LAKE.put("snapshot_latest.json", JSON.stringify(finalOutput));
+  await env.DATA_LAKE.put(
+    `processed/${dateParam}.json`,
+    JSON.stringify(finalOutput)
+  );
+  await env.DATA_LAKE.delete(tempFile).catch(() => { });
+
+  // (Legacy STATE_ENGINE write removed)
+
+  return new Response(
+    JSON.stringify(
+      {
+        status: "DONE",
+        total_items: finalOutput.length,
+        message: "Selesai!",
+      },
+      null,
+      2
+    ),
+    { headers: { "Content-Type": "application/json" } }
+  );
+}
+
+/**
+ * Compress all raw_lt files for a specific date into a single gzipped file
+ * @param {Object} env - Worker environment bindings
+ * @param {string} dateStr - Date in YYYY-MM-DD format
+ * @returns {Object} - Compression result with stats
+ */
+async function compressRawLtForDate(env, dateStr) {
+  const [y, m, d] = dateStr.split('-');
+  const prefix = `raw_lt/${y}/${m}/${d}/`;
+  const outputKey = `raw_lt_compressed/${dateStr}.jsonl.gz`;
+
+  console.log(`ðŸ—œï¸ Starting compression for ${dateStr}...`);
+
+  // Check if already compressed
+  const existing = await env.DATA_LAKE.head(outputKey);
+  if (existing) {
+    console.log(`âœ… Already compressed: ${outputKey}`);
+    return { compressed: true, skipReason: 'already_exists', outputKey };
+  }
+
+  // List files with a reasonable limit to avoid API issues
+  const MAX_FILES = 500; // Limit to avoid "Too many API requests" error
+  const files = [];
+  let cursor;
+  let listCount = 0;
+  const MAX_LIST_CALLS = 5; // Limit list operations
+
+  do {
+    const listed = await env.DATA_LAKE.list({ prefix, cursor, limit: 100 });
+    files.push(...listed.objects);
+    cursor = listed.truncated ? listed.cursor : null;
+    listCount++;
+
+    // Stop if we have enough files or made too many list calls
+    if (files.length >= MAX_FILES || listCount >= MAX_LIST_CALLS) {
+      console.log(`âš ï¸ Reached limit: ${files.length} files listed in ${listCount} calls`);
+      break;
     }
+  } while (cursor);
 
-    // Combine chunks into single Uint8Array
-    const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
-    const compressedData = new Uint8Array(totalLength);
-    let offset = 0;
-    for (const chunk of chunks) {
-      compressedData.set(chunk, offset);
-      offset += chunk.length;
+  if (files.length === 0) {
+    console.log(`âš ï¸ No files to compress for ${dateStr}`);
+    return { compressed: false, skipReason: 'no_files' };
+  }
+
+  // Fetch and concatenate files (limit to MAX_FILES to avoid memory/API issues)
+  const filesToProcess = files.slice(0, MAX_FILES);
+  const allLines = [];
+  let originalSize = 0;
+
+  for (const file of filesToProcess) {
+    const obj = await env.DATA_LAKE.get(file.key);
+    const text = await obj.text();
+    const trimmed = text.trim();
+    if (trimmed) {
+      allLines.push(trimmed);
     }
+    originalSize += file.size;
+  }
 
-    // Upload compressed file with known length
-    await env.DATA_LAKE.put(outputKey, compressedData, {
-      httpMetadata: {
-        contentType: 'application/gzip'
-      }
+  const combined = allLines.join('\n');
+
+  // Compress using CompressionStream and collect into ArrayBuffer
+  const stream = new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(combined));
+      controller.close();
+    }
+  });
+
+  const compressedStream = stream.pipeThrough(
+    new CompressionStream('gzip')
+  );
+
+  // Collect stream into buffer
+  const reader = compressedStream.getReader();
+  const chunks = [];
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+  }
+
+  // Combine chunks into single Uint8Array
+  const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
+  const compressedData = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    compressedData.set(chunk, offset);
+    offset += chunk.length;
+  }
+
+  // Upload compressed file with known length
+  await env.DATA_LAKE.put(outputKey, compressedData, {
+    httpMetadata: {
+      contentType: 'application/gzip'
+    }
+  });
+
+  const compressedSize = compressedData.length;
+  const compressionRatio = Math.round((compressedSize / originalSize) * 100);
+
+  console.log(`âœ… Compressed ${dateStr}: ${files.length} files, ${originalSize}â†’${compressedSize} bytes (${compressionRatio}%)`);
+
+  return {
+    compressed: true,
+    fileCount: files.length,
+    originalSize,
+    compressedSize,
+    compressionRatio,
+    outputKey
+  };
+}
+
+/**
+ * Delete raw_lt folders older than retentionDays
+ * @param {Object} env - Worker environment bindings  
+ * @param {number} retentionDays - Keep data for this many days
+ * @returns {Object} - Deletion result with stats
+ */
+async function deleteOldRawLt(env, retentionDays = 7) {
+  const now = new Date();
+  const cutoffDate = new Date(now.getTime() - retentionDays * 24 * 60 * 60 * 1000);
+
+  const cutoffY = cutoffDate.getUTCFullYear();
+  const cutoffM = String(cutoffDate.getUTCMonth() + 1).padStart(2, '0');
+  const cutoffD = String(cutoffDate.getUTCDate()).padStart(2, '0');
+  const cutoffStr = `${cutoffY}-${cutoffM}-${cutoffD}`;
+
+  console.log(`ðŸ—‘ï¸ Deleting raw_lt older than ${cutoffStr} (${retentionDays} days retention)`);
+
+  // List all files in raw_lt with date-based filtering
+  const toDelete = [];
+  const datesFound = new Set();
+  let cursor;
+
+  do {
+    const listed = await env.DATA_LAKE.list({
+      prefix: 'raw_lt/',
+      cursor,
+      limit: 1000
     });
 
-    const compressedSize = compressedData.length;
-    const compressionRatio = Math.round((compressedSize / originalSize) * 100);
+    for (const obj of listed.objects) {
+      // Parse date from path: raw_lt/YYYY/MM/DD/...
+      const match = obj.key.match(/^raw_lt\/(\d{4})\/(\d{2})\/(\d{2})\//);
+      if (!match) continue;
 
-    console.log(`âœ… Compressed ${dateStr}: ${files.length} files, ${originalSize}â†’${compressedSize} bytes (${compressionRatio}%)`);
+      const [_, y, m, d] = match;
+      const fileDate = `${y}-${m}-${d}`;
+      datesFound.add(fileDate);
 
-    return {
-      compressed: true,
-      fileCount: files.length,
-      originalSize,
-      compressedSize,
-      compressionRatio,
-      outputKey
-    };
-  }
-
-  /**
-   * Delete raw_lt folders older than retentionDays
-   * @param {Object} env - Worker environment bindings  
-   * @param {number} retentionDays - Keep data for this many days
-   * @returns {Object} - Deletion result with stats
-   */
-  async function deleteOldRawLt(env, retentionDays = 7) {
-    const now = new Date();
-    const cutoffDate = new Date(now.getTime() - retentionDays * 24 * 60 * 60 * 1000);
-
-    const cutoffY = cutoffDate.getUTCFullYear();
-    const cutoffM = String(cutoffDate.getUTCMonth() + 1).padStart(2, '0');
-    const cutoffD = String(cutoffDate.getUTCDate()).padStart(2, '0');
-    const cutoffStr = `${cutoffY}-${cutoffM}-${cutoffD}`;
-
-    console.log(`ðŸ—‘ï¸ Deleting raw_lt older than ${cutoffStr} (${retentionDays} days retention)`);
-
-    // List all files in raw_lt with date-based filtering
-    const toDelete = [];
-    const datesFound = new Set();
-    let cursor;
-
-    do {
-      const listed = await env.DATA_LAKE.list({
-        prefix: 'raw_lt/',
-        cursor,
-        limit: 1000
-      });
-
-      for (const obj of listed.objects) {
-        // Parse date from path: raw_lt/YYYY/MM/DD/...
-        const match = obj.key.match(/^raw_lt\/(\d{4})\/(\d{2})\/(\d{2})\//);
-        if (!match) continue;
-
-        const [_, y, m, d] = match;
-        const fileDate = `${y}-${m}-${d}`;
-        datesFound.add(fileDate);
-
-        // Only delete if older than cutoff
-        if (fileDate < cutoffStr) {
-          toDelete.push(obj.key);
-        }
+      // Only delete if older than cutoff
+      if (fileDate < cutoffStr) {
+        toDelete.push(obj.key);
       }
-
-      cursor = listed.truncated ? listed.cursor : null;
-    } while (cursor);
-
-    if (toDelete.length === 0) {
-      console.log(`âœ… No old files to delete (found dates: ${Array.from(datesFound).sort()})`);
-      return { deleted: false, fileCount: 0, cutoffDate: cutoffStr, skipReason: 'no_old_files' };
     }
 
-    // Delete in batches
-    const batchSize = 100;
-    let deleted = 0;
+    cursor = listed.truncated ? listed.cursor : null;
+  } while (cursor);
 
-    for (let i = 0; i < toDelete.length; i += batchSize) {
-      const batch = toDelete.slice(i, i + batchSize);
-      await Promise.all(batch.map(key =>
-        env.DATA_LAKE.delete(key).catch(err =>
-          console.error(`Failed to delete ${key}:`, err)
-        )
-      ));
-      deleted += batch.length;
-    }
-
-    console.log(`âœ… Deleted ${deleted} old raw_lt files (cutoff: ${cutoffStr})`);
-
-    return {
-      deleted: true,
-      fileCount: deleted,
-      cutoffDate: cutoffStr,
-      datesDeleted: Array.from(datesFound).filter(d => d < cutoffStr).sort()
-    };
+  if (toDelete.length === 0) {
+    console.log(`âœ… No old files to delete (found dates: ${Array.from(datesFound).sort()})`);
+    return { deleted: false, fileCount: 0, cutoffDate: cutoffStr, skipReason: 'no_old_files' };
   }
 
-  /**
-   * Cleanup old backfill_state_*.json files
-   * Keep only the most recent one (or two), delete the rest via Batch Delete Worker
-   */
-  async function cleanupBackfillStates(env) {
-    const prefix = BACKFILL_STATE_PREFIX; // "backfill_state_"
+  // Delete in batches
+  const batchSize = 100;
+  let deleted = 0;
 
-    // 1. List all state files
-    const listed = await env.DATA_LAKE.list({ prefix });
-    const allFiles = listed.objects;
-
-    if (allFiles.length <= 1) {
-      return { skipped: true, reason: "Not enough files to clean (<= 1)", count: allFiles.length };
-    }
-
-    // 2. Sort by uploaded time (descending) -> newest first
-    // key format: backfill_state_YYYY-MM-DD.json
-    // We can also sort by key since YYYY-MM-DD is lexicographically sortable
-    allFiles.sort((a, b) => b.key.localeCompare(a.key));
-
-    // 3. Keep the newest 2 files (active today + maybe yesterday) just to be safe
-    const KEEP_COUNT = 2;
-    const toDelete = allFiles.slice(KEEP_COUNT);
-
-    if (toDelete.length === 0) {
-      return { skipped: true, reason: "No old files to delete", count: allFiles.length };
-    }
-
-    const keysToDelete = toDelete.map(o => o.key);
-    console.log(`ðŸ§¹ Found ${keysToDelete.length} old backfill states to delete:`, keysToDelete);
-
-    // 4. Send to Batch Delete Worker
-    if (!env.BATCH_DELETE) {
-      console.warn("âš ï¸ BATCH_DELETE binding missing, falling back to manual delete");
-      // Fallback: manual delete one by one
-      let deletedCount = 0;
-      for (const key of keysToDelete) {
-        await env.DATA_LAKE.delete(key);
-        deletedCount++;
-      }
-      return { manual: true, deleted: deletedCount };
-    }
-
-    try {
-      const resp = await env.BATCH_DELETE.fetch("https://batch-delete/delete-keys?bucket=saham", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ keys: keysToDelete })
-      });
-
-      const resJson = await resp.json();
-      return {
-        success: resp.ok,
-        worker_response: resJson,
-        deleted_keys: keysToDelete.length
-      };
-    } catch (err) {
-      throw new Error(`Failed to call BATCH_DELETE: ${err.message}`);
-    }
+  for (let i = 0; i < toDelete.length; i += batchSize) {
+    const batch = toDelete.slice(i, i + batchSize);
+    await Promise.all(batch.map(key =>
+      env.DATA_LAKE.delete(key).catch(err =>
+        console.error(`Failed to delete ${key}:`, err)
+      )
+    ));
+    deleted += batch.length;
   }
 
+  console.log(`âœ… Deleted ${deleted} old raw_lt files (cutoff: ${cutoffStr})`);
+
+  return {
+    deleted: true,
+    fileCount: deleted,
+    cutoffDate: cutoffStr,
+    datesDeleted: Array.from(datesFound).filter(d => d < cutoffStr).sort()
+  };
 }
+
+/**
+ * Cleanup old backfill_state_*.json files
+ * Keep only the most recent one (or two), delete the rest via Batch Delete Worker
+ */
+async function cleanupBackfillStates(env) {
+  const prefix = BACKFILL_STATE_PREFIX; // "backfill_state_"
+
+  // 1. List all state files
+  const listed = await env.DATA_LAKE.list({ prefix });
+  const allFiles = listed.objects;
+
+  if (allFiles.length <= 1) {
+    return { skipped: true, reason: "Not enough files to clean (<= 1)", count: allFiles.length };
+  }
+
+  // 2. Sort by uploaded time (descending) -> newest first
+  // key format: backfill_state_YYYY-MM-DD.json
+  // We can also sort by key since YYYY-MM-DD is lexicographically sortable
+  allFiles.sort((a, b) => b.key.localeCompare(a.key));
+
+  // 3. Keep the newest 2 files (active today + maybe yesterday) just to be safe
+  const KEEP_COUNT = 2;
+  const toDelete = allFiles.slice(KEEP_COUNT);
+
+  if (toDelete.length === 0) {
+    return { skipped: true, reason: "No old files to delete", count: allFiles.length };
+  }
+
+  const keysToDelete = toDelete.map(o => o.key);
+  console.log(`ðŸ§¹ Found ${keysToDelete.length} old backfill states to delete:`, keysToDelete);
+
+  // 4. Send to Batch Delete Worker
+  if (!env.BATCH_DELETE) {
+    console.warn("âš ï¸ BATCH_DELETE binding missing, falling back to manual delete");
+    // Fallback: manual delete one by one
+    let deletedCount = 0;
+    for (const key of keysToDelete) {
+      await env.DATA_LAKE.delete(key);
+      deletedCount++;
+    }
+    return { manual: true, deleted: deletedCount };
+  }
+
+  try {
+    const resp = await env.BATCH_DELETE.fetch("https://batch-delete/delete-keys?bucket=saham", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ keys: keysToDelete })
+    });
+
+    const resJson = await resp.json();
+    return {
+      success: resp.ok,
+      worker_response: resJson,
+      deleted_keys: keysToDelete.length
+    };
+  } catch (err) {
+    throw new Error(`Failed to call BATCH_DELETE: ${err.message}`);
+  }
+}
+
+
 
 // --- INTRADAY PROCESSED PIPELINE ---
 
@@ -2554,3 +2723,249 @@ async function processIntradayMinute(env, job) {
 
 
 
+
+
+// ==========================================
+// FOOTPRINT AGGREGATION LOGIC (GEN-2)
+// ==========================================
+
+async function processAggregationBatch(env, messages) {
+  for (const msg of messages) {
+    try {
+      const { jobId, date, hour, tickers } = msg.body;
+      // tickers = ["AADI", "ADRO", ...]
+
+      const valuesToInsert = [];
+      const [y, m, d] = date.split("-");
+      // Key format: footprint/TICKER/1m/YYYY/MM/DD/HH.jsonl
+
+      // Chunked R2 fetching to control memory
+      const FETCH_CHUNK_SIZE = 10;
+      for (let i = 0; i < tickers.length; i += FETCH_CHUNK_SIZE) {
+        const batch = tickers.slice(i, i + FETCH_CHUNK_SIZE);
+        await Promise.all(batch.map(async (ticker) => {
+          const key = `footprint/${ticker}/1m/${y}/${m}/${d}/${hour}.jsonl`;
+          try {
+            const obj = await env.DATA_LAKE.get(key);
+            if (!obj) return;
+
+            const text = await obj.text();
+            const lines = text.trim().split("\n");
+
+            lines.forEach(line => {
+              if (!line) return;
+              try {
+                const row = JSON.parse(line);
+                if (row.ohlc) {
+                  valuesToInsert.push({
+                    ticker,
+                    date,
+                    time_key: row.t0,
+                    open: row.ohlc.o,
+                    high: row.ohlc.h,
+                    low: row.ohlc.l,
+                    close: row.ohlc.c,
+                    vol: row.vol,
+                    delta: row.delta
+                  });
+                }
+              } catch (e) { }
+            });
+          } catch (errR2) {
+            console.warn(`Failed to read footprint for ${ticker}`, errR2);
+          }
+        }));
+      }
+
+      // Bulk Insert D1 (Chunked to avoid SQLITE_MAX_VARIABLE_NUMBER and Memory Spikes)
+      if (valuesToInsert.length > 0) {
+        const CHUNK_SIZE = 5; // Very safe batch size
+        const D1_BATCH_LIMIT = 20; // Max tickers per D1 transaction batch? No, wait. 
+        // We use CHUNK_SIZE loop for prepare/bind/run.
+        // Let's stick to simple loop.
+
+        for (let i = 0; i < valuesToInsert.length; i += CHUNK_SIZE) {
+          const chunk = valuesToInsert.slice(i, i + CHUNK_SIZE);
+          const placeholders = chunk.map(() => "(?, ?, ?, ?, ?, ?, ?, ?, ?)").join(", ");
+          const rawValues = chunk.flatMap(v => [
+            v.ticker, v.date, v.time_key, v.open, v.high, v.low, v.close, v.vol, v.delta
+          ]);
+
+          try {
+            await env.SSSAHAM_DB.prepare(`
+                    INSERT OR REPLACE INTO temp_footprint_consolidate (ticker, date, time_key, open, high, low, close, vol, delta)
+                    VALUES ${placeholders}
+                `).bind(...rawValues).run();
+          } catch (errDb) {
+            console.error("DB Insert Failed (Chunk)", errDb);
+            // Do not break execution, just log. Next cron might pick up.
+          }
+        }
+      }
+
+      // Cleanup Retention (Run occasionally ~5% chance per batch to avoid spamming ops)
+      // Policy: Keep recent 2-3 days.
+      if (Math.random() < 0.05) {
+        await env.SSSAHAM_DB.prepare(
+          "DELETE FROM temp_footprint_consolidate WHERE date < date('now', '-3 days')"
+        ).run();
+      }
+
+      // Update Processed Count & Heartbeat
+      await env.SSSAHAM_DB.prepare(`
+         UPDATE job_checkpoint 
+         SET processed_tickers = processed_tickers + ?, updated_at = ?
+         WHERE job_id = ?
+      `).bind(tickers.length, new Date().toISOString(), jobId).run();
+
+      // OPTIONAL: KV Heartbeat for Monitoring
+      // await env.DATA_LAKE.put('health/aggregator_alive', new Date().toISOString()); 
+
+      // Check Completion & Trigger Features (Optimistic)
+      const job = await env.SSSAHAM_DB.prepare("SELECT * FROM job_checkpoint WHERE job_id = ?").bind(jobId).first();
+      // Only trigger if purely completed now
+      if (job && job.processed_tickers >= job.total_tickers && job.status !== 'COMPLETED') {
+        await env.SSSAHAM_DB.prepare("UPDATE job_checkpoint SET status='COMPLETED' WHERE job_id=?").bind(jobId).run();
+        console.log(`✅ Job ${jobId} Completed! Ready for Feature Calc.`);
+        // Trigger logic to be added
+      }
+
+      msg.ack();
+    } catch (err) {
+      console.error("Agg Batch Failed", err);
+      // If error is batch-wide, maybe retry. But D1 errors might be fatal.
+      // Retry once then drop? For now retry.
+      msg.retry();
+    }
+  }
+}
+
+// ==============================
+// SMART REPAIR LOGIC
+// ==============================
+
+/**
+ * Targeted repair for a single ticker for a full day.
+ * Source: raw_trades (clean GEN-2 format)
+ */
+async function repairTickerFootprint(env, ticker, dateStr) {
+  const tickerUpper = ticker.toUpperCase();
+  const dateInt = dateStr.replace(/-/g, ""); // 2026-02-06 -> 20260206
+
+  await recordAuditEntry(env, tickerUpper, dateStr, "REPAIR_FOOTPRINT", "START", "Targeted Re-aggregation initiated");
+
+  // Market hours (approximate UTC)
+  // 02:00 UTC - 10:00 UTC (09:00 - 17:00 WIB)
+  const hours = ["02", "03", "04", "05", "06", "07", "08", "09", "10"];
+  let totalProcessed = 0;
+  let filesFound = 0;
+
+  for (const hh of hours) {
+    const prefix = `raw_trades/${dateInt}/${hh}/`;
+    let cursor = undefined;
+
+    while (true) {
+      const listed = await env.DATA_LAKE.list({ prefix, cursor, limit: 100 });
+      if (listed.objects.length === 0) break;
+
+      filesFound += listed.objects.length;
+
+      // Process files in this page
+      for (const obj of listed.objects) {
+        const r = await env.DATA_LAKE.get(obj.key);
+        if (!r) continue;
+
+        const text = await r.text();
+        const lines = text.split("\n").filter(l => l.trim().length > 0);
+
+        const tickerTrades = [];
+        for (const line of lines) {
+          try {
+            const trade = JSON.parse(line);
+            // Check ticker (case-insensitive cross-check)
+            const t = (trade.ticker || trade.kode || trade.symbol || "").toUpperCase();
+            if (t === tickerUpper) {
+              tickerTrades.push(trade);
+            }
+          } catch (e) { }
+        }
+
+        if (tickerTrades.length > 0) {
+          totalProcessed += tickerTrades.length;
+          // Send to STATE_ENGINE_V2 (Singleton)
+          // We use trade-batch endpoint which handles normalization and fan-out
+          await env.STATE_ENGINE_V2.get(env.STATE_ENGINE_V2.idFromName("GLOBAL_V2_ENGINE"))
+            .fetch("https://internal/trade-batch", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(tickerTrades)
+            });
+        }
+      }
+
+      if (!listed.truncated) break;
+      cursor = listed.cursor;
+    }
+
+    // Log progress every hour
+    const progressPct = Math.round(((hours.indexOf(hh) + 1) / hours.length) * 100);
+    await recordAuditEntry(env, tickerUpper, dateStr, "REPAIR_FOOTPRINT", "PROCESSING", `Checking hour ${hh}:00 WIB (~${progressPct}%)`);
+    console.log(`[REPAIR] ${tickerUpper} @ ${dateStr} - Hour ${hh} check. Total trades found so far: ${totalProcessed}`);
+  }
+
+  const status = totalProcessed > 0 ? "SUCCESS" : "NO_DATA";
+  const msg = totalProcessed > 0
+    ? `Successfully re-aggregated ${totalProcessed} trades from ${filesFound} files.`
+    : `No raw trades found for this ticker in ${filesFound} files searched.`;
+
+  await recordAuditEntry(env, tickerUpper, dateStr, "REPAIR_FOOTPRINT", "COMPLETED", msg);
+  console.log(`[REPAIR] ${tickerUpper} @ ${dateStr} - ${status}: ${msg}`);
+}
+
+/**
+ * Record audit trail for Footprint Repair (Consistent with Broksum)
+ * Writes to SSSAHAM_EMITEN (sssaham-emiten)
+ */
+async function recordAuditEntry(env, stockCode, dataDate, action, status, detail) {
+  if (!env.SSSAHAM_EMITEN) {
+    console.error("SSSAHAM_EMITEN R2 binding missing in recordAuditEntry");
+    return;
+  }
+
+  const key = `audit/${stockCode.toUpperCase()}.json`;
+  let history = [];
+
+  try {
+    const existing = await env.SSSAHAM_EMITEN.get(key);
+    if (existing) {
+      history = await existing.json();
+    }
+  } catch (e) {
+    console.warn(`Could not read existing audit for ${stockCode}, starting new.`);
+  }
+
+  const entry = {
+    timestamp: new Date().toISOString(),
+    date: new Date().toISOString().split('T')[0],
+    data_date: dataDate,
+    action: action,
+    status: status,
+    source: "REPAIR_ENGINE",
+    detail: detail
+  };
+
+  history.push(entry);
+
+  // Keep last 100
+  if (history.length > 100) {
+    history = history.slice(-100);
+  }
+
+  try {
+    await env.SSSAHAM_EMITEN.put(key, JSON.stringify(history), {
+      httpMetadata: { contentType: "application/json" }
+    });
+  } catch (e) {
+    console.error(`Failed to write audit entry for ${stockCode}:`, e);
+  }
+}

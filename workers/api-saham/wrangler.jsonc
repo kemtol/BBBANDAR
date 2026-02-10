@@ -13,6 +13,10 @@
         {
             "binding": "RAW_BROKSUM",
             "bucket_name": "raw-broksum"
+        },
+        {
+            "binding": "FOOTPRINT_BUCKET",
+            "bucket_name": "tape-data-saham"
         }
     ],
     "d1_databases": [
@@ -20,6 +24,16 @@
             "binding": "SSSAHAM_DB",
             "database_name": "sssaham-db",
             "database_id": "98cd91eb-5666-4284-8845-8e8b6d7a1b8f"
+        }
+    ],
+    "services": [
+        {
+            "binding": "BROKSUM_SERVICE",
+            "service": "broksum-scrapper"
+        },
+        {
+            "binding": "FEATURES_SERVICE",
+            "service": "features-service"
         }
     ]
 }
