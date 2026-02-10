@@ -70,7 +70,7 @@ export default {
         }
     },
 
-    async aggregateFootprint(env, date, hour_override) {
+    async aggregateFootprint(env, date, hour_override, url) {
         // If hour_override is provided, use it.
         // If not provided, and date is TODAY, use current hour?
         // Actually, user wants "Snapshot" behavior by default.
@@ -83,10 +83,10 @@ export default {
         // If we aggregate "Full Day so far", it's fine.
         // So let's remove the "force current hour" logic and just pass hour_override.
 
-        return this.aggregateHybrid(env, date, hour_override);
+        return this.aggregateHybrid(env, date, hour_override, url);
     },
 
-    async aggregateHybrid(env, date, hour) {
+    async aggregateHybrid(env, date, hour, url) {
         try {
             console.log(`Starting Hybrid Footprint Aggregation (v3.0) for ${date} hour ${hour}...`);
             const startTime = Date.now();
@@ -104,7 +104,8 @@ export default {
             // But in `fetch`: const hour = parseInt(url.searchParams.get('hour') || getCurrentHour());
             // So we already have the requested hour.
 
-            let footprintData = await this.fetchFootprintAggregates(env, date, hour);
+            const forceR2 = url ? (new URL(url).searchParams.get('source') === 'r2') : false;
+            let footprintData = await this.fetchFootprintAggregates(env, date, hour, forceR2);
 
             // Filter Invalid Tickers (Backend Optimization)
             footprintData = footprintData.filter(fp => this.isValidTicker(fp.ticker));
@@ -124,6 +125,9 @@ export default {
                 const ctx = ctxFound ? contextMap.get(fp.ticker) : null;
                 return this.calculateHybridItem(fp, ctx, ctxFound);
             }).filter(Boolean);
+
+            // 3b. Sort by Score Descending (Critical for Frontend Display)
+            items.sort((a, b) => (b.sc || 0) - (a.sc || 0));
 
             // 4. Validate Data Quality
             const validation = this.validateHybridData(items);
@@ -157,7 +161,7 @@ export default {
         }
     },
 
-    async fetchFootprintAggregates(env, date, limitHour) {
+    async fetchFootprintAggregates(env, date, limitHour, forceR2 = false) {
         // Calculate max timestamp for this hour.
         // date = "2026-02-04".
         // limitHour (UTC). e.g. 3 (10:00 WIB).
@@ -199,7 +203,17 @@ export default {
             GROUP BY ticker
         `).bind(date).all();
 
-        if (!results || results.length === 0) return [];
+        if (forceR2 || !results || results.length === 0) {
+            console.log(`[D1-EMPTY] ${forceR2 ? 'Force R2 requested' : 'No footprint data in D1'} for ${date}. Using R2 fallback...`);
+            return await this.fetchFootprintFromR2(env, date);
+        }
+
+        // If D1 has fewer tickers than expected (~900 active), supplement from R2
+        const uniqueTickers = new Set(results.map(r => r.ticker));
+        if (uniqueTickers.size < 200) {
+            console.log(`[D1-SPARSE] Only ${uniqueTickers.size} tickers in D1 for ${date}. Supplementing from R2...`);
+            return await this.fetchFootprintFromR2(env, date);
+        }
 
         console.log("DEBUG: Raw Aggregation Item [0]:", JSON.stringify(results[0]));
 
@@ -258,6 +272,185 @@ export default {
                 close
             };
         });
+    },
+
+    /**
+     * R2 Fallback: Read pre-aggregated state files from R2 when D1 is empty.
+     * Uses processed/{ticker}/state.json (written by real-time pipeline).
+     * Falls back to reading raw hourly files for a limited set of tickers.
+     */
+    async fetchFootprintFromR2(env, date) {
+        const [y, m, d] = date.split("-");
+
+        // Primary: List tickers directly from R2 (ground truth — not limited by emiten table)
+        let targetTickers = [];
+        try {
+            // Paginated R2 list to get ALL ticker prefixes
+            let allPrefixes = [];
+            let cursor = undefined;
+            let pages = 0;
+            do {
+                const opts = { prefix: "footprint/", delimiter: "/", limit: 1000 };
+                if (cursor) opts.cursor = cursor;
+                const listed = await env.TAPE_DATA_SAHAM.list(opts);
+                allPrefixes.push(...(listed.delimitedPrefixes || []));
+                cursor = listed.truncated ? listed.cursor : undefined;
+                pages++;
+            } while (cursor && pages < 5);
+            targetTickers = allPrefixes.map(p => p.split("/")[1]).filter(t => this.isValidTicker(t));
+            console.log(`[R2-FALLBACK] Listed ${targetTickers.length} valid tickers from R2 (${pages} pages, ${allPrefixes.length} total prefixes)`);
+        } catch (e) {
+            console.warn("[R2-FALLBACK] R2 list failed, falling back to emiten table");
+        }
+
+        // Fallback: Use emiten table if R2 listing fails
+        if (targetTickers.length === 0) {
+            try {
+                const { results } = await env.SSSAHAM_DB.prepare(
+                    "SELECT ticker FROM emiten WHERE status = 'ACTIVE' LIMIT 900"
+                ).all();
+                if (results) targetTickers = results.map(r => r.ticker.replace(/\.JK$/, '')).filter(t => this.isValidTicker(t));
+            } catch (e) {
+                console.warn("[R2-FALLBACK] Cannot get tickers from emiten table either");
+            }
+        }
+
+        console.log(`[R2-FALLBACK] Checking ${targetTickers.length} tickers for date ${date}`);
+
+        // === MULTI-HOUR DISCOVERY STRATEGY ===
+        // Goal: Maximize ticker coverage within 1000 R2 read budget.
+        // Trading hours in UTC: 02 (09:00 WIB) through 09 (16:00 WIB)
+        // Strategy: Probe ALL trading hours, but spread tickers across hours
+        //   so every ticker gets checked at least once.
+        //   Tickers found early get extra hours for better OHLCV accuracy.
+
+        const PARALLEL = 50;
+        const tickerDataMap = new Map(); // ticker -> candles[]
+        const ALL_HOURS = ["03", "06", "02", "04", "05", "07", "08", "09"]; // Ordered by likelihood
+        const MAX_READS = 950; // Leave margin from 1000 limit
+        let totalReads = 0;
+
+        // Round 1: Probe peak hour (03 = 10:00 WIB) for ALL tickers
+        const PEAK_HOUR = "03";
+        for (let i = 0; i < targetTickers.length; i += PARALLEL) {
+            const batch = targetTickers.slice(i, i + PARALLEL);
+            await Promise.all(batch.map(async (ticker) => {
+                totalReads++;
+                const key = `footprint/${ticker}/1m/${y}/${m}/${d}/${PEAK_HOUR}.jsonl`;
+                try {
+                    const obj = await env.TAPE_DATA_SAHAM.get(key);
+                    if (!obj) return;
+                    const text = await obj.text();
+                    const candles = [];
+                    for (const line of text.split("\n")) {
+                        if (!line.trim()) continue;
+                        try { const c = JSON.parse(line); if (c.ohlc && c.t0) candles.push(c); } catch (_) { }
+                    }
+                    if (candles.length > 0) tickerDataMap.set(ticker, candles);
+                } catch (_) { }
+            }));
+        }
+
+        console.log(`[R2-FALLBACK] Round 1 (hour ${PEAK_HOUR}): ${tickerDataMap.size} tickers found. Reads used: ${totalReads}`);
+
+        // Round 2: Probe UNFOUND tickers at other hours (discovery priority)
+        const unfoundTickers = targetTickers.filter(t => !tickerDataMap.has(t));
+        const DISCOVERY_HOURS = ["06", "02", "04", "05", "07", "08", "09"]; // Skip 03 (already probed)
+
+        for (const hour of DISCOVERY_HOURS) {
+            if (totalReads >= MAX_READS || unfoundTickers.length === 0) break;
+            const remaining = MAX_READS - totalReads;
+            // Only probe tickers still not found
+            const stillMissing = unfoundTickers.filter(t => !tickerDataMap.has(t));
+            if (stillMissing.length === 0) break;
+
+            const probeBatch = stillMissing.slice(0, remaining);
+            for (let i = 0; i < probeBatch.length; i += PARALLEL) {
+                if (totalReads >= MAX_READS) break;
+                const batch = probeBatch.slice(i, i + PARALLEL);
+                await Promise.all(batch.map(async (ticker) => {
+                    if (totalReads >= MAX_READS) return;
+                    totalReads++;
+                    const key = `footprint/${ticker}/1m/${y}/${m}/${d}/${hour}.jsonl`;
+                    try {
+                        const obj = await env.TAPE_DATA_SAHAM.get(key);
+                        if (!obj) return;
+                        const text = await obj.text();
+                        const candles = [];
+                        for (const line of text.split("\n")) {
+                            if (!line.trim()) continue;
+                            try { const c = JSON.parse(line); if (c.ohlc && c.t0) candles.push(c); } catch (_) { }
+                        }
+                        if (candles.length > 0) tickerDataMap.set(ticker, candles);
+                    } catch (_) { }
+                }));
+            }
+            console.log(`[R2-FALLBACK] Round 2 (hour ${hour}): +${stillMissing.length - unfoundTickers.filter(t => !tickerDataMap.has(t)).length} new. Total: ${tickerDataMap.size}. Reads: ${totalReads}`);
+        }
+
+        console.log(`[R2-FALLBACK] Discovery complete: ${tickerDataMap.size} tickers found. Total reads: ${totalReads}/${MAX_READS}`);
+
+        // Phase 3: Build aggregated results
+        const enriched = [];
+        const d1BackfillRows = [];
+
+        for (const [ticker, candles] of tickerDataMap) {
+            if (candles.length === 0) continue;
+            candles.sort((a, b) => a.t0 - b.t0);
+
+            // Deduplicate by t0
+            const seen = new Set();
+            const unique = candles.filter(c => {
+                if (seen.has(c.t0)) return false;
+                seen.add(c.t0);
+                return true;
+            });
+
+            // Collect for D1 backfill
+            for (const c of unique) {
+                d1BackfillRows.push({
+                    ticker, date, time_key: c.t0,
+                    open: c.ohlc.o, high: c.ohlc.h, low: c.ohlc.l, close: c.ohlc.c,
+                    vol: c.vol || 0, delta: c.delta || 0
+                });
+            }
+
+            enriched.push({
+                ticker,
+                total_vol: unique.reduce((s, c) => s + (c.vol || 0), 0),
+                total_delta: unique.reduce((s, c) => s + (c.delta || 0), 0),
+                first_time: unique[0].t0,
+                last_time: unique[unique.length - 1].t0,
+                high: Math.max(...unique.map(c => c.ohlc.h)),
+                low: Math.min(...unique.map(c => c.ohlc.l)),
+                open: unique[0].ohlc.o,
+                close: unique[unique.length - 1].ohlc.c
+            });
+        }
+
+        console.log(`[R2-FALLBACK] Aggregated ${enriched.length} tickers (${d1BackfillRows.length} candle rows)`);
+
+        // Phase 4: Backfill D1 (best effort, chunked)
+        if (d1BackfillRows.length > 0) {
+            const CHUNK = 5;
+            let backfilled = 0;
+            for (let i = 0; i < Math.min(d1BackfillRows.length, 2000); i += CHUNK) {
+                const chunk = d1BackfillRows.slice(i, i + CHUNK);
+                const placeholders = chunk.map(() => "(?, ?, ?, ?, ?, ?, ?, ?, ?)").join(", ");
+                const vals = chunk.flatMap(v => [v.ticker, v.date, v.time_key, v.open, v.high, v.low, v.close, v.vol, v.delta]);
+                try {
+                    await env.SSSAHAM_DB.prepare(
+                        `INSERT OR REPLACE INTO temp_footprint_consolidate (ticker, date, time_key, open, high, low, close, vol, delta) VALUES ${placeholders}`
+                    ).bind(...vals).run();
+                    backfilled += chunk.length;
+                } catch (e) {
+                    if (i === 0) console.error("[R2-BACKFILL] D1 write error:", e.message);
+                }
+            }
+            console.log(`[R2-BACKFILL] Wrote ${backfilled}/${d1BackfillRows.length} rows to D1`);
+        }
+
+        return enriched;
     },
 
     async fetchLatestContext(env, date) {
@@ -442,8 +635,51 @@ export default {
                 const isDebug = url.searchParams.get("debug") === "1";
                 const hourParam = url.searchParams.get("hour");
                 const hour = hourParam ? parseInt(hourParam) : undefined;
-                const result = await this.aggregateFootprint(env, date, hour);
+                const result = await this.aggregateFootprint(env, date, hour, req.url);
                 return Response.json(result);
+            }
+
+            // Diagnostic: Count R2 tickers with data for a date
+            if (url.pathname === "/diag/r2-coverage") {
+                const date = url.searchParams.get("date") || new Date().toISOString().split("T")[0];
+                const [y, mo, dy] = date.split("-");
+                const hours = ["02","03","04","05","06","07","08","09"];
+
+                // List ALL tickers from R2 prefix (paginated)
+                let allPrefixes = [];
+                let cursor = undefined;
+                let pages = 0;
+                do {
+                    const opts = { prefix: "footprint/", delimiter: "/", limit: 1000 };
+                    if (cursor) opts.cursor = cursor;
+                    const listed = await env.TAPE_DATA_SAHAM.list(opts);
+                    allPrefixes.push(...(listed.delimitedPrefixes || []));
+                    cursor = listed.truncated ? listed.cursor : undefined;
+                    pages++;
+                } while (cursor && pages < 5);
+
+                const tickers = allPrefixes.map(p => p.split("/")[1]).filter(t => t && /^[A-Z0-9]{2,4}$/.test(t));
+
+                // Probe hour 03 for a sample
+                const sample = tickers.slice(0, 200);
+                const tickerSet = new Set();
+                const batch = 50;
+                for (let i = 0; i < sample.length; i += batch) {
+                    const chunk = sample.slice(i, i + batch);
+                    await Promise.all(chunk.map(async (t) => {
+                        const obj = await env.TAPE_DATA_SAHAM.head(`footprint/${t}/1m/${y}/${mo}/${dy}/03.jsonl`);
+                        if (obj) tickerSet.add(t);
+                    }));
+                }
+
+                return Response.json({
+                    date, total_r2_prefixes: allPrefixes.length,
+                    valid_tickers: tickers.length,
+                    sample_probed: sample.length,
+                    found_at_hour_03: tickerSet.size,
+                    sample_found: Array.from(tickerSet).slice(0, 30),
+                    sample_not_found: sample.filter(t => !tickerSet.has(t)).slice(0, 30)
+                });
             }
 
             if (url.pathname === "/trigger-all") {

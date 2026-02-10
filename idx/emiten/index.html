@@ -184,8 +184,8 @@
                 </div>
                 <select id="limit-select" class="form-select form-select-sm" style="width: auto;">
                     <option value="25">Top 25</option>
-                    <option value="50" selected>Top 50</option>
-                    <option value="100">Top 100</option>
+                    <option value="50">Top 50</option>
+                    <option value="100" selected>Top 100</option>
                 </select>
             </div>
         </div>
@@ -269,6 +269,11 @@
             ? "http://127.0.0.1:8787"
             : "https://api-saham.mkemalw.workers.dev"; // Fixed worker URL
 
+        const DEBUG = new URLSearchParams(window.location.search).has('debug');
+        function dbg(...args) { if (DEBUG) console.log('%c[OF-DEBUG]', 'color:#2563eb;font-weight:bold', ...args); }
+        function dbgWarn(...args) { if (DEBUG) console.warn('%c[OF-DEBUG]', 'color:#f59e0b;font-weight:bold', ...args); }
+        function dbgTable(label, data) { if (DEBUG) { console.groupCollapsed(`%c[OF-DEBUG] ${label}`, 'color:#2563eb;font-weight:bold'); console.table(data); console.groupEnd(); } }
+
         $(function () {
 
             // --- HELPERS ---
@@ -335,17 +340,57 @@
             }
 
             function loadData(retry = 0) {
-                const url = `${API_BASE}/footprint/summary`;
+                const url = `${API_BASE}/footprint/summary?_ts=${Date.now()}`;
                 // Keep loading indicator visible during retries
                 if (retry === 0) $("#loading-indicator").show();
 
                 $.ajax({
                     url: url,
                     dataType: "json",
+                    cache: false, // Disable jQuery cache
                     timeout: 20000, // 20s timeout for Cold Start
                     success: function (resp) {
                         const rawItems = resp.items || [];
                         const generatedAt = resp.generated_at;
+                        const status = resp.status;
+                        const reason = resp.reason;
+
+                        // --- DEBUG LOGGING ---
+                        dbg('API Response:', {
+                            status, reason,
+                            version: resp.version,
+                            date: resp.date,
+                            count: resp.count,
+                            generated_at: generatedAt,
+                            items_received: rawItems.length
+                        });
+                        if (status === 'FALLBACK' || status === 'WEEKEND_FALLBACK') {
+                            dbgWarn(`⚠️ FALLBACK aktif: ${reason || 'unknown'}. Data bukan hari ini.`);
+                        }
+                        if (status === 'NO_DATA') {
+                            dbgWarn('❌ NO_DATA: API tidak punya data sama sekali.');
+                        }
+                        if (status === 'DEGRADED') {
+                            dbgWarn('⚠️ DEGRADED: Data ada tapi tidak lengkap (footprint rows kosong).');
+                        }
+                        if (rawItems.length > 0) {
+                            const signals = {};
+                            rawItems.forEach(i => { signals[i.sig] = (signals[i.sig] || 0) + 1; });
+                            dbg('Signal distribution:', signals);
+                            dbg('Sample item [0]:', rawItems[0]);
+                            const noCtx = rawItems.filter(i => !i.ctx_found && i.ctx_found !== undefined);
+                            if (noCtx.length > 0) dbgWarn(`${noCtx.length} items tanpa konteks historical (ctx_found=false)`);
+                        }
+                        // --- END DEBUG ---
+
+                        // Show fallback banner if applicable
+                        $("#fallback-banner").remove();
+                        if (status === "FALLBACK" || status === "WEEKEND_FALLBACK") {
+                            $(`<div id="fallback-banner" class="alert alert-info small py-2 px-3 mb-2 d-flex align-items-center gap-2">
+                                <i class="fa-solid fa-clock-rotate-left"></i>
+                                <span>Data historis: <strong>${reason || resp.date}</strong></span>
+                            </div>`).insertBefore("#filter-row");
+                        }
 
                         currentRows = rawItems
                             .filter(item => item.t && item.t.length <= 4 && (item.v || 0) >= 1000) // Filter warrants & illiquid (<1000 lots)
@@ -384,6 +429,15 @@
 
                         currentRows.sort((a, b) => b.score - a.score);
 
+                        dbg(`Filtered: ${rawItems.length} → ${currentRows.length} rows (removed warrants & vol<1000)`);
+                        if (currentRows.length > 0) {
+                            dbgTable('Top 10 by Score', currentRows.slice(0, 10).map(r => ({
+                                kode: r.kode, score: r.score, signal: r.signal,
+                                delta: r.money, price: r.momentum, div: r.div,
+                                vol: r.vol, ctx: r.ctx_st
+                            })));
+                        }
+
                         updateDisplay(); // Render with current limit
                         $("#loading-indicator").hide();
                         /* Error Banner cleanup */
@@ -395,10 +449,16 @@
                     },
                     error: function (xhr, status, error) {
                         console.error("Failed load footprint summary:", status, error, "Retry:", retry);
+                        dbgWarn(`❌ AJAX Error: ${status} — ${error}`, {
+                            httpStatus: xhr.status,
+                            responseText: xhr.responseText?.substring(0, 200),
+                            timeout: status === 'timeout',
+                            retry
+                        });
 
                         // Auto-retry once for Cold Starts (Timeout or 500)
                         if (retry < 1) {
-                            console.log("Retrying in 2s...");
+                            dbg('🔄 Auto-retry in 2s (cold start handling)...');
                             setTimeout(() => loadData(retry + 1), 2000);
                             return;
                         }
@@ -420,6 +480,7 @@
             }
 
             function renderTable(rows) {
+                dbg(`📋 renderTable: ${rows.length} rows`);
                 const $tbody = $("#tbody-swing");
                 $tbody.empty();
 
@@ -497,8 +558,9 @@
                 const canvas = document.getElementById("quadChart");
                 if (!canvas) return;
 
-                // NOISE FILTERING: Showcase high-conviction or high-absorption gems
-                const filtered = points.filter(p => Math.abs(p.money) > 2 || p.div > 5);
+                // OPPORTUNITY FILTER: Only show positive-conviction items (net buying / high absorption)
+                const filtered = points.filter(p => p.money > 0.5 || p.div > 5);
+                dbg(`📊 renderQuadrantChart: ${points.length} input → ${filtered.length} after opportunity filter (delta>0.5 or div>5)`);
 
                 const xVals = filtered.map(p => p.money);
                 const yVals = filtered.map(p => p.div);
@@ -506,20 +568,29 @@
                 // Add padding for largest bubble (25px radius ~ 3 units on typical scale)
                 const bubblePadding = 3;
                 const xMax = xVals.length ? Math.max(10, Math.max(...xVals) + bubblePadding) : 10;
-                const xMin = xVals.length ? Math.min(-10, Math.min(...xVals) - bubblePadding) : -10;
+                const xMin = xVals.length ? Math.min(0, Math.min(...xVals) - 1) : 0;
                 const yMax = yVals.length ? Math.max(10, Math.max(...yVals) + bubblePadding) : 10;
 
                 const colorByContext = (p) => {
                     const delta = p.money;
                     const ctx = p.ctx_st;
 
-                    if (delta > 2) {
-                        // Absorption Gems (Dark Green if ctx is Accum, else Bright Green for New Markup)
-                        if (ctx === 'ACCUMULATION' || ctx === 'WATCH_ACCUM') return "rgba(21, 128, 61, 0.9)"; // Dark Green
-                        return "rgba(34, 197, 94, 0.8)"; // Bright Green
+                    if (delta > 5) {
+                        // Strong Power — confirmed accumulation = dark green, else bright green
+                        if (ctx === 'ACCUMULATION' || ctx === 'WATCH_ACCUM') return "rgba(21, 128, 61, 0.9)";
+                        return "rgba(34, 197, 94, 0.85)";
                     }
-                    if (delta < -2) return "rgba(239, 68, 68, 0.7)"; // Heavy Selling
-                    return "rgba(148, 163, 184, 0.5)"; // Neutral Noise
+                    if (delta > 2) {
+                        // Moderate Power
+                        if (ctx === 'ACCUMULATION' || ctx === 'WATCH_ACCUM') return "rgba(21, 128, 61, 0.75)";
+                        return "rgba(34, 197, 94, 0.65)";
+                    }
+                    if (delta > 0.5) {
+                        // Mild positive — light green
+                        return "rgba(134, 239, 172, 0.6)";
+                    }
+                    // Neutral / low delta but high absorption → blue-ish (watching)
+                    return "rgba(96, 165, 250, 0.5)";
                 };
 
                 const data = {
@@ -622,6 +693,7 @@
             function updateDisplay() {
                 const limit = parseInt($("#limit-select").val()) || 50;
                 const topRows = currentRows.slice(0, limit);
+                dbg(`🔄 updateDisplay: limit=${limit}, showing ${topRows.length}/${currentRows.length} rows`);
 
                 renderTable(topRows);
                 renderQuadrantChart(topRows);
@@ -637,10 +709,13 @@
             // Heartbeat Logic
             let lastDataTime = null;
             setInterval(() => {
+                dbg('⏰ Auto-refresh triggered (60s interval)');
                 loadData();
             }, 60000); // Check every 1 minute
 
             // Init
+            dbg('🚀 Orderflow Scanner init', { API_BASE, timestamp: new Date().toISOString() });
+            if (DEBUG) console.log('%c[OF-DEBUG] Debug mode ON — tambahkan ?debug ke URL untuk aktifkan', 'color:#2563eb;font-weight:bold;font-size:14px');
             loadData();
         });
     </script>

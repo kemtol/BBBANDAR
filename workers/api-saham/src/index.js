@@ -550,37 +550,37 @@ export default {
           }
         }
 
-        // If empty (weekend or no data), calculate from last trading day
+        // If empty (weekend or no data), search back up to 7 days for last available data
         if (isEmpty) {
-          console.log(`[SUMMARY] Empty or weekend (day=${dayOfWeek}), calculating from DB...`);
+          console.log(`[SUMMARY] Empty or weekend (day=${dayOfWeek}), searching DB for recent data...`);
 
-          // Calculate last trading day
-          const lastTradingDay = new Date(now);
-          if (dayOfWeek === 0) { // Sunday -> Friday
-            lastTradingDay.setDate(lastTradingDay.getDate() - 2);
-          } else if (dayOfWeek === 6) { // Saturday -> Friday
-            lastTradingDay.setDate(lastTradingDay.getDate() - 1);
-          } else {
-            // Weekday but empty - try yesterday
-            lastTradingDay.setDate(lastTradingDay.getDate() - 1);
-          }
-          const lastTradingStr = lastTradingDay.toISOString().split("T")[0];
+          // Try up to 7 days back to find last trading day with data
+          for (let daysBack = 1; daysBack <= 7; daysBack++) {
+            const tryDate = new Date(now);
+            tryDate.setDate(tryDate.getDate() - daysBack);
+            const tryDay = tryDate.getDay();
+            // Skip weekends
+            if (tryDay === 0 || tryDay === 6) continue;
 
-          try {
-            const rangeData = await calculateFootprintRange(env, lastTradingStr, lastTradingStr);
-            if (rangeData && rangeData.items && rangeData.items.length > 0) {
-              return json({
-                version: "v3.0-hybrid",
-                generated_at: new Date().toISOString(),
-                date: lastTradingStr,
-                count: rangeData.items.length,
-                status: isWeekend ? "WEEKEND_FALLBACK" : "FALLBACK",
-                reason: isWeekend ? `Using ${lastTradingStr} (last trading day)` : `Using ${lastTradingStr}`,
-                items: rangeData.items
-              }, 200, { "Cache-Control": "public, max-age=300" }); // 5min cache for fallback
+            const tryDateStr = tryDate.toISOString().split("T")[0];
+            console.log(`[SUMMARY] Trying fallback date: ${tryDateStr} (${daysBack} days back)`);
+
+            try {
+              const rangeData = await calculateFootprintRange(env, tryDateStr, tryDateStr);
+              if (rangeData && rangeData.items && rangeData.items.length > 0) {
+                return json({
+                  version: "v3.0-hybrid",
+                  generated_at: new Date().toISOString(),
+                  date: tryDateStr,
+                  count: rangeData.items.length,
+                  status: "FALLBACK",
+                  reason: `Using ${tryDateStr} (${daysBack} day${daysBack > 1 ? 's' : ''} ago)`,
+                  items: rangeData.items
+                }, 200, { "Cache-Control": "public, max-age=300" }); // 5min cache for fallback
+              }
+            } catch (e) {
+              console.error(`[SUMMARY] Fallback ${tryDateStr} failed:`, e.message);
             }
-          } catch (e) {
-            console.error(`[SUMMARY] Fallback calculation failed:`, e.message);
           }
 
           // Final fallback: return empty with message
@@ -588,14 +588,14 @@ export default {
             version: "v3.0-hybrid",
             status: "NO_DATA",
             reason: isWeekend ? "WEEKEND_NO_DATA" : "NO_DATA",
-            message: isWeekend ? "No trading data available for weekend. Market closed." : "No data available.",
+            message: isWeekend ? "No trading data available for weekend. Market closed." : "No data available. No recent trading data found in last 7 days.",
             items: []
           }, 200);
         }
 
         // Normal case: return cached data
         const headers = new Headers();
-        headers.set("Cache-Control", "public, max-age=30"); // 30s cache
+        headers.set("Cache-Control", "no-cache, no-store, must-revalidate"); // Force fresh on every request
         headers.set("Access-Control-Allow-Origin", "*");
         headers.set("Content-Type", "application/json");
 
