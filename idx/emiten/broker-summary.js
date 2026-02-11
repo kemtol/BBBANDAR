@@ -309,30 +309,70 @@ function renderScreenerTable(candidates) {
 // =========================================
 async function loadZScoreFeatures(symbol) {
     try {
-        const response = await fetch(`${WORKER_BASE_URL}/screener`);
-        const data = await response.json();
+        // Try screener first (has z-score detail), fallback to footprint/summary
+        let item = null;
         
-        if (data && data.items) {
-            const item = data.items.find(i => i.t === symbol);
+        // Attempt 1: Screener (101 emiten with z-score breakdown)
+        const screenerResp = await fetch(`${WORKER_BASE_URL}/screener`);
+        const screenerData = await screenerResp.json();
+        if (screenerData && screenerData.items) {
+            item = screenerData.items.find(i => i.t === symbol);
             if (item && item.z && item.z["20"]) {
                 const z = item.z["20"];
                 const state = mapState(item.s);
-                
-                // Update UI with badges
                 $('#feat-effort').html(getBadge(z.e || 0, 'effort'));
                 $('#feat-response').html(getBadge(z.r || 0, 'result'));
                 $('#feat-quality').html(getBadge(z.n || 0, 'ngr'));
                 $('#feat-elasticity').html(getBadge(z.el || 0, 'elasticity'));
                 $('#feat-state').html(getStateBadgeSimple(state));
-            } else {
-                // Symbol not found in screener data
-                $('#zscore-features-card').addClass('d-none');
+                return; // Done
             }
         }
+        
+        // Attempt 2: Footprint Summary (145+ tickers, simpler data)
+        const footprintResp = await fetch(`${WORKER_BASE_URL}/footprint/summary`);
+        const footprintData = await footprintResp.json();
+        if (footprintData && footprintData.items) {
+            item = footprintData.items.find(i => i.t === symbol);
+            if (item) {
+                // Footprint summary has: sc (score), sig (signal), ctx_st (state)
+                // No z-score breakdown, show what we have
+                $('#feat-effort').html('<span class="text-muted">-</span>');
+                $('#feat-response').html('<span class="text-muted">-</span>');
+                $('#feat-quality').html('<span class="text-muted">-</span>');
+                $('#feat-elasticity').html('<span class="text-muted">-</span>');
+                $('#feat-state').html(getStateBadgeSimple(item.ctx_st || 'NEUTRAL'));
+                
+                // Also show score & signal if available
+                if (item.sc || item.sig) {
+                    // Add score display
+                    const scoreHtml = `<div class="col"><div class="small text-muted">Score</div><div class="fw-bold">${(item.sc || 0).toFixed(2)}</div></div>`;
+                    const signalHtml = `<div class="col"><div class="small text-muted">Signal</div><div class="fw-bold">${getSignalBadge(item.sig)}</div></div>`;
+                    $('#zscore-features-card .row').prepend(scoreHtml + signalHtml);
+                }
+                return;
+            }
+        }
+        
+        // Not found anywhere
+        $('#zscore-features-card').addClass('d-none');
+        
     } catch (error) {
         console.error('Error loading Z-Score features:', error);
         $('#zscore-features-card').addClass('d-none');
     }
+}
+
+function getSignalBadge(signal) {
+    const colors = {
+        'STRONG_BUY': 'bg-success',
+        'BUY': 'bg-primary',
+        'WATCH_ACCUM': 'bg-info',
+        'NEUTRAL': 'bg-secondary',
+        'TRAP_WARNING': 'bg-warning text-dark',
+        'STRONG_SELL': 'bg-danger'
+    };
+    return `<span class="badge ${colors[signal] || 'bg-secondary'}">${signal || '-'}</span>`;
 }
 
 function getStateBadgeSimple(state) {
