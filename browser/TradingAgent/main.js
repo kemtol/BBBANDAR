@@ -21,10 +21,13 @@ function createWindow() {
     height: 900,
     title: 'Algo-One Trading Agent',
     icon: nativeImage.createFromPath(iconPath),
-    autoHideMenuBar: true
+    autoHideMenuBar: true,
+    show: false,
+    backgroundColor: '#000000'
   });
 
   const LEFT_PANE_WIDTH = 420; // Forced mobile width
+  let hasShownMainWindow = false;
 
   // Pane Kiri (Web Sekuritas - Mobile Mode)
   const leftView = new BrowserView({
@@ -39,8 +42,7 @@ function createWindow() {
   const mobileUA = "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1";
   leftView.webContents.setUserAgent(mobileUA);
 
-  leftView.setBounds({ x: 0, y: 30, width: LEFT_PANE_WIDTH, height: 870 });
-  leftView.setAutoResize({ width: false, height: true });
+  leftView.setAutoResize({ width: false, height: false });
 
   // Load initial URL
   console.log("[MAIN] Initializing market URL...");
@@ -80,24 +82,52 @@ function createWindow() {
 
   // Auto Token Check on page load
   leftView.webContents.on('did-finish-load', async () => {
+    if (!hasShownMainWindow) {
+      hasShownMainWindow = true;
+      win.maximize();
+      applyViewLayout('after-maximize-request');
+      win.show();
+    }
+
     const sendLog = (msg) => {
       console.log(msg);
       try {
         const views = win.getBrowserViews();
         if (views[1] && !views[1].webContents.isDestroyed()) {
-          views[1].webContents.send('system-log' , msg);
+          views[1].webContents.send('system-log', msg);
         }
       } catch (_) { }
     };
 
     sendLog('🔑 Get public token...');
 
-    // Small delay to let page JS fully initialize
-    await new Promise(r => setTimeout(r, 2000));
+    const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const waitDurations = [3000, 5000, 7000];
+    let token = null;
+    let attemptsUsed = 0;
 
-    const token = await tokenEngine.extractPublicToken(leftView.webContents);
+    for (let attemptIndex = 0; attemptIndex < waitDurations.length; attemptIndex++) {
+      const waitMs = waitDurations[attemptIndex];
+      const attemptLabel = `${attemptIndex + 1}/${waitDurations.length}`;
+      const seconds = waitMs % 1000 === 0 ? (waitMs / 1000).toString() : (waitMs / 1000).toFixed(1);
+
+      sendLog(`⏳ Menunggu ${seconds}s sebelum ambil public token (percobaan ${attemptLabel})...`);
+      await wait(waitMs);
+
+      token = await tokenEngine.extractPublicToken(leftView.webContents);
+      if (token) {
+        attemptsUsed = attemptIndex + 1;
+        break;
+      }
+
+      if (attemptIndex < waitDurations.length - 1) {
+        sendLog('⚠️ Public token belum ditemukan, akan retry...');
+      }
+    }
+
     if (token) {
-      sendLog('✅ Public token ready');
+      const attemptSuffix = attemptsUsed > 1 ? ` (percobaan ${attemptsUsed})` : '';
+      sendLog(`✅ Public token ready${attemptSuffix}`);
       sendLog(`🔑 Public token is ${tokenEngine.mask(token)}`);
 
       // Auto-connect Live Trade stream with public token
@@ -148,8 +178,32 @@ function createWindow() {
     }
   });
   win.addBrowserView(rightView);
-  rightView.setBounds({ x: LEFT_PANE_WIDTH, y: 30, width: 1400 - LEFT_PANE_WIDTH, height: 870 });
-  rightView.setAutoResize({ width: true, height: true });
+  rightView.setAutoResize({ width: false, height: false });
+
+  const applyViewLayout = (source = 'resize') => {
+    const [contentWidth, contentHeight] = win.getContentSize();
+    const rightPaneWidth = Math.max(contentWidth - LEFT_PANE_WIDTH, 0);
+
+    leftView.setBounds({
+      x: 0,
+      y: 0,
+      width: LEFT_PANE_WIDTH,
+      height: contentHeight
+    });
+
+    rightView.setBounds({
+      x: LEFT_PANE_WIDTH,
+      y: 0,
+      width: rightPaneWidth,
+      height: contentHeight
+    });
+
+    const leftBounds = leftView.getBounds();
+    const rightBounds = rightView.getBounds();
+    console.log(`[LAYOUT:${source}] content=${contentWidth}x${contentHeight} left=${JSON.stringify(leftBounds)} right=${JSON.stringify(rightBounds)}`);
+  };
+
+  applyViewLayout('init');
 
   console.log("[MAIN] Loading dashboard (index.html)...");
   const indexPath = path.join(__dirname, 'index.html');
@@ -256,6 +310,7 @@ function createWindow() {
         const views = win.getBrowserViews();
         if (views[1]) {
           views[1].webContents.send('system-log', msg);
+
         }
       };
 
@@ -273,10 +328,9 @@ function createWindow() {
   });
 
   // Handle window resize to keep panes aligned
-  win.on('resize', () => {
-    const { width, height } = win.getBounds();
-    leftView.setBounds({ x: 0, y: 30, width: LEFT_PANE_WIDTH, height: height - 30 });
-    rightView.setBounds({ x: LEFT_PANE_WIDTH, y: 30, width: width - LEFT_PANE_WIDTH, height: height - 30 });
+  const resizeEvents = ['resize', 'maximize', 'unmaximize', 'enter-full-screen', 'leave-full-screen'];
+  resizeEvents.forEach((evt) => {
+    win.on(evt, () => applyViewLayout(evt));
   });
 }
 

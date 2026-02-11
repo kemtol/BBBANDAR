@@ -25,9 +25,13 @@
             background-color: var(--bg-dark);
             font-family: 'JetBrains Mono', 'Inter', monospace;
             color: var(--text-main);
-            padding: 10px;
+            padding: 0;
             margin: 0;
             overflow-x: hidden;
+        }
+
+        .container-fluid {
+            padding: 10px;
         }
 
         /* Sharp Corners Everywhere except switches */
@@ -602,12 +606,18 @@
 
     <script src="./node_modules/bootstrap/dist/js/bootstrap.bundle.min.js"></script>
     <script>
+        let nodeFs = null;
+        let nodePath = null;
         // Check if we are in Electron to avoid "require is not defined" in browser preview
         if (typeof require !== 'undefined') {
             window.$ = window.jQuery = require('./node_modules/jquery/dist/jquery.min.js');
+            nodeFs = require('fs');
+            nodePath = require('path');
         } else {
             console.warn("RENDERER: Running in browser mode. Node.js features (require/Electron) are disabled.");
         }
+        window.nodeFs = nodeFs;
+        window.nodePath = nodePath;
     </script>
     <script>
         // Move window.onerror to the very top, before ANY other logic
@@ -641,6 +651,138 @@
         }
 
         $(document).ready(function () {
+            const fs = window.nodeFs;
+            const path = window.nodePath;
+            const strategiesDir = fs ? path.join(__dirname, 'data', 'strategies') : null;
+            let presetList = [];
+            let activePresetId = 'manual';
+            let lastLoadedConfig = null;
+            let isDirty = false;
+            let suspendDirtyTracking = false;
+
+            const defaultPresets = [
+                {
+                    id: 'bekti',
+                    label: '🚀 Bekti Sutikna (Frequency/Burst)',
+                    description: 'Mode Scalping: Mencari ledakan transaksi (Burst) dengan Z-Score tinggi.',
+                    config: {
+                        whale: {
+                            enabled: false,
+                            minVal: '500.000.000',
+                            minLot: 1000,
+                            side: 'both'
+                        },
+                        freq: {
+                            enabled: true,
+                            count: 15,
+                            time: 3,
+                            zscore: 2.5
+                        },
+                        quality: {
+                            enabled: true,
+                            priceAction: 'stable',
+                            avgLot: 10,
+                            hakaRatio: 70,
+                            maxSpread: 2,
+                            wallCheck: true
+                        },
+                        timeParam: {
+                            enabled: false,
+                            maxTime: '09:15',
+                            minChg: 2.0
+                        },
+                        risk: {
+                            tp: 1.5,
+                            sl: -1.5,
+                            allocation: '5.000.000',
+                            autoCutloss: true,
+                            trailingStop: false
+                        },
+                        watchlist: []
+                    }
+                },
+                {
+                    id: 'john',
+                    label: '🐋 John Wijaya/MG (Whale/Value)',
+                    description: 'Mode Whale: Mencari transaksi Jumbo (Min 500jt) yang memakan Offer.',
+                    config: {
+                        whale: {
+                            enabled: true,
+                            minVal: '500.000.000',
+                            minLot: 1000,
+                            side: 'buy'
+                        },
+                        freq: {
+                            enabled: false,
+                            count: 12,
+                            time: 4,
+                            zscore: 2.0
+                        },
+                        quality: {
+                            enabled: true,
+                            priceAction: 'stable',
+                            avgLot: 20,
+                            hakaRatio: 60,
+                            maxSpread: 3,
+                            wallCheck: true
+                        },
+                        timeParam: {
+                            enabled: false,
+                            maxTime: '09:30',
+                            minChg: 1.5
+                        },
+                        risk: {
+                            tp: 3.0,
+                            sl: -3.0,
+                            allocation: '10.000.000',
+                            autoCutloss: true,
+                            trailingStop: true
+                        },
+                        watchlist: []
+                    }
+                },
+                {
+                    id: 'john_openlow',
+                    label: '☀️ Koh John (Open=Low)',
+                    description: 'Mode Pagi: Mencari saham Open=Low yang baru mulai naik.',
+                    config: {
+                        whale: {
+                            enabled: false,
+                            minVal: '300.000.000',
+                            minLot: 500,
+                            side: 'both'
+                        },
+                        freq: {
+                            enabled: false,
+                            count: 10,
+                            time: 5,
+                            zscore: 1.8
+                        },
+                        quality: {
+                            enabled: false,
+                            priceAction: 'uptrend',
+                            avgLot: 5,
+                            hakaRatio: 60,
+                            maxSpread: 2,
+                            wallCheck: true
+                        },
+                        timeParam: {
+                            enabled: true,
+                            maxTime: '09:15',
+                            minChg: 2.0
+                        },
+                        risk: {
+                            tp: 2.0,
+                            sl: -1.0,
+                            allocation: '5.000.000',
+                            autoCutloss: true,
+                            trailingStop: false
+                        },
+                        watchlist: []
+                    }
+                }
+            ];
+
             // Initialize Bootstrap Tooltips
             var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'))
             var tooltipList = tooltipTriggerList.map(function (tooltipTriggerEl) {
@@ -649,7 +791,300 @@
 
             log("UI: System initialized...");
 
-            // IPC Listener for system-log messages from main process
+            function ensureStrategiesDir() {
+                if (!fs || !strategiesDir) return;
+                if (!fs.existsSync(strategiesDir)) {
+                    try {
+                        fs.mkdirSync(strategiesDir, { recursive: true });
+                        log('[PRESET] Created strategies directory.');
+                    } catch (err) {
+                        console.error('[PRESET] Failed to create strategies directory:', err);
+                    }
+                }
+            }
+
+            function reloadPresetList() {
+                presetList = defaultPresets.map((preset) => ({ ...preset, source: 'builtin' }));
+                if (!fs || !strategiesDir) {
+                    presetList.sort((a, b) => (a.label || '').localeCompare(b.label || '', 'id'));
+                    return;
+                }
+                try {
+                    const files = fs.readdirSync(strategiesDir);
+                    files.filter((file) => file.endsWith('.json')).forEach((file) => {
+                        const absPath = path.join(strategiesDir, file);
+                        try {
+                            const raw = fs.readFileSync(absPath, 'utf8');
+                            const parsed = JSON.parse(raw);
+                            if (parsed && parsed.id) {
+                                const entry = {
+                                    id: parsed.id,
+                                    label: parsed.label || parsed.id,
+                                    description: parsed.description || '',
+                                    config: parsed.config || {},
+                                    source: 'file',
+                                    filePath: absPath
+                                };
+                                const existingIdx = presetList.findIndex((preset) => preset.id === entry.id);
+                                if (existingIdx >= 0) {
+                                    presetList[existingIdx] = entry;
+                                } else {
+                                    presetList.push(entry);
+                                }
+                            }
+                        } catch (err) {
+                            console.error(`[PRESET] Failed parsing preset ${file}:`, err.message);
+                        }
+                    });
+                    presetList.sort((a, b) => (a.label || '').localeCompare(b.label || '', 'id'));
+                } catch (err) {
+                    console.error('[PRESET] Failed reading strategies directory:', err.message);
+                }
+            }
+
+            function populatePresetSelect(selectedId) {
+                const $select = $('#preset-select');
+                const previous = selectedId || activePresetId || 'manual';
+                $select.empty();
+                $select.append('<option value="manual">-- Custom Manual --</option>');
+                presetList.forEach((preset) => {
+                    const option = $('<option>').val(preset.id).text(preset.label);
+                    $select.append(option);
+                });
+                if (previous && $select.find(`option[value="${previous}"]`).length) {
+                    $select.val(previous);
+                } else {
+                    $select.val('manual');
+                }
+            }
+
+            function getPresetById(id) {
+                if (!id) return null;
+                return presetList.find((preset) => preset.id === id) || null;
+            }
+
+            function updatePresetHighlights(preset) {
+                $('.setting-group').removeClass('active');
+                if (!preset || preset.id === 'manual') {
+                    $('#group-frequency').addClass('active');
+                    $('#group-whale').addClass('active');
+                    return;
+                }
+                const cfg = preset.config || {};
+                if (cfg.whale?.enabled) $('#group-whale').addClass('active');
+                if (cfg.freq?.enabled) $('#group-frequency').addClass('active');
+                if (cfg.quality?.enabled) $('#group-quality').addClass('active');
+                if (cfg.timeParam?.enabled) $('#group-openlow').addClass('active');
+                // Ensure at least one active for visual reference
+                if ($('.setting-group.active').length === 0) {
+                    $('#group-frequency').addClass('active');
+                }
+            }
+
+            function updatePresetDescription(preset) {
+                const defaultDesc = 'Pilih preset untuk memuat parameter.';
+                if (!preset || preset.id === 'manual') {
+                    $('#preset-desc').text('Manual Mode: Semua parameter bisa diatur sendiri.');
+                } else {
+                    $('#preset-desc').text(preset.description || defaultDesc);
+                }
+            }
+
+            function setToggleValue(selector, value) {
+                const $el = $(selector);
+                const boolVal = Boolean(value);
+                if ($el.prop('checked') !== boolVal) {
+                    $el.prop('checked', boolVal);
+                }
+                $el.trigger('change');
+            }
+
+            function setInputValue(selector, value) {
+                const $el = $(selector);
+                if ($el.val() !== String(value ?? '')) {
+                    $el.val(value ?? '');
+                }
+            }
+
+            function updateZScoreDisplay() {
+                $('#zscore-val').text($('#var-zscore').val());
+            }
+
+            function updateHakaBadge() {
+                $('#val-haka').text(`${$('#var-haka-ratio').val()}%`);
+            }
+
+            function setWatchlistFromPreset(tickers) {
+                clearWatchlist({ silent: true });
+                if (Array.isArray(tickers)) {
+                    tickers.forEach((ticker) => addTicker(ticker, { silent: true }));
+                }
+                updateFinalWatchlist({ silent: true });
+            }
+
+            function applyPresetConfig(preset) {
+                if (!preset) return;
+                const cfg = preset.config || {};
+                suspendDirtyTracking = true;
+
+                if (cfg.whale) {
+                    setToggleValue('#toggle-whale', cfg.whale.enabled);
+                    setInputValue('#var-whale-val', cfg.whale.minVal ?? '500.000.000');
+                    setInputValue('#var-whale-lot', cfg.whale.minLot ?? 1000);
+                    setInputValue('#var-whale-side', cfg.whale.side ?? 'both');
+                } else {
+                    setToggleValue('#toggle-whale', false);
+                    setInputValue('#var-whale-val', '500.000.000');
+                    setInputValue('#var-whale-lot', 1000);
+                    setInputValue('#var-whale-side', 'both');
+                }
+
+                if (cfg.freq) {
+                    setToggleValue('#toggle-freq', cfg.freq.enabled);
+                    setInputValue('#var-freq-count', cfg.freq.count ?? 15);
+                    setInputValue('#var-freq-time', cfg.freq.time ?? 3);
+                    setInputValue('#var-zscore', cfg.freq.zscore ?? 2.5);
+                    updateZScoreDisplay();
+                } else {
+                    setToggleValue('#toggle-freq', false);
+                    setInputValue('#var-freq-count', 15);
+                    setInputValue('#var-freq-time', 3);
+                    setInputValue('#var-zscore', 2.5);
+                    updateZScoreDisplay();
+                }
+
+                if (cfg.quality) {
+                    setToggleValue('#toggle-quality', cfg.quality.enabled);
+                    setInputValue('#var-price-action', cfg.quality.priceAction ?? 'stable');
+                    setInputValue('#var-avg-lot', cfg.quality.avgLot ?? 10);
+                    setInputValue('#var-haka-ratio', cfg.quality.hakaRatio ?? 70);
+                    updateHakaBadge();
+                    setInputValue('#var-max-spread', cfg.quality.maxSpread ?? 2);
+                    $('#var-wall-check').prop('checked', cfg.quality.wallCheck ?? true);
+                } else {
+                    setToggleValue('#toggle-quality', false);
+                    setInputValue('#var-price-action', 'stable');
+                    setInputValue('#var-avg-lot', 10);
+                    setInputValue('#var-haka-ratio', 70);
+                    updateHakaBadge();
+                    setInputValue('#var-max-spread', 2);
+                    $('#var-wall-check').prop('checked', true);
+                }
+
+                if (cfg.timeParam) {
+                    setToggleValue('#toggle-time-param', cfg.timeParam.enabled);
+                    setInputValue('#var-ol-time', cfg.timeParam.maxTime ?? '09:15');
+                    setInputValue('#var-ol-min-chg', cfg.timeParam.minChg ?? 2.0);
+                } else {
+                    setToggleValue('#toggle-time-param', false);
+                    setInputValue('#var-ol-time', '09:15');
+                    setInputValue('#var-ol-min-chg', 2.0);
+                }
+
+                if (cfg.risk) {
+                    setInputValue('#risk-tp', cfg.risk.tp ?? 2.0);
+                    setInputValue('#risk-sl', cfg.risk.sl ?? -2.0);
+                    setInputValue('#risk-allocation', cfg.risk.allocation ?? '5.000.000');
+                    $('#auto-cutloss').prop('checked', cfg.risk.autoCutloss ?? true);
+                    $('#trailing-stop').prop('checked', cfg.risk.trailingStop ?? false);
+                } else {
+                    setInputValue('#risk-tp', 2.0);
+                    setInputValue('#risk-sl', -2.0);
+                    setInputValue('#risk-allocation', '5.000.000');
+                    $('#auto-cutloss').prop('checked', true);
+                    $('#trailing-stop').prop('checked', false);
+                }
+
+                setWatchlistFromPreset(cfg.watchlist || []);
+
+                suspendDirtyTracking = false;
+                lastLoadedConfig = gatherConfig();
+                setDirty(false);
+            }
+
+            function setDirty(state) {
+                isDirty = state;
+                const $btn = $('#btn-save');
+                if (state) {
+                    $btn.prop('disabled', false);
+                    $btn.text('💾 SAVE PARAMETERS*');
+                } else {
+                    $btn.prop('disabled', true);
+                    $btn.text('💾 SAVE PARAMETERS');
+                }
+            }
+
+            function markDirty() {
+                if (suspendDirtyTracking) return;
+                setDirty(true);
+            }
+
+            function slugify(str) {
+                return String(str || '')
+                    .trim()
+                    .toLowerCase()
+                    .replace(/[^a-z0-9\-\s_]/g, '')
+                    .replace(/[\s_]+/g, '-');
+            }
+
+            function registerDirtyTracking() {
+                const selectors = [
+                    '#toggle-whale', '#var-whale-val', '#var-whale-side', '#var-whale-lot',
+                    '#toggle-freq', '#var-freq-count', '#var-freq-time', '#var-zscore',
+                    '#toggle-quality', '#var-price-action', '#var-avg-lot', '#var-haka-ratio', '#var-max-spread', '#var-wall-check',
+                    '#toggle-time-param', '#var-ol-time', '#var-ol-min-chg',
+                    '#risk-tp', '#risk-sl', '#risk-allocation', '#auto-cutloss', '#trailing-stop'
+                ];
+                selectors.forEach((selector) => {
+                    $(selector).on('change', markDirty);
+                });
+                $('#var-zscore').on('input', function () {
+                    updateZScoreDisplay();
+                    markDirty();
+                });
+                $('#var-haka-ratio').on('input', function () {
+                    updateHakaBadge();
+                    markDirty();
+                });
+            }
+
+            function loadPresetById(id) {
+                const preset = getPresetById(id);
+                if (!preset) return false;
+                activePresetId = id;
+                log(`[PRESET] Loading preset ${preset.label}...`);
+                applyPresetConfig(preset);
+                updatePresetHighlights(preset);
+                updatePresetDescription(preset);
+                $('.setting-group.active').css('background-color', '#333');
+                setTimeout(() => $('.setting-group.active').css('background-color', 'transparent'), 200);
+                return true;
+            }
+
+            function clearWatchlist(options = {}) {
+                const { silent = false } = options;
+                const $container = $('#watchlist-container');
+                $container.find('.ticker-badge').remove();
+                $('#empty-msg').show();
+                if (!silent && !suspendDirtyTracking) {
+                    markDirty();
+                }
+            }
+
+            function initPresetSystem() {
+                if (fs && strategiesDir) {
+                    ensureStrategiesDir();
+                    reloadPresetList();
+                }
+                populatePresetSelect(activePresetId);
+                registerDirtyTracking();
+                suspendDirtyTracking = true;
+                $('#preset-select').trigger('change');
+                suspendDirtyTracking = false;
+                lastLoadedConfig = gatherConfig();
+                setDirty(false);
+            }
+
             if (window.ipcRenderer && window.ipcRenderer.on) {
                 ipcRenderer.on('system-log', (event, msg) => {
                     log(msg);
@@ -658,53 +1093,39 @@
 
             // 1. LOGIC PRESET SWITCHING (Preview & Toggle Visibility)
             $('#preset-select').on('change', function () {
-                const preset = $(this).val();
-                $('.setting-group').removeClass('active');
-
-                if (preset === 'bekti') {
-                    $('#group-frequency').addClass('active');
-                    $('#preset-desc').text("Mode Scalping: Mencari ledakan transaksi (Burst) dengan Z-Score tinggi.");
-                } else if (preset === 'john') {
-                    $('#group-whale').addClass('active');
-                    $('#preset-desc').text("Mode Whale: Mencari transaksi Jumbo (Min 500jt) yang memakan Offer.");
-                } else if (preset === 'john_openlow') {
-                    $('#group-openlow').addClass('active');
-                    $('#preset-desc').text("Mode Pagi: Mencari saham Open=Low yang baru mulai naik.");
-                } else {
-                    $('#group-frequency').addClass('active');
-                    $('#group-whale').addClass('active');
-                    $('#preset-desc').text("Manual Mode: Semua parameter bisa diatur sendiri.");
+                const selectedId = $(this).val();
+                if (selectedId === 'manual') {
+                    activePresetId = 'manual';
+                    updatePresetHighlights(null);
+                    updatePresetDescription(null);
+                    lastLoadedConfig = gatherConfig();
+                    setDirty(false);
+                    return;
                 }
+                const preset = getPresetById(selectedId);
+                if (!preset) {
+                    log(`[PRESET] Preset ${selectedId} tidak ditemukan.`);
+                    updatePresetHighlights(null);
+                    updatePresetDescription(null);
+                    activePresetId = 'manual';
+                    return;
+                }
+                loadPresetById(selectedId);
             });
 
             // 1b. LOGIC LOAD PRESET (Apply Values)
             $('#btn-load-preset').on('click', function () {
-                const preset = $('#preset-select').val();
-                log(`UI: Loading preset ${preset.toUpperCase()}...`);
-
-                if (preset === 'bekti') {
-                    $('#var-freq-count').val(15);
-                    $('#var-freq-time').val(3);
-                    $('#var-zscore').val(2.5).trigger('input');
-                    $('#risk-tp').val(1.5);
-                    $('#risk-sl').val(-1.5);
-                } else if (preset === 'john') {
-                    $('#var-whale-val').val("500.000.000");
-                    $('#risk-tp').val(3.0);
-                    $('#risk-sl').val(-3.0);
-                } else if (preset === 'john_openlow') {
-                    $('#var-ol-time').val("09:15");
-                    $('#risk-tp').val(2.0);
-                    $('#risk-sl').val(-1.0);
+                const selectedId = $('#preset-select').val();
+                if (selectedId === 'manual') {
+                    log('UI: Manual mode aktif, tidak ada preset untuk dimuat ulang.');
+                    return;
                 }
-
-                // Visual feedback flash
-                $('.setting-group.active').css('background-color', '#333');
-                setTimeout(() => $('.setting-group.active').css('background-color', 'transparent'), 200);
+                if (!loadPresetById(selectedId)) {
+                    alert('Preset tidak ditemukan.');
+                }
             });
 
-            // Trigger change di awal biar defaultnya Bekti/Manual kelihatan
-            $('#preset-select').val('manual').trigger('change');
+            initPresetSystem();
 
             // 2. LOGIC Z-SCORE SLIDER (Visual Feedback)
             $('#var-zscore').on('input', function () {
@@ -768,15 +1189,71 @@
 
             // 4. LOGIC SAVE & START
             $('#btn-save').on('click', function () {
-                const config = gatherConfig();
-                log("Configuration Saved: " + JSON.stringify(config));
-                // Disini nanti kirim config ke backend logic
-                ipcRenderer.send('update-config', config);
+                if (!isDirty) {
+                    log('[PRESET] Tidak ada perubahan yang perlu disimpan.');
+                    return;
+                }
 
-                const $btn = $(this);
-                const originalText = $btn.text();
-                $btn.text("✅ SAVED!").addClass('btn-outline-primary').removeClass('btn-primary');
-                setTimeout(() => $btn.text(originalText).addClass('btn-primary').removeClass('btn-outline-primary'), 1000);
+                if (!fs || !strategiesDir) {
+                    alert('Save preset hanya tersedia ketika aplikasi dijalankan lewat Electron.');
+                    return;
+                }
+
+                const config = gatherConfig();
+
+                const baseName = activePresetId && activePresetId !== 'manual'
+                    ? `${activePresetId}-custom`
+                    : '';
+                const inputName = prompt('Nama preset baru?', baseName);
+                if (inputName === null) {
+                    log('[PRESET] Penyimpanan dibatalkan.');
+                    return;
+                }
+                const presetName = inputName.trim();
+                if (!presetName) {
+                    alert('Nama preset tidak boleh kosong.');
+                    return;
+                }
+
+                const slug = slugify(presetName);
+                if (!slug) {
+                    alert('Nama preset tidak valid. Gunakan huruf/angka saja.');
+                    return;
+                }
+
+                ensureStrategiesDir();
+                const filePath = path.join(strategiesDir, `${slug}.json`);
+                if (fs.existsSync(filePath)) {
+                    const overwrite = confirm(`Preset dengan nama "${presetName}" sudah ada. Timpa file?`);
+                    if (!overwrite) {
+                        log('[PRESET] Penyimpanan dibatalkan (user menolak overwrite).');
+                        return;
+                    }
+                }
+
+                const { presetId, ...configToSave } = config;
+                const payload = {
+                    id: slug,
+                    label: presetName,
+                    description: `Custom preset disimpan pada ${new Date().toLocaleString('id-ID')}`,
+                    config: configToSave
+                };
+
+                try {
+                    fs.writeFileSync(filePath, JSON.stringify(payload, null, 2), 'utf8');
+                    log(`[PRESET] Preset "${presetName}" disimpan ke ${filePath}.`);
+                    reloadPresetList();
+                    populatePresetSelect(slug);
+                    loadPresetById(slug);
+                    lastLoadedConfig = gatherConfig();
+                    setDirty(false);
+                    if (window.ipcRenderer) {
+                        ipcRenderer.send('update-config', { ...lastLoadedConfig });
+                    }
+                } catch (err) {
+                    console.error('[PRESET] Gagal menyimpan preset:', err);
+                    alert(`Gagal menyimpan preset: ${err.message}`);
+                }
             });
 
             // --- LOGIC START / FLATTEN ENGINE ---
@@ -872,39 +1349,45 @@
 
             // Helper Gather Data
             function gatherConfig() {
+                const watchlistRaw = $('#final-watchlist').val();
+                const watchlist = watchlistRaw
+                    ? watchlistRaw.split(',').map((t) => t.trim()).filter((t) => t.length > 0)
+                    : [];
                 return {
-                    preset: $('#preset-select').val(),
+                    presetId: activePresetId,
                     whale: {
                         minVal: $('#var-whale-val').val(),
                         side: $('#var-whale-side').val(),
-                        minLot: $('#var-whale-lot').val(),
+                        minLot: Number($('#var-whale-lot').val() || 0),
                         enabled: $('#toggle-whale').is(':checked')
                     },
                     freq: {
-                        count: $('#var-freq-count').val(),
-                        time: $('#var-freq-time').val(),
-                        zscore: $('#var-zscore').val(),
+                        count: Number($('#var-freq-count').val() || 0),
+                        time: Number($('#var-freq-time').val() || 0),
+                        zscore: Number($('#var-zscore').val() || 0),
                         enabled: $('#toggle-freq').is(':checked')
                     },
                     quality: {
                         enabled: $('#toggle-quality').is(':checked'),
                         priceAction: $('#var-price-action').val(),
-                        avgLot: $('#var-avg-lot').val(),
-                        hakaRatio: $('#var-haka-ratio').val(),
-                        maxSpread: $('#var-max-spread').val(),
+                        avgLot: Number($('#var-avg-lot').val() || 0),
+                        hakaRatio: Number($('#var-haka-ratio').val() || 0),
+                        maxSpread: Number($('#var-max-spread').val() || 0),
                         wallCheck: $('#var-wall-check').is(':checked')
                     },
                     timeParam: {
                         enabled: $('#toggle-time-param').is(':checked'),
                         maxTime: $('#var-ol-time').val(),
-                        minChg: $('#var-ol-min-chg').val()
+                        minChg: Number($('#var-ol-min-chg').val() || 0)
                     },
                     risk: {
-                        tp: $('#risk-tp').val(),
-                        sl: $('#risk-sl').val(),
-                        allocation: $('#risk-allocation').val()
+                        tp: Number($('#risk-tp').val() || 0),
+                        sl: Number($('#risk-sl').val() || 0),
+                        allocation: $('#risk-allocation').val(),
+                        autoCutloss: $('#auto-cutloss').is(':checked'),
+                        trailingStop: $('#trailing-stop').is(':checked')
                     },
-                    watchlist: $('#final-watchlist').val().split(',')
+                    watchlist
                 };
             }
 
@@ -970,8 +1453,9 @@
                 }
             });
 
-            function addTicker(ticker) {
-                ticker = ticker.trim().toUpperCase();
+            function addTicker(ticker, options = {}) {
+                const { silent = false } = options;
+                ticker = (ticker || '').trim().toUpperCase();
                 if (!ticker) return;
 
                 // Check duplicate
@@ -984,7 +1468,7 @@
                     </div>
                 `);
                 $container.append($badge);
-                updateFinalWatchlist();
+                updateFinalWatchlist({ silent });
             }
 
             // Remove Ticker
@@ -996,12 +1480,16 @@
                 updateFinalWatchlist();
             });
 
-            function updateFinalWatchlist() {
+            function updateFinalWatchlist(options = {}) {
+                const { silent = false } = options;
                 const tickers = [];
                 $container.find('.ticker-badge').each(function () {
                     tickers.push($(this).data('ticker'));
                 });
                 $('#final-watchlist').val(tickers.join(','));
+                if (!silent && !suspendDirtyTracking) {
+                    markDirty();
+                }
             }
 
             // PRESET WATCHLIST
@@ -1021,7 +1509,7 @@
             });
 
             // Pre-fill default watchlist if any
-            updateFinalWatchlist();
+            updateFinalWatchlist({ silent: true });
         });
     </script>
 </body>

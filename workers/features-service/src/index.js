@@ -88,76 +88,95 @@ export default {
 
     async aggregateHybrid(env, date, hour, url) {
         try {
-            console.log(`Starting Hybrid Footprint Aggregation (v3.0) for ${date} hour ${hour}...`);
+            console.log(`Starting Hybrid Footprint Aggregation (v3.1-merged) for ${date} hour ${hour}...`);
             const startTime = Date.now();
-
-            // Support Simulation: If 'hour' is explicitly passed via query (not shown here but passed from fetch),
-            // we can filter the SQL. But `aggregateFootprint` signature doesn't take hour.
-            // Let's rely on `fetchFootprintAggregates` taking an optional end_hour.
-
-            // 1. Fetch Footprint Data (L1 Trigger)
-            // If we want simulation, we need to limit the time_key.
-            // 10:00 WIB = 03:00 UTC. 
-            // 16:00 WIB = 09:00 UTC.
-            // Let's add a hack: if hour < 20 (meaning intraday), we limit the query?
-            // Actually, let's just use the 'hour' arg passed to this function as the limit.
-            // But in `fetch`: const hour = parseInt(url.searchParams.get('hour') || getCurrentHour());
-            // So we already have the requested hour.
 
             const forceR2 = url ? (new URL(url).searchParams.get('source') === 'r2') : false;
             let footprintData = await this.fetchFootprintAggregates(env, date, hour, forceR2);
 
-            // Filter Invalid Tickers (Backend Optimization)
+            // Filter Invalid Tickers
             footprintData = footprintData.filter(fp => this.isValidTicker(fp.ticker));
-            console.log(`Step 1: Fetched & Filtered to ${footprintData.length} footprint items (Limit Hour: ${hour}).`);
+            console.log(`Step 1: Fetched ${footprintData.length} footprint items (Hour: ${hour})`);
 
-            // 2. Fetch Context Data (L2 Historical)
+            // 2. Fetch Context Data (ALL emiten with z-score)
             const contextData = await this.fetchLatestContext(env, date);
-            console.log(`Step 2: Fetched ${contextData.length} context items.`);
+            console.log(`Step 2: Fetched ${contextData.length} context items (z-score)`);
 
             const contextMap = new Map();
             contextData.forEach(c => contextMap.set(c.ticker, c));
 
-            // 3. Join & Calculate Hybrid Scores
-            // 3. Join & Calculate Hybrid Scores (Telemetry Patch)
-            const items = footprintData.map(fp => {
-                const ctxFound = contextMap.has(fp.ticker);
-                const ctx = ctxFound ? contextMap.get(fp.ticker) : null;
-                return this.calculateHybridItem(fp, ctx, ctxFound);
-            }).filter(Boolean);
+            // Create footprint lookup for quick access
+            const footprintMap = new Map();
+            footprintData.forEach(fp => footprintMap.set(fp.ticker, fp));
 
-            // 3b. Sort by Score Descending (Critical for Frontend Display)
-            items.sort((a, b) => (b.sc || 0) - (a.sc || 0));
+            // 3. MERGE: Union of footprint + context tickers
+            const allTickers = new Set([
+                ...footprintData.map(fp => fp.ticker),
+                ...contextData.map(c => c.ticker).filter(t => this.isValidTicker(t))
+            ]);
+            console.log(`Step 3: Merged ticker set = ${allTickers.size} unique tickers`);
 
-            // 4. Validate Data Quality
-            const validation = this.validateHybridData(items);
-            if (validation.missing_context > 100) {
-                console.warn(`WARNING: High missing context count: ${validation.missing_context}`);
+            // 4. Calculate hybrid items for ALL tickers
+            const items = [];
+            let withFootprint = 0;
+            let zscoreOnly = 0;
+
+            for (const ticker of allTickers) {
+                const fp = footprintMap.get(ticker);
+                const ctx = contextMap.get(ticker);
+                const ctxFound = !!ctx;
+
+                if (fp) {
+                    // HAS FOOTPRINT: Full hybrid calculation
+                    const item = this.calculateHybridItem(fp, ctx, ctxFound);
+                    if (item) {
+                        item.src = 'FULL';  // Source indicator
+                        items.push(item);
+                        withFootprint++;
+                    }
+                } else if (ctx) {
+                    // ZSCORE ONLY: Create item from context data
+                    const item = this.calculateZscoreOnlyItem(ticker, ctx);
+                    if (item) {
+                        item.src = 'ZSCORE';  // Source indicator
+                        items.push(item);
+                        zscoreOnly++;
+                    }
+                }
             }
 
-            // 5. Save to R2
-            // 5. Save to R2 (Availability Fix: Always write output)
+            console.log(`Step 4: Generated ${items.length} items (${withFootprint} full, ${zscoreOnly} zscore-only)`);
+
+            // 5. Sort by Score Descending
+            items.sort((a, b) => (b.sc || 0) - (a.sc || 0));
+
+            // 6. Validate Data Quality
+            const validation = this.validateHybridData(items);
+            validation.with_footprint = withFootprint;
+            validation.zscore_only = zscoreOnly;
+
+            // 7. Save to R2
             const output = {
-                version: 'v3.0-hybrid',
+                version: 'v3.1-merged',
                 generated_at: new Date().toISOString(),
                 date: date,
                 hour: hour,
                 count: items.length,
                 status: items.length > 0 ? "OK" : "DEGRADED",
-                reason: items.length > 0 ? null : "NO_FOOTPRINT_ROWS",
+                reason: items.length > 0 ? null : "NO_DATA",
                 duration_ms: Date.now() - startTime,
                 validation: validation,
                 items: items
             };
 
             await env.SSSAHAM_EMITEN.put('features/footprint-summary.json', JSON.stringify(output));
-            console.log(`Saved Hybrid Footprint Summary (v3) with ${items.length} items. Status: ${output.status}`);
+            console.log(`Saved Merged Summary (v3.1) with ${items.length} items (${withFootprint} full + ${zscoreOnly} zscore-only)`);
 
             return output;
         } catch (err) {
             console.error("Hybrid Aggregation CRITICAL FAILURE:", err);
             await env.SSSAHAM_EMITEN.put('debug/hybrid_crash.txt', `Date: ${date}\nError: ${err.message}\nStack: ${err.stack}`);
-            throw err; // Re-throw to ensure upstream knows
+            throw err;
         }
     },
 
@@ -203,26 +222,27 @@ export default {
             GROUP BY ticker
         `).bind(date).all();
 
-        if (forceR2 || !results || results.length === 0) {
-            console.log(`[D1-EMPTY] ${forceR2 ? 'Force R2 requested' : 'No footprint data in D1'} for ${date}. Using R2 fallback...`);
-            return await this.fetchFootprintFromR2(env, date);
+        if (forceR2) {
+            console.log(`[FORCE-R2] R2 source explicitly requested for ${date}.`);
+            return await this.fetchFootprintFromR2(env, date, []);  // Empty excludeList = probe all
         }
 
-        // If D1 has fewer tickers than expected (~900 active), supplement from R2
-        const uniqueTickers = new Set(results.map(r => r.ticker));
-        if (uniqueTickers.size < 200) {
-            console.log(`[D1-SPARSE] Only ${uniqueTickers.size} tickers in D1 for ${date}. Supplementing from R2...`);
-            return await this.fetchFootprintFromR2(env, date);
+        if (!results || results.length === 0) {
+            console.log(`[D1-EMPTY] No footprint data in D1 for ${date}. Using R2 fallback...`);
+            return await this.fetchFootprintFromR2(env, date, []);  // Empty excludeList = probe all
         }
 
-        console.log("DEBUG: Raw Aggregation Item [0]:", JSON.stringify(results[0]));
+        // D1 has some data - use it and SUPPLEMENT from R2 only for missing tickers
+        const d1Tickers = results.map(r => r.ticker);
+        console.log(`[D1-DATA] Found ${d1Tickers.length} tickers in D1 for ${date}`);
 
-        // Step B: Put into Map for enrichment
-        // Fetch Open/Close using batch WHERE IN approach or individual checks if batch is too complex to map back.
-        // Given D1 limitations, simplest robust way is: 
-        // Select all opens and closes for this params?
-        // Actually, let's process in chunks of 50 to get specific Open/Close.
+        // Supplement from R2 only for tickers NOT in D1 (budget-friendly)
+        const r2Supplement = await this.fetchFootprintFromR2(env, date, d1Tickers);
+        console.log(`[R2-SUPPLEMENT] Found ${r2Supplement.length} additional tickers from R2`);
 
+        console.log("DEBUG: Raw D1 Aggregation Item [0]:", JSON.stringify(results[0]));
+
+        // Step B: Enrich D1 data with OHLC
         const enriched = [];
         const BATCH_SIZE = 50;
 
@@ -232,8 +252,11 @@ export default {
             enriched.push(...enrichedChunk);
         }
 
-        console.log("DEBUG: Enriched Item [0]:", JSON.stringify(enriched[0]));
-        return enriched;
+        // Step C: Merge D1 enriched + R2 supplement
+        const merged = [...enriched, ...r2Supplement];
+        console.log(`[MERGED] D1(${enriched.length}) + R2(${r2Supplement.length}) = ${merged.length} total footprint items`);
+        
+        return merged;
     },
 
     async enrichWithOHLC(env, chunk) {
@@ -278,41 +301,53 @@ export default {
      * R2 Fallback: Read pre-aggregated state files from R2 when D1 is empty.
      * Uses processed/{ticker}/state.json (written by real-time pipeline).
      * Falls back to reading raw hourly files for a limited set of tickers.
+     * @param {Array<string>} excludeTickers - Tickers to skip (already in D1)
      */
-    async fetchFootprintFromR2(env, date) {
+    async fetchFootprintFromR2(env, date, excludeTickers = []) {
         const [y, m, d] = date.split("-");
+        const excludeSet = new Set(excludeTickers);
 
-        // Primary: List tickers directly from R2 (ground truth — not limited by emiten table)
+        // PRIMARY: Use emiten table as master list (R2.list is unreliable/incomplete)
         let targetTickers = [];
         try {
-            // Paginated R2 list to get ALL ticker prefixes
-            let allPrefixes = [];
-            let cursor = undefined;
-            let pages = 0;
-            do {
-                const opts = { prefix: "footprint/", delimiter: "/", limit: 1000 };
-                if (cursor) opts.cursor = cursor;
-                const listed = await env.TAPE_DATA_SAHAM.list(opts);
-                allPrefixes.push(...(listed.delimitedPrefixes || []));
-                cursor = listed.truncated ? listed.cursor : undefined;
-                pages++;
-            } while (cursor && pages < 5);
-            targetTickers = allPrefixes.map(p => p.split("/")[1]).filter(t => this.isValidTicker(t));
-            console.log(`[R2-FALLBACK] Listed ${targetTickers.length} valid tickers from R2 (${pages} pages, ${allPrefixes.length} total prefixes)`);
+            const { results } = await env.SSSAHAM_DB.prepare(
+                "SELECT ticker FROM emiten"  // No status filter - get ALL tickers
+            ).all();
+            if (results) {
+                targetTickers = results
+                    .map(r => r.ticker.replace(/\.JK$/, ''))
+                    .filter(t => this.isValidTicker(t) && !excludeSet.has(t));
+            }
+            console.log(`[R2-FALLBACK] Using ${targetTickers.length} tickers from emiten (excluded ${excludeSet.size} D1 tickers)`);
         } catch (e) {
-            console.warn("[R2-FALLBACK] R2 list failed, falling back to emiten table");
+            console.warn("[R2-FALLBACK] Cannot get tickers from emiten table:", e.message);
         }
 
-        // Fallback: Use emiten table if R2 listing fails
-        if (targetTickers.length === 0) {
+        // Fallback: R2 list only if emiten query fails
+        if (targetTickers.length === 0 && excludeSet.size === 0) {
             try {
-                const { results } = await env.SSSAHAM_DB.prepare(
-                    "SELECT ticker FROM emiten WHERE status = 'ACTIVE' LIMIT 900"
-                ).all();
-                if (results) targetTickers = results.map(r => r.ticker.replace(/\.JK$/, '')).filter(t => this.isValidTicker(t));
+                let allPrefixes = [];
+                let cursor = undefined;
+                let pages = 0;
+                do {
+                    const opts = { prefix: "footprint/", delimiter: "/", limit: 1000 };
+                    if (cursor) opts.cursor = cursor;
+                    const listed = await env.TAPE_DATA_SAHAM.list(opts);
+                    allPrefixes.push(...(listed.delimitedPrefixes || []));
+                    cursor = listed.truncated ? listed.cursor : undefined;
+                    pages++;
+                } while (cursor && pages < 10);
+                targetTickers = allPrefixes.map(p => p.split("/")[1]).filter(t => this.isValidTicker(t));
+                console.log(`[R2-FALLBACK] Fallback: Listed ${targetTickers.length} tickers from R2`);
             } catch (e) {
-                console.warn("[R2-FALLBACK] Cannot get tickers from emiten table either");
+                console.warn("[R2-FALLBACK] R2 list also failed");
             }
+        }
+
+        // If no tickers to probe (all excluded), return empty
+        if (targetTickers.length === 0) {
+            console.log(`[R2-FALLBACK] No tickers to probe (all in D1 or empty)`);
+            return [];
         }
 
         console.log(`[R2-FALLBACK] Checking ${targetTickers.length} tickers for date ${date}`);
@@ -320,20 +355,26 @@ export default {
         // === MULTI-HOUR DISCOVERY STRATEGY ===
         // Goal: Maximize ticker coverage within 1000 R2 read budget.
         // Trading hours in UTC: 02 (09:00 WIB) through 09 (16:00 WIB)
-        // Strategy: Probe ALL trading hours, but spread tickers across hours
-        //   so every ticker gets checked at least once.
-        //   Tickers found early get extra hours for better OHLCV accuracy.
+        // Strategy: Probe peak hour first, then other hours for unfound tickers.
+        // Now that we exclude D1 tickers (~158), we only probe ~615 tickers.
 
         const PARALLEL = 50;
         const tickerDataMap = new Map(); // ticker -> candles[]
-        const ALL_HOURS = ["03", "06", "02", "04", "05", "07", "08", "09"]; // Ordered by likelihood
-        const MAX_READS = 950; // Leave margin from 1000 limit
+        const MAX_READS = 900; // Leave margin from 1000 limit
         let totalReads = 0;
 
-        // Round 1: Probe peak hour (03 = 10:00 WIB) for ALL tickers
+        // With D1 exclusion, targetTickers should be small enough (~615)
+        // But limit anyway for safety
+        const probeTickers = targetTickers.slice(0, Math.min(targetTickers.length, MAX_READS - 100));
+        console.log(`[R2-FALLBACK] Will probe ${probeTickers.length} tickers`);
+
+        // Round 1: Probe peak hour (03 = 10:00 WIB) for tickers
         const PEAK_HOUR = "03";
-        for (let i = 0; i < targetTickers.length; i += PARALLEL) {
-            const batch = targetTickers.slice(i, i + PARALLEL);
+        for (let i = 0; i < probeTickers.length && totalReads < MAX_READS; i += PARALLEL) {
+            const batch = probeTickers.slice(i, Math.min(i + PARALLEL, probeTickers.length));
+            const remaining = MAX_READS - totalReads;
+            if (remaining < batch.length) break;
+            
             await Promise.all(batch.map(async (ticker) => {
                 totalReads++;
                 const key = `footprint/${ticker}/1m/${y}/${m}/${d}/${PEAK_HOUR}.jsonl`;
@@ -351,42 +392,10 @@ export default {
             }));
         }
 
-        console.log(`[R2-FALLBACK] Round 1 (hour ${PEAK_HOUR}): ${tickerDataMap.size} tickers found. Reads used: ${totalReads}`);
+        console.log(`[R2-FALLBACK] Probed hour ${PEAK_HOUR}: ${tickerDataMap.size} tickers found from ${probeTickers.length} probes. Reads: ${totalReads}`);
 
-        // Round 2: Probe UNFOUND tickers at other hours (discovery priority)
-        const unfoundTickers = targetTickers.filter(t => !tickerDataMap.has(t));
-        const DISCOVERY_HOURS = ["06", "02", "04", "05", "07", "08", "09"]; // Skip 03 (already probed)
-
-        for (const hour of DISCOVERY_HOURS) {
-            if (totalReads >= MAX_READS || unfoundTickers.length === 0) break;
-            const remaining = MAX_READS - totalReads;
-            // Only probe tickers still not found
-            const stillMissing = unfoundTickers.filter(t => !tickerDataMap.has(t));
-            if (stillMissing.length === 0) break;
-
-            const probeBatch = stillMissing.slice(0, remaining);
-            for (let i = 0; i < probeBatch.length; i += PARALLEL) {
-                if (totalReads >= MAX_READS) break;
-                const batch = probeBatch.slice(i, i + PARALLEL);
-                await Promise.all(batch.map(async (ticker) => {
-                    if (totalReads >= MAX_READS) return;
-                    totalReads++;
-                    const key = `footprint/${ticker}/1m/${y}/${m}/${d}/${hour}.jsonl`;
-                    try {
-                        const obj = await env.TAPE_DATA_SAHAM.get(key);
-                        if (!obj) return;
-                        const text = await obj.text();
-                        const candles = [];
-                        for (const line of text.split("\n")) {
-                            if (!line.trim()) continue;
-                            try { const c = JSON.parse(line); if (c.ohlc && c.t0) candles.push(c); } catch (_) { }
-                        }
-                        if (candles.length > 0) tickerDataMap.set(ticker, candles);
-                    } catch (_) { }
-                }));
-            }
-            console.log(`[R2-FALLBACK] Round 2 (hour ${hour}): +${stillMissing.length - unfoundTickers.filter(t => !tickerDataMap.has(t)).length} new. Total: ${tickerDataMap.size}. Reads: ${totalReads}`);
-        }
+        // Skip Round 2: Multi-hour discovery uses too much budget.
+        // Tickers not found at peak hour will fallback to ZSCORE-only in the merge phase.
 
         console.log(`[R2-FALLBACK] Discovery complete: ${tickerDataMap.size} tickers found. Total reads: ${totalReads}/${MAX_READS}`);
 
@@ -454,13 +463,16 @@ export default {
     },
 
     async fetchLatestContext(env, date) {
-        // Find latest date with data before 'date'
+        // Find latest date with data up to and including 'date'
+        // Changed from < to <= to include same-day data
         const dateRow = await env.SSSAHAM_DB.prepare(`
-            SELECT MAX(date) as ctx_date FROM daily_features WHERE date < ?
+            SELECT MAX(date) as ctx_date FROM daily_features WHERE date <= ?
         `).bind(date).first();
 
         const ctxDate = dateRow?.ctx_date;
         if (!ctxDate) return [];
+        
+        console.log(`[Context] Using z-score data from ${ctxDate} for footprint date ${date}`);
 
         const { results } = await env.SSSAHAM_DB.prepare(`
             SELECT ticker, state as hist_state, z_ngr as hist_z_ngr
@@ -474,6 +486,66 @@ export default {
     normalize(value, min, max) {
         const clamped = Math.max(min, Math.min(max, value));
         return (clamped - min) / (max - min);
+    },
+
+    /**
+     * Calculate Divergence Factor based on Z-Score state vs intraday signal
+     * 
+     * Logic: If historical state conflicts with intraday direction, apply penalty
+     * - DISTRIBUTION + Bullish intraday = RETAIL TRAP (0.5 penalty)
+     * - ACCUMULATION + Bearish intraday = SHAKEOUT (0.7 penalty)
+     * - Perfect confluence = BOOST (1.2)
+     * 
+     * @param {string} zScoreState - 'ACCUMULATION' | 'DISTRIBUTION' | 'NEUTRAL' | 'TRANSITION'
+     * @param {number} intradayDelta - deltaPct from footprint
+     * @param {number} histZNgr - Historical Z-Score NGR (proxy for SM direction)
+     * @returns {number} Factor between 0.5 and 1.2
+     */
+    getDivergenceFactor(zScoreState, intradayDelta, histZNgr = 0) {
+        const intradayBullish = intradayDelta > 5;  // Significant positive delta (>5%)
+        const intradayBearish = intradayDelta < -5; // Significant negative delta
+        const smDistributing = histZNgr < -0.5;     // Z-NGR negative = SM outflow
+        const smAccumulating = histZNgr > 0.5;      // Z-NGR positive = SM inflow
+        
+        // Case 1: DISTRIBUTION + Intraday Bullish = RETAIL TRAP
+        // SM has been distributing, but today shows buying = likely retail buying the distribution
+        if (zScoreState === 'DISTRIBUTION' && intradayBullish) {
+            return 0.5;  // 50% penalty - HIGH RISK
+        }
+        
+        // Case 2: Strong Distribution signal + any bullish (even moderate)
+        if (zScoreState === 'DISTRIBUTION' && intradayDelta > 0 && smDistributing) {
+            return 0.6;  // 40% penalty - Moderate-High risk
+        }
+        
+        // Case 3: ACCUMULATION + Intraday Bearish = SHAKEOUT
+        // SM accumulating but price down today = could be shakeout or early accumulation
+        if (zScoreState === 'ACCUMULATION' && intradayBearish) {
+            return 0.7;  // 30% penalty - MODERATE RISK (could be shakeout)
+        }
+        
+        // Case 4: PERFECT CONFLUENCE - SM accumulating AND intraday bullish
+        if (zScoreState === 'ACCUMULATION' && intradayBullish && smAccumulating) {
+            return 1.2;  // 20% BOOST - CONFIRMED ACCUMULATION
+        }
+        
+        // Case 5: Good confluence - Accumulation + positive delta (moderate)
+        if (zScoreState === 'ACCUMULATION' && intradayDelta > 0 && smAccumulating) {
+            return 1.1;  // 10% boost
+        }
+        
+        // Case 6: DISTRIBUTION + Bearish = Confirmed Distribution (let it through, base score handles)
+        if (zScoreState === 'DISTRIBUTION' && intradayBearish) {
+            return 1.0;  // No adjustment, signals agree
+        }
+        
+        // Case 7: TRANSITION state - uncertain, slight penalty if bullish
+        if (zScoreState === 'TRANSITION' && intradayBullish) {
+            return 0.9;  // 10% penalty - uncertain state
+        }
+        
+        // Default: NEUTRAL state or no clear signal
+        return 1.0;
     },
 
     isValidTicker(t) {
@@ -518,25 +590,47 @@ export default {
         const pricePct = ((close - open) / open) * 100;
 
         // Normalization
-        // Normalization
         const hist_z_ngr = context?.hist_z_ngr ?? 0;
         const normZNGR = this.normalize(hist_z_ngr, -3, 3);
         const normDelta = this.normalize(deltaPct, -100, 100);
 
-        // Hybrid Score
-        let hybridScore = (0.3 * normZNGR) + (0.7 * normDelta);
+        // BASE Hybrid Score (before divergence adjustment)
+        let baseScore = (0.3 * normZNGR) + (0.7 * normDelta);
 
         // Price Penalty: If price is falling hard (>4%), penalize the hybrid score
         if (pricePct < -4) {
-            hybridScore *= 0.5; // Cut score in half for falling knives
+            baseScore *= 0.5; // Cut score in half for falling knives
         } else if (pricePct >= -1 && pricePct <= 2) {
-            hybridScore *= 1.1; // Bonus for Sweet Spot (Consolidation)
+            baseScore *= 1.1; // Bonus for Sweet Spot (Consolidation)
         }
-        hybridScore = Math.min(1, hybridScore);
+        baseScore = Math.min(1, baseScore);
 
-        // Signal
+        // Historical Context
         const hist_state = context?.hist_state || 'NEUTRAL';
-        let signal = this.getSignal(hybridScore, deltaPct, hist_z_ngr, hist_state, pricePct);
+
+        // === DIVERGENCE SCORING (NEW) ===
+        // Calculate divergence factor based on state vs intraday signal
+        const divFactor = ctxFound ? this.getDivergenceFactor(hist_state, deltaPct, hist_z_ngr) : 1.0;
+        
+        // Apply divergence factor to get final score
+        let hybridScore = baseScore * divFactor;
+        hybridScore = Math.max(0, Math.min(1, hybridScore)); // Clamp 0-1
+
+        // Determine if this is a divergence warning situation
+        const hasDivergenceWarning = divFactor < 0.8;
+        
+        // Determine divergence type for signal classification
+        let divType = null;
+        if (divFactor <= 0.5) {
+            divType = 'RETAIL_TRAP';
+        } else if (divFactor <= 0.7 && hist_state === 'DISTRIBUTION') {
+            divType = 'SM_DIVERGENCE';
+        } else if (divFactor <= 0.7 && hist_state === 'ACCUMULATION') {
+            divType = 'SHAKEOUT';
+        }
+
+        // Signal (now considers divergence)
+        let signal = this.getSignalWithDivergence(hybridScore, deltaPct, hist_z_ngr, hist_state, pricePct, divFactor, divType);
 
         // FALLBACK: If Context Missing or Neutral, but Intraday is Strong -> WATCH_ACCUM
         if (!ctxFound || hist_state === 'NEUTRAL') {
@@ -566,23 +660,139 @@ export default {
             ctx_net: parseFloat(hist_z_ngr.toFixed(2)),
             ctx_st: hist_state,
 
-            sc: parseFloat(hybridScore.toFixed(3)),
+            // Scoring (Updated with divergence)
+            sc_raw: parseFloat(baseScore.toFixed(3)),    // Raw score before divergence
+            sc: parseFloat(hybridScore.toFixed(3)),       // Final score after divergence
+            div_factor: parseFloat(divFactor.toFixed(2)), // Divergence factor applied
+            div_warn: hasDivergenceWarning,               // Boolean flag for UI
+            div_type: divType,                            // Type of divergence if any
             sig: signal
         };
+    },
+
+    /**
+     * Calculate item from Z-Score data only (no footprint/intraday data)
+     * Used for emiten that have historical z-score but no trading data today
+     */
+    calculateZscoreOnlyItem(ticker, context) {
+        const hist_z_ngr = context?.hist_z_ngr ?? 0;
+        const hist_state = context?.hist_state || 'NEUTRAL';
+
+        // Normalize Z-NGR to 0-1 scale
+        const normZNGR = this.normalize(hist_z_ngr, -3, 3);
+        
+        // Score based purely on z-score (scaled down - less confidence without intraday)
+        let score = normZNGR * 0.6;  // Max 0.6 without intraday data
+        score = Math.max(0, Math.min(1, score));
+
+        // Signal based on z-score state
+        let signal = 'NO_INTRADAY';
+        if (hist_state === 'ACCUMULATION' && hist_z_ngr > 0.5) {
+            signal = hist_z_ngr > 1.0 ? 'WATCH_ACCUM' : 'WATCH';
+        } else if (hist_state === 'DISTRIBUTION' && hist_z_ngr < -0.5) {
+            signal = hist_z_ngr < -1.0 ? 'STRONG_SELL' : 'SELL';
+        } else if (hist_state === 'ACCUMULATION') {
+            signal = 'WATCH';
+        } else if (hist_state === 'DISTRIBUTION') {
+            signal = 'SELL';
+        }
+
+        return {
+            t: ticker,
+            d: 0,          // No delta (no intraday)
+            p: 0,          // No price change (no intraday)
+            v: 0,          // No volume (no intraday)
+            h: 0,
+            l: 0,
+            r: 0,
+            f: 0,
+            div: 0,
+
+            ctx_found: true,
+            ctx_net: parseFloat(hist_z_ngr.toFixed(2)),
+            ctx_st: hist_state,
+
+            sc_raw: parseFloat(score.toFixed(3)),
+            sc: parseFloat(score.toFixed(3)),
+            div_factor: 1.0,
+            div_warn: false,
+            div_type: null,
+            sig: signal
+        };
+    },
+
+    /**
+     * Enhanced signal classification that considers divergence
+     */
+    getSignalWithDivergence(score, deltaPct, histZNGR, histState, pricePct, divFactor, divType) {
+        // Priority 0: Safety - Falling Knife Check
+        if (pricePct < -5) return 'SELL';
+
+        // Priority 0.5: Divergence Warnings (NEW)
+        // If severe divergence detected, override other signals
+        if (divType === 'RETAIL_TRAP') {
+            return 'RETAIL_TRAP';  // New signal type
+        }
+        
+        if (divType === 'SM_DIVERGENCE' && score > 0.4) {
+            return 'SM_DIVERGENCE';  // Warn about divergence even if score looks okay
+        }
+
+        // Priority 1: Strong Buy (Accum + Score + Stable Price) - now requires good divergence
+        if (score > 0.7 && histState === 'ACCUMULATION' && pricePct >= -2 && divFactor >= 1.0) {
+            return 'STRONG_BUY';
+        }
+
+        // Priority 1.5: Confirmed Accumulation (good score + perfect confluence)
+        if (score > 0.6 && divFactor >= 1.1 && histState === 'ACCUMULATION') {
+            return 'CONFIRMED_ACCUM';  // New signal - highest confidence
+        }
+
+        // Priority 2: Trap Warning (High Effort, Low Context)
+        if (deltaPct > 80 && histZNGR < -0.5) return 'TRAP_WARNING';
+
+        // Priority 3: Hidden Accum (Low Effort, Strong Context)
+        if (deltaPct < 40 && histZNGR > 0.7 && histState === 'ACCUMULATION') return 'HIDDEN_ACCUM';
+
+        // Priority 4: Strong Sell
+        if (score < 0.3 && histState === 'DISTRIBUTION') return 'STRONG_SELL';
+
+        // Default Ranges (adjusted for divergence)
+        if (score > 0.6 && pricePct >= -3 && divFactor >= 0.9) return 'BUY';
+        if (score > 0.5 && pricePct >= -3 && divFactor >= 0.7) return 'WATCH';  // Downgrade if divergence
+        if (score < 0.4) return 'SELL';
+        
+        return 'NEUTRAL';
     },
 
     validateHybridData(items) {
         return {
             total: items.length,
             missing_context: items.filter(i => !i.ctx_found).length,
+            divergence_warnings: items.filter(i => i.div_warn).length,
             signals: {
+                CONFIRMED_ACCUM: items.filter(i => i.sig === 'CONFIRMED_ACCUM').length,
                 STRONG_BUY: items.filter(i => i.sig === 'STRONG_BUY').length,
                 BUY: items.filter(i => i.sig === 'BUY').length,
+                WATCH: items.filter(i => i.sig === 'WATCH').length,
                 WATCH_ACCUM: items.filter(i => i.sig === 'WATCH_ACCUM').length,
                 HIDDEN_ACCUM: items.filter(i => i.sig === 'HIDDEN_ACCUM').length,
                 TRAP_WARNING: items.filter(i => i.sig === 'TRAP_WARNING').length,
+                RETAIL_TRAP: items.filter(i => i.sig === 'RETAIL_TRAP').length,
+                SM_DIVERGENCE: items.filter(i => i.sig === 'SM_DIVERGENCE').length,
+                NO_INTRADAY: items.filter(i => i.sig === 'NO_INTRADAY').length,
+                NEUTRAL: items.filter(i => i.sig === 'NEUTRAL').length,
                 SELL: items.filter(i => i.sig === 'SELL').length,
                 STRONG_SELL: items.filter(i => i.sig === 'STRONG_SELL').length
+            },
+            divergence_types: {
+                RETAIL_TRAP: items.filter(i => i.div_type === 'RETAIL_TRAP').length,
+                SM_DIVERGENCE: items.filter(i => i.div_type === 'SM_DIVERGENCE').length,
+                SHAKEOUT: items.filter(i => i.div_type === 'SHAKEOUT').length
+            },
+            data_sources: {
+                FULL: items.filter(i => i.src === 'FULL').length,
+                ZSCORE: items.filter(i => i.src === 'ZSCORE').length
             }
         };
     },
@@ -592,8 +802,8 @@ export default {
 
         let tickers = [];
         try {
-            // Updated to strip .JK just in case
-            const { results } = await env.SSSAHAM_DB.prepare("SELECT ticker FROM emiten WHERE status = 'ACTIVE'").all();
+            // Get ALL tickers regardless of status
+            const { results } = await env.SSSAHAM_DB.prepare("SELECT ticker FROM emiten").all();
             if (results) tickers = results.map(r => r.ticker.replace(/\.JK$/, ''));
         } catch (e) {
             console.error("Error fetching tickers:", e);
@@ -689,6 +899,156 @@ export default {
                 return new Response(`Triggered daily pipeline (Async) for ${date}`);
             }
 
+            // DIAGNOSTIC: Check emiten count and daily_features status
+            if (url.pathname === "/diag/status") {
+                const date = url.searchParams.get("date") || new Date().toISOString().split("T")[0];
+                
+                // Count ALL emiten (no status filter)
+                const emitenResult = await env.SSSAHAM_DB.prepare("SELECT COUNT(*) as count FROM emiten").first();
+                
+                // Count daily_features for today
+                const featuresResult = await env.SSSAHAM_DB.prepare("SELECT COUNT(*) as count FROM daily_features WHERE date = ?").bind(date).first();
+                
+                // Count UNIQUE tickers for today
+                const uniqueTodayResult = await env.SSSAHAM_DB.prepare("SELECT COUNT(DISTINCT ticker) as unique_count FROM daily_features WHERE date = ?").bind(date).first();
+                
+                // Check for duplicates on this date
+                const dupeResult = await env.SSSAHAM_DB.prepare(`
+                    SELECT ticker, COUNT(*) as cnt FROM daily_features 
+                    WHERE date = ? GROUP BY ticker HAVING cnt > 1 LIMIT 10
+                `).bind(date).all();
+                
+                // Get latest date in daily_features
+                const latestResult = await env.SSSAHAM_DB.prepare("SELECT MAX(date) as latest_date, COUNT(DISTINCT ticker) as unique_tickers FROM daily_features").first();
+                
+                // Count raw-broksum files for today - list with prefix
+                let broksum_count = 0;
+                let broksum_sample = [];
+                try {
+                    const listed = await env.RAW_BROKSUM.list({ limit: 100 });
+                    // Check which ones match today's date
+                    for (const obj of listed.objects) {
+                        if (obj.key.includes(`/${date}.json`)) {
+                            broksum_count++;
+                            if (broksum_sample.length < 5) broksum_sample.push(obj.key);
+                        }
+                    }
+                } catch (e) {
+                    broksum_sample = [`Error: ${e.message}`];
+                }
+
+                return Response.json({
+                    date,
+                    emiten: {
+                        total_count: emitenResult?.count || 0
+                    },
+                    daily_features: {
+                        today_count: featuresResult?.count || 0,
+                        today_unique: uniqueTodayResult?.unique_count || 0,
+                        duplicates: dupeResult?.results || [],
+                        latest_date: latestResult?.latest_date,
+                        all_unique_tickers: latestResult?.unique_tickers || 0
+                    },
+                    raw_broksum: {
+                        today_files: broksum_count,
+                        sample: broksum_sample
+                    }
+                });
+            }
+
+            // DIAGNOSTIC: List R2 broksum contents
+            if (url.pathname === "/diag/broksum-list") {
+                const prefix = url.searchParams.get("prefix") || "";
+                const limit = parseInt(url.searchParams.get("limit") || "50");
+                
+                const listed = await env.RAW_BROKSUM.list({ prefix, limit });
+                return Response.json({
+                    truncated: listed.truncated,
+                    count: listed.objects.length,
+                    objects: listed.objects.map(o => ({ key: o.key, size: o.size }))
+                });
+            }
+
+            // DIAGNOSTIC: Check temp_footprint_consolidate (D1 intraday data)
+            if (url.pathname === "/diag/footprint-d1") {
+                const date = url.searchParams.get("date") || new Date().toISOString().split("T")[0];
+                
+                const countResult = await env.SSSAHAM_DB.prepare(
+                    "SELECT COUNT(*) as total, COUNT(DISTINCT ticker) as unique_tickers FROM temp_footprint_consolidate WHERE date = ?"
+                ).bind(date).first();
+                
+                const sampleResult = await env.SSSAHAM_DB.prepare(
+                    "SELECT ticker, COUNT(*) as candles FROM temp_footprint_consolidate WHERE date = ? GROUP BY ticker ORDER BY candles DESC LIMIT 20"
+                ).bind(date).all();
+                
+                return Response.json({
+                    date,
+                    total_rows: countResult?.total || 0,
+                    unique_tickers: countResult?.unique_tickers || 0,
+                    sample: sampleResult?.results || []
+                });
+            }
+
+            // DIAGNOSTIC: Check specific ticker footprint in TAPE_DATA_SAHAM R2
+            if (url.pathname === "/diag/footprint-check") {
+                const ticker = url.searchParams.get("ticker") || "PTBA";
+                const date = url.searchParams.get("date") || new Date().toISOString().split("T")[0];
+                const [y, mo, dy] = date.split("-");
+                const hours = ["02","03","04","05","06","07","08","09"];
+                
+                const results = {};
+                for (const h of hours) {
+                    const key = `footprint/${ticker}/1m/${y}/${mo}/${dy}/${h}.jsonl`;
+                    const obj = await env.TAPE_DATA_SAHAM.head(key);
+                    results[h] = obj ? { exists: true, size: obj.size } : { exists: false };
+                }
+                
+                // Also check if ticker is in R2 list
+                const listed = await env.TAPE_DATA_SAHAM.list({ prefix: `footprint/${ticker}/`, limit: 10 });
+                
+                return Response.json({
+                    ticker, date,
+                    hours: results,
+                    r2_list: listed.objects.map(o => o.key).slice(0, 10),
+                    r2_prefixes: listed.delimitedPrefixes || []
+                });
+            }
+
+            // DIAGNOSTIC: Count files for specific date (paginated)
+            if (url.pathname === "/diag/broksum-count") {
+                const date = url.searchParams.get("date") || new Date().toISOString().split("T")[0];
+                
+                let count = 0;
+                let tickers = [];
+                let cursor = undefined;
+                let pages = 0;
+                
+                do {
+                    const opts = { limit: 1000 };
+                    if (cursor) opts.cursor = cursor;
+                    const listed = await env.RAW_BROKSUM.list(opts);
+                    
+                    for (const obj of listed.objects) {
+                        if (obj.key.endsWith(`/${date}.json`)) {
+                            count++;
+                            const ticker = obj.key.split('/')[0];
+                            if (!tickers.includes(ticker)) tickers.push(ticker);
+                        }
+                    }
+                    
+                    cursor = listed.truncated ? listed.cursor : undefined;
+                    pages++;
+                } while (cursor && pages < 50); // Max 50 pages = 50k objects
+                
+                return Response.json({
+                    date,
+                    pages_scanned: pages,
+                    files_found: count,
+                    unique_tickers: tickers.length,
+                    tickers: tickers.slice(0, 50) // Sample
+                });
+            }
+
             // Feature Rebuild (Backfill History) - Single Ticker
             if (url.pathname === "/rebuild-history") {
                 const ticker = url.searchParams.get("ticker");
@@ -700,10 +1060,10 @@ export default {
 
             // NEW: Batch Rebuild All
             if (url.pathname === "/rebuild-all") {
-                const { results } = await env.SSSAHAM_DB.prepare("SELECT symbol FROM emiten WHERE status = 'ACTIVE'").all();
-                if (!results) return new Response("No active tickers", { status: 404 });
+                const { results } = await env.SSSAHAM_DB.prepare("SELECT ticker FROM emiten").all();  // No status filter
+                if (!results) return new Response("No tickers found", { status: 404 });
 
-                const tickers = results.map(r => r.symbol);
+                const tickers = results.map(r => r.ticker.replace(/\.JK$/, ''));
                 console.log(`Dispatching ${tickers.length} rebuild jobs...`);
 
                 // Use Queue
@@ -1042,14 +1402,7 @@ export default {
         console.log("Starting System-Wide Integrity Scan (D-1 to D-90)...");
         let results = [];
         try {
-            const dbRes = await env.SSSAHAM_DB.prepare("SELECT ticker FROM emiten WHERE status = 'ACTIVE'").all(); // Correct table col is 'ticker' or 'symbol'? emiten cols: symbol,name,status... 
-            // Previous code used 'ticker' in queries but mapped .symbol?
-            // index.js line 408 uses `SELECT ticker FROM emiten`... wait.
-            // Let me re-verify column name. Line 338: "SELECT ticker FROM emiten".
-            // Line 408: "SELECT ticker FROM emiten".
-            // So emiten table has `ticker` column?
-            // User context said "SELECT count(*) FROM emiten WHERE symbol..." in terminal metadata.
-            // Let's assume `ticker` (from previous code usage).
+            const dbRes = await env.SSSAHAM_DB.prepare("SELECT ticker FROM emiten").all();  // No status filter - scan ALL tickers
             results = dbRes.results;
         } catch (e) { console.error("DB Error:", e); return; }
 

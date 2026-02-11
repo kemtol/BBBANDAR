@@ -321,6 +321,141 @@ KZ (Ajaib), ...
 
 ---
 
-*Document Version: 1.0*
+## 12. Z-Score Features Card (Detail View)
+
+### Overview
+
+Halaman `broker-summary.html` menampilkan **Z-Score Features Card** yang memberikan insight tentang karakteristik trading emiten berdasarkan analisis 20-hari.
+
+### Features Displayed
+
+| Feature | Metric | Interpretation |
+|---------|--------|----------------|
+| **Effort** | `z_effort` | Volume effort vs historical. High = aggressive trading |
+| **Price Response** | `z_result` | Price response to effort. High = responsive |
+| **Net Quality** | `z_ngr` | Quality of net flow. High = consistent accumulation |
+| **Elasticity** | `z_elas` | Price elasticity. High = volatile, Low = rigid |
+| **State** | `state` | Overall regime: ACCUMULATION / DISTRIBUTION / NEUTRAL |
+
+### Badge Logic
+
+```javascript
+function getBadge(label, value, thresholds) {
+    // Each feature has specific threshold interpretation
+    // Green = positive signal
+    // Yellow = neutral
+    // Red = negative signal
+    
+    // Example: Effort
+    if (label === 'Effort') {
+        if (value > 1) return { text: 'High Volume', class: 'success' };
+        if (value < -1) return { text: 'Low Volume', class: 'secondary' };
+        return { text: 'Normal', class: 'warning' };
+    }
+    // ... etc
+}
+```
+
+### Data Source
+
+**Primary**: `/screener?limit=9999` API endpoint
+- Contains pre-calculated Z-Score features for ~101 emiten (actively tracked)
+
+**Fallback (On-Demand)**: When ticker not in screener
+- Calculate from raw broker summary history (20-day rolling window)
+- API: `/features/calculate?ticker={TICKER}` (new endpoint)
+
+### On-Demand Calculation Flow
+
+```
+User opens broker-summary.html?kode=BMSR
+         ↓
+loadZScoreFeatures(ticker)
+         ↓
+Try /screener endpoint
+         ↓
+Found in screener? → Display directly
+         ↓
+Not found? → calculateFeaturesFromHistory()
+         ↓
+Fetch raw broker summary (20 days)
+         ↓
+Calculate locally:
+- NGR = (buyVal - sellVal) / totalVal per day
+- z_ngr = (NGR_today - mean(NGR_20d)) / stddev(NGR_20d)
+- ... other z-scores
+         ↓
+Display calculated features
+```
+
+### UI Placement
+
+```
+┌─────────────────────────────────────────┐
+│ [Broker Summary Card - Top]             │
+│ - Market Sentiment                      │
+│ - Proportional Bar (SM vs Retail)       │
+├─────────────────────────────────────────┤
+│ [Z-Score Features Card] ← NEW           │
+│ ┌─────────┬─────────┬─────────┐        │
+│ │ Effort  │ Response│ Quality │        │
+│ │ Normal  │ Quiet   │ Noise   │        │
+│ └─────────┴─────────┴─────────┘        │
+│ ┌─────────────┬─────────────┐          │
+│ │ Elasticity  │ State       │          │
+│ │ Rigid       │DISTRIBUTION │          │
+│ └─────────────┴─────────────┘          │
+├─────────────────────────────────────────┤
+│ [Date Range Selector]                   │
+│ [Smart Money Flow Chart]                │
+└─────────────────────────────────────────┘
+```
+
+### Feature Interpretation Guide
+
+| Feature | High (> 1) | Normal (-1 to 1) | Low (< -1) |
+|---------|------------|------------------|------------|
+| Effort | Heavy trading activity | Normal activity | Light activity |
+| Response | Strong price moves | Normal response | Price stuck |
+| Quality | Clean accumulation | Mixed flow | Heavy distribution |
+| Elasticity | Very responsive | Normal | Rigid/stuck |
+
+| State | Color | Meaning |
+|-------|-------|---------|
+| ACCUMULATION | 🟢 Green | Smart money building position |
+| DISTRIBUTION | 🔴 Red | Smart money exiting |
+| NEUTRAL | 🟡 Yellow | No clear direction |
+
+---
+
+## 13. Divergence Detection Integration
+
+### Cross-Reference with Orderflow
+
+The Z-Score features now integrate with Orderflow Scanner to detect **divergence**:
+
+| Orderflow Signal | Z-Score State | Result |
+|------------------|---------------|--------|
+| Bullish (WATCH_ACCUM) | ACCUMULATION | ✅ Confirmed |
+| Bullish (WATCH_ACCUM) | DISTRIBUTION | ⚠️ **RETAIL_TRAP** |
+| Bearish (SELL) | DISTRIBUTION | ✅ Confirmed |
+| Bearish (SELL) | ACCUMULATION | 🔄 Possible Shakeout |
+
+### Display Warning
+
+When divergence detected, broker-summary.html shows:
+```
+⚠️ DIVERGENCE WARNING
+Intraday signal (BULLISH) conflicts with 20-day trend (DISTRIBUTION).
+Smart Money net: -28.2M | Retail net: +28.1M
+Risk Level: HIGH - Potential Retail Trap
+```
+
+See [0004_divergence_scoring.md](0004_divergence_scoring.md) for full divergence logic.
+
+---
+
+*Document Version: 1.1*
 *Created: 2026-02-10*
+*Last Updated: 2026-02-11*
 *Author: Copilot + mkemalw*

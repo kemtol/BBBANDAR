@@ -182,12 +182,7 @@
                     <div class="heartbeat-pulse"></div>
                     <span id="last-updated">Updating...</span>
                 </div>
-                <select id="limit-select" class="form-select form-select-sm" style="width: auto;">
-                    <option value="25">Top 25</option>
-                    <option value="50">Top 50</option>
-                    <option value="100">Top 100</option>
-                    <option value="9999" selected>All</option>
-                </select>
+<span id="stat-count" class="badge bg-secondary">0 items</span>
             </div>
         </div>
 
@@ -238,6 +233,27 @@
                 </div>
             </div>
         </div>
+
+        <!-- PAGINATION -->
+        <nav id="pagination-nav" class="d-flex justify-content-between align-items-center my-3">
+            <div class="text-muted small">
+                Showing <span id="page-range">1-100</span> of <span id="total-items">0</span>
+            </div>
+            <ul class="pagination pagination-sm mb-0">
+                <li class="page-item" id="prev-page">
+                    <a class="page-link" href="#" onclick="changePage(-1); return false;">«</a>
+                </li>
+                <li class="page-item active">
+                    <span class="page-link" id="current-page-num">1</span>
+                </li>
+                <li class="page-item disabled">
+                    <span class="page-link" id="total-pages">/ 1</span>
+                </li>
+                <li class="page-item" id="next-page">
+                    <a class="page-link" href="#" onclick="changePage(1); return false;">»</a>
+                </li>
+            </ul>
+        </nav>
 
         <!-- DETAIL PANEL -->
         <div class="card card-swing mb-4" id="detail-card" style="display:none;">
@@ -301,6 +317,10 @@
             let currentRows = [];
             let currentSort = { key: 'score', dir: 'desc' };
             let quadChartInstance = null;
+            
+            // Pagination state
+            const PAGE_SIZE = 100;
+            let currentPage = 1;
 
             // Quadrant Lines Plugin
             const quadrantLinesPlugin = {
@@ -394,7 +414,7 @@
                         }
 
                         currentRows = rawItems
-                            .filter(item => item.t && item.t.length <= 4 && (item.v || 0) >= 1000) // Filter warrants & illiquid (<1000 lots)
+                            .filter(item => item.t && item.t.length <= 4 && (item.src === 'ZSCORE' || (item.v || 0) >= 1000)) // Filter warrants & illiquid (<1000 lots), keep ZSCORE items
                             .map((item, idx) => {
                                 const deltaPct = item.d || 0;
                                 const priceChg = item.p || 0;
@@ -422,13 +442,23 @@
                                     quadrant: quadrant,
 
                                     score: item.sc || 0,
+                                    score_raw: item.sc_raw || item.sc || 0,  // Raw score before divergence
                                     signal: item.sig || '-',
                                     ctx_st: item.ctx_st || '-',
-                                    ctx_net: item.ctx_net || 0
+                                    ctx_net: item.ctx_net || 0,
+                                    
+                                    // Divergence fields
+                                    div_factor: item.div_factor || 1.0,
+                                    div_warn: item.div_warn || false,
+                                    div_type: item.div_type || null,
+                                    
+                                    // Data source (NEW)
+                                    src: item.src || 'FULL'  // 'FULL' or 'ZSCORE'
                                 };
                             });
 
                         currentRows.sort((a, b) => b.score - a.score);
+                        currentPage = 1; // Reset to first page on data load
 
                         dbg(`Filtered: ${rawItems.length} → ${currentRows.length} rows (removed warrants & vol<1000)`);
                         if (currentRows.length > 0) {
@@ -486,18 +516,40 @@
                 $tbody.empty();
 
                 rows.forEach((s, idx) => {
-                    const netClass = s.net_vol > 0 ? "text-success" : "text-danger";
+                    const netClass = s.net_vol > 0 ? "text-success" : s.net_vol < 0 ? "text-danger" : "text-muted";
                     const score = s.score.toFixed(2);
                     let sigClass = "badge bg-secondary";
 
-                    if (s.signal === 'STRONG_BUY') sigClass = "badge bg-success";
+                    // Signal badge styling (updated with new signals)
+                    if (s.signal === 'CONFIRMED_ACCUM') sigClass = "badge bg-success";
+                    else if (s.signal === 'STRONG_BUY') sigClass = "badge bg-success";
                     else if (s.signal === 'BUY') sigClass = "badge bg-primary";
+                    else if (s.signal === 'WATCH') sigClass = "badge bg-info text-dark";
+                    else if (s.signal === 'WATCH_ACCUM') sigClass = "badge bg-info text-dark";
                     else if (s.signal === 'STRONG_SELL') sigClass = "badge bg-danger";
                     else if (s.signal === 'TRAP_WARNING') sigClass = "badge bg-warning text-dark";
+                    else if (s.signal === 'RETAIL_TRAP') sigClass = "badge bg-danger";
+                    else if (s.signal === 'SM_DIVERGENCE') sigClass = "badge bg-warning text-dark";
                     else if (s.signal === 'HIDDEN_ACCUM') sigClass = "badge bg-info text-dark";
+                    else if (s.signal === 'NO_INTRADAY') sigClass = "badge bg-secondary";
+                    else if (s.signal === 'SELL') sigClass = "badge bg-danger";
+
+                    // Source indicator (ZSCORE = no intraday trading data)
+                    const srcBadge = s.src === 'ZSCORE' ? 
+                        `<span class="badge bg-secondary ms-1" style="font-size:9px" title="Z-Score only (no intraday)">Z</span>` : '';
+
+                    // Divergence warning icon
+                    const divWarnIcon = s.div_warn ? 
+                        `<i class="fas fa-exclamation-triangle text-warning ms-1" title="Divergence: ${s.div_type || 'Warning'}"></i>` : '';
+                    
+                    // Row background for divergence warnings or zscore-only
+                    let rowClass = '';
+                    if (s.div_type === 'RETAIL_TRAP') rowClass = 'table-danger';
+                    else if (s.div_type === 'SM_DIVERGENCE') rowClass = 'table-warning';
+                    else if (s.src === 'ZSCORE') rowClass = 'table-light';
 
                     const $tr = $(`
-                        <tr data-kode="${s.kode}">
+                        <tr data-kode="${s.kode}" class="${rowClass}">
                             <td class="text-center text-muted">${idx + 1}</td>
                             <td>
                                 <div class="d-flex align-items-center">
@@ -505,22 +557,25 @@
                                          style="width: 24px; height: 24px; object-fit: contain; margin-right: 8px; border-radius: 50%; background: #fff;" 
                                          onerror="this.style.display='none'">
                                     <a href="detail.html?kode=${encodeURIComponent(s.kode)}&mode=footprint" class="text-decoration-none fw-bold">${s.kode}</a>
+                                    ${srcBadge}
+                                    ${divWarnIcon}
                                 </div>
                             </td>
                             <!-- High/Low Removed -->
-                            <td class="text-end">${s.vol.toLocaleString()}</td>
-                            <td class="text-end ${netClass}">${Math.round(s.net_vol).toLocaleString()}</td>
-                            <td class="text-end">${s.haka_pct.toFixed(0)}%</td>
-                            <td class="text-end">${s.range.toLocaleString()}</td>
+                            <td class="text-end">${s.vol > 0 ? s.vol.toLocaleString() : '-'}</td>
+                            <td class="text-end ${netClass}">${s.vol > 0 ? Math.round(s.net_vol).toLocaleString() : '-'}</td>
+                            <td class="text-end">${s.vol > 0 ? s.haka_pct.toFixed(0) + '%' : '-'}</td>
+                            <td class="text-end">${s.range > 0 ? s.range.toLocaleString() : '-'}</td>
                             <td class="text-end fw-bold text-primary">
-                                ${s.fluktuasi.toFixed(2)}%
+                                ${s.fluktuasi > 0 ? s.fluktuasi.toFixed(2) + '%' : '-'}
                             </td>
-                            <td class="text-end fw-bold">${s.div.toFixed(1)}</td>
+                            <td class="text-end fw-bold">${s.div > 0 ? s.div.toFixed(1) : '-'}</td>
                             <td class="text-center">
                                 <div class="fw-bold" style="color: ${score >= 0.7 ? '#16a34a' : score >= 0.5 ? '#2563eb' : '#64748b'};">
                                     ${score}
+                                    ${s.div_factor < 1 ? `<small class="text-danger">(×${s.div_factor})</small>` : ''}
                                 </div>
-                                <div style="font-size:10px; color:#94a3b8;">${s.signal}</div>
+                                <div style="font-size:10px; color:#94a3b8;">${s.signal.replace('_', ' ')}</div>
                             </td>
                             <td class="text-end fw-bold">
                                 ${(() => {
@@ -528,7 +583,30 @@
                             let label = '';
                             let color = '#64748b';
 
-                            if (s.div > 5 && s.money > 2 && s.momentum >= -3) {
+                            // Check for zscore-only items first
+                            if (s.src === 'ZSCORE') {
+                                if (s.ctx_st === 'ACCUMULATION') {
+                                    label = '📊 ACCUM';
+                                    color = '#16a34a'; // Green
+                                } else if (s.ctx_st === 'DISTRIBUTION') {
+                                    label = '📊 DISTRIB';
+                                    color = '#dc2626'; // Red
+                                } else {
+                                    label = '📊 Z-SCORE';
+                                    color = '#64748b'; // Gray
+                                }
+                            }
+                            // Check for divergence signals
+                            else if (s.signal === 'RETAIL_TRAP') {
+                                label = '⚠️ TRAP';
+                                color = '#dc2626'; // Red
+                            } else if (s.signal === 'SM_DIVERGENCE') {
+                                label = '⚠️ DIVERGE';
+                                color = '#f59e0b'; // Amber
+                            } else if (s.signal === 'CONFIRMED_ACCUM') {
+                                label = '✅ CONFIRMED';
+                                color = '#059669'; // Emerald
+                            } else if (s.div > 5 && s.money > 2 && s.momentum >= -3) {
                                 label = 'BREAKOUT';
                                 color = '#16a34a'; // Green
                             } else if (s.momentum < -5) {
@@ -677,7 +755,8 @@
                         return (va - vb) * factor;
                     });
                 }
-                renderTable(currentRows);
+                currentPage = 1; // Reset to first page on sort
+                updateDisplay();
             }
 
             $(".sortable").on("click", function () {
@@ -692,20 +771,44 @@
 
 
             function updateDisplay() {
-                const limit = parseInt($("#limit-select").val()) || 50;
-                const topRows = currentRows.slice(0, limit);
-                dbg(`🔄 updateDisplay: limit=${limit}, showing ${topRows.length}/${currentRows.length} rows`);
+                const totalRows = currentRows.length;
+                const totalPages = Math.ceil(totalRows / PAGE_SIZE);
+                
+                // Clamp current page
+                if (currentPage < 1) currentPage = 1;
+                if (currentPage > totalPages) currentPage = totalPages;
+                if (totalPages === 0) currentPage = 1;
+                
+                const startIdx = (currentPage - 1) * PAGE_SIZE;
+                const endIdx = Math.min(startIdx + PAGE_SIZE, totalRows);
+                const pageRows = currentRows.slice(startIdx, endIdx);
+                
+                dbg(`🔄 updateDisplay: page ${currentPage}/${totalPages}, showing ${pageRows.length}/${totalRows} rows`);
 
-                renderTable(topRows);
-                renderQuadrantChart(topRows);
+                renderTable(pageRows);
+                
+                // Only show top items in chart (from current page or top overall)
+                const chartRows = currentRows.slice(0, 100); // Always top 100 for chart
+                renderQuadrantChart(chartRows);
 
-                // Update badge/count if needed
-                // $("#stat-count").text(topRows.length);
+                // Update pagination UI
+                $("#stat-count").text(`${totalRows} items`);
+                $("#total-items").text(totalRows);
+                $("#page-range").text(`${startIdx + 1}-${endIdx}`);
+                $("#current-page-num").text(currentPage);
+                $("#total-pages").text(`/ ${totalPages}`);
+                
+                // Enable/disable prev/next
+                $("#prev-page").toggleClass("disabled", currentPage <= 1);
+                $("#next-page").toggleClass("disabled", currentPage >= totalPages);
             }
 
-            $("#limit-select").on("change", function () {
+            function changePage(delta) {
+                currentPage += delta;
                 updateDisplay();
-            });
+                // Scroll to table
+                $("html, body").animate({ scrollTop: $("#filter-row").offset().top - 60 }, 200);
+            }
 
             // Heartbeat Logic
             let lastDataTime = null;
