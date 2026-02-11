@@ -275,39 +275,8 @@
         <!-- VIEW 2: DETAIL DASHBOARD -->
         <div id="detail-view" style="display:none;">
 
-            <!-- Z-SCORE FEATURES CARD -->
-            <div id="zscore-features-card" class="card card-swing mb-3 mt-3">
-                <div class="card-header bg-light border-bottom">
-                    <span class="fw-bold small text-muted">Z-SCORE FEATURES (20-Day)</span>
-                </div>
-                <div class="card-body py-2">
-                    <div class="row g-2 text-center">
-                        <div class="col">
-                            <div class="small text-muted">Effort</div>
-                            <div id="feat-effort" class="fw-bold">-</div>
-                        </div>
-                        <div class="col">
-                            <div class="small text-muted">Price Response</div>
-                            <div id="feat-response" class="fw-bold">-</div>
-                        </div>
-                        <div class="col">
-                            <div class="small text-muted">Net Quality</div>
-                            <div id="feat-quality" class="fw-bold">-</div>
-                        </div>
-                        <div class="col">
-                            <div class="small text-muted">Elasticity</div>
-                            <div id="feat-elasticity" class="fw-bold">-</div>
-                        </div>
-                        <div class="col">
-                            <div class="small text-muted">State</div>
-                            <div id="feat-state" class="fw-bold">-</div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
             <!-- TABS -->
-            <ul class="nav nav-tabs mb-3" id="detailTabs" role="tablist">
+            <ul class="nav nav-tabs mb-3 mt-3" id="detailTabs" role="tablist">
                 <li class="nav-item" role="presentation">
                     <a class="nav-link" id="intraday-link" href="#">Intraday</a>
                 </li>
@@ -333,6 +302,34 @@
 
                     <!-- PROPORTIONAL BAR (Foreign / Local / Retail) -->
                     <div id="proportional-bar-container" class="mb-3"></div>
+
+                    <!-- Z-SCORE FEATURES CARD -->
+                    <div id="zscore-features-card" class="card card-swing mb-3">
+                        <div class="card-body py-2">
+                            <div class="row g-2 text-center">
+                                <div class="col">
+                                    <div class="small text-muted">Effort</div>
+                                    <div id="feat-effort" class="fw-bold">-</div>
+                                </div>
+                                <div class="col">
+                                    <div class="small text-muted">Price Response</div>
+                                    <div id="feat-response" class="fw-bold">-</div>
+                                </div>
+                                <div class="col">
+                                    <div class="small text-muted">Net Quality</div>
+                                    <div id="feat-quality" class="fw-bold">-</div>
+                                </div>
+                                <div class="col">
+                                    <div class="small text-muted">Elasticity</div>
+                                    <div id="feat-elasticity" class="fw-bold">-</div>
+                                </div>
+                                <div class="col">
+                                    <div class="small text-muted">State</div>
+                                    <div id="feat-state" class="fw-bold">-</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
 
                     <!-- BROKER TABLE -->
                     <div class="card card-swing mb-4">
