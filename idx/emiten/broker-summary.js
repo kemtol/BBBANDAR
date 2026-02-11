@@ -99,9 +99,11 @@ async function initIndexMode() {
     loadScreenerData();
 }
 
-// Global state for sorting
+// Global state for sorting and pagination
 let currentCandidates = [];
 let sortState = { key: 'score', desc: true };
+const SCREENER_PAGE_SIZE = 100;
+let screenerPage = 1;
 
 async function loadScreenerData() {
     try {
@@ -110,17 +112,37 @@ async function loadScreenerData() {
         const data = await response.json();
 
         if (data && data.items) {
-            currentCandidates = data.items.map(i => ({
-                symbol: i.t,
-                state: mapState(i.s),
-                score: i.sc,
-                metrics: {
-                    effortZ: i.z["20"]?.e || 0,
-                    resultZ: i.z["20"]?.r || 0,
-                    ngr: i.z["20"]?.n || 0,
-                    elasticity: i.z["20"]?.el || 0 // Mapped (default 0 if backend older)
-                }
-            }));
+            currentCandidates = data.items.map(i => {
+                const state = mapState(i.s);
+                const effortZ = i.z["20"]?.e || 0;
+                const resultZ = i.z["20"]?.r || 0;
+                const ngr = i.z["20"]?.n || 0;
+                const elasticity = i.z["20"]?.el || 0;
+                
+                // NEW: Simple Score based on positive effort trend and good state
+                // Higher effort = more buying activity above normal
+                // Good states: ACCUMULATION, READY_MARKUP
+                // Formula: effortBonus + stateBonus + ngrBonus
+                const stateBonus = (state === 'ACCUMULATION' || state === 'READY_MARKUP') ? 2 
+                                 : (state === 'TRANSITION') ? 1 : 0;
+                const effortBonus = effortZ > 0 ? Math.min(effortZ * 2, 4) : 0; // Cap at 4
+                const ngrBonus = ngr > 0 ? 1 : 0;
+                
+                const simpleScore = effortBonus + stateBonus + ngrBonus;
+                
+                return {
+                    symbol: i.t,
+                    state: state,
+                    score: simpleScore, // Use simple score instead of complex sc
+                    originalScore: i.sc, // Keep original for reference
+                    metrics: {
+                        effortZ: effortZ,
+                        resultZ: resultZ,
+                        ngr: ngr,
+                        elasticity: elasticity
+                    }
+                };
+            });
 
             // Initial sort by Score DESC
             sortCandidates('score', true);
@@ -129,12 +151,12 @@ async function loadScreenerData() {
             renderMarketBreadth(currentCandidates, data.date);
 
         } else {
-            $('#tbody-index').html('<tr><td colspan="7" class="text-center text-muted">No data available.</td></tr>');
+            $('#tbody-index').html('<tr><td colspan="6" class="text-center text-muted">No data available.</td></tr>');
         }
 
     } catch (error) {
         console.error(error);
-        $('#tbody-index').html('<tr><td colspan="7" class="text-center text-danger">Error loading screener data</td></tr>');
+        $('#tbody-index').html('<tr><td colspan="6" class="text-center text-danger">Error loading screener data</td></tr>');
     } finally {
         $('#loading-indicator').hide();
         $('#app').fadeIn();
@@ -205,8 +227,40 @@ function sortCandidates(key, desc) {
         return desc ? valB - valA : valA - valB;
     });
 
-    renderScreenerTable(currentCandidates);
+    screenerPage = 1; // Reset to first page
+    updateScreenerDisplay();
     updateSortIcons(key, desc);
+}
+
+// Pagination functions
+function updateScreenerDisplay() {
+    const totalRows = currentCandidates.length;
+    const totalPages = Math.ceil(totalRows / SCREENER_PAGE_SIZE);
+    
+    if (screenerPage < 1) screenerPage = 1;
+    if (screenerPage > totalPages) screenerPage = totalPages;
+    if (totalPages === 0) screenerPage = 1;
+    
+    const startIdx = (screenerPage - 1) * SCREENER_PAGE_SIZE;
+    const endIdx = Math.min(startIdx + SCREENER_PAGE_SIZE, totalRows);
+    const pageRows = currentCandidates.slice(startIdx, endIdx);
+    
+    renderScreenerTable(pageRows);
+    
+    // Update pagination UI
+    $('#total-items').text(totalRows);
+    $('#page-range').text(`${startIdx + 1}-${endIdx}`);
+    $('#current-page-num').text(screenerPage);
+    $('#total-pages').text(`/ ${totalPages}`);
+    
+    $('#prev-page').toggleClass('disabled', screenerPage <= 1);
+    $('#next-page').toggleClass('disabled', screenerPage >= totalPages);
+}
+
+function changeScreenerPage(delta) {
+    screenerPage += delta;
+    updateScreenerDisplay();
+    $('html, body').animate({ scrollTop: $('#market-breadth-widget').offset().top - 60 }, 200);
 }
 
 function updateSortIcons(activeKey, desc) {
@@ -282,6 +336,14 @@ function renderScreenerTable(candidates) {
         };
         return `<span class="badge ${colors[state] || 'bg-secondary'}">${state.replace('_', ' ')}</span>`;
     };
+    
+    // Flow Score Badge
+    const getFlowBadge = (score) => {
+        if (score >= 5) return `<span class="badge bg-success">Strong</span> <small class="text-muted">(${score.toFixed(1)})</small>`;
+        if (score >= 3) return `<span class="badge bg-primary">Good</span> <small class="text-muted">(${score.toFixed(1)})</small>`;
+        if (score >= 1) return `<span class="badge bg-warning text-dark">Weak</span> <small class="text-muted">(${score.toFixed(1)})</small>`;
+        return `<span class="badge bg-secondary">Neutral</span> <small class="text-muted">(${score.toFixed(1)})</small>`;
+    };
 
     candidates.forEach((item, idx) => {
         const m = item.metrics;
@@ -293,10 +355,9 @@ function renderScreenerTable(candidates) {
                     <img src="${logoUrl}" alt="" style="height: 20px; width: auto; margin-right: 6px; vertical-align: middle; border-radius: 3px;" onerror="this.style.display='none'">
                     <a href="?kode=${item.symbol}">${item.symbol}</a>
                 </td>
+                <td class="text-center">${getFlowBadge(item.score)}</td>
                 <td class="text-center">${getBadge(m.effortZ, 'effort')}</td>
-                <td class="text-center">${getBadge(m.resultZ, 'result')}</td>
-                <td class="text-center">${getBadge(m.ngr, 'ngr')}</td>
-                <td class="text-center">${getBadge(m.elasticity, 'elasticity')}</td>
+                <td class="text-center hide-mobile">${getBadge(m.ngr, 'ngr')}</td>
                 <td class="text-center">${getStateBadge(item.state)}</td>
             </tr>
         `;

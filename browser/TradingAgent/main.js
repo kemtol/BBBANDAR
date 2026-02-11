@@ -44,6 +44,9 @@ function createWindow() {
 
   leftView.setAutoResize({ width: false, height: false });
 
+  // Warm-up flag tracking
+  let didWarmupReady = false;
+
   // Load initial URL
   console.log("[MAIN] Initializing market URL...");
   leftView.webContents.loadURL('https://indopremier.com/#ipot/app/marketlive').catch(err => {
@@ -164,8 +167,40 @@ function createWindow() {
           sendLog('[FEATURES] Cache is fresh. Skip prefetch.');
         }
       }
+
+      if (!didWarmupReady && liveTradeStream.connected) {
+        didWarmupReady = true;
+        try {
+          leftView.webContents.send('warmup-ready', { broker: 'ipot' });
+          console.log('[WARMUP] Warmup ready dispatched to left view');
+        } catch (err) {
+          console.warn('[WARMUP] Failed to send warmup-ready:', err.message);
+        }
+      }
     } else {
       sendLog('⚠️ Public token NOT found. Halaman belum terbuka sempurna.');
+    }
+  });
+
+  ipcMain.on('broker-login-state', (event, payload) => {
+    const { broker, loggedIn } = payload || {};
+    console.log(`[LOGIN] Broker=${broker} loggedIn=${loggedIn}`);
+
+    global.brokerLoginState = {
+      ...(global.brokerLoginState || {}),
+      [broker || 'unknown']: {
+        loggedIn: Boolean(loggedIn),
+        ts: Date.now()
+      }
+    };
+
+    try {
+      const views = win.getBrowserViews();
+      if (views[1] && !views[1].webContents.isDestroyed()) {
+        views[1].webContents.send('broker-login-state', payload);
+      }
+    } catch (err) {
+      console.warn('[LOGIN] Failed forwarding login state:', err.message);
     }
   });
 

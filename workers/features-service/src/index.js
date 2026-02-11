@@ -899,6 +899,14 @@ export default {
                 return new Response(`Triggered daily pipeline (Async) for ${date}`);
             }
 
+            // FOREIGN FLOW SCANNER - Calculate and save foreign flow trend for all emiten
+            if (url.pathname === "/foreign-flow-scanner") {
+                const lookback = parseInt(url.searchParams.get("days") || "10");
+                // Run async to avoid timeout
+                ctx.waitUntil(this.calculateForeignFlowScanner(env, lookback));
+                return new Response(`Foreign Flow Scanner triggered (${lookback} days lookback). Check R2 for results.`);
+            }
+
             // DIAGNOSTIC: Check emiten count and daily_features status
             if (url.pathname === "/diag/status") {
                 const date = url.searchParams.get("date") || new Date().toISOString().split("T")[0];
@@ -1520,5 +1528,160 @@ export default {
         } catch (e) { console.error("Audit Log Error:", e); }
 
         return { ticker, status: "MISSING_RAW", missing_count: missing.length };
+    },
+
+    // -------------------------------------------------------------------------
+    // FOREIGN FLOW SCANNER - Calculate foreign flow trend for all emiten
+    // -------------------------------------------------------------------------
+    
+    /**
+     * Calculate foreign flow trend for all emiten.
+     * For each ticker: fetch last N days broksum, calculate cumulative foreign net & trend.
+     * Save result to R2 as features/foreign-flow-scanner.json
+     * 
+     * @param {Object} env - Worker environment bindings
+     * @param {number} lookbackDays - Number of trading days to look back (default 10)
+     */
+    async calculateForeignFlowScanner(env, lookbackDays = 10) {
+        console.log(`[FOREIGN-FLOW] Starting scanner with ${lookbackDays} day lookback...`);
+        const startTime = Date.now();
+
+        // 1. Get all tickers from emiten table
+        let tickers = [];
+        try {
+            const { results } = await env.SSSAHAM_DB.prepare("SELECT ticker FROM emiten").all();
+            if (results) tickers = results.map(r => r.ticker.replace(/\.JK$/, '')).filter(t => this.isValidTicker(t));
+        } catch (e) {
+            console.error("[FOREIGN-FLOW] Failed to get tickers:", e);
+            return { error: e.message };
+        }
+
+        console.log(`[FOREIGN-FLOW] Processing ${tickers.length} tickers...`);
+
+        // 2. Generate expected dates (last N trading days)
+        const tradingDates = [];
+        const now = new Date();
+        now.setUTCHours(0, 0, 0, 0);
+        for (let i = 1; tradingDates.length < lookbackDays && i <= 30; i++) {
+            const d = new Date(now);
+            d.setDate(d.getDate() - i);
+            if (d.getUTCDay() !== 0 && d.getUTCDay() !== 6) { // Skip weekends
+                tradingDates.push(d.toISOString().split('T')[0]);
+            }
+        }
+        tradingDates.reverse(); // Oldest first
+
+        // 3. Foreign broker codes (asing)
+        const FOREIGN_CODES = new Set(["ZP", "YU", "KZ", "RX", "BK", "AK", "CS", "CG", "DB", "ML", "CC", "DX", "FS", "LG", "NI", "OD"]);
+
+        // 4. Process in batches to avoid hitting R2 limits
+        const BATCH_SIZE = 50;
+        const results = [];
+        let r2Reads = 0;
+
+        for (let batch = 0; batch < tickers.length; batch += BATCH_SIZE) {
+            const batchTickers = tickers.slice(batch, batch + BATCH_SIZE);
+
+            const batchPromises = batchTickers.map(async (ticker) => {
+                // Fetch broksum data for each date
+                const dailyNets = [];
+                
+                for (const date of tradingDates) {
+                    const key = `${ticker}/${date}.json`;
+                    try {
+                        r2Reads++;
+                        const obj = await env.RAW_BROKSUM.get(key);
+                        if (!obj) continue;
+                        
+                        const data = await obj.json();
+                        if (!data.buy || !data.sell) continue;
+
+                        // Calculate foreign net for this day
+                        let foreignBuy = 0, foreignSell = 0;
+                        for (const b of data.buy) {
+                            if (FOREIGN_CODES.has(b.broker)) foreignBuy += (b.val || 0);
+                        }
+                        for (const s of data.sell) {
+                            if (FOREIGN_CODES.has(s.broker)) foreignSell += (s.val || 0);
+                        }
+                        const foreignNet = foreignBuy - foreignSell;
+                        dailyNets.push({ date, net: foreignNet });
+                    } catch (e) {
+                        // Skip errors silently
+                    }
+                }
+
+                if (dailyNets.length < 3) {
+                    return null; // Not enough data
+                }
+
+                // Calculate cumulative values
+                let cumulative = 0;
+                const cumulativeValues = [];
+                for (const d of dailyNets) {
+                    cumulative += d.net;
+                    cumulativeValues.push(cumulative);
+                }
+
+                // Calculate trend (simple linear regression slope)
+                const n = cumulativeValues.length;
+                const xMean = (n - 1) / 2;
+                const yMean = cumulativeValues.reduce((a, b) => a + b, 0) / n;
+                
+                let numerator = 0, denominator = 0;
+                for (let i = 0; i < n; i++) {
+                    numerator += (i - xMean) * (cumulativeValues[i] - yMean);
+                    denominator += (i - xMean) * (i - xMean);
+                }
+                const slope = denominator !== 0 ? numerator / denominator : 0;
+
+                // Current value (latest cumulative)
+                const currentValue = cumulativeValues[cumulativeValues.length - 1];
+                
+                // Normalize slope to daily average
+                const dailySlope = slope;
+
+                // Score: prioritize positive trend and positive current value
+                // Score = (currentValue > 0 ? 1 : 0) * 2 + (slope > 0 ? 1 : 0) * 2 + normalized_slope
+                const trendScore = (currentValue > 0 ? 2 : 0) + (dailySlope > 0 ? 2 : 0);
+                
+                return {
+                    t: ticker,
+                    fv: Math.round(currentValue / 1e9 * 100) / 100, // Foreign Value in Billion
+                    ft: Math.round(dailySlope / 1e9 * 100) / 100,   // Foreign Trend (daily slope) in Billion
+                    ts: trendScore,                                   // Trend Score (0-4)
+                    days: dailyNets.length
+                };
+            });
+
+            const batchResults = await Promise.all(batchPromises);
+            results.push(...batchResults.filter(r => r !== null));
+        }
+
+        // 5. Sort by trend score (higher = better)
+        results.sort((a, b) => {
+            // Primary: trend score
+            if (b.ts !== a.ts) return b.ts - a.ts;
+            // Secondary: absolute trend value
+            return b.ft - a.ft;
+        });
+
+        // 6. Save to R2
+        const output = {
+            version: 'v1.0',
+            generated_at: new Date().toISOString(),
+            lookback_days: lookbackDays,
+            count: results.length,
+            r2_reads: r2Reads,
+            duration_ms: Date.now() - startTime,
+            items: results
+        };
+
+        await env.SSSAHAM_EMITEN.put('features/foreign-flow-scanner.json', JSON.stringify(output), {
+            httpMetadata: { contentType: "application/json" }
+        });
+
+        console.log(`[FOREIGN-FLOW] Saved ${results.length} items. R2 reads: ${r2Reads}. Duration: ${output.duration_ms}ms`);
+        return output;
     }
 };

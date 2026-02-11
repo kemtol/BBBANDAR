@@ -1157,8 +1157,17 @@ export default {
         }
       }
 
-
-
+      // GET /foreign-flow-scanner - Returns pre-computed foreign flow trend data
+      if (url.pathname === "/foreign-flow-scanner" && req.method === "GET") {
+        try {
+          const obj = await env.SSSAHAM_EMITEN.get("features/foreign-flow-scanner.json");
+          if (!obj) return json({ items: [], error: "No data. Run /foreign-flow-scanner on features-service first." });
+          const data = await obj.json();
+          return withCORS(new Response(JSON.stringify(data), { headers: { "Content-Type": "application/json" } }));
+        } catch (e) {
+          return json({ error: "Failed to fetch foreign flow scanner", details: e.message }, 500);
+        }
+      }
 
       // 1.6 GET /audit/logs - Get scraping logs from D1
       if (url.pathname === "/audit/logs" && req.method === "GET") {

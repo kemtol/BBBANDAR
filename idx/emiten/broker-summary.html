@@ -252,13 +252,11 @@
                                 <th class="text-center">#</th>
                                 <th data-sort="symbol" style="cursor:pointer">Emiten <i
                                         class="fa-solid fa-sort small text-muted"></i></th>
+                                <th class="text-center" data-sort="score" style="cursor:pointer">Flow <i
+                                        class="fa-solid fa-sort small text-muted"></i></th>
                                 <th class="text-center" data-sort="effort" style="cursor:pointer">Effort <i
                                         class="fa-solid fa-sort small text-muted"></i></th>
-                                <th class="text-center" data-sort="response" style="cursor:pointer">Price Response <i
-                                        class="fa-solid fa-sort small text-muted"></i></th>
-                                <th class="text-center" data-sort="quality" style="cursor:pointer">Net Quality <i
-                                        class="fa-solid fa-sort small text-muted"></i></th>
-                                <th class="text-center" data-sort="elasticity" style="cursor:pointer">Elasticity <i
+                                <th class="text-center hide-mobile" data-sort="quality" style="cursor:pointer">Quality <i
                                         class="fa-solid fa-sort small text-muted"></i></th>
                                 <th class="text-center" data-sort="state" style="cursor:pointer">State <i
                                         class="fa-solid fa-sort small text-muted"></i></th>
@@ -270,6 +268,27 @@
                     </table>
                 </div>
             </div>
+            
+            <!-- PAGINATION -->
+            <nav id="pagination-nav" class="d-flex justify-content-between align-items-center my-3">
+                <div class="text-muted small">
+                    Showing <span id="page-range">1-100</span> of <span id="total-items">0</span>
+                </div>
+                <ul class="pagination pagination-sm mb-0">
+                    <li class="page-item" id="prev-page">
+                        <a class="page-link" href="#" onclick="changeScreenerPage(-1); return false;">«</a>
+                    </li>
+                    <li class="page-item active">
+                        <span class="page-link" id="current-page-num">1</span>
+                    </li>
+                    <li class="page-item disabled">
+                        <span class="page-link" id="total-pages">/ 1</span>
+                    </li>
+                    <li class="page-item" id="next-page">
+                        <a class="page-link" href="#" onclick="changeScreenerPage(1); return false;">»</a>
+                    </li>
+                </ul>
+            </nav>
         </div>
 
         <!-- VIEW 2: DETAIL DASHBOARD -->
