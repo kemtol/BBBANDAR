@@ -296,28 +296,28 @@ function mapState(s) {
 }
 
 // Global badge helper function (used by both screener table and detail view)
-function getBadge(val, type) {
-    const score = `<span class="small text-muted ms-1">(${val.toFixed(2)})</span>`;
+function getBadge(val, type, showScore = false) {
+    const score = showScore ? ` <small class="text-muted">(${val.toFixed(2)})</small>` : '';
     if (type === 'effort') {
-        if (val > 1.0) return `<span class="badge bg-danger">Extreme</span>${score}`;
-        if (val > 0.5) return `<span class="badge bg-warning text-dark">High</span>${score}`;
-        if (val < -0.5) return `<span class="badge bg-secondary">Low</span>${score}`;
-        return `<span class="badge bg-light text-dark border">Normal</span>${score}`;
+        if (val > 1.0) return `<span class="text-danger fw-bold">Extreme</span>${score}`;
+        if (val > 0.5) return `<span class="text-warning fw-bold">High</span>${score}`;
+        if (val < -0.5) return `<span class="text-muted">Low</span>${score}`;
+        return `<span class="text-secondary">Normal</span>${score}`;
     }
     if (type === 'result') {
         if (val > 1.0) return `<span class="text-danger fw-bold">Volatile</span>${score}`;
         if (val < -0.5) return `<span class="text-muted">Quiet</span>${score}`;
-        return `<span class="text-dark">Normal</span>${score}`;
+        return `<span class="text-secondary">Normal</span>${score}`;
     }
     if (type === 'ngr') {
         if (val < 0.15) return `<span class="text-muted">Noise</span>${score}`;
         return `<span class="text-success fw-bold">Valid</span>${score}`;
     }
     if (type === 'elasticity') {
-        if (val === 0) return `<span class="text-muted">-</span>${score}`;
-        if (val > 1.5) return `<span class="badge bg-success">Elastic</span>${score}`;
-        if (val < 0.5) return `<span class="badge bg-danger">Rigid</span>${score}`;
-        return `<span class="text-dark small">Normal</span>${score}`;
+        if (val === 0) return `<span class="text-muted">-</span>`;
+        if (val > 1.5) return `<span class="text-success fw-bold">Elastic</span>${score}`;
+        if (val < 0.5) return `<span class="text-danger">Rigid</span>${score}`;
+        return `<span class="text-secondary">Normal</span>${score}`;
     }
     return val;
 }
@@ -334,15 +334,24 @@ function renderScreenerTable(candidates) {
             'DISTRIBUTION': 'bg-danger',
             'NEUTRAL': 'bg-secondary'
         };
-        return `<span class="badge ${colors[state] || 'bg-secondary'}">${state.replace('_', ' ')}</span>`;
+        // Shorter labels
+        const labels = {
+            'READY_MARKUP': 'Ready',
+            'TRANSITION': 'Trans',
+            'ACCUMULATION': 'Accum',
+            'DISTRIBUTION': 'Dist',
+            'NEUTRAL': 'Neutral'
+        };
+        return `<span class="badge ${colors[state] || 'bg-secondary'}">${labels[state] || state}</span>`;
     };
     
-    // Flow Score Badge
-    const getFlowBadge = (score) => {
-        if (score >= 5) return `<span class="badge bg-success">Strong</span> <small class="text-muted">(${score.toFixed(1)})</small>`;
-        if (score >= 3) return `<span class="badge bg-primary">Good</span> <small class="text-muted">(${score.toFixed(1)})</small>`;
-        if (score >= 1) return `<span class="badge bg-warning text-dark">Weak</span> <small class="text-muted">(${score.toFixed(1)})</small>`;
-        return `<span class="badge bg-secondary">Neutral</span> <small class="text-muted">(${score.toFixed(1)})</small>`;
+    // Flow Score - simple number with color
+    const getFlowScore = (score) => {
+        let colorClass = 'text-muted';
+        if (score >= 5) colorClass = 'text-success fw-bold';
+        else if (score >= 3) colorClass = 'text-primary fw-bold';
+        else if (score >= 1) colorClass = 'text-warning fw-bold';
+        return `<span class="${colorClass}">${score.toFixed(1)}</span>`;
     };
 
     candidates.forEach((item, idx) => {
@@ -355,7 +364,7 @@ function renderScreenerTable(candidates) {
                     <img src="${logoUrl}" alt="" style="height: 20px; width: auto; margin-right: 6px; vertical-align: middle; border-radius: 3px;" onerror="this.style.display='none'">
                     <a href="?kode=${item.symbol}">${item.symbol}</a>
                 </td>
-                <td class="text-center">${getFlowBadge(item.score)}</td>
+                <td class="text-center">${getFlowScore(item.score)}</td>
                 <td class="text-center">${getBadge(m.effortZ, 'effort')}</td>
                 <td class="text-center hide-mobile">${getBadge(m.ngr, 'ngr')}</td>
                 <td class="text-center">${getStateBadge(item.state)}</td>
