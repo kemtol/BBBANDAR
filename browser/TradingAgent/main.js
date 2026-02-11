@@ -1,5 +1,6 @@
 const { app, BrowserWindow, BrowserView, ipcMain, nativeImage } = require('electron');
 const path = require('path');
+const fs = require('fs');
 
 // --- CORE MODULES ---
 const ipotParser = require('./core/adapters/ipot_parser');
@@ -9,21 +10,16 @@ const riskManager = require('./core/risk/risk_controller');
 const tapeStream = require('./core/tns/stream');
 const whaleTracker = require('./core/features/whale');
 const tokenEngine = require('./core/engine/token-engine');
-const targetPrice = require('./core/channel/target-price');
+const featuresChannel = require('./core/channel/features');
 const liveTradeStream = require('./core/channel/livetrade');
 
 function createWindow() {
-  const iconPath = path.join(__dirname, 'icon.png');
-  console.log(`[MAIN] Using window icon: ${iconPath}`);
-
-  // Global strategy state
-  global.currentStrategy = 'manual';
-  global.activeBroker = 'ipot';
+  const iconPath = path.join(__dirname, 'icon.png'); // Adjust path if needed
 
   const win = new BrowserWindow({
     width: 1400,
     height: 900,
-    title: "Algo-One Trading Agent",
+    title: 'Algo-One Trading Agent',
     icon: nativeImage.createFromPath(iconPath),
     autoHideMenuBar: true
   });
@@ -47,10 +43,40 @@ function createWindow() {
   leftView.setAutoResize({ width: false, height: true });
 
   // Load initial URL
-  console.log("[MAIN] Initializing IPOT URL...");
+  console.log("[MAIN] Initializing market URL...");
   leftView.webContents.loadURL('https://indopremier.com/#ipot/app/marketlive').catch(err => {
     console.error(`[MAIN] Initial load failed: ${err.message}`);
   });
+
+  // Helpers: features cache freshness check
+  const FEATURES_PATH = path.join(__dirname, 'data', 'features-emiten.json');
+  function isFeaturesFresh(maxAgeMs = 24 * 60 * 60 * 1000) {
+    try {
+      const stat = fs.statSync(FEATURES_PATH);
+      if (stat.size < 64) {
+        return false; // empty or truncated file
+      }
+      const raw = fs.readFileSync(FEATURES_PATH, 'utf8');
+      const parsed = JSON.parse(raw);
+      if (!parsed || !parsed.generatedAt) {
+        return false;
+      }
+      const generatedAt = new Date(parsed.generatedAt);
+      if (Number.isNaN(generatedAt.getTime())) {
+        return false;
+      }
+      const now = new Date();
+      const sameDay = generatedAt.getFullYear() === now.getFullYear()
+        && generatedAt.getMonth() === now.getMonth()
+        && generatedAt.getDate() === now.getDate();
+      if (!sameDay) {
+        return false;
+      }
+      return (Date.now() - stat.mtimeMs) < maxAgeMs;
+    } catch {
+      return false;
+    }
+  }
 
   // Auto Token Check on page load
   leftView.webContents.on('did-finish-load', async () => {
@@ -59,14 +85,14 @@ function createWindow() {
       try {
         const views = win.getBrowserViews();
         if (views[1] && !views[1].webContents.isDestroyed()) {
-          views[1].webContents.send('system-log', msg);
+          views[1].webContents.send('system-log' , msg);
         }
       } catch (_) { }
     };
 
     sendLog('🔑 Get public token...');
 
-    // Small delay to let IPOT JS fully initialize
+    // Small delay to let page JS fully initialize
     await new Promise(r => setTimeout(r, 2000));
 
     const token = await tokenEngine.extractPublicToken(leftView.webContents);
@@ -88,8 +114,28 @@ function createWindow() {
           } catch (_) { }
         });
       }
+
+      // Prefetch today's features (once) if cache not fresh
+      if (!global.__didPrefetchFeatures) {
+        if (!isFeaturesFresh()) {
+          global.__didPrefetchFeatures = true;
+          sendLog('[FEATURES] Auto-fetch start (init)');
+          const t0 = Date.now();
+          try {
+            const results = await featuresChannel.connectAndFetch(token, sendLog);
+            const secs = Math.round((Date.now() - t0) / 1000);
+            sendLog(`[FEATURES] Prefetch done in ${secs}s. ${Object.keys(results).length} emitens`);
+            sendLog('💾 Data saved to data/features-emiten.json');
+          } catch (err) {
+            sendLog(`[FEATURES] Prefetch error: ${err.message}`);
+          }
+        } else {
+          global.__didPrefetchFeatures = true;
+          sendLog('[FEATURES] Cache is fresh. Skip prefetch.');
+        }
+      }
     } else {
-      sendLog('⚠️ Public token NOT found. Halaman IPOT belum terbuka sempurna.');
+      sendLog('⚠️ Public token NOT found. Halaman belum terbuka sempurna.');
     }
   });
 
@@ -155,12 +201,12 @@ function createWindow() {
   // HANDLER AGENT CONTROL
   ipcMain.on('agent-control', (event, payload) => {
     const action = typeof payload === 'string' ? payload : payload.action;
-    console.log("⚡ AGENT ACTION:", action);
+    console.log('⚡ AGENT ACTION:', action);
 
     if (action === 'START') {
       const strategy = payload.strategy || 'manual';
       global.currentStrategy = strategy;
-      log(`[MAIN] Starting Agent with strategy: ${strategy}`);
+      console.log(`[MAIN] Starting Agent with strategy: ${strategy}`);
     }
 
     if (action === 'FLATTEN') {
@@ -186,8 +232,8 @@ function createWindow() {
     console.log(`[UI] ${msg}`);
   });
 
-  // TARGET PRICE FETCH HANDLER
-  ipcMain.handle('fetch-target-prices', async (event) => {
+  // FEATURES FETCH HANDLER (Target Price averages)
+  ipcMain.handle('fetch-features', async (event) => {
     try {
       // Use cached public token, or re-extract
       let token = tokenEngine.getPublicToken();
@@ -201,7 +247,7 @@ function createWindow() {
       }
 
       if (!token) {
-        return { success: false, error: 'No public token available. Buka halaman IPOT dulu.' };
+        return { success: false, error: 'No public token available. Buka halaman market dulu.' };
       }
 
       // Log function to send updates to dashboard
@@ -213,15 +259,15 @@ function createWindow() {
         }
       };
 
-      // Fetch target prices using public token
-      const results = await targetPrice.connectAndFetch(token, logFn);
+      // Fetch features using public token
+      const results = await featuresChannel.connectAndFetch(token, logFn);
       return {
         success: true,
         totalEmitens: Object.keys(results).length,
-        message: `Fetched target prices for ${Object.keys(results).length} emitens.`
+        message: `Fetched features (target price averages) for ${Object.keys(results).length} emitens.`
       };
     } catch (err) {
-      console.error('[MAIN] Error fetching target prices:', err.message);
+      console.error('[MAIN] Error fetching features:', err.message);
       return { success: false, error: err.message };
     }
   });

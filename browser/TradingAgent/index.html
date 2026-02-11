@@ -848,20 +848,20 @@
             // 4c. LOGIC DRY RUN
             $('#btn-dry-run').on('click', async function () {
                 const $btn = $(this);
-                $btn.addClass('btn-warning').removeClass('btn-primary').text('🧪 FETCHING TARGET PRICES...');
-                log("--- TARGET PRICE FETCH (DRY RUN) ---");
+                $btn.addClass('btn-warning').removeClass('btn-primary').text('🧪 FETCHING FEATURES...');
+                log("--- FEATURES FETCH (DRY RUN) ---");
 
                 try {
                     if (window.ipcRenderer && window.ipcRenderer.invoke) {
-                        const result = await ipcRenderer.invoke('fetch-target-prices');
+                        const result = await ipcRenderer.invoke('fetch-features');
                         if (result.success) {
                             log(`✅ ${result.message}`);
-                            log(`💾 Data saved to data/target-price-by-emiten.json`);
+                            log(`💾 Data saved to data/features-emiten.json`);
                         } else {
                             log(`❌ Error: ${result.error}`);
                         }
                     } else {
-                        log("⚠️ Not in Electron. Cannot fetch target prices.");
+                        log("⚠️ Not in Electron. Cannot fetch features.");
                     }
                 } catch (err) {
                     log(`❌ Fetch failed: ${err.message}`);

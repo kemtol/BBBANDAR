@@ -309,14 +309,11 @@ function renderScreenerTable(candidates) {
 // =========================================
 async function loadZScoreFeatures(symbol) {
     try {
-        // Try screener first (has z-score detail), fallback to footprint/summary
-        let item = null;
-        
-        // Attempt 1: Screener (101 emiten with z-score breakdown)
+        // Try screener first (has z-score detail from cron job)
         const screenerResp = await fetch(`${WORKER_BASE_URL}/screener`);
         const screenerData = await screenerResp.json();
         if (screenerData && screenerData.items) {
-            item = screenerData.items.find(i => i.t === symbol);
+            const item = screenerData.items.find(i => i.t === symbol);
             if (item && item.z && item.z["20"]) {
                 const z = item.z["20"];
                 const state = mapState(item.s);
@@ -325,42 +322,90 @@ async function loadZScoreFeatures(symbol) {
                 $('#feat-quality').html(getBadge(z.n || 0, 'ngr'));
                 $('#feat-elasticity').html(getBadge(z.el || 0, 'elasticity'));
                 $('#feat-state').html(getStateBadgeSimple(state));
-                return; // Done
-            }
-        }
-        
-        // Attempt 2: Footprint Summary (145+ tickers, simpler data)
-        const footprintResp = await fetch(`${WORKER_BASE_URL}/footprint/summary`);
-        const footprintData = await footprintResp.json();
-        if (footprintData && footprintData.items) {
-            item = footprintData.items.find(i => i.t === symbol);
-            if (item) {
-                // Footprint summary has: sc (score), sig (signal), ctx_st (state)
-                // No z-score breakdown, show what we have
-                $('#feat-effort').html('<span class="text-muted">-</span>');
-                $('#feat-response').html('<span class="text-muted">-</span>');
-                $('#feat-quality').html('<span class="text-muted">-</span>');
-                $('#feat-elasticity').html('<span class="text-muted">-</span>');
-                $('#feat-state').html(getStateBadgeSimple(item.ctx_st || 'NEUTRAL'));
-                
-                // Also show score & signal if available
-                if (item.sc || item.sig) {
-                    // Add score display
-                    const scoreHtml = `<div class="col"><div class="small text-muted">Score</div><div class="fw-bold">${(item.sc || 0).toFixed(2)}</div></div>`;
-                    const signalHtml = `<div class="col"><div class="small text-muted">Signal</div><div class="fw-bold">${getSignalBadge(item.sig)}</div></div>`;
-                    $('#zscore-features-card .row').prepend(scoreHtml + signalHtml);
-                }
                 return;
             }
         }
         
-        // Not found anywhere
+        // Not in screener - calculate on-demand from cache-summary data
+        console.log(`[ZScore] ${symbol} not in screener, calculating from broker data...`);
+        
+        // Fetch cache-summary (which we already use for chart)
+        const endDate = new Date();
+        const startDate = new Date();
+        startDate.setDate(startDate.getDate() - 30);
+        
+        const cacheResp = await fetch(`${WORKER_BASE_URL}/cache-summary?symbol=${symbol}&from=${startDate.toISOString().split('T')[0]}&to=${endDate.toISOString().split('T')[0]}`);
+        const cacheData = await cacheResp.json();
+        
+        if (cacheData && cacheData.history && cacheData.history.length >= 5) {
+            const features = calculateFeaturesFromHistory(cacheData.history);
+            $('#feat-effort').html(getBadge(features.effort, 'effort'));
+            $('#feat-response').html(getBadge(features.response, 'result'));
+            $('#feat-quality').html(getBadge(features.quality, 'ngr'));
+            $('#feat-elasticity').html(getBadge(features.elasticity, 'elasticity'));
+            $('#feat-state').html(getStateBadgeSimple(features.state));
+            return;
+        }
+        
+        // No data available
         $('#zscore-features-card').addClass('d-none');
         
     } catch (error) {
         console.error('Error loading Z-Score features:', error);
         $('#zscore-features-card').addClass('d-none');
     }
+}
+
+function calculateFeaturesFromHistory(history) {
+    // Filter valid days (has trading activity)
+    const days = history.filter(h => h.data && h.data.price > 0)
+                        .sort((a, b) => new Date(a.date) - new Date(b.date));
+    
+    if (days.length < 5) {
+        return { effort: 0, response: 0, quality: 0, elasticity: 0, state: 'NEUTRAL' };
+    }
+    
+    const n = days.length;
+    
+    // Effort: Average trading value
+    const avgValue = days.reduce((s, d) => s + (parseFloat(d.data?.detector?.value) || 0), 0) / n;
+    
+    // Response: Price change from first to last
+    const firstPrice = days[0].data?.price || 0;
+    const lastPrice = days[n-1].data?.price || 0;
+    const priceChange = firstPrice > 0 ? ((lastPrice - firstPrice) / firstPrice) * 100 : 0;
+    
+    // Quality: Net smart money flow consistency
+    const smartMoneyFlow = days.map(d => 
+        (d.data?.foreign?.net_val || 0) + (d.data?.local?.net_val || 0)
+    );
+    const avgFlow = smartMoneyFlow.reduce((s, v) => s + v, 0) / n;
+    const maxFlow = Math.max(...smartMoneyFlow.map(Math.abs)) || 1;
+    
+    // Elasticity: Price response per unit of smart money flow
+    const totalFlow = smartMoneyFlow.reduce((s, v) => s + v, 0);
+    const elasticity = totalFlow !== 0 ? priceChange / (totalFlow / 1000000) : 0;
+    
+    // Determine state from recent vs early activity
+    const recentFlow = smartMoneyFlow.slice(-5).reduce((s, v) => s + v, 0);
+    const earlyFlow = smartMoneyFlow.slice(0, 5).reduce((s, v) => s + v, 0);
+    
+    let state = 'NEUTRAL';
+    if (recentFlow > 0 && recentFlow > earlyFlow * 1.2) state = 'ACCUMULATION';
+    else if (recentFlow < 0 && recentFlow < earlyFlow * 0.8) state = 'DISTRIBUTION';
+    else if (recentFlow > 0 && priceChange > 3) state = 'READY_MARKUP';
+    else if (recentFlow < 0 && priceChange < -3) state = 'POTENTIAL_TOP';
+    
+    // Normalize to z-score-like range (-3 to +3)
+    const normalize = (val, range) => Math.max(-3, Math.min(3, val / (range || 1) * 3));
+    
+    return {
+        effort: normalize(avgValue, 5000000000), // 5B as reference
+        response: normalize(priceChange, 10), // 10% as max
+        quality: normalize(avgFlow, maxFlow),
+        elasticity: normalize(elasticity, 5),
+        state: state
+    };
 }
 
 function getSignalBadge(signal) {

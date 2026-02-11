@@ -1,14 +1,14 @@
 /**
- * target-price.js
- * Menyadap data Target Price dari WebSocket IPOT (SocketCluster)
- * untuk semua emiten dalam master list.
+ * features.js
+ * Mengambil fitur market harian (mis. target price analis broker)
+ * dari WebSocket IPOT (SocketCluster) untuk semua emiten.
  */
 const WebSocket = require('ws');
 const fs = require('fs');
 const path = require('path');
 
 const MASTER_EMITEN_PATH = path.join(__dirname, '../../data/master-emiten.json');
-const OUTPUT_PATH = path.join(__dirname, '../../data/target-price-by-emiten.json');
+const OUTPUT_PATH = path.join(__dirname, '../../data/features-emiten.json');
 
 // Delay between each emiten query to avoid flooding
 const QUERY_DELAY_MS = 300;
@@ -26,7 +26,7 @@ function loadEmitenList() {
         const list = JSON.parse(raw);
         return list.map(e => e.ticker.replace('.JK', ''));
     } catch (err) {
-        console.error('[TARGET-PRICE] Error loading emiten list:', err.message);
+        console.error('[FEATURES] Error loading emiten list:', err.message);
         return [];
     }
 }
@@ -43,7 +43,7 @@ function getTodayDate() {
 }
 
 /**
- * Connect to IPOT WebSocket and fetch target prices for all emitens
+ * Connect to WebSocket and fetch target prices for all emitens
  * @param {string} token - The appsession token
  * @param {Function} logFn - Optional logging function to send updates to UI
  * @returns {Promise<Object>} Results keyed by ticker
@@ -59,26 +59,48 @@ function connectAndFetch(token, logFn) {
         const wsUrl = `wss://ipotapp.ipot.id/socketcluster/?appsession=${token}`;
         const log = logFn || console.log;
 
-        log(`[TARGET-PRICE] Connecting to IPOT WebSocket...`);
-        log(`[TARGET-PRICE] Total emitens to query: ${emitens.length}`);
+        log(`[FEATURES] Connecting to WebSocket...`);
+        log(`[FEATURES] Total emitens to query: ${emitens.length}`);
 
         const ws = new WebSocket(wsUrl);
         const results = {};
+        const pendingQueries = new Map();
+        const dateStr = getTodayDate();
         let currentIndex = 0;
         let cidCounter = 1;
-        const pendingQueries = new Map(); // cid -> ticker
-        const dateStr = getTodayDate();
+
+        function computeAvgTarget(payload) {
+            try {
+                const rows = Array.isArray(payload) ? payload : (payload && Array.isArray(payload.data) ? payload.data : null);
+                if (!rows) return null;
+                let sum = 0, cnt = 0;
+                for (const it of rows) {
+                    if (!it || typeof it !== 'object') continue;
+                    const candidates = [it.average, it.avg, it.target, it.targetPrice, it.tp, it.value, it.price];
+                    let picked = null;
+                    for (const v of candidates) {
+                        const num = typeof v === 'string' ? parseFloat(v) : (typeof v === 'number' ? v : NaN);
+                        if (!isNaN(num) && isFinite(num) && num > 0) { picked = num; break; }
+                    }
+                    if (picked !== null) { sum += picked; cnt++; }
+                }
+                if (cnt > 0) return sum / cnt;
+                return null;
+            } catch (_) { return null; }
+        }
+
 
         // Timeout: kill connection if it takes too long
         const globalTimeout = setTimeout(() => {
-            log(`[TARGET-PRICE] ⚠️ Global timeout reached. Saving ${Object.keys(results).length} results.`);
+            log(`[FEATURES] ⚠️ Global timeout reached. Saving ${Object.keys(results).length} results.`);
             ws.close();
             saveResults(results);
             resolve(results);
         }, emitens.length * (QUERY_DELAY_MS + 500) + 30000); // generous timeout
 
         ws.on('open', () => {
-            log(`[TARGET-PRICE] ✅ WebSocket connected.`);
+            log(`[FEATURES] ✅ WebSocket connected.`);
+            log(`[FEATURES] Handshaking`);
 
             // SocketCluster handshake
             ws.send(JSON.stringify({
@@ -97,7 +119,7 @@ function connectAndFetch(token, logFn) {
             if (currentIndex >= emitens.length) {
                 // All queries sent, wait a bit for remaining responses
                 setTimeout(() => {
-                    log(`[TARGET-PRICE] ✅ All queries complete. Total results: ${Object.keys(results).length}/${emitens.length}`);
+                    log(`[FEATURES] ✅ All queries complete. Total results: ${Object.keys(results).length}/${emitens.length}`);
                     clearTimeout(globalTimeout);
                     ws.close();
                     saveResults(results);
@@ -127,10 +149,13 @@ function connectAndFetch(token, logFn) {
                 cid: cid
             };
 
+            if (ticker === 'BBRI') {
+                log(`[FEATURES] Checking for BBRI target price average`);
+            }
             ws.send(JSON.stringify(msg));
 
             if (currentIndex % 20 === 0) {
-                log(`[TARGET-PRICE] 📡 Querying... ${currentIndex + 1}/${emitens.length} (${ticker})`);
+                log(`[FEATURES] 📡 Querying... ${currentIndex + 1}/${emitens.length} (${ticker})`);
             }
 
             currentIndex++;
@@ -150,6 +175,12 @@ function connectAndFetch(token, logFn) {
                     return;
                 }
 
+                // Handshake acknowledgements
+                if (msg.event === '#handshake' || msg.event === '#setAuthToken') {
+                    log(`[FEATURES] Handshake ack: ${msg.event}`);
+                    return;
+                }
+
                 // Handle query responses
                 if (msg.rid) {
                     const ticker = pendingQueries.get(msg.rid);
@@ -161,6 +192,15 @@ function connectAndFetch(token, logFn) {
                                 data: msg.data.data,
                                 fetchedAt: new Date().toISOString()
                             };
+
+                            const avg = computeAvgTarget(msg.data.data);
+                            if (avg !== null) {
+                                results[ticker].avgTarget = avg;
+                                if (ticker === 'BBRI') {
+                                    log(`[FEATURES] BBRI target price average by broker is ${avg.toFixed(2)}`);
+                                }
+                                log(`[FEATURES] adding today average price target to emiten data`);
+                            }
                         } else if (msg.error) {
                             results[ticker] = {
                                 error: msg.error,
@@ -171,6 +211,15 @@ function connectAndFetch(token, logFn) {
                                 data: msg.data || null,
                                 fetchedAt: new Date().toISOString()
                             };
+
+                            const avg = computeAvgTarget(msg.data || null);
+                            if (avg !== null) {
+                                results[ticker].avgTarget = avg;
+                                if (ticker === 'BBRI') {
+                                    log(`[FEATURES] BBRI target price average by broker is ${avg.toFixed(2)}`);
+                                }
+                                log(`[FEATURES] adding today average price target to emiten data`);
+                            }
                         }
                     }
                 }
@@ -180,13 +229,13 @@ function connectAndFetch(token, logFn) {
         });
 
         ws.on('error', (err) => {
-            log(`[TARGET-PRICE] ❌ WebSocket error: ${err.message}`);
+            log(`[FEATURES] ❌ WebSocket error: ${err.message}`);
             clearTimeout(globalTimeout);
             reject(err);
         });
 
         ws.on('close', (code, reason) => {
-            log(`[TARGET-PRICE] WebSocket closed. Code: ${code}`);
+            log(`[FEATURES] WebSocket closed. Code: ${code}`);
             clearTimeout(globalTimeout);
         });
     });
@@ -204,9 +253,9 @@ function saveResults(data) {
             results: data
         };
         fs.writeFileSync(OUTPUT_PATH, JSON.stringify(output, null, 2));
-        console.log(`[TARGET-PRICE] 💾 Saved to ${OUTPUT_PATH}`);
+        console.log(`[FEATURES] 💾 Saved to ${OUTPUT_PATH}`);
     } catch (err) {
-        console.error('[TARGET-PRICE] Error saving results:', err.message);
+        console.error('[FEATURES] Error saving results:', err.message);
     }
 }
 

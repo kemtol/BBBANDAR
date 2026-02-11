@@ -74,7 +74,7 @@ App Start
 
 Setelah public token ready, `main.js` otomatis menjalankan channel streams yang terdokumentasi di [0003 Channel & Stream](./0003_channel_stream.md):
 - **Live Trade Stream** — auto-connect
-- **Target Price** — on-demand via DRY RUN button
+- **Features (Target Price averages)** — on-demand via DRY RUN button
 
 ---
 

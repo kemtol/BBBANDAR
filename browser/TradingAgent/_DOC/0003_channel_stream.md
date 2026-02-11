@@ -15,7 +15,7 @@ Channel layer menangani semua koneksi WebSocket ke IPOT SocketCluster. Semua cha
 | Channel | Module | Subscription | Trigger | Output |
 |---------|--------|-------------|---------|--------|
 | **Live Trade** | [`livetrade.js`](../core/channel/livetrade.js) | `rtype: LT`, `code: *` | Auto (on token ready) | Event `trade` per transaksi |
-| **Target Price** | [`target-price.js`](../core/channel/target-price.js) | `index: en_qu_TargetPrice` | Manual (DRY RUN button) | File `target-price-by-emiten.json` |
+| **Features (Target Price)** | [`features.js`](../core/channel/features.js) | `index: en_qu_TargetPrice` | Manual (DRY RUN button) | File `features-emiten.json` |
 
 ---
 
@@ -91,7 +91,7 @@ TokenEngine.public-token-ready
 
 ---
 
-## 2. Target Price Channel
+## 2. Features Channel (Target Price)
 
 ### Protocol
 
@@ -119,7 +119,7 @@ wss://ipotapp.ipot.id/socketcluster/?appsession=<PUBLIC_TOKEN>
 
 ### Output
 
-Hasil disimpan ke [`data/target-price-by-emiten.json`](../data/target-price-by-emiten.json):
+Hasil disimpan ke [`data/features-emiten.json`](../data/features-emiten.json) berupa ringkasan rata-rata target price per emiten:
 
 ```json
 {
@@ -134,7 +134,7 @@ Hasil disimpan ke [`data/target-price-by-emiten.json`](../data/target-price-by-e
 
 ### Trigger
 
-Dipanggil dari dashboard via IPC `fetch-target-prices` (tombol **DRY RUN**).
+Dipanggil dari dashboard via IPC `fetch-features` (tombol **DRY RUN**).
 
 ---
 
@@ -149,7 +149,7 @@ Dipanggil dari dashboard via IPC `fetch-target-prices` (tombol **DRY RUN**).
 │              ┌─── public token ready ───┐       │
 │              ▼                          ▼       │
 │     ┌────────────────┐       ┌────────────────┐ │
-│     │  livetrade.js  │       │ target-price.js│ │
+│     │  livetrade.js  │       │ features.js     │ │
 │     │  (auto-start)  │       │  (on-demand)   │ │
 │     └───────┬────────┘       └───────┬────────┘ │
 │             │                        │          │

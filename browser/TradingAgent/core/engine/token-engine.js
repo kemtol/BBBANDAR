@@ -2,11 +2,12 @@
  * token-engine.js — Centralized Token State Manager
  * 
  * 3-Tier Token Architecture:
- * 1. Public Token  — Auto (just opening IPOT page), for backtest/dry run/chart
+ * 1. Public Token  — Auto (fetch from appsession.js like workers), for backtest/dry run/chart
  * 2. IPOT Agent    — After IPOT login, for real trade execution
  * 3. Stockbit Agent — After Stockbit login, for real trade execution
  */
 const EventEmitter = require('events');
+const https = require('https');
 
 class TokenEngine extends EventEmitter {
     constructor() {
@@ -19,15 +20,97 @@ class TokenEngine extends EventEmitter {
     }
 
     /**
-     * Extract PUBLIC token from IPOT page (no login required).
-     * This token is available just by opening the IPOT page.
-     * Used for: backtest, dry run, chart data, target prices.
-     * CANNOT execute trades.
+     * Fetch PUBLIC token directly from IPOT appsession.js (like workers do)
+     * No browser/cookies needed! Uses Node.js https module.
      * 
+     * @returns {Promise<string|null>}
+     */
+    fetchPublicToken() {
+        return new Promise((resolve) => {
+            const url = 'https://indopremier.com/ipc/appsession.js';
+            
+            const options = {
+                headers: {
+                    'Accept': '*/*',
+                    'User-Agent': 'TradingAgent/1.0',
+                    'Origin': 'https://indopremier.com',
+                    'Referer': 'https://indopremier.com/',
+                }
+            };
+
+            const req = https.get(url, options, (res) => {
+                let data = '';
+                
+                res.on('data', (chunk) => {
+                    data += chunk;
+                });
+                
+                res.on('end', () => {
+                    if (res.statusCode !== 200) {
+                        console.error(`[TOKEN-ENGINE] appsession fetch failed: ${res.statusCode}`);
+                        resolve(null);
+                        return;
+                    }
+
+                    // Parse appsession from response (same patterns as workers)
+                    const patterns = [
+                        /appsession\s*[:=]\s*["']([^"']+)["']/i,
+                        /appsession=([a-zA-Z0-9\-_]+)/i,
+                        /["']appsession["']\s*[:,]\s*["']([^"']+)["']/i,
+                    ];
+
+                    let token = null;
+                    for (const re of patterns) {
+                        const m = data.match(re);
+                        if (m && m[1]) { 
+                            token = m[1]; 
+                            break; 
+                        }
+                    }
+
+                    // Fallback: look for token near "appsession"
+                    if (!token) {
+                        const near = data.match(/appsession[^A-Za-z0-9\-_]{0,30}([A-Za-z0-9\-_]{16,128})/i);
+                        if (near) token = near[1];
+                    }
+
+                    if (token) {
+                        this.state.public = token;
+                        this.emit('public-token-ready', token);
+                        console.log('[TOKEN-ENGINE] ✅ Public token fetched successfully');
+                        resolve(token);
+                    } else {
+                        console.error('[TOKEN-ENGINE] Could not parse appsession from response');
+                        console.error('[TOKEN-ENGINE] Response preview:', data.substring(0, 200));
+                        resolve(null);
+                    }
+                });
+            });
+
+            req.on('error', (err) => {
+                console.error('[TOKEN-ENGINE] Error fetching public token:', err.message);
+                resolve(null);
+            });
+
+            req.setTimeout(10000, () => {
+                req.destroy();
+                console.error('[TOKEN-ENGINE] Request timeout');
+                resolve(null);
+            });
+        });
+    }
+
+    /**
+     * Extract PUBLIC token from IPOT page (fallback method)
      * @param {Electron.WebContents} webContents - Left pane webContents
      * @returns {Promise<string|null>}
      */
     async extractPublicToken(webContents) {
+        // Method 0: Try direct fetch first (like workers)
+        const directToken = await this.fetchPublicToken();
+        if (directToken) return directToken;
+
+        // Fallback: Try cookies/localStorage from webContents
         try {
             // Method 1: Try cookies on ipotapp.ipot.id
             const cookies = await webContents.session.cookies.get({ domain: 'ipotapp.ipot.id' });
@@ -44,11 +127,7 @@ class TokenEngine extends EventEmitter {
                 (function() {
                     var keys = ['appsession', 'token', 'sessionId', 'appSession'];
                     for (var i = 0; i < keys.length; i++) {
-                        var v = localStorage.getItem(keys[i]);
-                        if (v) return v;
-                    }
-                    for (var i = 0; i < keys.length; i++) {
-                        var v = sessionStorage.getItem(keys[i]);
+                        var v = localStorage.getItem(keys[i]) || sessionStorage.getItem(keys[i]);
                         if (v) return v;
                     }
                     return null;

@@ -40,7 +40,7 @@ class LiveTradeStream extends EventEmitter {
     }
 
     /**
-     * Connect to IPOT WebSocket and start streaming live trades
+     * Connect to WebSocket and start streaming live trades
      * @param {string} token - Public appsession token
      * @param {Function} logFn - Logger function (sends to dashboard terminal)
      */
@@ -53,10 +53,16 @@ class LiveTradeStream extends EventEmitter {
         this.log = logFn || console.log;
 
         const wsUrl = `wss://ipotapp.ipot.id/socketcluster/?appsession=${token}`;
-        this.log('[LIVETRADE] 📡 Connecting to IPOT Live Trade stream...');
+        this.log('[LIVETRADE] 📡 Connecting to Live Trade stream...');
 
         try {
-            this.ws = new WebSocket(wsUrl);
+            const headers = {
+                'Origin': 'https://indopremier.com',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Referer': 'https://indopremier.com/#ipot/app/marketlive',
+                'Accept': '*/*'
+            };
+            this.ws = new WebSocket(wsUrl, { headers, perMessageDeflate: false, handshakeTimeout: 15000 });
         } catch (err) {
             this.log(`[LIVETRADE] ❌ Connection failed: ${err.message}`);
             this._scheduleReconnect(token);
@@ -93,6 +99,14 @@ class LiveTradeStream extends EventEmitter {
 
         this.ws.on('error', (err) => {
             this.log(`[LIVETRADE] ❌ WebSocket error: ${err.message}`);
+            if (!this.connected) {
+                this._scheduleReconnect(token);
+            }
+        });
+
+        // Log non-101 responses (handshake rejected, etc.)
+        this.ws.on('unexpected-response', (req, res) => {
+            this.log(`[LIVETRADE] ❌ Unexpected response: ${res.statusCode} ${res.statusMessage}`);
         });
     }
 
@@ -135,6 +149,12 @@ class LiveTradeStream extends EventEmitter {
 
         try {
             const parsed = JSON.parse(msg);
+
+            // Log handshake acknowledgements for visibility
+            if (parsed.event === '#handshake' || parsed.event === '#setAuthToken') {
+                this.log(`[LIVETRADE] 🔐 Handshake ack: ${parsed.event}`);
+                return;
+            }
 
             // Handle trade stream events
             if (parsed.event === 'stream' || parsed.event === '#publish') {

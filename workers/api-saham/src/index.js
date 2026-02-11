@@ -1196,6 +1196,123 @@ export default {
         }
       }
 
+      // 2b. GET /features/calculate (On-Demand Z-Score Calculation)
+      if (url.pathname === "/features/calculate" && req.method === "GET") {
+        const ticker = url.searchParams.get("symbol");
+        if (!ticker) return json({ error: "Missing symbol" }, 400);
+
+        try {
+          // Strategy 1: Check if data exists in R2 cache (from broker-summary)
+          const cacheKey = `broksum/${ticker}/cache.json`;
+          const cacheObj = await env.RAW_BROKSUM.get(cacheKey);
+          
+          let days = [];
+          
+          if (cacheObj) {
+            // Use broker summary cache data
+            const cacheData = await cacheObj.json();
+            if (cacheData.history && cacheData.history.length >= 5) {
+              days = cacheData.history.map(h => ({
+                date: h.date,
+                total_vol: h.data?.detector?.volume || 0,
+                total_delta: (h.data?.foreign?.net_val || 0) + (h.data?.local?.net_val || 0), // Smart money flow
+                close: h.data?.price || h.data?.detector?.average || 0
+              })).filter(d => d.close > 0);
+            }
+          }
+          
+          // Strategy 2: Fallback to D1 footprint data
+          if (days.length < 5) {
+            const startDate = new Date();
+            startDate.setDate(startDate.getDate() - 30);
+            const startDateStr = startDate.toISOString().split("T")[0];
+
+            const { results } = await env.SSSAHAM_DB.prepare(`
+              SELECT date, 
+                     SUM(vol) as total_vol, 
+                     SUM(delta) as total_delta,
+                     MAX(close) as close
+              FROM temp_footprint_consolidate
+              WHERE ticker = ? AND date >= ?
+              GROUP BY date
+              ORDER BY date DESC
+              LIMIT 20
+            `).bind(ticker, startDateStr).all();
+            
+            if (results && results.length > days.length) {
+              days = results;
+            }
+          }
+
+          if (days.length < 5) {
+            return json({ 
+              symbol: ticker,
+              source: "none",
+              message: "Insufficient data for calculation",
+              days_found: days.length
+            });
+          }
+
+          // Sort oldest first
+          days.sort((a, b) => new Date(a.date) - new Date(b.date));
+          const n = days.length;
+
+          // Effort = avg volume over period
+          const avgVol = days.reduce((s, d) => s + (d.total_vol || 0), 0) / n;
+          
+          // Result = price change from first to last
+          const priceChange = days[n-1].close && days[0].close 
+            ? ((days[n-1].close - days[0].close) / days[0].close) * 100 
+            : 0;
+
+          // Net Quality = avg delta % (how consistent is buying)
+          const avgDeltaPct = days.reduce((s, d) => {
+            const vol = d.total_vol || 1;
+            return s + (d.total_delta / vol) * 100;
+          }, 0) / n;
+
+          // Elasticity = price response per unit effort (simplified)
+          const elasticity = avgVol > 0 ? priceChange / (avgVol / 1000000) : 0;
+
+          // Determine state based on delta trend
+          const recentDelta = days.slice(-5).reduce((s, d) => s + (d.total_delta || 0), 0);
+          const earlyDelta = days.slice(0, 5).reduce((s, d) => s + (d.total_delta || 0), 0);
+          
+          let state = "NEUTRAL";
+          if (recentDelta > earlyDelta * 1.5 && recentDelta > 0) state = "ACCUMULATION";
+          else if (recentDelta < earlyDelta * 0.5 && recentDelta < 0) state = "DISTRIBUTION";
+          else if (recentDelta > 0 && priceChange > 2) state = "READY_MARKUP";
+          else if (recentDelta < 0 && priceChange < -2) state = "POTENTIAL_TOP";
+
+          // Normalize to z-score-like values (-3 to +3 range)
+          const normalize = (val, min, max) => Math.max(-3, Math.min(3, ((val - min) / (max - min || 1)) * 6 - 3));
+          
+          const features = {
+            effort: normalize(avgVol, 0, 10000000),
+            response: normalize(priceChange, -10, 10),
+            quality: normalize(avgDeltaPct, -50, 50),
+            elasticity: normalize(elasticity, -1, 1),
+            state: state
+          };
+
+          return json({
+            symbol: ticker,
+            source: "on_demand",
+            days_used: n,
+            period: `${days[0].date} to ${days[n-1].date}`,
+            features: features,
+            raw: {
+              avg_volume: Math.round(avgVol),
+              price_change_pct: priceChange.toFixed(2),
+              avg_delta_pct: avgDeltaPct.toFixed(2),
+              elasticity: elasticity.toFixed(4)
+            }
+          });
+        } catch (e) {
+          return json({ error: "Calculation error", details: e.message }, 500);
+        }
+      }
+
       // 3. GET /brokers (Mapping for frontend)
       if (url.pathname === "/brokers" && req.method === "GET") {
         try {
