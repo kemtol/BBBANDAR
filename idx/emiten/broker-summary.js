@@ -241,36 +241,36 @@ function mapState(s) {
     return map[s] || s;
 }
 
+// Global badge helper function (used by both screener table and detail view)
+function getBadge(val, type) {
+    const score = `<span class="small text-muted ms-1">(${val.toFixed(2)})</span>`;
+    if (type === 'effort') {
+        if (val > 1.0) return `<span class="badge bg-danger">Extreme</span>${score}`;
+        if (val > 0.5) return `<span class="badge bg-warning text-dark">High</span>${score}`;
+        if (val < -0.5) return `<span class="badge bg-secondary">Low</span>${score}`;
+        return `<span class="badge bg-light text-dark border">Normal</span>${score}`;
+    }
+    if (type === 'result') {
+        if (val > 1.0) return `<span class="text-danger fw-bold">Volatile</span>${score}`;
+        if (val < -0.5) return `<span class="text-muted">Quiet</span>${score}`;
+        return `<span class="text-dark">Normal</span>${score}`;
+    }
+    if (type === 'ngr') {
+        if (val < 0.15) return `<span class="text-muted">Noise</span>${score}`;
+        return `<span class="text-success fw-bold">Valid</span>${score}`;
+    }
+    if (type === 'elasticity') {
+        if (val === 0) return `<span class="text-muted">-</span>${score}`;
+        if (val > 1.5) return `<span class="badge bg-success">Elastic</span>${score}`;
+        if (val < 0.5) return `<span class="badge bg-danger">Rigid</span>${score}`;
+        return `<span class="text-dark small">Normal</span>${score}`;
+    }
+    return val;
+}
+
 function renderScreenerTable(candidates) {
     const tbody = $('#tbody-index');
     tbody.empty();
-
-    const getBadge = (val, type) => {
-        const score = `<span class="small text-muted ms-1">(${val.toFixed(2)})</span>`;
-        if (type === 'effort') {
-            if (val > 1.0) return `<span class="badge bg-danger">Extreme</span>${score}`;
-            if (val > 0.5) return `<span class="badge bg-warning text-dark">High</span>${score}`;
-            if (val < -0.5) return `<span class="badge bg-secondary">Low</span>${score}`;
-            return `<span class="badge bg-light text-dark border">Normal</span>${score}`;
-        }
-        if (type === 'result') {
-            if (val > 1.0) return `<span class="text-danger fw-bold">Volatile</span>${score}`;
-            if (val < -0.5) return `<span class="text-muted">Quiet</span>${score}`;
-            return `<span class="text-dark">Normal</span>${score}`;
-        }
-        if (type === 'ngr') {
-            if (val < 0.15) return `<span class="text-muted">Noise</span>${score}`;
-            return `<span class="text-success fw-bold">Valid</span>${score}`;
-        }
-        // Elasticity Badge (New)
-        if (type === 'elasticity') {
-            if (val === 0) return `<span class="text-muted">-</span>${score}`;
-            if (val > 1.5) return `<span class="badge bg-success">Elastic</span>${score}`; // Very responsive
-            if (val < 0.5) return `<span class="badge bg-danger">Rigid</span>${score}`; // Hard to move
-            return `<span class="text-dark small">Normal</span>${score}`;
-        }
-        return val;
-    };
 
     const getStateBadge = (state) => {
         const colors = {
