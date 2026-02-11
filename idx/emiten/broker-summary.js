@@ -308,6 +308,8 @@ function renderScreenerTable(candidates) {
 // Z-SCORE FEATURES (For Detail View)
 // =========================================
 async function loadZScoreFeatures(symbol) {
+    console.log(`[ZScore] Loading features for ${symbol}...`);
+    
     try {
         // Try screener first (has z-score detail from cron job)
         const screenerResp = await fetch(`${WORKER_BASE_URL}/screener`);
@@ -315,6 +317,7 @@ async function loadZScoreFeatures(symbol) {
         if (screenerData && screenerData.items) {
             const item = screenerData.items.find(i => i.t === symbol);
             if (item && item.z && item.z["20"]) {
+                console.log(`[ZScore] Found in screener`);
                 const z = item.z["20"];
                 const state = mapState(item.s);
                 $('#feat-effort').html(getBadge(z.e || 0, 'effort'));
@@ -322,6 +325,7 @@ async function loadZScoreFeatures(symbol) {
                 $('#feat-quality').html(getBadge(z.n || 0, 'ngr'));
                 $('#feat-elasticity').html(getBadge(z.el || 0, 'elasticity'));
                 $('#feat-state').html(getStateBadgeSimple(state));
+                $('#zscore-features-card').removeClass('d-none');
                 return;
             }
         }
@@ -329,29 +333,38 @@ async function loadZScoreFeatures(symbol) {
         // Not in screener - calculate on-demand from cache-summary data
         console.log(`[ZScore] ${symbol} not in screener, calculating from broker data...`);
         
-        // Fetch cache-summary (which we already use for chart)
+        // Fetch cache-summary (30 days of data)
         const endDate = new Date();
         const startDate = new Date();
         startDate.setDate(startDate.getDate() - 30);
         
-        const cacheResp = await fetch(`${WORKER_BASE_URL}/cache-summary?symbol=${symbol}&from=${startDate.toISOString().split('T')[0]}&to=${endDate.toISOString().split('T')[0]}`);
+        const cacheUrl = `${WORKER_BASE_URL}/cache-summary?symbol=${symbol}&from=${startDate.toISOString().split('T')[0]}&to=${endDate.toISOString().split('T')[0]}`;
+        console.log(`[ZScore] Fetching: ${cacheUrl}`);
+        
+        const cacheResp = await fetch(cacheUrl);
         const cacheData = await cacheResp.json();
+        
+        console.log(`[ZScore] Got history: ${cacheData.history?.length || 0} days`);
         
         if (cacheData && cacheData.history && cacheData.history.length >= 5) {
             const features = calculateFeaturesFromHistory(cacheData.history);
+            console.log(`[ZScore] Calculated features:`, features);
+            
             $('#feat-effort').html(getBadge(features.effort, 'effort'));
             $('#feat-response').html(getBadge(features.response, 'result'));
             $('#feat-quality').html(getBadge(features.quality, 'ngr'));
             $('#feat-elasticity').html(getBadge(features.elasticity, 'elasticity'));
             $('#feat-state').html(getStateBadgeSimple(features.state));
+            $('#zscore-features-card').removeClass('d-none');
             return;
         }
         
-        // No data available
+        // No data available - hide card
+        console.log(`[ZScore] No data, hiding card`);
         $('#zscore-features-card').addClass('d-none');
         
     } catch (error) {
-        console.error('Error loading Z-Score features:', error);
+        console.error('[ZScore] Error:', error);
         $('#zscore-features-card').addClass('d-none');
     }
 }
