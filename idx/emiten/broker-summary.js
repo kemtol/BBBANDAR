@@ -300,7 +300,7 @@ function getBadge(val, type, showScore = false) {
     const score = showScore ? ` <small class="text-muted">(${val.toFixed(2)})</small>` : '';
     if (type === 'effort') {
         if (val > 1.0) return `<span class="text-danger fw-bold">Extreme</span>${score}`;
-        if (val > 0.5) return `<span class="text-warning fw-bold">High</span>${score}`;
+        if (val > 0.5) return `<span style="color:#fd7e14" class="fw-bold">High</span>${score}`;
         if (val < -0.5) return `<span class="text-muted">Low</span>${score}`;
         return `<span class="text-secondary">Normal</span>${score}`;
     }
@@ -326,15 +326,14 @@ function renderScreenerTable(candidates) {
     const tbody = $('#tbody-index');
     tbody.empty();
 
-    const getStateBadge = (state) => {
-        const colors = {
-            'READY_MARKUP': 'bg-warning text-dark',
-            'TRANSITION': 'bg-primary',
-            'ACCUMULATION': 'bg-success',
-            'DISTRIBUTION': 'bg-danger',
-            'NEUTRAL': 'bg-secondary'
+    const getStateText = (state) => {
+        const styles = {
+            'READY_MARKUP': 'color:#fd7e14;font-weight:bold',
+            'TRANSITION': 'color:#0d6efd',
+            'ACCUMULATION': 'color:#198754;font-weight:bold',
+            'DISTRIBUTION': 'color:#dc3545;font-weight:bold',
+            'NEUTRAL': 'color:#6c757d'
         };
-        // Shorter labels
         const labels = {
             'READY_MARKUP': 'Ready',
             'TRANSITION': 'Trans',
@@ -342,16 +341,15 @@ function renderScreenerTable(candidates) {
             'DISTRIBUTION': 'Dist',
             'NEUTRAL': 'Neutral'
         };
-        return `<span class="badge ${colors[state] || 'bg-secondary'}">${labels[state] || state}</span>`;
+        return `<span style="${styles[state] || 'color:#6c757d'}">${labels[state] || state}</span>`;
     };
     
     // Flow Score - simple number with color
     const getFlowScore = (score) => {
-        let colorClass = 'text-muted';
-        if (score >= 5) colorClass = 'text-success fw-bold';
-        else if (score >= 3) colorClass = 'text-primary fw-bold';
-        else if (score >= 1) colorClass = 'text-warning fw-bold';
-        return `<span class="${colorClass}">${score.toFixed(1)}</span>`;
+        if (score >= 5) return `<span class="text-success fw-bold">${score.toFixed(1)}</span>`;
+        if (score >= 3) return `<span class="text-primary fw-bold">${score.toFixed(1)}</span>`;
+        if (score >= 1) return `<span style="color:#fd7e14" class="fw-bold">${score.toFixed(1)}</span>`;
+        return `<span class="text-muted">${score.toFixed(1)}</span>`;
     };
 
     candidates.forEach((item, idx) => {
@@ -367,7 +365,7 @@ function renderScreenerTable(candidates) {
                 <td class="text-center">${getFlowScore(item.score)}</td>
                 <td class="text-center">${getBadge(m.effortZ, 'effort')}</td>
                 <td class="text-center hide-mobile">${getBadge(m.ngr, 'ngr')}</td>
-                <td class="text-center">${getStateBadge(item.state)}</td>
+                <td class="text-center">${getStateText(item.state)}</td>
             </tr>
         `;
         tbody.append(row);
