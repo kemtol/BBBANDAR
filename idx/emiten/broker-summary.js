@@ -919,10 +919,15 @@ function renderChart(history) {
     // Sort and filter out NA/holiday days (days with no actual trading activity)
     history.sort((a, b) => new Date(a.date) - new Date(b.date));
     const validHistory = history.filter(h => {
-        if (!h.data || !h.data.foreign) return false;
-        // Check if there's actual trading activity (buy or sell > 0)
-        const f = h.data.foreign;
-        return (f.buy_val > 0 || f.sell_val > 0);
+        if (!h.data) return false;
+        // Check if there's actual trading activity in ANY category (foreign, retail, or local)
+        const f = h.data.foreign || {};
+        const r = h.data.retail || {};
+        const l = h.data.local || {};
+        const hasActivity = (f.buy_val > 0 || f.sell_val > 0) ||
+                           (r.buy_val > 0 || r.sell_val > 0) ||
+                           (l.buy_val > 0 || l.sell_val > 0);
+        return hasActivity;
     });
 
     const labels = validHistory.map(h => {
