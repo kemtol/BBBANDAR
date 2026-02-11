@@ -305,6 +305,49 @@ function renderScreenerTable(candidates) {
 }
 
 // =========================================
+// Z-SCORE FEATURES (For Detail View)
+// =========================================
+async function loadZScoreFeatures(symbol) {
+    try {
+        const response = await fetch(`${WORKER_BASE_URL}/screener`);
+        const data = await response.json();
+        
+        if (data && data.items) {
+            const item = data.items.find(i => i.t === symbol);
+            if (item && item.z && item.z["20"]) {
+                const z = item.z["20"];
+                const state = mapState(item.s);
+                
+                // Update UI with badges
+                $('#feat-effort').html(getBadge(z.e || 0, 'effort'));
+                $('#feat-response').html(getBadge(z.r || 0, 'result'));
+                $('#feat-quality').html(getBadge(z.n || 0, 'ngr'));
+                $('#feat-elasticity').html(getBadge(z.el || 0, 'elasticity'));
+                $('#feat-state').html(getStateBadgeSimple(state));
+            } else {
+                // Symbol not found in screener data
+                $('#zscore-features-card').addClass('d-none');
+            }
+        }
+    } catch (error) {
+        console.error('Error loading Z-Score features:', error);
+        $('#zscore-features-card').addClass('d-none');
+    }
+}
+
+function getStateBadgeSimple(state) {
+    const colors = {
+        'OFF_THE_LOW': 'bg-success',
+        'ACCUMULATION': 'bg-primary',
+        'READY_MARKUP': 'bg-info',
+        'POTENTIAL_TOP': 'bg-warning text-dark',
+        'DISTRIBUTION': 'bg-danger',
+        'NEUTRAL': 'bg-secondary'
+    };
+    return `<span class="badge ${colors[state] || 'bg-secondary'}">${state ? state.replace('_', ' ') : '-'}</span>`;
+}
+
+// =========================================
 // DETAIL MODE
 // =========================================
 async function initDetailMode(symbol) {
@@ -317,6 +360,9 @@ async function initDetailMode(symbol) {
         <a href="?kode=${symbol}" style="color: inherit; text-decoration: none;">${symbol}</a>
     `);
     $('#nav-back').removeClass('d-none').attr('href', '?'); // Show back button, link to index
+
+    // Load Z-Score Features for this symbol
+    loadZScoreFeatures(symbol);
 
     let endDate = endParam ? new Date(endParam) : new Date();
     let startDate = startParam ? new Date(startParam) : new Date();
