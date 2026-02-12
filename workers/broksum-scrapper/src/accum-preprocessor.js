@@ -89,6 +89,7 @@ export async function runAccumPreprocessor(env, { sendWebhook }) {
             // Cumulative sums
             let fn = 0, ln = 0, rn = 0;
             let allPos = true;
+            let foreignAllPos = true;
             let streak = 0;
             let streakCounting = true;
 
@@ -108,9 +109,11 @@ export async function runAccumPreprocessor(env, { sendWebhook }) {
                 ln += d.local_net || 0;
                 rn += d.retail_net || 0;
                 if (d.smart_net <= 0) allPos = false;
+                if ((d.foreign_net || 0) <= 0) foreignAllPos = false;
             }
 
             const sm = fn + ln;
+            const foreignDominant = fn > 0; // Foreign net kumulatif positif
 
             // Price change over window
             const firstPrice = windowDays[0]?.price || 0;
@@ -126,6 +129,8 @@ export async function runAccumPreprocessor(env, { sendWebhook }) {
                 sm: Math.round(sm),
                 streak,
                 allPos,
+                foreignAllPos,
+                foreignDominant,
                 days: windowDays.length,
                 pctChg,
             };

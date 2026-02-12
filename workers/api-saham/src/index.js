@@ -1369,6 +1369,8 @@ export default {
                 sm: windowData.sm,   // smart money (fn+ln)
                 streak: windowData.streak, // consecutive sm>0 days
                 allPos: windowData.allPos, // every day sm>0
+                foreignAllPos: windowData.foreignAllPos || false, // every day foreign>0
+                foreignDominant: windowData.foreignDominant || false, // cumulative foreign>0
                 pctChg: windowData.pctChg, // price change %
                 window: window
               },

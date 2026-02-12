@@ -106,6 +106,7 @@ const SCREENER_PAGE_SIZE = 100;
 let screenerPage = 1;
 let screenerMode = 'accum'; // 'all' or 'accum'
 let accumWindow = 2; // Current timeframe window: 2, 5, 10, or 20
+let accumFilter = 'strict'; // 'strict' (foreign+smart), 'smart' (smart only), 'all'
 let accumDataCache = null; // Cache accum API response to avoid re-fetch on window change
 
 async function loadScreenerData(mode = 'accum') {
@@ -200,7 +201,18 @@ async function loadAccumData() {
     const data = accumDataCache;
 
     currentCandidates = data.items
-        .filter(i => i.accum && i.accum.allPos) // Only show where smart money positive every day
+        .filter(i => {
+            if (!i.accum) return false;
+            if (accumFilter === 'strict') {
+                // Foreign positif setiap hari DAN smart money kumulatif positif
+                return i.accum.foreignAllPos && i.accum.allPos;
+            } else if (accumFilter === 'smart') {
+                // Smart money (F+L) positif setiap hari
+                return i.accum.allPos;
+            }
+            // 'all' — tampilkan semua yang ada data
+            return true;
+        })
         .map(i => {
             const state = i.s ? mapState(i.s) : 'NEUTRAL';
             const effortZ = i.z?.["20"]?.e || 0;
@@ -374,6 +386,29 @@ $(document).on('click', '#timeframe-selector a', function(e) {
     $(this).addClass('active');
     accumWindow = window;
     accumDataCache = null; // Re-fetch for new window
+    loadAccumData().then(() => {
+        $('#loading-indicator').hide();
+        $('#app').fadeIn();
+    });
+});
+
+// Accum filter selector click handler
+$(document).on('click', '#accum-filter-selector a', function(e) {
+    e.preventDefault();
+    const filter = $(this).data('filter');
+    $('#accum-filter-selector a').removeClass('active');
+    $(this).addClass('active');
+    accumFilter = filter;
+
+    // Update filter pill text
+    const pillLabels = {
+        strict: '<i class="fa-solid fa-filter me-1"></i>Foreign &amp; Smart $ &gt; 0',
+        smart: '<i class="fa-solid fa-filter me-1"></i>Smart Money &gt; 0',
+        all: '<i class="fa-solid fa-filter me-1"></i>No filter'
+    };
+    $('#filter-pill').html(pillLabels[filter] || pillLabels.strict);
+
+    // Re-render from cache (no re-fetch needed, filter is client-side)
     loadAccumData().then(() => {
         $('#loading-indicator').hide();
         $('#app').fadeIn();

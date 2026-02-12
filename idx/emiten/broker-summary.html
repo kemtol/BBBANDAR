@@ -257,10 +257,16 @@
                         <a href="#" class="btn btn-outline-secondary btn-sm" data-window="10">10D</a>
                         <a href="#" class="btn btn-outline-secondary btn-sm" data-window="20">20D</a>
                     </div>
+                    <span class="text-muted small fw-bold text-uppercase" style="font-size:0.7rem; letter-spacing:0.5px;">Filter</span>
+                    <div class="btn-group btn-group-sm" id="accum-filter-selector">
+                        <a href="#" class="btn btn-outline-secondary btn-sm active" data-filter="strict" title="Foreign + Local positif setiap hari">Strict</a>
+                        <a href="#" class="btn btn-outline-secondary btn-sm" data-filter="smart" title="Smart Money (F+L) positif setiap hari">Smart</a>
+                        <a href="#" class="btn btn-outline-secondary btn-sm" data-filter="all" title="Tampilkan semua">All</a>
+                    </div>
                     <!-- Active Filter Pills -->
                     <div id="active-filter-pills" class="d-flex gap-1 flex-wrap">
-                        <span class="badge rounded-pill bg-success bg-opacity-10 text-success" style="font-size:0.72rem;">
-                            <i class="fa-solid fa-filter me-1"></i>Smart Money &gt; 0
+                        <span id="filter-pill" class="badge rounded-pill bg-success bg-opacity-10 text-success" style="font-size:0.72rem;">
+                            <i class="fa-solid fa-filter me-1"></i>Foreign &amp; Smart $ &gt; 0
                         </span>
                     </div>
                 </div>
@@ -435,7 +441,7 @@
     <script src="component.js"></script>
 
     <!-- MAIN APP LOGIC -->
-    <script src="broker-summary.js?v=13"></script>
+    <script src="broker-summary.js?v=14"></script>
 </body>
 
 </html>
