@@ -95,125 +95,33 @@ async function initIndexMode() {
     $('#index-view').show();
     $('#detail-view').hide();
     $('.nav-title').text('Dashboard');
-    $('#nav-back').addClass('d-none'); // Hide back button in Screen Mode
-    loadScreenerData('accum'); // Default to Accum mode
+    $('#nav-back').addClass('d-none');
+    loadScreenerData();
 }
 
 // Global state for sorting and pagination
 let currentCandidates = [];
-let sortState = { key: 'score', desc: true };
+let allCandidates = []; // Unfiltered cache
+let sortState = { key: 'sm2', desc: true };
 const SCREENER_PAGE_SIZE = 100;
 let screenerPage = 1;
-let screenerMode = 'accum'; // 'all' or 'accum'
-let accumWindow = 2; // Current timeframe window: 2, 5, 10, or 20
-let accumFilter = 'strict'; // 'strict' (foreign+smart), 'smart' (smart only), 'all'
-let accumDataCache = null; // Cache accum API response to avoid re-fetch on window change
+let accumFilter = 'all'; // 'strict', 'smart', 'all'
 
-async function loadScreenerData(mode = 'accum') {
+async function loadScreenerData() {
     try {
-        screenerMode = mode;
         $('#loading-indicator').show();
         $('#tbody-index').html('');
 
-        // Toggle accum filter bar visibility
-        if (mode === 'accum') {
-            $('#accum-filter-bar').show();
-            $('.accum-col').show();
-        } else {
-            $('#accum-filter-bar').hide();
-            $('.accum-col').hide();
+        const response = await fetch(`${WORKER_BASE_URL}/screener-accum`);
+        const data = await response.json();
+
+        if (!data || !data.items || data.items.length === 0) {
+            $('#tbody-index').html('<tr><td colspan="9" class="text-center text-muted">Accum data not yet generated.</td></tr>');
+            return;
         }
 
-        if (mode === 'accum') {
-            await loadAccumData();
-        } else {
-            // "All" mode - original screener
-            accumDataCache = null;
-            const response = await fetch(`${WORKER_BASE_URL}/screener`);
-            const data = await response.json();
-
-            if (data && data.items) {
-                currentCandidates = data.items.map(i => {
-                    const state = mapState(i.s);
-                    const effortZ = i.z?.["20"]?.e || 0;
-                    const resultZ = i.z?.["20"]?.r || 0;
-                    const ngr = i.z?.["20"]?.n || 0;
-                    const elasticity = i.z?.["20"]?.el || 0;
-
-                    const stateBonus = (state === 'ACCUMULATION' || state === 'READY_MARKUP') ? 2
-                                     : (state === 'TRANSITION') ? 1 : 0;
-                    const effortBonus = effortZ > 0 ? Math.min(effortZ * 2, 4) : 0;
-                    const ngrBonus = ngr > 0 ? 1 : 0;
-                    const simpleScore = effortBonus + stateBonus + ngrBonus;
-
-                    return {
-                        symbol: i.t,
-                        state: state,
-                        score: simpleScore,
-                        originalScore: i.sc,
-                        smartMoney: null,
-                        accum: null,
-                        metrics: { effortZ, resultZ, ngr, elasticity }
-                    };
-                });
-
-                $('#screener-count').text(`${currentCandidates.length} emiten`);
-                sortState = { key: 'score', desc: true };
-                sortCandidates('score', true);
-            } else {
-                $('#tbody-index').html('<tr><td colspan="7" class="text-center text-muted">No data available.</td></tr>');
-            }
-        }
-
-        loadForeignSentiment();
-
-    } catch (error) {
-        console.error(error);
-        $('#tbody-index').html('<tr><td colspan="7" class="text-center text-danger">Error loading screener data</td></tr>');
-    } finally {
-        $('#loading-indicator').hide();
-        $('#app').fadeIn();
-    }
-}
-
-/**
- * Load accumulation data from /screener-accum API.
- * Uses cached data if available and only window changed.
- */
-async function loadAccumData() {
-    // Fetch if not cached
-    if (!accumDataCache) {
-        const response = await fetch(`${WORKER_BASE_URL}/screener-accum?window=${accumWindow}`);
-        accumDataCache = await response.json();
-    }
-
-    if (!accumDataCache || !accumDataCache.items) {
-        $('#tbody-index').html('<tr><td colspan="7" class="text-center text-muted">Accum data not yet generated.</td></tr>');
-        return;
-    }
-
-    // Re-fetch if window changed (server pre-filters by window)
-    if (accumDataCache.window !== accumWindow) {
-        const response = await fetch(`${WORKER_BASE_URL}/screener-accum?window=${accumWindow}`);
-        accumDataCache = await response.json();
-    }
-
-    const data = accumDataCache;
-
-    currentCandidates = data.items
-        .filter(i => {
-            if (!i.accum) return false;
-            if (accumFilter === 'strict') {
-                // Foreign positif setiap hari DAN smart money kumulatif positif
-                return i.accum.foreignAllPos && i.accum.allPos;
-            } else if (accumFilter === 'smart') {
-                // Smart money (F+L) positif setiap hari
-                return i.accum.allPos;
-            }
-            // 'all' — tampilkan semua yang ada data
-            return true;
-        })
-        .map(i => {
+        // Map all items with all windows
+        allCandidates = data.items.map(i => {
             const state = i.s ? mapState(i.s) : 'NEUTRAL';
             const effortZ = i.z?.["20"]?.e || 0;
             const resultZ = i.z?.["20"]?.r || 0;
@@ -228,19 +136,55 @@ async function loadAccumData() {
 
             return {
                 symbol: i.t,
-                state: state,
+                state,
                 score: simpleScore,
-                originalScore: i.sc || 0,
-                smartMoney: i.accum.sm || 0,
-                accum: i.accum,
+                // Per-window accum data
+                w2: i.accum?.["2"] || null,
+                w5: i.accum?.["5"] || null,
+                w10: i.accum?.["10"] || null,
+                w20: i.accum?.["20"] || null,
+                // Shortcut for sorting
+                sm2:  i.accum?.["2"]?.sm || 0,
+                sm5:  i.accum?.["5"]?.sm || 0,
+                sm10: i.accum?.["10"]?.sm || 0,
+                sm20: i.accum?.["20"]?.sm || 0,
                 metrics: { effortZ, resultZ, ngr, elasticity }
             };
         });
 
+        applyFilter();
+        loadForeignSentiment();
+
+    } catch (error) {
+        console.error(error);
+        $('#tbody-index').html('<tr><td colspan="9" class="text-center text-danger">Error loading screener data</td></tr>');
+    } finally {
+        $('#loading-indicator').hide();
+        $('#app').fadeIn();
+    }
+}
+
+/**
+ * Apply client-side filter and re-render.
+ */
+function applyFilter() {
+    if (accumFilter === 'strict') {
+        // Strict: foreignAllPos on at least one window (prefer 2D as gate)
+        currentCandidates = allCandidates.filter(c => {
+            return [c.w2, c.w5, c.w10, c.w20].some(w => w && w.foreignAllPos && w.allPos);
+        });
+    } else if (accumFilter === 'smart') {
+        // Smart: allPos on at least one window
+        currentCandidates = allCandidates.filter(c => {
+            return [c.w2, c.w5, c.w10, c.w20].some(w => w && w.allPos);
+        });
+    } else {
+        // All: show everything
+        currentCandidates = [...allCandidates];
+    }
+
     $('#screener-count').text(`${currentCandidates.length} emiten`);
-    // Sort by smart money DESC in accum mode
-    sortState = { key: 'smartMoney', desc: true };
-    sortCandidates('smartMoney', true);
+    sortCandidates(sortState.key, sortState.desc);
 }
 
 // Foreign Sentiment Chart - Cumulative of 10 MVP Stocks
@@ -368,30 +312,6 @@ $(document).on('click', '#foreign-range-selector a', function(e) {
     loadForeignSentiment(days);
 });
 
-// Screener mode selector click handler
-$(document).on('click', '#screener-mode-selector a', function(e) {
-    e.preventDefault();
-    const mode = $(this).data('mode');
-    $('#screener-mode-selector a').removeClass('active');
-    $(this).addClass('active');
-    accumDataCache = null; // Clear cache on mode switch
-    loadScreenerData(mode);
-});
-
-// Timeframe selector click handler (accum mode)
-$(document).on('click', '#timeframe-selector a', function(e) {
-    e.preventDefault();
-    const window = parseInt($(this).data('window'));
-    $('#timeframe-selector a').removeClass('active');
-    $(this).addClass('active');
-    accumWindow = window;
-    accumDataCache = null; // Re-fetch for new window
-    loadAccumData().then(() => {
-        $('#loading-indicator').hide();
-        $('#app').fadeIn();
-    });
-});
-
 // Accum filter selector click handler
 $(document).on('click', '#accum-filter-selector a', function(e) {
     e.preventDefault();
@@ -400,19 +320,16 @@ $(document).on('click', '#accum-filter-selector a', function(e) {
     $(this).addClass('active');
     accumFilter = filter;
 
-    // Update filter pill text
+    // Update filter pill
     const pillLabels = {
-        strict: '<i class="fa-solid fa-filter me-1"></i>Foreign &amp; Smart $ &gt; 0',
-        smart: '<i class="fa-solid fa-filter me-1"></i>Smart Money &gt; 0',
-        all: '<i class="fa-solid fa-filter me-1"></i>No filter'
+        strict: { text: '<i class="fa-solid fa-filter me-1"></i>Foreign &amp; Smart $ &gt; 0', cls: 'bg-success bg-opacity-10 text-success' },
+        smart:  { text: '<i class="fa-solid fa-filter me-1"></i>Smart Money &gt; 0', cls: 'bg-primary bg-opacity-10 text-primary' },
+        all:    { text: '<i class="fa-solid fa-filter me-1"></i>No filter', cls: 'bg-secondary bg-opacity-10 text-secondary' }
     };
-    $('#filter-pill').html(pillLabels[filter] || pillLabels.strict);
+    const pill = pillLabels[filter] || pillLabels.all;
+    $('#filter-pill').html(pill.text).attr('class', `badge rounded-pill ${pill.cls}`).css('font-size', '0.72rem');
 
-    // Re-render from cache (no re-fetch needed, filter is client-side)
-    loadAccumData().then(() => {
-        $('#loading-indicator').hide();
-        $('#app').fadeIn();
-    });
+    applyFilter();
 });
 
 function sortCandidates(key, desc) {
@@ -421,9 +338,12 @@ function sortCandidates(key, desc) {
 
         // Extract values based on key
         if (key === 'symbol') { valA = a.symbol; valB = b.symbol; }
-        else if (key === 'state') { valA = a.state; valB = b.state; } // String comparison for state
+        else if (key === 'state') { valA = a.state; valB = b.state; }
         else if (key === 'score') { valA = a.score; valB = b.score; }
-        else if (key === 'smartMoney') { valA = a.smartMoney || 0; valB = b.smartMoney || 0; }
+        else if (key === 'sm2')  { valA = a.sm2  || 0; valB = b.sm2  || 0; }
+        else if (key === 'sm5')  { valA = a.sm5  || 0; valB = b.sm5  || 0; }
+        else if (key === 'sm10') { valA = a.sm10 || 0; valB = b.sm10 || 0; }
+        else if (key === 'sm20') { valA = a.sm20 || 0; valB = b.sm20 || 0; }
         else if (key === 'effort') { valA = a.metrics.effortZ; valB = b.metrics.effortZ; }
         else if (key === 'response') { valA = a.metrics.resultZ; valB = b.metrics.resultZ; }
         else if (key === 'quality') { valA = a.metrics.ngr; valB = b.metrics.ngr; }
@@ -561,31 +481,31 @@ function renderScreenerTable(candidates) {
         return `<span class="text-muted">${score.toFixed(1)}</span>`;
     };
 
-    // Format smart money value (Rupiah)
-    const formatSmartMoney = (item) => {
-        if (!item.accum || item.smartMoney === null) return '';
-        const val = item.smartMoney;
+    // Format smart money value per window cell
+    const fmtSm = (wData) => {
+        if (!wData) return '<span class="text-muted">-</span>';
+        const val = wData.sm || 0;
         const abs = Math.abs(val);
         let formatted;
         if (abs >= 1e12) formatted = (val / 1e12).toFixed(1) + 'T';
         else if (abs >= 1e9) formatted = (val / 1e9).toFixed(1) + 'B';
         else if (abs >= 1e6) formatted = (val / 1e6).toFixed(0) + 'M';
-        else formatted = val.toLocaleString();
+        else if (abs === 0) return '<span class="text-muted">0</span>';
+        else formatted = (val / 1e6).toFixed(0) + 'M';
 
-        const color = val > 0 ? 'text-success' : val < 0 ? 'text-danger' : 'text-muted';
-        const streak = item.accum.streak || 0;
-        const streakBadge = streak >= 3 ? ` <span class="badge bg-success bg-opacity-10 text-success" style="font-size:0.6rem;">${streak}🔥</span>` : '';
-        return `<span class="${color} fw-bold" style="font-size:0.82rem;">${formatted}</span>${streakBadge}`;
+        const color = val > 0 ? 'text-success' : 'text-danger';
+        // Indicator: ● green if foreignAllPos+allPos, ◐ blue if allPos only
+        let indicator = '';
+        if (wData.foreignAllPos && wData.allPos) indicator = '<span class="text-success" style="font-size:0.55rem;">●</span> ';
+        else if (wData.allPos) indicator = '<span class="text-primary" style="font-size:0.55rem;">◐</span> ';
+        const streak = wData.streak || 0;
+        const streakBadge = streak >= 3 ? `<sup class="text-success" style="font-size:0.55rem;">${streak}🔥</sup>` : '';
+        return `${indicator}<span class="${color} fw-bold" style="font-size:0.78rem;">${formatted}</span>${streakBadge}`;
     };
-
-    const isAccumMode = screenerMode === 'accum';
 
     candidates.forEach((item, idx) => {
         const m = item.metrics;
         const logoUrl = `https://api-saham.mkemalw.workers.dev/logo?symbol=${item.symbol}`;
-        const smartMoneyCol = isAccumMode
-            ? `<td class="text-center accum-col">${formatSmartMoney(item)}</td>`
-            : '';
         const row = `
             <tr onclick="window.location.href='?kode=${item.symbol}'" style="cursor:pointer;">
                 <td class="text-center text-muted small">${idx + 1}</td>
@@ -593,10 +513,12 @@ function renderScreenerTable(candidates) {
                     <img src="${logoUrl}" alt="" style="height: 20px; width: auto; margin-right: 6px; vertical-align: middle; border-radius: 3px;" onerror="this.style.display='none'">
                     <a href="?kode=${item.symbol}">${item.symbol}</a>
                 </td>
-                ${smartMoneyCol}
+                <td class="text-center">${fmtSm(item.w2)}</td>
+                <td class="text-center">${fmtSm(item.w5)}</td>
+                <td class="text-center hide-mobile">${fmtSm(item.w10)}</td>
+                <td class="text-center hide-mobile">${fmtSm(item.w20)}</td>
                 <td class="text-center">${getFlowScore(item.score)}</td>
-                <td class="text-center">${getBadge(m.effortZ, 'effort')}</td>
-                <td class="text-center hide-mobile">${getBadge(m.ngr, 'ngr')}</td>
+                <td class="text-center hide-mobile">${getBadge(m.effortZ, 'effort')}</td>
                 <td class="text-center">${getStateText(item.state)}</td>
             </tr>
         `;

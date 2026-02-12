@@ -236,39 +236,21 @@
                     <canvas id="foreign-sentiment-chart"></canvas>
                 </div>
             </div>
-            <!-- FILTER BAR (TradingView Style) -->
+            <!-- FILTER BAR -->
             <div class="mb-2">
                 <div class="d-flex justify-content-between align-items-center mb-2">
                     <div class="d-flex align-items-center gap-2 flex-wrap">
-                        <span class="text-muted small fw-bold text-uppercase" style="font-size:0.7rem; letter-spacing:0.5px;">Mode</span>
-                        <div class="btn-group btn-group-sm" id="screener-mode-selector">
-                            <a href="#" class="btn btn-outline-primary btn-sm" data-mode="all">All</a>
-                            <a href="#" class="btn btn-outline-primary btn-sm active" data-mode="accum">Accum</a>
+                        <span class="text-muted small fw-bold text-uppercase" style="font-size:0.7rem; letter-spacing:0.5px;">Filter</span>
+                        <div class="btn-group btn-group-sm" id="accum-filter-selector">
+                            <a href="#" class="btn btn-outline-secondary btn-sm" data-filter="strict" title="Foreign positif setiap hari di semua window">Strict</a>
+                            <a href="#" class="btn btn-outline-secondary btn-sm" data-filter="smart" title="Smart Money positif setiap hari di semua window">Smart</a>
+                            <a href="#" class="btn btn-outline-secondary btn-sm active" data-filter="all" title="Tampilkan semua">All</a>
                         </div>
-                    </div>
-                    <small class="text-muted" id="screener-count"></small>
-                </div>
-                <!-- Timeframe pills (visible when Accum mode active) -->
-                <div id="accum-filter-bar" class="d-flex align-items-center gap-2 flex-wrap">
-                    <span class="text-muted small fw-bold text-uppercase" style="font-size:0.7rem; letter-spacing:0.5px;">Window</span>
-                    <div class="btn-group btn-group-sm" id="timeframe-selector">
-                        <a href="#" class="btn btn-outline-secondary btn-sm active" data-window="2">2D</a>
-                        <a href="#" class="btn btn-outline-secondary btn-sm" data-window="5">5D</a>
-                        <a href="#" class="btn btn-outline-secondary btn-sm" data-window="10">10D</a>
-                        <a href="#" class="btn btn-outline-secondary btn-sm" data-window="20">20D</a>
-                    </div>
-                    <span class="text-muted small fw-bold text-uppercase" style="font-size:0.7rem; letter-spacing:0.5px;">Filter</span>
-                    <div class="btn-group btn-group-sm" id="accum-filter-selector">
-                        <a href="#" class="btn btn-outline-secondary btn-sm active" data-filter="strict" title="Foreign + Local positif setiap hari">Strict</a>
-                        <a href="#" class="btn btn-outline-secondary btn-sm" data-filter="smart" title="Smart Money (F+L) positif setiap hari">Smart</a>
-                        <a href="#" class="btn btn-outline-secondary btn-sm" data-filter="all" title="Tampilkan semua">All</a>
-                    </div>
-                    <!-- Active Filter Pills -->
-                    <div id="active-filter-pills" class="d-flex gap-1 flex-wrap">
-                        <span id="filter-pill" class="badge rounded-pill bg-success bg-opacity-10 text-success" style="font-size:0.72rem;">
-                            <i class="fa-solid fa-filter me-1"></i>Foreign &amp; Smart $ &gt; 0
+                        <span id="filter-pill" class="badge rounded-pill bg-secondary bg-opacity-10 text-secondary" style="font-size:0.72rem;">
+                            <i class="fa-solid fa-filter me-1"></i>No filter
                         </span>
                     </div>
+                    <small class="text-muted" id="screener-count"></small>
                 </div>
             </div>
             <div class="card card-swing">
@@ -279,13 +261,17 @@
                                 <th class="text-center">#</th>
                                 <th data-sort="symbol" style="cursor:pointer">Emiten <i
                                         class="fa-solid fa-sort small text-muted"></i></th>
-                                <th class="text-center accum-col" data-sort="smartMoney" style="cursor:pointer">Smart $ <i
+                                <th class="text-center" data-sort="sm2" style="cursor:pointer">2D <i
+                                        class="fa-solid fa-sort small text-muted"></i></th>
+                                <th class="text-center" data-sort="sm5" style="cursor:pointer">5D <i
+                                        class="fa-solid fa-sort small text-muted"></i></th>
+                                <th class="text-center hide-mobile" data-sort="sm10" style="cursor:pointer">10D <i
+                                        class="fa-solid fa-sort small text-muted"></i></th>
+                                <th class="text-center hide-mobile" data-sort="sm20" style="cursor:pointer">20D <i
                                         class="fa-solid fa-sort small text-muted"></i></th>
                                 <th class="text-center" data-sort="score" style="cursor:pointer">Flow <i
                                         class="fa-solid fa-sort small text-muted"></i></th>
-                                <th class="text-center" data-sort="effort" style="cursor:pointer">Effort <i
-                                        class="fa-solid fa-sort small text-muted"></i></th>
-                                <th class="text-center hide-mobile" data-sort="quality" style="cursor:pointer">Quality <i
+                                <th class="text-center hide-mobile" data-sort="effort" style="cursor:pointer">Effort <i
                                         class="fa-solid fa-sort small text-muted"></i></th>
                                 <th class="text-center" data-sort="state" style="cursor:pointer">State <i
                                         class="fa-solid fa-sort small text-muted"></i></th>
@@ -441,7 +427,7 @@
     <script src="component.js"></script>
 
     <!-- MAIN APP LOGIC -->
-    <script src="broker-summary.js?v=14"></script>
+    <script src="broker-summary.js?v=15"></script>
 </body>
 
 </html>

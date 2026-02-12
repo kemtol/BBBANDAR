@@ -1329,9 +1329,7 @@ export default {
           }
 
           const accumData = await obj.json();
-          const requestedWindow = parseInt(url.searchParams.get('window') || '2');
           const validWindows = [2, 5, 10, 20];
-          const window = validWindows.includes(requestedWindow) ? requestedWindow : 2;
 
           // Merge with screener z-score data for enriched response
           let screenerMap = {};
@@ -1351,29 +1349,16 @@ export default {
             console.error("[screener-accum] Failed to load z-score data:", e);
           }
 
-          // Build enriched items: accum metrics + z-score data
+          // Build enriched items: ALL windows per ticker + z-score data
           const items = [];
           for (const row of (accumData.items || [])) {
-            const windowData = row.accum?.[window];
-            if (!windowData) continue;
-
+            if (!row.accum) continue;
             const screenerItem = screenerMap[row.t] || null;
 
             items.push({
               t: row.t,
-              // Accum data for requested window
-              accum: {
-                fn: windowData.fn,   // foreign net
-                ln: windowData.ln,   // local net
-                rn: windowData.rn,   // retail net
-                sm: windowData.sm,   // smart money (fn+ln)
-                streak: windowData.streak, // consecutive sm>0 days
-                allPos: windowData.allPos, // every day sm>0
-                foreignAllPos: windowData.foreignAllPos || false, // every day foreign>0
-                foreignDominant: windowData.foreignDominant || false, // cumulative foreign>0
-                pctChg: windowData.pctChg, // price change %
-                window: window
-              },
+              // All window accum data
+              accum: row.accum,
               // Z-score data (if available)
               s: screenerItem?.s || null,
               sc: screenerItem?.sc || null,
@@ -1384,9 +1369,8 @@ export default {
           return withCORS(new Response(JSON.stringify({
             items,
             date: accumData.date,
-            generatedAt: accumData.generatedAt,
-            window,
-            availableWindows: validWindows,
+            generatedAt: accumData.generated_at,
+            windows: validWindows,
             total: items.length
           }), { headers: { "Content-Type": "application/json" } }));
 
