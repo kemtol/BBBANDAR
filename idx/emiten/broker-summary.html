@@ -216,31 +216,52 @@
                     <span class="nav-link active">Brokerflow</span>
                 </li>
             </ul>
-            <!-- MARKET BREADTH WIDGET -->
-            <div id="market-breadth-widget" class="p-4 mb-3 bg-white rounded-3 shadow-sm d-none">
-                <div class="row align-items-center">
-                    <div class="col-md-4 text-center border-end">
-                        <h6 class="text-muted mb-1">Market Sentiment</h6>
-                        <h2 class="mb-0 fw-bold" id="market-sentiment-text">Neutral</h2>
-                        <small class="text-muted" id="market-date">Today</small>
+            <!-- FOREIGN SENTIMENT CHART -->
+            <div id="foreign-sentiment-widget" class="p-3 mb-3 bg-white rounded-3 shadow-sm">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <h6 class="text-muted mb-0">Foreign Flow</h6>
+                    <div class="btn-group btn-group-sm" id="foreign-range-selector">
+                        <a href="#" class="btn btn-outline-secondary btn-sm active" data-days="7">7D</a>
+                        <a href="#" class="btn btn-outline-secondary btn-sm" data-days="30">30D</a>
+                        <a href="#" class="btn btn-outline-secondary btn-sm" data-days="90">90D</a>
                     </div>
-                    <div class="col-md-8">
-                        <div class="d-flex justify-content-between mb-1 small text-muted">
-                            <span>Distribution (Bearish)</span>
-                            <span>Accumulation (Bullish)</span>
+                </div>
+                <div id="foreign-chart-loading" class="text-center py-4">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                    <p class="small text-muted mt-2 mb-0">Memuat data foreign flow...</p>
+                </div>
+                <div class="chart-container-responsive" style="height: 200px; display: none;" id="foreign-chart-container">
+                    <canvas id="foreign-sentiment-chart"></canvas>
+                </div>
+            </div>
+            <!-- FILTER BAR (TradingView Style) -->
+            <div class="mb-2">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <div class="d-flex align-items-center gap-2 flex-wrap">
+                        <span class="text-muted small fw-bold text-uppercase" style="font-size:0.7rem; letter-spacing:0.5px;">Mode</span>
+                        <div class="btn-group btn-group-sm" id="screener-mode-selector">
+                            <a href="#" class="btn btn-outline-primary btn-sm" data-mode="all">All</a>
+                            <a href="#" class="btn btn-outline-primary btn-sm active" data-mode="accum">Accum</a>
                         </div>
-                        <div class="progress" style="height: 24px;">
-                            <div id="bar-dist" class="progress-bar bg-danger" role="progressbar" style="width: 0%">0
-                            </div>
-                            <div id="bar-neut" class="progress-bar bg-secondary opacity-50" role="progressbar"
-                                style="width: 100%">0</div>
-                            <div id="bar-accum" class="progress-bar bg-success" role="progressbar" style="width: 0%">0
-                            </div>
-                        </div>
-                        <div class="d-flex justify-content-between mt-2 small">
-                            <span class="text-danger fw-bold" id="count-dist">0 Stocks</span>
-                            <span class="text-success fw-bold" id="count-accum">0 Stocks</span>
-                        </div>
+                    </div>
+                    <small class="text-muted" id="screener-count"></small>
+                </div>
+                <!-- Timeframe pills (visible when Accum mode active) -->
+                <div id="accum-filter-bar" class="d-flex align-items-center gap-2 flex-wrap">
+                    <span class="text-muted small fw-bold text-uppercase" style="font-size:0.7rem; letter-spacing:0.5px;">Window</span>
+                    <div class="btn-group btn-group-sm" id="timeframe-selector">
+                        <a href="#" class="btn btn-outline-secondary btn-sm active" data-window="2">2D</a>
+                        <a href="#" class="btn btn-outline-secondary btn-sm" data-window="5">5D</a>
+                        <a href="#" class="btn btn-outline-secondary btn-sm" data-window="10">10D</a>
+                        <a href="#" class="btn btn-outline-secondary btn-sm" data-window="20">20D</a>
+                    </div>
+                    <!-- Active Filter Pills -->
+                    <div id="active-filter-pills" class="d-flex gap-1 flex-wrap">
+                        <span class="badge rounded-pill bg-success bg-opacity-10 text-success" style="font-size:0.72rem;">
+                            <i class="fa-solid fa-filter me-1"></i>Smart Money &gt; 0
+                        </span>
                     </div>
                 </div>
             </div>
@@ -251,6 +272,8 @@
                             <tr>
                                 <th class="text-center">#</th>
                                 <th data-sort="symbol" style="cursor:pointer">Emiten <i
+                                        class="fa-solid fa-sort small text-muted"></i></th>
+                                <th class="text-center accum-col" data-sort="smartMoney" style="cursor:pointer">Smart $ <i
                                         class="fa-solid fa-sort small text-muted"></i></th>
                                 <th class="text-center" data-sort="score" style="cursor:pointer">Flow <i
                                         class="fa-solid fa-sort small text-muted"></i></th>
@@ -412,7 +435,7 @@
     <script src="component.js"></script>
 
     <!-- MAIN APP LOGIC -->
-    <script src="broker-summary.js?v=12"></script>
+    <script src="broker-summary.js?v=13"></script>
 </body>
 
 </html>

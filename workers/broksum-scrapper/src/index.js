@@ -32,9 +32,10 @@
  *  * - Implements complex retry and backoff logic for scraping.
  *  */
 
-
-
-
+import { validateBroksum, hasValidBrokerData } from './validator.js';
+import { runHealthCheck } from './health-check.js';
+import { aggregateAndStore, backfillFlowFromR2 } from './flow-aggregator.js';
+import { runAccumPreprocessor } from './accum-preprocessor.js';
 
 // Helper: Check if R2 object exists
 async function objectExists(env, key) {
@@ -223,7 +224,8 @@ export default {
                 "/update-watchlist", "/ipot/reset-session",
                 "/scrape", "/backfill-queue", "/trigger-full-flow", "/init",
                 "/backfill/status", "/backfill/resume", "/backfill/pause", "/backfill/reset",
-                "/debug-token", "/test-range", "/auto-backfill"
+                "/debug-token", "/test-range", "/auto-backfill",
+                "/backfill-flow", "/trigger-accum"
             ];
             if (sensitiveRoutes.includes(path)) {
                 const keyError = requireKey(request, env);
@@ -381,6 +383,67 @@ export default {
                 }
             }
 
+            // ROUTE: Backfill daily_broker_flow from existing R2 data
+            if (path === "/backfill-flow") {
+                const days = parseInt(url.searchParams.get("days") || "30");
+                const ticker = url.searchParams.get("ticker"); // optional: single ticker
+                
+                const watchlist = ticker ? [ticker.toUpperCase()] : await this.getWatchlistFromKV(env);
+                if (!watchlist || watchlist.length === 0) {
+                    return new Response(JSON.stringify({ error: "No watchlist" }), {
+                        headers: withCors({ "Content-Type": "application/json" })
+                    });
+                }
+
+                // Generate trading days
+                const tradingDays = [];
+                const now = new Date();
+                for (let i = 0; i < days * 1.5 && tradingDays.length < days; i++) {
+                    const d = new Date(now);
+                    d.setDate(d.getDate() - i);
+                    const dow = d.getDay();
+                    if (dow !== 0 && dow !== 6) {
+                        tradingDays.push(d.toISOString().split('T')[0]);
+                    }
+                }
+
+                let processed = 0, errors = 0;
+                for (const sym of watchlist) {
+                    for (const date of tradingDays) {
+                        try {
+                            await backfillFlowFromR2(env, sym, date);
+                            processed++;
+                        } catch (e) {
+                            errors++;
+                        }
+                    }
+                }
+
+                return new Response(JSON.stringify({
+                    ok: true,
+                    message: `Backfill complete: ${processed} processed, ${errors} errors`,
+                    tickers: watchlist.length,
+                    days: tradingDays.length
+                }), { headers: withCors({ "Content-Type": "application/json" }) });
+            }
+
+            // ROUTE: Manually trigger accum preprocessor
+            if (path === "/trigger-accum") {
+                try {
+                    await runAccumPreprocessor(env, {
+                        sendWebhook: this.sendWebhook.bind(this),
+                    });
+                    return new Response(JSON.stringify({
+                        ok: true,
+                        message: "Accum preprocessor completed successfully"
+                    }), { headers: withCors({ "Content-Type": "application/json" }) });
+                } catch (e) {
+                    return new Response(JSON.stringify({
+                        ok: false,
+                        error: e.message
+                    }), { status: 500, headers: withCors({ "Content-Type": "application/json" }) });
+                }
+            }
 
             // ROUTE IPOT: Scrape Broker Summary via WebSocket (public)
             if (path === "/ipot/scrape") {
@@ -601,9 +664,37 @@ export default {
             }
 
             // MODE SELECTION
-            // If cron is "0 11 * * *" (11:00 UTC / 18:00 WIB) -> DAILY REWRITE
-            // Checks strictly if UTC Hour is 11
+            // UTC 11    (18:00 WIB) -> DAILY REWRITE
+            // UTC 12:00 (19:00 WIB) -> HEALTH CHECK
+            // UTC 12:15 (19:15 WIB) -> ACCUM PREPROCESSOR
+            // Otherwise              -> SWEEPING BACKFILL
             const isDailyRewrite = (utcHour === 11);
+            const isHealthCheck = (utcHour === 12 && now.getUTCMinutes() < 10);
+            const isAccumPreprocessor = (utcHour === 12 && now.getUTCMinutes() >= 15);
+
+            if (isAccumPreprocessor) {
+                console.log("📊 MODE: ACCUM PREPROCESSOR (19:15 WIB) - Building screener-accum artifact");
+                try {
+                    await runAccumPreprocessor(env, {
+                        sendWebhook: this.sendWebhook.bind(this),
+                    });
+                    console.log("📊 Accum preprocessor complete");
+                } catch (e) {
+                    console.error(`📊 Accum preprocessor error: ${e.message}`);
+                    await this.sendWebhook(env, `❌ **Accum Preprocessor Failed**\nError: ${e.message}`);
+                }
+                return;
+            }
+
+            if (isHealthCheck) {
+                console.log("🩺 MODE: HEALTH CHECK (19:00 WIB) - Validating H-1 Data");
+                const report = await runHealthCheck(env, ctx, {
+                    sendWebhook: this.sendWebhook.bind(this),
+                    getWatchlist: this.getWatchlistFromKV.bind(this),
+                });
+                console.log(`🩺 Health check complete: ${JSON.stringify({ healthy: report.healthy, warning: report.warning, critical: report.critical, repairType: report.repairType })}`);
+                return;
+            }
 
             if (isDailyRewrite) {
                 console.log("🚀 MODE: DAILY REWRITE (18:00 WIB) - Overwriting Today's Data");
@@ -1448,6 +1539,15 @@ export default {
                     }
                 } else {
                     console.log(`[Queue] ✅ ${symbol}/${date} scraped via IPOT`);
+
+                    // Post-process: aggregate broker flow into D1 for screener-accum
+                    try {
+                        await aggregateAndStore(env, symbol, date, resultData);
+                    } catch (aggErr) {
+                        console.error(`[Queue] Flow aggregation failed for ${symbol}/${date}:`, aggErr);
+                        // Non-blocking: scrape succeeded, flow aggregation is best-effort
+                    }
+
                     message.ack();
                 }
 
@@ -1750,11 +1850,11 @@ export default {
 
             ws.addEventListener("message", onMsg);
 
-            const EMPTY_IDLE_MS = 1200;
+            const EMPTY_IDLE_MS = 2000;
             while (true) {
                 const now = Date.now();
                 if (now - startAt > MAX_MS) { exitReason = "MAX_MS"; break; }
-                if (gotRes && resAt && (now - resAt) > 150) { exitReason = "GOT_RES"; break; }
+                if (gotRes && resAt && (now - resAt) > 500) { exitReason = "GOT_RES"; break; }
                 if (records.length > 0 && (now - lastAt) > IDLE_MS) { exitReason = "IDLE"; break; }
                 if (records.length === 0 && (now - lastAt) > EMPTY_IDLE_MS) { exitReason = "EMPTY_IDLE"; break; }
                 await new Promise(r => setTimeout(r, 50));
@@ -1808,9 +1908,9 @@ export default {
                     }
 
                     // P0 Fix #1: Sequential scraping to avoid race condition
-                    const resB = await runScrapeSide("b", d);
+                    let resB = await runScrapeSide("b", d);
                     await new Promise(r => setTimeout(r, 80)); // small gap to reduce interleaving
-                    const resS = await runScrapeSide("s", d);
+                    let resS = await runScrapeSide("s", d);
 
                     if (debug) debugMeta.push({ date: d, b: resB.meta, s: resS.meta });
 
@@ -1829,8 +1929,38 @@ export default {
                         return { brokers, summaries };
                     };
 
-                    const bData = processDaily(resB.records);
-                    const sData = processDaily(resS.records);
+                    let bData = processDaily(resB.records);
+                    let sData = processDaily(resS.records);
+
+                    // RETRY LOGIC: If we got summary (total_value > 0) but zero broker records,
+                    // the WebSocket likely timed out too early. Retry once with a longer wait.
+                    const allSummariesCheck = [...bData.summaries, ...sData.summaries];
+                    const hasSummaryWithValue = allSummariesCheck.some(s => {
+                        const v = BigInt(s.parts[1]?.replace(/,/g, "") || "0");
+                        return v > 0n;
+                    });
+                    const hasBrokerRecords = bData.brokers.length > 0 || sData.brokers.length > 0;
+
+                    if (hasSummaryWithValue && !hasBrokerRecords) {
+                        console.warn(`⚠️ [RETRY] ${symbol}/${d}: Got summary but 0 broker records. Retrying with longer idle...`);
+                        await new Promise(r => setTimeout(r, 500)); // Wait before retry
+
+                        // Retry both sides
+                        resB = await runScrapeSide("b", d);
+                        await new Promise(r => setTimeout(r, 150));
+                        resS = await runScrapeSide("s", d);
+
+                        if (debug) debugMeta.push({ date: d, retry: true, b: resB.meta, s: resS.meta });
+
+                        bData = processDaily(resB.records);
+                        sData = processDaily(resS.records);
+
+                        if (bData.brokers.length > 0 || sData.brokers.length > 0) {
+                            console.log(`✅ [RETRY OK] ${symbol}/${d}: Got ${bData.brokers.length}B/${sData.brokers.length}S after retry`);
+                        } else {
+                            console.warn(`❌ [RETRY FAIL] ${symbol}/${d}: Still 0 broker records after retry`);
+                        }
+                    }
 
                     // Aggregate One Summary for this Date
                     const allDailySummaries = [...bData.summaries, ...sData.summaries];
@@ -1993,16 +2123,48 @@ export default {
                         };
                     }
 
-                    // Save to R2
+                    // Save to R2 — Smart Save with validator module
                     if (save) {
                         const key = `${symbol}/${d}.json`;
-                        await env.RAW_BROKSUM.put(key, JSON.stringify(dailyOutput), {
-                            httpMetadata: { contentType: "application/json" }
-                        });
-                        if (debug || save) dailyOutput.saved_key = key;
 
-                        // Record Audit Trail
-                        await this.recordAuditTrail(env, symbol, d, "SCRAPE_BROKSUM", "SUCCESS", "IPOT");
+                        // Layer 1: Validate scraped data
+                        const validation = validateBroksum(dailyOutput);
+                        dailyOutput._validation = { severity: validation.severity, issues: validation.issues };
+
+                        if (validation.valid) {
+                            // VALID: save directly
+                            await env.RAW_BROKSUM.put(key, JSON.stringify(dailyOutput), {
+                                httpMetadata: { contentType: "application/json" }
+                            });
+                            if (debug || save) dailyOutput.saved_key = key;
+                            await this.recordAuditTrail(env, symbol, d, "SCRAPE_BROKSUM", "SUCCESS", "IPOT");
+
+                        } else if (validation.severity === 'CRITICAL') {
+                            // CRITICAL (e.g. empty brokers): check if R2 already has valid data
+                            const existing = await env.RAW_BROKSUM.get(key);
+                            if (existing && hasValidBrokerData(await existing.json())) {
+                                // Existing is valid — do NOT overwrite
+                                console.warn(`⚠️ [SKIP SAVE] ${key}: Scrape ${validation.issues.join('; ')} but R2 has valid data. Keeping existing.`);
+                                dailyOutput._skipped = true;
+                                dailyOutput._skipReason = validation.issues.join('; ');
+                            } else {
+                                // No existing or existing is also bad — save anyway
+                                await env.RAW_BROKSUM.put(key, JSON.stringify(dailyOutput), {
+                                    httpMetadata: { contentType: "application/json" }
+                                });
+                                if (debug || save) dailyOutput.saved_key = key;
+                                await this.recordAuditTrail(env, symbol, d, "SCRAPE_BROKSUM", "WARN", `IPOT (${validation.issues.join('; ')})`);
+                            }
+
+                        } else {
+                            // WARNING: save but log
+                            console.warn(`⚠️ [WARN SAVE] ${key}: ${validation.issues.join('; ')}`);
+                            await env.RAW_BROKSUM.put(key, JSON.stringify(dailyOutput), {
+                                httpMetadata: { contentType: "application/json" }
+                            });
+                            if (debug || save) dailyOutput.saved_key = key;
+                            await this.recordAuditTrail(env, symbol, d, "SCRAPE_BROKSUM", "WARN", `IPOT (${validation.issues.join('; ')})`);
+                        }
                     }
 
                     batchResults.push(dailyOutput);

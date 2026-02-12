@@ -455,7 +455,257 @@ See [0004_divergence_scoring.md](0004_divergence_scoring.md) for full divergence
 
 ---
 
-*Document Version: 1.1*
+## 14. Smart Repair & Data Integrity
+
+### 14.1 Problem Statement (Incident: 2026-02-10 ~ 2026-02-11)
+
+**Root Cause**: WebSocket koneksi ke IPOT bersifat non-deterministic. Scraper menunggu records selama `EMPTY_IDLE_MS` (1.2s), tetapi IPOT kadang lambat merespon. Akibatnya:
+
+| Tanggal | Price | brokers_buy | brokers_sell | Impact |
+|---------|-------|-------------|--------------|--------|
+| 2026-02-10 | 0 | [] | [] | Scraper gagal total — summary line juga kosong |
+| 2026-02-11 | 7444 | [] | [] | Summary ter-parse, tapi broker records kosong |
+
+Data kosong ini disimpan ke R2 **tanpa validasi**, menimpa data valid (jika ada) dan menyebabkan chart cumulative flow **kehilangan data point** untuk tanggal tersebut.
+
+Masalah terdeteksi di **semua emiten** (BBCA, BBRI, BMRI, TLKM, ASII, dll.) — bukan masalah per-ticker melainkan masalah WebSocket timing secara global.
+
+### 14.2 Solution Architecture: 2 Layer Protection
+
+```
+┌──────────────────────────────────────────────────────┐
+│ LAYER 1: Real-time Validation (Saat Scrape)          │
+│                                                      │
+│  Scraper → validate() → OK? ─── YES → save to R2    │
+│                          │                           │
+│                          NO → retry (max 2x)         │
+│                               │                      │
+│                               STILL FAIL?            │
+│                               ├─ R2 punya data valid │
+│                               │  → SKIP overwrite    │
+│                               └─ R2 kosong           │
+│                                  → save + flag       │
+│                                    _needsRepair      │
+│                                  → repair queue      │
+└──────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────┐
+│ LAYER 2: Daily Health Check Cron (Safety Net)        │
+│                                                      │
+│  Cron 19:00 WIB → sample ~60 emiten dari H-1        │
+│  ├─ 30 emiten wajib (LQ45/IDX30)                    │
+│  └─ 30 emiten random dari watchlist                  │
+│                                                      │
+│  Validate semuanya → hitung critical rate            │
+│  ├─ >10% critical → FULL REBUILD tanggal H-1        │
+│  ├─ <10% tapi ada → SELECTIVE REPAIR                │
+│  └─ 0% critical   → Log "All Healthy ✅"            │
+└──────────────────────────────────────────────────────┘
+```
+
+### 14.3 Validator Module (`validator.js`)
+
+Shared module yang dipakai oleh scraper (Layer 1) dan health check (Layer 2).
+
+**Rules**:
+
+| # | Rule | Severity | Description |
+|---|------|----------|-------------|
+| 1 | `price > 0` | CRITICAL | Harga harus ada jika ada trading |
+| 2 | `brokers_buy.length >= 1` | CRITICAL | Minimal 1 broker buy |
+| 3 | `brokers_sell.length >= 1` | CRITICAL | Minimal 1 broker sell |
+| 4 | `total_value > 0 && broker_count == 0` | CRITICAL | Summary ada tapi broker kosong |
+| 5 | `price_change <= 35%` vs H-1 | WARNING | Di luar ARA/ARB (25-35%) |
+| 6 | `frequency > 0 && total_val == 0` | CRITICAL | Ada transaksi tapi value 0 |
+
+**Interface**:
+
+```javascript
+import { validateBroksum } from './validator.js';
+
+const result = validateBroksum(rawData, previousDayData);
+// Returns: { valid: boolean, issues: string[], severity: 'OK'|'WARNING'|'CRITICAL' }
+```
+
+### 14.4 Smart Save Logic (Scraper Integration)
+
+Ditambahkan di `index.js` sebelum R2 `.put()`:
+
+```
+validate(scrapedData, prevData)
+  ├── valid → save to R2 ✅
+  └── invalid (CRITICAL)
+       ├── retry ≤ 2x → re-scrape, re-validate
+       └── retry exhausted
+            ├── R2 punya data lama yang valid? → SKIP save (keep existing) 🛡️
+            └── R2 kosong → save with _needsRepair flag + add to repair queue 📋
+```
+
+### 14.5 Health Check Cron
+
+**Schedule**: `0 12 * * 1-5` (19:00 WIB, Senin-Jumat)
+- Berjalan **1 jam setelah** daily rewrite cron (18:00 WIB)
+- Memberi waktu scrape + queue processing selesai sebelum di-validasi
+
+**Sample Strategy**:
+
+```javascript
+const MANDATORY_CHECK = [
+  // LQ45 / IDX30 yang wajib dicek
+  'BBCA','BBRI','BMRI','BBNI','TLKM','ASII','UNVR',
+  'HMSP','ICBP','INDF','KLBF','PGAS','SMGR','TOWR',
+  'EXCL','ANTM','INCO','PTBA','ADRO','MDKA','ACES',
+  'BRIS','ARTO','GOTO','BREN','AMMN','CPIN','MAPI',
+  'ESSA','BRPT'
+];
+const RANDOM_SAMPLE_SIZE = 30;  // dari sisa watchlist
+```
+
+**Decision Matrix**:
+
+| Critical Rate | Action | Scope |
+|---------------|--------|-------|
+| > 10% (≥ 6/60) | FULL REBUILD | Semua emiten, tanggal H-1 |
+| 1-10% (1-5/60) | SELECTIVE REPAIR | Hanya emiten yg gagal |
+| 0% | No action | Log "healthy" |
+
+**Repair Queue**: Disimpan di KV `repair:{YYYY-MM-DD}` dengan TTL 7 hari.
+
+**Report**: Disimpan di KV `health-report:{YYYY-MM-DD}` dengan TTL 30 hari.
+
+### 14.6 Implementation Files
+
+| File | Type | Description |
+|------|------|-------------|
+| `src/validator.js` | NEW | Validation rules & severity logic |
+| `src/health-check.js` | NEW | Health check cron handler + repair orchestration |
+| `src/index.js` | MODIFY | Import validator, smart save before R2 put, route health check in cron |
+| `wrangler.jsonc` | MODIFY | Add `"0 12 * * 1-5"` cron trigger |
+
+### 14.7 Webhook Notifications
+
+Health check mengirim notifikasi via existing `NOTIF_SERVICE` binding:
+
+| Event | Message |
+|-------|---------|
+| All Healthy | `✅ Health Check: 60/60 emiten healthy for 2026-02-11` |
+| Selective Repair | `🔧 Health Check: 3/60 critical. Repairing: BBCA, GOTO, ASII` |
+| Full Rebuild | `⚠️ Health Check: 12/60 critical (20%). FULL REBUILD triggered for 2026-02-11` |
+| Repair Success | `✅ Repair Complete: 3/3 emiten fixed for 2026-02-11` |
+
+### 14.8 Tasks
+
+- [x] Investigate root cause (WebSocket timing, EMPTY_IDLE_MS too short)
+- [x] Frontend fix: chart filter tidak buang tanggal zero-data
+- [x] Scraper fix: retry logic saat broker list kosong + validasi save
+- [ ] Create `validator.js`
+- [ ] Create `health-check.js`
+- [ ] Integrate smart save into scraper `index.js`
+- [ ] Add health check cron to `wrangler.jsonc`
+- [ ] Deploy & verify
+
+---
+
+## 15. Accumulation Scanner (TradingView-Style)
+
+### 15.1 Objective
+
+Provide a fast, pre-aggregated screener that identifies stocks where **Smart Money** (Foreign + Local Fund) has been net buying for consecutive days. Replaces the slow per-R2-read MVP filter with a D1-backed pipeline.
+
+### 15.2 Architecture
+
+```
+Queue Consumer (per scrape)
+    └─ flow-aggregator.js → D1 `daily_broker_flow` (upsert)
+
+Cron 15 12 * * 1-5 (19:15 WIB)
+    └─ accum-preprocessor.js → R2 `cache/screener-accum-latest.json`
+
+API
+    └─ GET /screener-accum?window=2|5|10|20 → JSON
+```
+
+### 15.3 D1 Table: `daily_broker_flow`
+
+| Column | Type | Description |
+|--------|------|-------------|
+| date | TEXT | YYYY-MM-DD |
+| ticker | TEXT | Stock code |
+| foreign_buy/sell/net | REAL | Foreign fund flow |
+| local_buy/sell/net | REAL | Local fund flow |
+| retail_buy/sell/net | REAL | Retail flow |
+| smart_net | REAL | foreign_net + local_net |
+| price | INT | Average price |
+| total_value | TEXT | Total transaction value |
+| broker_buy/sell_count | INT | Broker count |
+
+Primary key: `(date, ticker)`. Indexes on `(ticker, date DESC)` and `(date)`.
+
+Migration: `migrations/0005_create_daily_broker_flow.sql`
+
+### 15.4 Flow Aggregator (`flow-aggregator.js`)
+
+- Called after each successful scrape in queue consumer
+- Classifies brokers via D1 `brokers.category` + IPOT `type` field
+- Broker category cache with 10-minute TTL
+- Exports: `aggregateAndStore(env, ticker, date, dailyOutput)`
+- Non-blocking: errors are logged but don't fail the scrape
+
+### 15.5 Accum Preprocessor (`accum-preprocessor.js`)
+
+- Cron: `15 12 * * 1-5` (UTC 12:15 / 19:15 WIB)
+- Queries last 30 calendar days from D1 `daily_broker_flow`
+- Computes per-ticker, per-window (2D/5D/10D/20D) metrics:
+  - `fn` — foreign net sum
+  - `ln` — local net sum  
+  - `rn` — retail net sum
+  - `sm` — smart money net (fn + ln)
+  - `streak` — consecutive days with sm > 0
+  - `allPos` — every day in window had sm > 0
+  - `pctChg` — price change % over window
+- Writes to R2: `cache/screener-accum-latest.json`
+
+### 15.6 API Endpoint (`/screener-accum`)
+
+- Public endpoint in `api-saham`
+- Query param: `?window=2|5|10|20` (default: 2)
+- Merges accum data with z-score screener data
+- Response: `{ items, date, window, availableWindows, total }`
+
+### 15.7 Frontend
+
+- Default mode: **Accum** (was "All")
+- Mode selector: `All` | `Accum` (replaces old "MVP Filter")
+- Timeframe pills (TradingView style): `2D` `5D` `10D` `20D`
+- Active filter pill: "Smart Money > 0"
+- New column: **Smart $** — shows net smart money flow with streak badges
+- Default sort: Smart Money DESC in Accum mode
+- Client-side filter: only `allPos === true` items shown
+
+### 15.8 Cron Schedule (Updated)
+
+| Cron | UTC | WIB | Mode |
+|------|-----|-----|------|
+| `0 */3 * * *` | Every 3h | - | Sweeping backfill |
+| `0 11 * * *` | 11:00 | 18:00 | Daily rewrite |
+| `0 12 * * 1-5` | 12:00 | 19:00 | Health check |
+| `15 12 * * 1-5` | 12:15 | 19:15 | **Accum preprocessor** |
+
+### 15.9 Implementation Files
+
+| File | Action |
+|------|--------|
+| `migrations/0005_create_daily_broker_flow.sql` | NEW — D1 migration |
+| `src/flow-aggregator.js` | NEW — queue post-processor |
+| `src/accum-preprocessor.js` | NEW — cron preprocessor |
+| `src/index.js` | MODIFIED — imports, queue wire, cron branch |
+| `wrangler.jsonc` | MODIFIED — added cron |
+| `api-saham/src/index.js` | MODIFIED — `/screener-accum` endpoint |
+| `idx/emiten/broker-summary.html` | MODIFIED — filter bar UI |
+| `idx/emiten/broker-summary.js` | MODIFIED — accum mode logic |
+
+*Document Version: 1.3*
 *Created: 2026-02-10*
-*Last Updated: 2026-02-11*
+*Last Updated: 2026-02-13*
 *Author: Copilot + mkemalw*
+*Changelog: v1.3 — Added Section 15: Accumulation Scanner (TradingView-Style)*

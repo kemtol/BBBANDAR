@@ -1,6 +1,6 @@
 import openapi from "./openapi.json";
 
-const PUBLIC_PATHS = new Set(["/", "/docs", "/console", "/openapi.json", "/health", "/screener", "/cache-summary", "/features/history"]);
+const PUBLIC_PATHS = new Set(["/", "/docs", "/console", "/openapi.json", "/health", "/screener", "/screener-accum", "/cache-summary", "/features/history"]);
 
 // ==============================
 // CORS helper
@@ -1166,6 +1166,369 @@ export default {
           return withCORS(new Response(JSON.stringify(data), { headers: { "Content-Type": "application/json" } }));
         } catch (e) {
           return json({ error: "Failed to fetch foreign flow scanner", details: e.message }, 500);
+        }
+      }
+
+      // GET /screener-mvp - Returns screener filtered by last 2 days foreign+local positive
+      if (url.pathname === "/screener-mvp" && req.method === "GET") {
+        try {
+          const CACHE_VERSION = 'v2'; // Bump to invalidate cache
+          const CACHE_TTL_SECONDS = 3600; // 1 hour
+          const FOREIGN_CODES = new Set(['ZP', 'YU', 'KZ', 'RX', 'BK', 'AK', 'CS', 'CG', 'DB', 'ML', 'CC', 'DX', 'FS', 'LG', 'NI', 'OD']);
+          
+          // Check cache first
+          const cacheKey = `cache/screener-mvp-${CACHE_VERSION}.json`;
+          const cachedObj = await env.SSSAHAM_EMITEN.get(cacheKey);
+          
+          if (cachedObj) {
+            const cached = await cachedObj.json();
+            const cacheAge = (Date.now() - (cached.timestamp || 0)) / 1000;
+            if (cacheAge < CACHE_TTL_SECONDS) {
+              return withCORS(new Response(JSON.stringify({
+                ...cached.data,
+                cached: true,
+                cacheAge: Math.round(cacheAge)
+              }), { headers: { "Content-Type": "application/json" } }));
+            }
+          }
+          
+          // Fetch screener data
+          const pointerObj = await env.SSSAHAM_EMITEN.get("features/latest.json");
+          if (!pointerObj) return json({ items: [] });
+          let screenerData = await pointerObj.json();
+          if (screenerData.pointer_to) {
+            const actualObj = await env.SSSAHAM_EMITEN.get(screenerData.pointer_to);
+            if (!actualObj) return json({ items: [] });
+            screenerData = await actualObj.json();
+          }
+          
+          // Get last 2 trading days (skip today as data may be incomplete)
+          const dates = [];
+          const today = new Date();
+          for (let i = 1; i < 10 && dates.length < 2; i++) { // Start from yesterday (i=1)
+            const d = new Date(today);
+            d.setDate(d.getDate() - i);
+            const dow = d.getDay();
+            if (dow !== 0 && dow !== 6) {
+              dates.push(d.toISOString().split('T')[0]);
+            }
+          }
+          
+          // Filter stocks by last 2 days foreign+local positive
+          const filteredItems = [];
+          const brokersMap = {};
+          
+          // Fetch brokers mapping
+          try {
+            const { results } = await env.SSSAHAM_DB.prepare("SELECT * FROM brokers").all();
+            if (results) results.forEach(b => brokersMap[b.code] = b);
+          } catch (e) {}
+          
+          const isRetail = (code) => {
+            const b = brokersMap[code];
+            if (!b) return false;
+            return (b.category || '').toLowerCase().includes('retail');
+          };
+          
+          for (const item of screenerData.items || []) {
+            const ticker = item.t;
+            let passFilter = true;
+            let flowData = { day1: null, day2: null };
+            
+            for (let dayIdx = 0; dayIdx < dates.length && passFilter; dayIdx++) {
+              const dateStr = dates[dayIdx];
+              try {
+                const key = `${ticker}/${dateStr}.json`;
+                const obj = await env.RAW_BROKSUM.get(key);
+                if (!obj) { passFilter = false; continue; }
+                
+                const fileData = await obj.json();
+                const bs = fileData?.data?.broker_summary;
+                if (!bs) { passFilter = false; continue; }
+                
+                let foreignBuy = 0, foreignSell = 0;
+                let localBuy = 0, localSell = 0;
+                
+                if (bs.brokers_buy && Array.isArray(bs.brokers_buy)) {
+                  bs.brokers_buy.forEach(b => {
+                    if (!b) return;
+                    const val = parseFloat(b.bval) || 0;
+                    const code = b.netbs_broker_code;
+                    if (b.type === 'Asing' || FOREIGN_CODES.has(code)) foreignBuy += val;
+                    else if (!isRetail(code)) localBuy += val;
+                  });
+                }
+                
+                if (bs.brokers_sell && Array.isArray(bs.brokers_sell)) {
+                  bs.brokers_sell.forEach(b => {
+                    if (!b) return;
+                    const val = parseFloat(b.sval) || 0;
+                    const code = b.netbs_broker_code;
+                    if (b.type === 'Asing' || FOREIGN_CODES.has(code)) foreignSell += val;
+                    else if (!isRetail(code)) localSell += val;
+                  });
+                }
+                
+                const foreignNet = foreignBuy - foreignSell;
+                const localNet = localBuy - localSell;
+                
+                // Filter: foreign AND local must be positive (smart money inflow)
+                if (foreignNet <= 0 || localNet <= 0) {
+                  passFilter = false;
+                }
+                
+                if (dayIdx === 0) flowData.day1 = { foreign: foreignNet, local: localNet, date: dateStr };
+                else flowData.day2 = { foreign: foreignNet, local: localNet, date: dateStr };
+                
+              } catch (e) {
+                passFilter = false;
+              }
+            }
+            
+            if (passFilter && flowData.day1 && flowData.day2) {
+              filteredItems.push({
+                ...item,
+                flow: flowData
+              });
+            }
+          }
+          
+          const responseData = {
+            items: filteredItems,
+            date: screenerData.date,
+            filter: 'foreign+local > 0 last 2 days',
+            total: filteredItems.length
+          };
+          
+          // Store in cache
+          try {
+            await env.SSSAHAM_EMITEN.put(cacheKey, JSON.stringify({
+              timestamp: Date.now(),
+              data: responseData
+            }));
+          } catch (e) {}
+          
+          return withCORS(new Response(JSON.stringify({
+            ...responseData,
+            cached: false
+          }), { headers: { "Content-Type": "application/json" } }));
+        } catch (e) {
+          return json({ error: "Failed to fetch screener-mvp", details: e.message }, 500);
+        }
+      }
+
+      // GET /screener-accum - Returns pre-aggregated accumulation scanner data
+      // Artifact built by accum-preprocessor cron in broksum-scrapper
+      // Supports ?window=2|5|10|20 (default: 2) for server-side pre-filter
+      if (url.pathname === "/screener-accum" && req.method === "GET") {
+        try {
+          const cacheKey = "cache/screener-accum-latest.json";
+          const obj = await env.SSSAHAM_EMITEN.get(cacheKey);
+          if (!obj) {
+            return json({ items: [], error: "Accumulation data not yet generated. Cron runs at 19:15 WIB." });
+          }
+
+          const accumData = await obj.json();
+          const requestedWindow = parseInt(url.searchParams.get('window') || '2');
+          const validWindows = [2, 5, 10, 20];
+          const window = validWindows.includes(requestedWindow) ? requestedWindow : 2;
+
+          // Merge with screener z-score data for enriched response
+          let screenerMap = {};
+          try {
+            const pointerObj = await env.SSSAHAM_EMITEN.get("features/latest.json");
+            if (pointerObj) {
+              let screenerData = await pointerObj.json();
+              if (screenerData.pointer_to) {
+                const actualObj = await env.SSSAHAM_EMITEN.get(screenerData.pointer_to);
+                if (actualObj) screenerData = await actualObj.json();
+              }
+              for (const item of (screenerData.items || [])) {
+                screenerMap[item.t] = item;
+              }
+            }
+          } catch (e) {
+            console.error("[screener-accum] Failed to load z-score data:", e);
+          }
+
+          // Build enriched items: accum metrics + z-score data
+          const items = [];
+          for (const row of (accumData.items || [])) {
+            const windowData = row.accum?.[window];
+            if (!windowData) continue;
+
+            const screenerItem = screenerMap[row.t] || null;
+
+            items.push({
+              t: row.t,
+              // Accum data for requested window
+              accum: {
+                fn: windowData.fn,   // foreign net
+                ln: windowData.ln,   // local net
+                rn: windowData.rn,   // retail net
+                sm: windowData.sm,   // smart money (fn+ln)
+                streak: windowData.streak, // consecutive sm>0 days
+                allPos: windowData.allPos, // every day sm>0
+                pctChg: windowData.pctChg, // price change %
+                window: window
+              },
+              // Z-score data (if available)
+              s: screenerItem?.s || null,
+              sc: screenerItem?.sc || null,
+              z: screenerItem?.z || null
+            });
+          }
+
+          return withCORS(new Response(JSON.stringify({
+            items,
+            date: accumData.date,
+            generatedAt: accumData.generatedAt,
+            window,
+            availableWindows: validWindows,
+            total: items.length
+          }), { headers: { "Content-Type": "application/json" } }));
+
+        } catch (e) {
+          return json({ error: "Failed to fetch screener-accum", details: e.message }, 500);
+        }
+      }
+
+      // GET /foreign-sentiment - Returns foreign gross flow for MVP 10 stocks
+      // Cached in R2 with 1 hour TTL
+      if (url.pathname === "/foreign-sentiment" && req.method === "GET") {
+        try {
+          const CACHE_VERSION = 'v1'; // Bump this when logic changes
+          const CACHE_TTL_SECONDS = 3600; // 1 hour
+          const MVP_TICKERS = ['BREN', 'BBCA', 'DSSA', 'BBRI', 'TPIA', 'AMMN', 'BYAN', 'DCII', 'BMRI', 'TLKM'];
+          const FOREIGN_CODES = new Set(['ZP', 'YU', 'KZ', 'RX', 'BK', 'AK', 'CS', 'CG', 'DB', 'ML', 'CC', 'DX', 'FS', 'LG', 'NI', 'OD']);
+          const days = Math.min(parseInt(url.searchParams.get('days') || '7'), 90); // Max 90 days
+          
+          // Check cache first
+          const cacheKey = `cache/foreign-sentiment-${days}d-${CACHE_VERSION}.json`;
+          const cachedObj = await env.SSSAHAM_EMITEN.get(cacheKey);
+          
+          if (cachedObj) {
+            const cached = await cachedObj.json();
+            const cacheAge = (Date.now() - (cached.timestamp || 0)) / 1000;
+            
+            if (cacheAge < CACHE_TTL_SECONDS) {
+              // Return cached data
+              return withCORS(new Response(JSON.stringify({
+                ...cached.data,
+                cached: true,
+                cacheAge: Math.round(cacheAge)
+              }), { headers: { "Content-Type": "application/json" } }));
+            }
+          }
+          
+          // Generate date list (trading days only)
+          const dates = [];
+          const today = new Date();
+          for (let i = 0; i < days + Math.ceil(days * 0.5); i++) { // Extra buffer for weekends
+            const d = new Date(today);
+            d.setDate(d.getDate() - i);
+            const dow = d.getDay();
+            if (dow !== 0 && dow !== 6) { // Skip weekends
+              dates.push(d.toISOString().split('T')[0]);
+            }
+            if (dates.length >= days) break;
+          }
+          
+          const result = {};
+          
+          // Fetch data for each ticker
+          for (const ticker of MVP_TICKERS) {
+            const tickerData = [];
+            
+            for (const dateStr of dates) {
+              try {
+                const key = `${ticker}/${dateStr}.json`;
+                const obj = await env.RAW_BROKSUM.get(key);
+                if (!obj) continue;
+                
+                const fileData = await obj.json();
+                const bs = fileData?.data?.broker_summary;
+                if (!bs) continue;
+                
+                let foreignBuy = 0, foreignSell = 0;
+                
+                // Process buyers
+                if (bs.brokers_buy && Array.isArray(bs.brokers_buy)) {
+                  bs.brokers_buy.forEach(b => {
+                    if (b && (b.type === 'Asing' || FOREIGN_CODES.has(b.netbs_broker_code))) {
+                      foreignBuy += parseFloat(b.bval) || 0;
+                    }
+                  });
+                }
+                
+                // Process sellers
+                if (bs.brokers_sell && Array.isArray(bs.brokers_sell)) {
+                  bs.brokers_sell.forEach(b => {
+                    if (b && (b.type === 'Asing' || FOREIGN_CODES.has(b.netbs_broker_code))) {
+                      foreignSell += parseFloat(b.sval) || 0;
+                    }
+                  });
+                }
+                
+                tickerData.push({
+                  date: dateStr,
+                  buy: foreignBuy,
+                  sell: foreignSell,
+                  net: foreignBuy - foreignSell
+                });
+              } catch (e) {
+                // Skip missing data
+              }
+            }
+            
+            // Sort by date ascending
+            tickerData.sort((a, b) => a.date.localeCompare(b.date));
+            result[ticker] = tickerData;
+          }
+          
+          // Calculate cumulative total across all tickers per day
+          const sortedDates = dates.sort();
+          const cumulative = sortedDates.map(dateStr => {
+            let totalBuy = 0, totalSell = 0;
+            for (const ticker of MVP_TICKERS) {
+              const tickerData = result[ticker] || [];
+              const day = tickerData.find(d => d.date === dateStr);
+              if (day) {
+                totalBuy += day.buy;
+                totalSell += day.sell;
+              }
+            }
+            return {
+              date: dateStr,
+              buy: totalBuy,
+              sell: totalSell,
+              net: totalBuy - totalSell
+            };
+          });
+          
+          const responseData = { 
+            tickers: MVP_TICKERS,
+            data: result,
+            cumulative: cumulative,
+            dates: sortedDates
+          };
+          
+          // Store in cache (await to ensure it completes)
+          try {
+            await env.SSSAHAM_EMITEN.put(cacheKey, JSON.stringify({
+              timestamp: Date.now(),
+              data: responseData
+            }));
+          } catch (cacheErr) {
+            console.error('Cache write failed:', cacheErr);
+          }
+          
+          return withCORS(new Response(JSON.stringify({
+            ...responseData,
+            cached: false
+          }), { headers: { "Content-Type": "application/json" } }));
+        } catch (e) {
+          return json({ error: "Failed to fetch foreign sentiment", details: e.message }, 500);
         }
       }
 

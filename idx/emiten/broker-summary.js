@@ -96,7 +96,7 @@ async function initIndexMode() {
     $('#detail-view').hide();
     $('.nav-title').text('Dashboard');
     $('#nav-back').addClass('d-none'); // Hide back button in Screen Mode
-    loadScreenerData();
+    loadScreenerData('accum'); // Default to Accum mode
 }
 
 // Global state for sorting and pagination
@@ -104,108 +104,281 @@ let currentCandidates = [];
 let sortState = { key: 'score', desc: true };
 const SCREENER_PAGE_SIZE = 100;
 let screenerPage = 1;
+let screenerMode = 'accum'; // 'all' or 'accum'
+let accumWindow = 2; // Current timeframe window: 2, 5, 10, or 20
+let accumDataCache = null; // Cache accum API response to avoid re-fetch on window change
 
-async function loadScreenerData() {
+async function loadScreenerData(mode = 'accum') {
     try {
+        screenerMode = mode;
         $('#loading-indicator').show();
-        const response = await fetch(`${WORKER_BASE_URL}/screener`);
-        const data = await response.json();
+        $('#tbody-index').html('');
 
-        if (data && data.items) {
-            currentCandidates = data.items.map(i => {
-                const state = mapState(i.s);
-                const effortZ = i.z["20"]?.e || 0;
-                const resultZ = i.z["20"]?.r || 0;
-                const ngr = i.z["20"]?.n || 0;
-                const elasticity = i.z["20"]?.el || 0;
-                
-                // NEW: Simple Score based on positive effort trend and good state
-                // Higher effort = more buying activity above normal
-                // Good states: ACCUMULATION, READY_MARKUP
-                // Formula: effortBonus + stateBonus + ngrBonus
-                const stateBonus = (state === 'ACCUMULATION' || state === 'READY_MARKUP') ? 2 
-                                 : (state === 'TRANSITION') ? 1 : 0;
-                const effortBonus = effortZ > 0 ? Math.min(effortZ * 2, 4) : 0; // Cap at 4
-                const ngrBonus = ngr > 0 ? 1 : 0;
-                
-                const simpleScore = effortBonus + stateBonus + ngrBonus;
-                
-                return {
-                    symbol: i.t,
-                    state: state,
-                    score: simpleScore, // Use simple score instead of complex sc
-                    originalScore: i.sc, // Keep original for reference
-                    metrics: {
-                        effortZ: effortZ,
-                        resultZ: resultZ,
-                        ngr: ngr,
-                        elasticity: elasticity
-                    }
-                };
-            });
-
-            // Initial sort by Score DESC
-            sortCandidates('score', true);
-
-            // Calculate & Render Market Breadth
-            renderMarketBreadth(currentCandidates, data.date);
-
+        // Toggle accum filter bar visibility
+        if (mode === 'accum') {
+            $('#accum-filter-bar').show();
+            $('.accum-col').show();
         } else {
-            $('#tbody-index').html('<tr><td colspan="6" class="text-center text-muted">No data available.</td></tr>');
+            $('#accum-filter-bar').hide();
+            $('.accum-col').hide();
         }
+
+        if (mode === 'accum') {
+            await loadAccumData();
+        } else {
+            // "All" mode - original screener
+            accumDataCache = null;
+            const response = await fetch(`${WORKER_BASE_URL}/screener`);
+            const data = await response.json();
+
+            if (data && data.items) {
+                currentCandidates = data.items.map(i => {
+                    const state = mapState(i.s);
+                    const effortZ = i.z?.["20"]?.e || 0;
+                    const resultZ = i.z?.["20"]?.r || 0;
+                    const ngr = i.z?.["20"]?.n || 0;
+                    const elasticity = i.z?.["20"]?.el || 0;
+
+                    const stateBonus = (state === 'ACCUMULATION' || state === 'READY_MARKUP') ? 2
+                                     : (state === 'TRANSITION') ? 1 : 0;
+                    const effortBonus = effortZ > 0 ? Math.min(effortZ * 2, 4) : 0;
+                    const ngrBonus = ngr > 0 ? 1 : 0;
+                    const simpleScore = effortBonus + stateBonus + ngrBonus;
+
+                    return {
+                        symbol: i.t,
+                        state: state,
+                        score: simpleScore,
+                        originalScore: i.sc,
+                        smartMoney: null,
+                        accum: null,
+                        metrics: { effortZ, resultZ, ngr, elasticity }
+                    };
+                });
+
+                $('#screener-count').text(`${currentCandidates.length} emiten`);
+                sortState = { key: 'score', desc: true };
+                sortCandidates('score', true);
+            } else {
+                $('#tbody-index').html('<tr><td colspan="7" class="text-center text-muted">No data available.</td></tr>');
+            }
+        }
+
+        loadForeignSentiment();
 
     } catch (error) {
         console.error(error);
-        $('#tbody-index').html('<tr><td colspan="6" class="text-center text-danger">Error loading screener data</td></tr>');
+        $('#tbody-index').html('<tr><td colspan="7" class="text-center text-danger">Error loading screener data</td></tr>');
     } finally {
         $('#loading-indicator').hide();
         $('#app').fadeIn();
     }
 }
 
-function calculateMarketBreadth(candidates) {
-    const total = candidates.length;
-    if (total === 0) return { accum: 0, dist: 0, neut: 0, sentiment: 'Neutral' };
+/**
+ * Load accumulation data from /screener-accum API.
+ * Uses cached data if available and only window changed.
+ */
+async function loadAccumData() {
+    // Fetch if not cached
+    if (!accumDataCache) {
+        const response = await fetch(`${WORKER_BASE_URL}/screener-accum?window=${accumWindow}`);
+        accumDataCache = await response.json();
+    }
 
-    const accum = candidates.filter(c => c.state === 'OFF_THE_LOW' || c.state === 'ACCUMULATION' || c.state === 'READY_MARKUP').length;
-    const dist = candidates.filter(c => c.state === 'POTENTIAL_TOP' || c.state === 'DISTRIBUTION').length;
-    const neut = total - accum - dist;
+    if (!accumDataCache || !accumDataCache.items) {
+        $('#tbody-index').html('<tr><td colspan="7" class="text-center text-muted">Accum data not yet generated.</td></tr>');
+        return;
+    }
 
-    // Determine Sentiment
-    let sentiment = 'Neutral';
-    if (accum > dist * 1.5) sentiment = 'Bullish';
-    if (dist > accum * 1.5) sentiment = 'Bearish';
+    // Re-fetch if window changed (server pre-filters by window)
+    if (accumDataCache.window !== accumWindow) {
+        const response = await fetch(`${WORKER_BASE_URL}/screener-accum?window=${accumWindow}`);
+        accumDataCache = await response.json();
+    }
 
-    return { accum, dist, neut, sentiment, total };
+    const data = accumDataCache;
+
+    currentCandidates = data.items
+        .filter(i => i.accum && i.accum.allPos) // Only show where smart money positive every day
+        .map(i => {
+            const state = i.s ? mapState(i.s) : 'NEUTRAL';
+            const effortZ = i.z?.["20"]?.e || 0;
+            const resultZ = i.z?.["20"]?.r || 0;
+            const ngr = i.z?.["20"]?.n || 0;
+            const elasticity = i.z?.["20"]?.el || 0;
+
+            const stateBonus = (state === 'ACCUMULATION' || state === 'READY_MARKUP') ? 2
+                             : (state === 'TRANSITION') ? 1 : 0;
+            const effortBonus = effortZ > 0 ? Math.min(effortZ * 2, 4) : 0;
+            const ngrBonus = ngr > 0 ? 1 : 0;
+            const simpleScore = effortBonus + stateBonus + ngrBonus;
+
+            return {
+                symbol: i.t,
+                state: state,
+                score: simpleScore,
+                originalScore: i.sc || 0,
+                smartMoney: i.accum.sm || 0,
+                accum: i.accum,
+                metrics: { effortZ, resultZ, ngr, elasticity }
+            };
+        });
+
+    $('#screener-count').text(`${currentCandidates.length} emiten`);
+    // Sort by smart money DESC in accum mode
+    sortState = { key: 'smartMoney', desc: true };
+    sortCandidates('smartMoney', true);
 }
 
-function renderMarketBreadth(candidates, dateStr) {
-    const stats = calculateMarketBreadth(candidates);
+// Foreign Sentiment Chart - Cumulative of 10 MVP Stocks
+let foreignSentimentChart = null;
+let currentForeignDays = 7;
 
-    // Show Widget
-    $('#market-breadth-widget').removeClass('d-none');
-
-    // Update Text
-    $('#market-sentiment-text').text(stats.sentiment);
-    if (stats.sentiment === 'Bullish') $('#market-sentiment-text').addClass('text-success').removeClass('text-danger text-dark');
-    else if (stats.sentiment === 'Bearish') $('#market-sentiment-text').addClass('text-danger').removeClass('text-success text-dark');
-    else $('#market-sentiment-text').addClass('text-dark').removeClass('text-success text-danger');
-
-    $('#market-date').text(dateStr || 'Today');
-
-    // Update Bars
-    const pAccum = (stats.accum / stats.total) * 100;
-    const pDist = (stats.dist / stats.total) * 100;
-    const pNeut = (stats.neut / stats.total) * 100;
-
-    $('#bar-accum').css('width', `${pAccum}%`).text(stats.accum > 0 ? stats.accum : '');
-    $('#bar-dist').css('width', `${pDist}%`).text(stats.dist > 0 ? stats.dist : '');
-    $('#bar-neut').css('width', `${pNeut}%`).text(stats.neut > 0 ? stats.neut : '');
-
-    // Counts
-    $('#count-accum').text(`${stats.accum} Stocks`);
-    $('#count-dist').text(`${stats.dist} Stocks`);
+async function loadForeignSentiment(days = 7) {
+    try {
+        currentForeignDays = days;
+        
+        // Show loading, hide chart
+        $('#foreign-chart-loading').show().html(`
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+            <p class="small text-muted mt-2 mb-0">Memuat data foreign flow...</p>
+        `);
+        $('#foreign-chart-container').hide();
+        
+        const response = await fetch(`${WORKER_BASE_URL}/foreign-sentiment?days=${days}`);
+        const data = await response.json();
+        
+        if (!data || !data.cumulative || !data.dates) {
+            $('#foreign-chart-loading').html('<p class="small text-muted mb-0">Data tidak tersedia</p>');
+            return;
+        }
+        
+        // Hide loading, show chart
+        $('#foreign-chart-loading').hide();
+        $('#foreign-chart-container').show();
+        
+        const dates = data.dates;
+        const cumulative = data.cumulative;
+        
+        // Prepare cumulative net values (in Billion)
+        const netValues = cumulative.map(d => d.net / 1e9);
+        
+        const ctx = document.getElementById('foreign-sentiment-chart').getContext('2d');
+        
+        if (foreignSentimentChart) {
+            foreignSentimentChart.destroy();
+        }
+        
+        foreignSentimentChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: dates.map(d => {
+                    const dt = new Date(d);
+                    return dt.toLocaleDateString('id-ID', { day: '2-digit', month: 'short' });
+                }),
+                datasets: [{
+                    label: 'Foreign Net Flow',
+                    data: netValues,
+                    borderColor: '#0d6efd',
+                    backgroundColor: 'rgba(13, 110, 253, 0.1)',
+                    borderWidth: 2,
+                    tension: 0.3,
+                    pointRadius: 4,
+                    pointBackgroundColor: netValues.map(v => v >= 0 ? '#198754' : '#dc3545'),
+                    pointBorderColor: netValues.map(v => v >= 0 ? '#198754' : '#dc3545'),
+                    fill: true
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        display: false
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label: function(ctx) {
+                                const val = ctx.parsed.y;
+                                const status = val >= 0 ? '📈 Inflow' : '📉 Outflow';
+                                return `${status}: Rp ${Math.abs(val).toFixed(1)} B`;
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    y: {
+                        title: {
+                            display: true,
+                            text: 'Net Flow (Rp B)',
+                            font: { size: 10 }
+                        },
+                        ticks: { font: { size: 9 } },
+                        grid: {
+                            color: function(context) {
+                                if (context.tick.value === 0) return '#6c757d';
+                                return 'rgba(0,0,0,0.05)';
+                            },
+                            lineWidth: function(context) {
+                                if (context.tick.value === 0) return 2;
+                                return 1;
+                            }
+                        }
+                    },
+                    x: {
+                        ticks: { font: { size: 9 } }
+                    }
+                }
+            }
+        });
+        
+        // Update widget title with total
+        const totalNet = netValues.reduce((a, b) => a + b, 0);
+        const trend = totalNet >= 0 ? 'text-success' : 'text-danger';
+        const arrow = totalNet >= 0 ? '↑' : '↓';
+        $('#foreign-sentiment-widget h6').html(`Foreign Flow 10 Saham Cap Terbesar<span class="d-block my-3 ${trend} fw-bold">${arrow} Rp ${Math.abs(totalNet).toFixed(1)} B</span>`);
+        
+    } catch (e) {
+        console.error('Error loading foreign sentiment:', e);
+        $('#foreign-chart-loading').html('<p class="small text-danger mb-0">Gagal memuat data</p>');
+    }
 }
+
+// Foreign range selector click handler
+$(document).on('click', '#foreign-range-selector a', function(e) {
+    e.preventDefault();
+    const days = $(this).data('days');
+    $('#foreign-range-selector a').removeClass('active');
+    $(this).addClass('active');
+    loadForeignSentiment(days);
+});
+
+// Screener mode selector click handler
+$(document).on('click', '#screener-mode-selector a', function(e) {
+    e.preventDefault();
+    const mode = $(this).data('mode');
+    $('#screener-mode-selector a').removeClass('active');
+    $(this).addClass('active');
+    accumDataCache = null; // Clear cache on mode switch
+    loadScreenerData(mode);
+});
+
+// Timeframe selector click handler (accum mode)
+$(document).on('click', '#timeframe-selector a', function(e) {
+    e.preventDefault();
+    const window = parseInt($(this).data('window'));
+    $('#timeframe-selector a').removeClass('active');
+    $(this).addClass('active');
+    accumWindow = window;
+    accumDataCache = null; // Re-fetch for new window
+    loadAccumData().then(() => {
+        $('#loading-indicator').hide();
+        $('#app').fadeIn();
+    });
+});
 
 function sortCandidates(key, desc) {
     currentCandidates.sort((a, b) => {
@@ -215,6 +388,7 @@ function sortCandidates(key, desc) {
         if (key === 'symbol') { valA = a.symbol; valB = b.symbol; }
         else if (key === 'state') { valA = a.state; valB = b.state; } // String comparison for state
         else if (key === 'score') { valA = a.score; valB = b.score; }
+        else if (key === 'smartMoney') { valA = a.smartMoney || 0; valB = b.smartMoney || 0; }
         else if (key === 'effort') { valA = a.metrics.effortZ; valB = b.metrics.effortZ; }
         else if (key === 'response') { valA = a.metrics.resultZ; valB = b.metrics.resultZ; }
         else if (key === 'quality') { valA = a.metrics.ngr; valB = b.metrics.ngr; }
@@ -352,9 +526,31 @@ function renderScreenerTable(candidates) {
         return `<span class="text-muted">${score.toFixed(1)}</span>`;
     };
 
+    // Format smart money value (Rupiah)
+    const formatSmartMoney = (item) => {
+        if (!item.accum || item.smartMoney === null) return '';
+        const val = item.smartMoney;
+        const abs = Math.abs(val);
+        let formatted;
+        if (abs >= 1e12) formatted = (val / 1e12).toFixed(1) + 'T';
+        else if (abs >= 1e9) formatted = (val / 1e9).toFixed(1) + 'B';
+        else if (abs >= 1e6) formatted = (val / 1e6).toFixed(0) + 'M';
+        else formatted = val.toLocaleString();
+
+        const color = val > 0 ? 'text-success' : val < 0 ? 'text-danger' : 'text-muted';
+        const streak = item.accum.streak || 0;
+        const streakBadge = streak >= 3 ? ` <span class="badge bg-success bg-opacity-10 text-success" style="font-size:0.6rem;">${streak}🔥</span>` : '';
+        return `<span class="${color} fw-bold" style="font-size:0.82rem;">${formatted}</span>${streakBadge}`;
+    };
+
+    const isAccumMode = screenerMode === 'accum';
+
     candidates.forEach((item, idx) => {
         const m = item.metrics;
         const logoUrl = `https://api-saham.mkemalw.workers.dev/logo?symbol=${item.symbol}`;
+        const smartMoneyCol = isAccumMode
+            ? `<td class="text-center accum-col">${formatSmartMoney(item)}</td>`
+            : '';
         const row = `
             <tr onclick="window.location.href='?kode=${item.symbol}'" style="cursor:pointer;">
                 <td class="text-center text-muted small">${idx + 1}</td>
@@ -362,6 +558,7 @@ function renderScreenerTable(candidates) {
                     <img src="${logoUrl}" alt="" style="height: 20px; width: auto; margin-right: 6px; vertical-align: middle; border-radius: 3px;" onerror="this.style.display='none'">
                     <a href="?kode=${item.symbol}">${item.symbol}</a>
                 </td>
+                ${smartMoneyCol}
                 <td class="text-center">${getFlowScore(item.score)}</td>
                 <td class="text-center">${getBadge(m.effortZ, 'effort')}</td>
                 <td class="text-center hide-mobile">${getBadge(m.ngr, 'ngr')}</td>
@@ -1082,18 +1279,13 @@ function renderChart(history) {
     const ctx = document.getElementById('detailChart').getContext('2d');
     if (myChart) myChart.destroy();
 
-    // Sort and filter out NA/holiday days (days with no actual trading activity)
+    // Sort and include all days that have data object (from R2)
+    // Even if buy/sell values are zero, we still show the date point on the chart
+    // so the cumulative line doesn't skip trading days
     history.sort((a, b) => new Date(a.date) - new Date(b.date));
     const validHistory = history.filter(h => {
         if (!h.data) return false;
-        // Check if there's actual trading activity in ANY category (foreign, retail, or local)
-        const f = h.data.foreign || {};
-        const r = h.data.retail || {};
-        const l = h.data.local || {};
-        const hasActivity = (f.buy_val > 0 || f.sell_val > 0) ||
-                           (r.buy_val > 0 || r.sell_val > 0) ||
-                           (l.buy_val > 0 || l.sell_val > 0);
-        return hasActivity;
+        return true; // Include all dates that have data from R2 (already filtered by API)
     });
 
     const labels = validHistory.map(h => {
