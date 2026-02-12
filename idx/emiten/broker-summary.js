@@ -105,7 +105,43 @@ let allCandidates = []; // Unfiltered cache
 let sortState = { key: 'sm2', desc: true };
 const SCREENER_PAGE_SIZE = 100;
 let screenerPage = 1;
-let accumFilter = 'all'; // 'strict', 'smart', 'all'
+let accumFilter = 'all'; // legacy compat
+// Active filter state
+const activeFilters = {
+    foreign: 'any',   // any | allPos | dominant
+    smart:   'any',   // any | allPos | positive
+    streak:  'any',   // any | 3 | 5
+    effort:  'any',   // any | high | positive
+    state:   'any',   // any | accum | markup
+    window:  'any'    // any | 2 | 5 | 10 | 20
+};
+let activePreset = 'all';
+
+// Preset recipes
+const PRESETS = {
+    strict: { foreign:'allPos', smart:'allPos', streak:'any', effort:'any', state:'any', window:'any' },
+    smart:  { foreign:'any',    smart:'allPos', streak:'any', effort:'any', state:'any', window:'any' },
+    all:    { foreign:'any',    smart:'any',    streak:'any', effort:'any', state:'any', window:'any' }
+};
+
+const PRESET_DESC = {
+    strict: 'Foreign & Smart Money positif tiap hari',
+    smart:  'Smart Money positif tiap hari',
+    all:    'Tanpa filter'
+};
+
+const FILTER_LABELS = {
+    foreign: { any:'Any', allPos:'Positif tiap hari', dominant:'Kumulatif > 0' },
+    smart:   { any:'Any', allPos:'Positif tiap hari', positive:'Kumulatif > 0' },
+    streak:  { any:'Any', '3':'≥ 3 hari', '5':'≥ 5 hari' },
+    effort:  { any:'Any', high:'High (z > 1)', positive:'Positif (z > 0)' },
+    state:   { any:'Any', accum:'Accumulation', markup:'Accum / Ready Markup' },
+    window:  { any:'Any window', '2':'2D only', '5':'5D only', '10':'10D only', '20':'20D only' }
+};
+
+const PILL_COLORS = {
+    foreign:'success', smart:'primary', streak:'warning', effort:'info', state:'danger', window:'secondary'
+};
 
 async function loadScreenerData() {
     try {
@@ -165,25 +201,60 @@ async function loadScreenerData() {
 }
 
 /**
- * Apply client-side filter and re-render.
+ * Apply client-side filters and re-render.
+ * Filters are checked per-window. If window selector is 'any', candidate passes if ANY window passes.
+ * If a specific window is selected, only that window is checked.
  */
 function applyFilter() {
-    if (accumFilter === 'strict') {
-        // Strict: foreignAllPos on at least one window (prefer 2D as gate)
-        currentCandidates = allCandidates.filter(c => {
-            return [c.w2, c.w5, c.w10, c.w20].some(w => w && w.foreignAllPos && w.allPos);
+    const wKey = activeFilters.window;
+
+    currentCandidates = allCandidates.filter(c => {
+        // Determine which windows to check
+        const windowsToCheck = wKey === 'any'
+            ? [c.w2, c.w5, c.w10, c.w20].filter(Boolean)
+            : [c[`w${wKey}`]].filter(Boolean);
+
+        if (windowsToCheck.length === 0) return false;
+
+        // Each window must pass ALL active criteria for that window
+        return windowsToCheck.some(w => {
+            // Foreign filter
+            if (activeFilters.foreign === 'allPos' && !w.foreignAllPos) return false;
+            if (activeFilters.foreign === 'dominant' && !w.foreignDominant) return false;
+
+            // Smart Money filter
+            if (activeFilters.smart === 'allPos' && !w.allPos) return false;
+            if (activeFilters.smart === 'positive' && (w.sm || 0) <= 0) return false;
+
+            // Streak filter
+            if (activeFilters.streak !== 'any') {
+                const minStreak = parseInt(activeFilters.streak);
+                if ((w.streak || 0) < minStreak) return false;
+            }
+
+            return true;
         });
-    } else if (accumFilter === 'smart') {
-        // Smart: allPos on at least one window
-        currentCandidates = allCandidates.filter(c => {
-            return [c.w2, c.w5, c.w10, c.w20].some(w => w && w.allPos);
+    });
+
+    // Non-window filters (effort, state) — applied on candidate level
+    if (activeFilters.effort !== 'any') {
+        currentCandidates = currentCandidates.filter(c => {
+            const ez = c.metrics.effortZ;
+            if (activeFilters.effort === 'high') return ez > 1;
+            if (activeFilters.effort === 'positive') return ez > 0;
+            return true;
         });
-    } else {
-        // All: show everything
-        currentCandidates = [...allCandidates];
+    }
+    if (activeFilters.state !== 'any') {
+        currentCandidates = currentCandidates.filter(c => {
+            if (activeFilters.state === 'accum') return c.state === 'ACCUMULATION';
+            if (activeFilters.state === 'markup') return c.state === 'ACCUMULATION' || c.state === 'READY_MARKUP';
+            return true;
+        });
     }
 
     $('#screener-count').text(`${currentCandidates.length} emiten`);
+    renderFilterPills();
     sortCandidates(sortState.key, sortState.desc);
 }
 
@@ -312,23 +383,98 @@ $(document).on('click', '#foreign-range-selector a', function(e) {
     loadForeignSentiment(days);
 });
 
-// Accum filter selector click handler
-$(document).on('click', '#accum-filter-selector a', function(e) {
+// ========== PRESET SELECTOR ==========
+$(document).on('click', '#preset-selector a', function(e) {
     e.preventDefault();
-    const filter = $(this).data('filter');
-    $('#accum-filter-selector a').removeClass('active');
-    $(this).addClass('active');
-    accumFilter = filter;
+    const preset = $(this).data('preset');
+    applyPreset(preset);
+});
 
-    // Update filter pill
-    const pillLabels = {
-        strict: { text: '<i class="fa-solid fa-filter me-1"></i>Foreign &amp; Smart $ &gt; 0', cls: 'bg-success bg-opacity-10 text-success' },
-        smart:  { text: '<i class="fa-solid fa-filter me-1"></i>Smart Money &gt; 0', cls: 'bg-primary bg-opacity-10 text-primary' },
-        all:    { text: '<i class="fa-solid fa-filter me-1"></i>No filter', cls: 'bg-secondary bg-opacity-10 text-secondary' }
-    };
-    const pill = pillLabels[filter] || pillLabels.all;
-    $('#filter-pill').html(pill.text).attr('class', `badge rounded-pill ${pill.cls}`).css('font-size', '0.72rem');
+function applyPreset(name) {
+    const recipe = PRESETS[name];
+    if (!recipe) return;
+    activePreset = name;
+    Object.assign(activeFilters, recipe);
+    // Update preset buttons
+    $('#preset-selector a').removeClass('active');
+    $(`#preset-selector a[data-preset="${name}"]`).addClass('active');
+    $('#preset-desc').text(PRESET_DESC[name] || '');
+    syncFilterDropdowns();
+    applyFilter();
+}
 
+// ========== INDIVIDUAL FILTER DROPDOWNS ==========
+$(document).on('click', '[data-filter][data-val]', function(e) {
+    e.preventDefault();
+    const key = $(this).data('filter');
+    const val = $(this).data('val').toString();
+    activeFilters[key] = val;
+    // Update button label
+    syncFilterDropdowns();
+    // Detect if current filters match a preset
+    detectMatchingPreset();
+    applyFilter();
+});
+
+function syncFilterDropdowns() {
+    Object.keys(FILTER_LABELS).forEach(key => {
+        const ddId = key === 'window' ? '#dd-window' : `#dd-${key}`;
+        const label = FILTER_LABELS[key][activeFilters[key]] || 'Any';
+        const prefix = key === 'foreign' ? 'Foreign' : key === 'smart' ? 'Smart $' : key === 'streak' ? 'Streak' : key === 'effort' ? 'Effort' : key === 'state' ? 'State' : '';
+        if (key === 'window') {
+            $(ddId).html(`<i class="fa-solid fa-calendar-days me-1"></i>Window: ${label}`);
+        } else {
+            $(ddId).text(`${prefix}: ${label}`);
+        }
+        // Highlight active dropdown when not 'any'
+        if (activeFilters[key] !== 'any') {
+            $(ddId).removeClass('btn-outline-secondary btn-outline-info').addClass(key === 'window' ? 'btn-info text-white' : `btn-${PILL_COLORS[key]} text-white`);
+        } else {
+            $(ddId).removeClass(`btn-${PILL_COLORS[key]} btn-info text-white`).addClass(key === 'window' ? 'btn-outline-info' : 'btn-outline-secondary');
+        }
+    });
+}
+
+function detectMatchingPreset() {
+    for (const [name, recipe] of Object.entries(PRESETS)) {
+        const match = Object.keys(recipe).every(k => activeFilters[k] === recipe[k]);
+        if (match) {
+            activePreset = name;
+            $('#preset-selector a').removeClass('active');
+            $(`#preset-selector a[data-preset="${name}"]`).addClass('active');
+            $('#preset-desc').text(PRESET_DESC[name] || '');
+            return;
+        }
+    }
+    // No preset match — custom
+    activePreset = 'custom';
+    $('#preset-selector a').removeClass('active');
+    $('#preset-desc').text('Custom filter');
+}
+
+function renderFilterPills() {
+    const $pills = $('#active-pills');
+    $pills.empty();
+    Object.keys(FILTER_LABELS).forEach(key => {
+        if (activeFilters[key] !== 'any') {
+            const label = FILTER_LABELS[key][activeFilters[key]];
+            const color = PILL_COLORS[key] || 'secondary';
+            const prefix = key === 'foreign' ? 'Foreign' : key === 'smart' ? 'Smart $' : key === 'streak' ? 'Streak' : key === 'effort' ? 'Effort' : key === 'state' ? 'State' : key === 'window' ? 'Window' : key;
+            $pills.append(`
+                <span class="badge rounded-pill bg-${color} bg-opacity-10 text-${color}" style="font-size:0.68rem; cursor:pointer;" data-remove-filter="${key}">
+                    ${prefix}: ${label} <i class="fa-solid fa-xmark ms-1"></i>
+                </span>
+            `);
+        }
+    });
+}
+
+// Click pill X to remove that individual filter
+$(document).on('click', '[data-remove-filter]', function() {
+    const key = $(this).data('remove-filter');
+    activeFilters[key] = 'any';
+    syncFilterDropdowns();
+    detectMatchingPreset();
     applyFilter();
 });
 
