@@ -1,0 +1,1563 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trading Agent Console</title>
+    <link href="./node_modules/bootstrap/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link
+        href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Inter:wght@400;600&display=swap"
+        rel="stylesheet">
+    <style>
+        :root {
+            --bg-dark: #000000;
+            --bg-card: #000000;
+            --accent-orange: #ff9900;
+            --accent-green: #00ff00;
+            --accent-red: #ff3333;
+            --text-main: #ffffff;
+            --text-muted: #cccccc;
+            --border-color: #333333;
+        }
+
+        body {
+            background-color: var(--bg-dark);
+            font-family: 'JetBrains Mono', 'Inter', monospace;
+            color: var(--text-main);
+            padding: 0;
+            margin: 0;
+            overflow-x: hidden;
+        }
+
+        .container-fluid {
+            padding: 10px;
+        }
+
+        /* Scrollbar Styling */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #000000;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background-color: #050505;
+            border-radius: 0;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background-color: #050505;
+        }
+
+        html {
+            scrollbar-width: thin;
+            scrollbar-color: #050505 #000000;
+        }
+
+        /* Sharp Corners Everywhere except switches */
+        *:not(.form-check-input):not(.form-check-label):not(.form-switch) {
+            border-radius: 0 !important;
+        }
+
+        .form-check-input:checked {
+            background-color: var(--accent-orange);
+            border-color: var(--accent-orange);
+        }
+
+        /* Card Styling - Flat Bloomberg Look */
+        .card {
+            background-color: var(--bg-card);
+            border: 1px solid var(--border-color);
+            margin-bottom: 15px;
+            box-shadow: none;
+        }
+
+        .card-header {
+            background-color: #ea8623;
+            border-bottom: 1px solid var(--border-color);
+            font-weight: bold;
+            color: #1a1a1a;
+            font-size: 0.85rem;
+            padding: 8px 12px;
+            text-transform: uppercase;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        /* Form Inputs */
+        label {
+            font-size: 0.75rem;
+            color: var(--accent-orange);
+            margin-bottom: 5px;
+            text-transform: uppercase;
+            font-weight: bold;
+        }
+
+        .form-select,
+        .form-control {
+            background-color: transparent;
+            border: 1px solid var(--border-color);
+            color: var(--accent-orange);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.85rem;
+            padding: 6px 10px;
+        }
+
+        .form-select {
+            background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='none' stroke='%23ff9900' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='m4 6 4-4 4 4m0 4-4 4-4-4'/%3e%3c/svg%3e");
+            background-size: 10px;
+            background-position: right 0.75rem center;
+        }
+
+        .form-select:focus,
+        .form-control:focus {
+            background-color: #000000;
+            border-color: var(--accent-orange);
+            color: var(--accent-orange);
+            box-shadow: none;
+        }
+
+        /* Buttons - Professional Flat Look */
+        .btn {
+            font-family: 'JetBrains Mono', monospace;
+            font-weight: bold;
+            text-transform: uppercase;
+            font-size: 0.85rem;
+            padding: 10px 20px;
+            border: 1px solid var(--border-color);
+        }
+
+        .btn-primary {
+            background-color: #000000;
+            color: var(--accent-orange);
+            border-color: var(--accent-orange);
+        }
+
+        .btn-primary:hover {
+            background-color: var(--accent-orange);
+            color: #000000;
+            border-color: var(--accent-orange);
+
+        }
+
+        .btn-success {
+            background-color: #000000;
+            color: var(--accent-green);
+            border-color: var(--accent-green);
+        }
+
+        .btn-success:hover {
+            background-color: var(--accent-green);
+            color: #000000;
+        }
+
+        .btn-danger {
+            background-color: #000000;
+            color: var(--accent-red);
+            border-color: var(--accent-red);
+        }
+
+        /* Helper Tooltip Icon */
+        .help-tooltip {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 14px;
+            height: 14px;
+            padding: 0 !important;
+            font-size: 8px !important;
+            background-color: #444 !important;
+            color: #fff !important;
+            border: none !important;
+            border-radius: 50% !important;
+            position: relative;
+            top: -2px;
+            cursor: help;
+            vertical-align: middle;
+            margin-left: 4px;
+        }
+
+        /* Status & Sonar */
+        .status-dot {
+            height: 10px;
+            width: 10px;
+            background-color: #444;
+            display: inline-block;
+            margin-right: 8px;
+        }
+
+        .status-dot.connected {
+            background-color: var(--accent-green);
+            animation: sonar 2s infinite;
+        }
+
+        @keyframes sonar {
+            0% {
+                box-shadow: 0 0 0 0 rgba(0, 255, 0, 0.4);
+            }
+
+            70% {
+                box-shadow: 0 0 0 8px rgba(0, 255, 0, 0);
+            }
+
+            100% {
+                box-shadow: 0 0 0 0 rgba(0, 255, 0, 0);
+            }
+        }
+
+        .status-dot.waiting {
+            background-color: var(--accent-orange);
+            box-shadow: 0 0 5px var(--accent-orange);
+        }
+
+        .text-waiting {
+            color: var(--accent-orange) !important;
+            font-weight: bold;
+        }
+
+        .text-success {
+            color: var(--accent-green) !important;
+            font-weight: bold;
+        }
+
+        /* Override Bootstrap Muted text for better visibility on black */
+        .text-muted {
+            color: var(--text-muted) !important;
+        }
+
+        /* Utility */
+        hr {
+            border-color: var(--border-color);
+            opacity: 1;
+            margin: 15px 0;
+        }
+
+        .input-group-text {
+            background-color: #1a1a1a;
+            border: 1px solid var(--border-color);
+            color: var(--accent-orange);
+            font-size: 0.75rem;
+        }
+
+        /* Autocomplete Results */
+        #autocomplete-results {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            z-index: 1000;
+            background: #111;
+            border: 1px solid var(--accent-orange);
+            max-height: 200px;
+            overflow-y: auto;
+            display: none;
+        }
+
+        .autocomplete-item {
+            padding: 8px 12px;
+            cursor: pointer;
+            border-bottom: 1px solid #222;
+            font-size: 0.8rem;
+        }
+
+        .autocomplete-item:hover {
+            background: #222;
+            color: var(--accent-orange);
+        }
+
+        .autocomplete-item .sector {
+            font-size: 0.7rem;
+            color: #888;
+            display: block;
+        }
+
+        /* Ticker Badge Custom Style */
+        .ticker-badge {
+            background: #111;
+            border: 1px solid var(--accent-orange);
+            color: var(--accent-orange);
+            padding: 4px 8px;
+            font-size: 0.75rem;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            cursor: pointer;
+        }
+
+        .ticker-badge:hover {
+            background: var(--accent-orange);
+            color: #000;
+        }
+
+        .ticker-badge .remove-icon {
+            font-size: 10px;
+            opacity: 0.6;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container-fluid">
+
+        <div class="row">
+            <div class="col-12">
+                <div class="mb-4" style="border: none;">
+                    <div class="d-flex align-items-center justify-content-between">
+                        <div class="d-flex align-items-center gap-3">
+                            <select class="form-select form-select-sm" id="broker-select" style="width: 200px;">
+                                <option value="ipot" selected>Indo Premier (IPOT)</option>
+                                <option value="stockbit">Stockbit Pro</option>
+                                <option value="ajaib">Ajaib Sekuritas</option>
+                                <option value="mirae">Mirae HOTS Web</option>
+                            </select>
+                        </div>
+                        <div class="d-flex align-items-center">
+                            <span class="status-dot waiting" id="connection-dot"></span>
+                            <span class="small text-waiting" id="connection-text">Waiting Connection</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row align-items-stretch">
+            <div class="col-md-7 mb-3">
+                <div class="card">
+                    <div class="card-header">
+                        <span>STRATEGY CONFIGURATION</span>
+                    </div>
+
+                    <div class="card-body">
+                        <label class="fw-bold text-white">Select Personality (Preset)</label>
+                        <div class="input-group mb-1">
+                            <select class="form-select" id="preset-select">
+                                <option value="manual">-- Custom Manual --</option>
+                                <option value="bekti">🚀 Bekti Sutikna (Frequency/Burst)</option>
+                                <option value="john">🐋 John Wijaya/MG (Whale/Value)</option>
+                                <option value="john_openlow">☀️ Koh John (Open=Low)</option>
+                            </select>
+                            <button class="btn btn-warning fw-bold" id="btn-load-preset"
+                                style="font-size: 11px;">LOAD</button>
+                        </div>
+                        <small class="text-muted d-block mt-2" id="preset-desc" style="font-size: 10px;">Pilih preset
+                            untuk memuat parameter.</small>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-body">
+                        <div id="group-whale" class="setting-group mb-4">
+                            <div class="d-flex justify-content-between align-items-center mb-3">
+                                <label class="small fw-bold d-block text-white m-0">LIVETRADE SCANNER</label>
+                                <div class="form-check form-switch p-0 m-0 d-flex align-items-center gap-2">
+                                    <span class="small text-muted" style="font-size: 10px;">OFF</span>
+                                    <input class="form-check-input ms-0 group-toggle" type="checkbox" id="toggle-whale">
+                                    <span class="small text-warning" style="font-size: 10px;">ON</span>
+                                </div>
+                            </div>
+                            <div class="row g-3">
+                                <div class="col-md-12">
+                                    <label>Minimal Nilai Transaksi</label>
+                                    <div class="input-group input-group-sm">
+                                        <span class="input-group-text">Rp</span>
+                                        <input type="text" class="form-control" id="var-whale-val" value="500.000.000">
+                                    </div>
+                                    <small class="text-muted mt-2" style="font-size: 10px;">Hanya terpantau jika nilai
+                                        satu
+                                        kali transaksi melebihi angka ini.</small>
+                                </div>
+                                <div class="col-md-6">
+                                    <label>Aggressor Filter</label>
+                                    <select class="form-select form-select-sm" id="var-whale-side">
+                                        <option value="buy">HAKA Only (Buy on Offer)</option>
+                                        <option value="both">Both Buy & Sell</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-6">
+                                    <label>Volume Minimal (Lot)</label>
+                                    <input type="number" class="form-control form-control-sm" id="var-whale-lot"
+                                        value="1000">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-body">
+                        <div id="group-frequency" class="setting-group mb-4">
+                            <div class="d-flex justify-content-between align-items-center mb-3">
+                                <label class="small fw-bold d-block text-white m-0">ORDER FLOW PARAMETER</label>
+                                <div class="form-check form-switch p-0 m-0 d-flex align-items-center gap-2">
+                                    <span class="small text-muted" style="font-size: 10px;">OFF</span>
+                                    <input class="form-check-input ms-0 group-toggle" type="checkbox" id="toggle-freq">
+                                    <span class="small text-warning" style="font-size: 10px;">ON</span>
+                                </div>
+                            </div>
+                            <div class="row g-3">
+                                <div class="col-md-6">
+                                    <label>Transaksi Beruntun <span class="help-tooltip" data-bs-toggle="tooltip"
+                                            title="Jumlah transaksi minimal dalam durasi singkat untuk dianggap sebagai sinyal ledakan.">?</span></label>
+                                    <div class="input-group input-group-sm">
+                                        <input type="number" class="form-control" id="var-freq-count" value="15">
+                                        <span class="input-group-text">Trades</span>
+                                    </div>
+                                    <small class="text-muted" style="font-size: 10px;">Min trades per
+                                        window.</small>
+                                </div>
+                                <div class="col-md-6">
+                                    <label>Dalam Waktu</label>
+                                    <div class="input-group input-group-sm">
+                                        <input type="number" class="form-control" id="var-freq-time" value="3">
+                                        <span class="input-group-text">Detik</span>
+                                    </div>
+                                </div>
+                                <div class="col-md-12">
+                                    <label>Kepekaan Anomali Diluar Kebiasaan<span class="help-tooltip"
+                                            data-bs-toggle="tooltip"
+                                            title="Semakin ketat (kanan), semakin sedikit sinyal yang lolos karena bot hanya mencari anomali data yang sangat ekstrem.">?</span></label>
+                                    <input type="range" class="form-range" min="1" max="5" step="0.1" id="var-zscore"
+                                        value="2.5">
+                                    <div class="d-flex justify-content-between small text-muted">
+                                        <span>Loose (1.0)</span>
+                                        <span id="zscore-val" class="text-white">2.5</span>
+                                        <span>Strict (5.0)</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-body">
+                        <div id="group-quality" class="setting-group mb-4">
+                            <div class="d-flex justify-content-between align-items-center mb-3">
+                                <label class="small fw-bold d-block text-white m-0">TRADE QUALITY & CONTEXT</label>
+                                <div class="form-check form-switch p-0 m-0 d-flex align-items-center gap-2">
+                                    <span class="small text-muted" style="font-size: 10px;">OFF</span>
+                                    <input class="form-check-input ms-0 group-toggle" type="checkbox"
+                                        id="toggle-quality">
+                                    <span class="small text-warning" style="font-size: 10px;">ON</span>
+                                </div>
+                            </div>
+                            <div class="row g-3">
+                                <div class="col-md-6">
+                                    <label>Price Action</label>
+                                    <select class="form-select form-select-sm" id="var-price-action">
+                                        <option value="uptrend">Uptrend Only (Strict)</option>
+                                        <option value="stable" selected>Stable or Up (Normal)</option>
+                                    </select>
+                                    <small class="text-muted mt-2" style="font-size: 10px;">Filter panic selling
+                                        bursts.</small>
+                                </div>
+
+                                <div class="col-md-6">
+                                    <label>Avg. Lot / Trade</label>
+                                    <div class="input-group input-group-sm">
+                                        <input type="number" class="form-control" id="var-avg-lot" value="10">
+                                        <span class="input-group-text">Lot</span>
+                                    </div>
+                                </div>
+
+                                <div class="col-md-12">
+                                    <label>HAKA Dominance (Buy Aggressor %)</label>
+                                    <div class="d-flex align-items-center gap-2">
+                                        <input type="range" class="form-range" min="0" max="100" step="5"
+                                            id="var-haka-ratio" value="70">
+                                        <span class="badge bg-info text-dark" id="val-haka">70%</span>
+                                    </div>
+                                    <small class="text-muted" style="font-size: 10px;">Min % of trades hitting
+                                        Offer.</small>
+                                </div>
+
+                                <div class="col-md-6">
+                                    <label>Max Spread</label>
+                                    <div class="input-group input-group-sm">
+                                        <input type="number" class="form-control" id="var-max-spread" value="2">
+                                        <span class="input-group-text">Ticks</span>
+                                    </div>
+                                </div>
+                                <div class="col-md-6 d-flex align-items-end">
+                                    <div class="form-check form-switch mb-1">
+                                        <input class="form-check-input" type="checkbox" id="var-wall-check" checked>
+                                        <label class="form-check-label text-white small" for="var-wall-check">Check
+                                            Offer Wall</label>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="group-openlow" class="setting-group mb-4">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <label class="small fw-bold d-block text-white m-0">TIME PARAMETER</label>
+                        <div class="form-check form-switch p-0 m-0 d-flex align-items-center gap-2">
+                            <span class="small text-muted" style="font-size: 10px;">OFF</span>
+                            <input class="form-check-input ms-0 group-toggle" type="checkbox" id="toggle-time-param">
+                            <span class="small text-warning" style="font-size: 10px;">ON</span>
+                        </div>
+                    </div>
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label>Max Time (Morning)</label>
+                            <input type="time" class="form-control form-control-sm" id="var-ol-time" value="09:15">
+                        </div>
+                        <div class="col-md-6">
+                            <label>Min Increase (%)</label>
+                            <div class="input-group input-group-sm">
+                                <input type="number" class="form-control" id="var-ol-min-chg" value="2.0">
+                                <span class="input-group-text">%</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-5 d-flex flex-column mb-3">
+                <div class="card">
+                    <div class="card-header">
+                        RISK MANAGEMENT
+                    </div>
+
+                    <div class="card-body">
+                        <label class="text-white fw-bold mb-2" style="font-size: 0.75rem; letter-spacing: 1px;">TARGET
+                            UNIVERSE (WATCHLIST)</label>
+
+                        <div class="d-flex gap-2 mb-2">
+                            <button class="btn btn-sm btn-outline-info py-0" style="font-size: 10px;"
+                                id="btn-pre-lq45">LQ45</button>
+                            <button class="btn btn-sm btn-outline-info py-0" style="font-size: 10px;"
+                                id="btn-pre-kompas">KOMPAS100</button>
+                            <button class="btn btn-sm btn-outline-warning py-0" style="font-size: 10px;"
+                                id="btn-pre-volatile">⚡
+                                VOLATILE</button>
+                        </div>
+
+                        <div class="input-group input-group-sm my-3 position-relative">
+                            <input type="text" class="form-control" id="stock-ticker-input"
+                                placeholder="CODE (e.g. BBCA)" maxlength="4"
+                                style="text-transform: uppercase; color: white; border-color: #475569;"
+                                autocomplete="off">
+                            <button class="btn btn-outline-warning" type="button" id="btn-add-ticker">➕
+                                ADD</button>
+                            <div id="autocomplete-results"></div>
+                        </div>
+
+                        <div id="watchlist-container" class="d-flex flex-wrap gap-2 p-2 rounded"
+                            style="min-height: 50px; border: 1px dashed #475569;">
+                            <small class="text-muted fst-italic w-100 text-center mt-1 align-self-center" id="empty-msg"
+                                style="font-size: 11px;">
+                                Empty. System will scan ALL MARKET (High Load).
+                            </small>
+                        </div>
+
+                        <input type="hidden" id="final-watchlist" value="">
+                    </div>
+                </div>
+
+                <div class="card">
+
+                    <div class="card-body">
+                        <div class="row g-3">
+                            <div class="col-6">
+                                <label class="text-success fw-bold">Take Profit (TP)</label>
+                                <div class="input-group input-group-sm">
+                                    <input type="number" class="form-control" id="risk-tp" value="2.0">
+                                    <span class="input-group-text">%</span>
+                                </div>
+                            </div>
+                            <div class="col-6">
+                                <label class="text-danger fw-bold">Stop Loss (SL)</label>
+                                <div class="input-group input-group-sm">
+                                    <input type="number" class="form-control" id="risk-sl" value="-2.0">
+                                    <span class="input-group-text">%</span>
+                                </div>
+                            </div>
+                            <div class="col-6">
+                                <label>Max Allocation per Lot</label>
+                                <div class="input-group input-group-sm">
+                                    <span class="input-group-text">Rp</span>
+                                    <input type="text" class="form-control" id="risk-allocation" value="5.000.000" placeholder="Misal: 5.000.000">
+                                </div>
+                            </div>
+                            <div class="col-6">
+                                <label>Target Lot</label>
+                                <div class="input-group input-group-sm">
+                                    <input type="number" class="form-control" id="risk-target-lot" value="0" min="0">
+                                    <span class="input-group-text">Lot</span>
+                                </div>
+                                <small class="text-muted" style="font-size: 10px;">Isi 0 untuk hitung otomatis berdasarkan Max Allocation per Lot.</small>
+                            </div>
+                            <div class="col-12 mt-3">
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="auto-cutloss" checked>
+                                    <label class="form-check-label" for="auto-cutloss">Enable Auto-Cutloss (Hard
+                                        Stop)</label>
+                                </div>
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="trailing-stop">
+                                    <label class="form-check-label" for="trailing-stop">Enable Trailing Stop
+                                        (Follow
+                                        Trend)</label>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="d-grid gap-2">
+                    <button class="btn btn-primary py-2" id="btn-save">
+                        💾 SAVE PARAMETERS
+                    </button>
+                    <button class="btn btn-primary py-2" id="btn-dry-run">
+                        🧪 DRY RUN (Simulation)
+                    </button>
+                    <button class="btn btn-success py-3 fw-bold" id="btn-start" disabled>
+                        ▶ START AGENT
+                    </button>
+                </div>
+
+                <div class="card mt-3 mb-0 flex-grow-1 d-flex flex-column">
+                    <div class="card-body p-2 bg-black flex-grow-1"
+                        style="font-family: monospace; font-size: 0.75rem; overflow-y: auto;" id="system-log">
+                        <div class="text-muted">> System initialized...</div>
+                        <div class="text-muted">> Waiting for broker connection...</div>
+                    </div>
+                </div>
+            </div> <!-- Close col-md-5 -->
+        </div>
+
+    </div>
+
+    <script src="./node_modules/bootstrap/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        let nodeFs = null;
+        let nodePath = null;
+        // Check if we are in Electron to avoid "require is not defined" in browser preview
+        if (typeof require !== 'undefined') {
+            window.$ = window.jQuery = require('./node_modules/jquery/dist/jquery.min.js');
+            nodeFs = require('fs');
+            nodePath = require('path');
+        } else {
+            console.warn("RENDERER: Running in browser mode. Node.js features (require/Electron) are disabled.");
+        }
+        window.nodeFs = nodeFs;
+        window.nodePath = nodePath;
+    </script>
+    <script>
+        // Move window.onerror to the very top, before ANY other logic
+        window.onerror = function (msg, url, line, col, error) {
+            const errStr = `RENDERER ERROR: ${msg} at ${line}:${col}`;
+            console.error(errStr);
+            if (window.ipcRenderer) {
+                window.ipcRenderer.send('log-to-terminal', errStr);
+            }
+            return false;
+        };
+
+        console.log("RENDERER: Starting script execution...");
+
+        // Safety check for Electron IPC
+        if (typeof require !== 'undefined') {
+            const { ipcRenderer } = require('electron');
+            window.ipcRenderer = ipcRenderer;
+        } else {
+            // Mock ipcRenderer for browser preview
+            window.ipcRenderer = { send: (channel, msg) => console.log(`[MOCK IPC] ${channel}:`, msg) };
+        }
+
+        if (window.ipcRenderer && window.ipcRenderer.on) {
+            ipcRenderer.on('broker-login-state', (event, payload = {}) => {
+                const broker = (payload.broker || 'unknown').toUpperCase();
+                const loggedIn = Boolean(payload.loggedIn);
+                const source = payload.source || 'unknown';
+
+                updateConnectionStatus(loggedIn);
+
+                // Additional logs will be delivered via system-log channel from main process
+            });
+        }
+
+        // Helper Log
+        function log(msg) {
+            const time = new Date().toLocaleTimeString();
+            if ($('#system-log').length) {
+                $('#system-log').prepend(`<div class="text-white"><span class="text-muted">[${time}]</span> ${msg}</div>`);
+            }
+            ipcRenderer.send('log-to-terminal', msg);
+        }
+
+        $(document).ready(function () {
+            const fs = window.nodeFs;
+            const path = window.nodePath;
+            const strategiesDir = fs ? path.join(__dirname, 'data', 'strategies') : null;
+            let presetList = [];
+            let activePresetId = 'manual';
+            let lastLoadedConfig = null;
+            let isDirty = false;
+            let suspendDirtyTracking = false;
+
+            const defaultPresets = [
+                {
+                    id: 'bekti',
+                    label: '🚀 Bekti Sutikna (Frequency/Burst)',
+                    description: 'Mode Scalping: Mencari ledakan transaksi (Burst) dengan Z-Score tinggi.',
+                    config: {
+                        whale: {
+                            enabled: false,
+                            minVal: '500.000.000',
+                            minLot: 1000,
+                            side: 'both'
+                        },
+                        freq: {
+                            enabled: true,
+                            count: 15,
+                            time: 3,
+                            zscore: 2.5
+                        },
+                        quality: {
+                            enabled: true,
+                            priceAction: 'stable',
+                            avgLot: 10,
+                            hakaRatio: 70,
+                            maxSpread: 2,
+                            wallCheck: true
+                        },
+                        timeParam: {
+                            enabled: false,
+                            maxTime: '09:15',
+                            minChg: 2.0
+                        },
+                        risk: {
+                            tp: 1.5,
+                            sl: -1.5,
+                            allocation: '5.000.000',
+                            autoCutloss: true,
+                            trailingStop: false
+                        },
+                        watchlist: []
+                    }
+                },
+                {
+                    id: 'john',
+                    label: '🐋 John Wijaya/MG (Whale/Value)',
+                    description: 'Mode Whale: Mencari transaksi Jumbo (Min 500jt) yang memakan Offer.',
+                    config: {
+                        whale: {
+                            enabled: true,
+                            minVal: '500.000.000',
+                            minLot: 1000,
+                            side: 'buy'
+                        },
+                        freq: {
+                            enabled: false,
+                            count: 12,
+                            time: 4,
+                            zscore: 2.0
+                        },
+                        quality: {
+                            enabled: true,
+                            priceAction: 'stable',
+                            avgLot: 20,
+                            hakaRatio: 60,
+                            maxSpread: 3,
+                            wallCheck: true
+                        },
+                        timeParam: {
+                            enabled: false,
+                            maxTime: '09:30',
+                            minChg: 1.5
+                        },
+                        risk: {
+                            tp: 3.0,
+                            sl: -3.0,
+                            allocation: '10.000.000',
+                            autoCutloss: true,
+                            trailingStop: true
+                        },
+                        watchlist: []
+                    }
+                },
+                {
+                    id: 'john_openlow',
+                    label: '☀️ Koh John (Open=Low)',
+                    description: 'Mode Pagi: Mencari saham Open=Low yang baru mulai naik.',
+                    config: {
+                        whale: {
+                            enabled: false,
+                            minVal: '300.000.000',
+                            minLot: 500,
+                            side: 'both'
+                        },
+                        freq: {
+                            enabled: false,
+                            count: 10,
+                            time: 5,
+                            zscore: 1.8
+                        },
+                        quality: {
+                            enabled: false,
+                            priceAction: 'uptrend',
+                            avgLot: 5,
+                            hakaRatio: 60,
+                            maxSpread: 2,
+                            wallCheck: true
+                        },
+                        timeParam: {
+                            enabled: true,
+                            maxTime: '09:15',
+                            minChg: 2.0
+                        },
+                        risk: {
+                            tp: 2.0,
+                            sl: -1.0,
+                            allocation: '5.000.000',
+                            autoCutloss: true,
+                            trailingStop: false
+                        },
+                        watchlist: []
+                    }
+                }
+            ];
+
+            // Initialize Bootstrap Tooltips
+            var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'))
+            var tooltipList = tooltipTriggerList.map(function (tooltipTriggerEl) {
+                return new bootstrap.Tooltip(tooltipTriggerEl)
+            })
+
+            log("UI: System initialized...");
+
+            function ensureStrategiesDir() {
+                if (!fs || !strategiesDir) return;
+                if (!fs.existsSync(strategiesDir)) {
+                    try {
+                        fs.mkdirSync(strategiesDir, { recursive: true });
+                        log('[PRESET] Created strategies directory.');
+                    } catch (err) {
+                        console.error('[PRESET] Failed to create strategies directory:', err);
+                    }
+                }
+            }
+
+            function reloadPresetList() {
+                presetList = defaultPresets.map((preset) => ({ ...preset, source: 'builtin' }));
+                if (!fs || !strategiesDir) {
+                    presetList.sort((a, b) => (a.label || '').localeCompare(b.label || '', 'id'));
+                    return;
+                }
+                try {
+                    const files = fs.readdirSync(strategiesDir);
+                    files.filter((file) => file.endsWith('.json')).forEach((file) => {
+                        const absPath = path.join(strategiesDir, file);
+                        try {
+                            const raw = fs.readFileSync(absPath, 'utf8');
+                            const parsed = JSON.parse(raw);
+                            if (parsed && parsed.id) {
+                                const entry = {
+                                    id: parsed.id,
+                                    label: parsed.label || parsed.id,
+                                    description: parsed.description || '',
+                                    config: parsed.config || {},
+                                    source: 'file',
+                                    filePath: absPath
+                                };
+                                const existingIdx = presetList.findIndex((preset) => preset.id === entry.id);
+                                if (existingIdx >= 0) {
+                                    presetList[existingIdx] = entry;
+                                } else {
+                                    presetList.push(entry);
+                                }
+                            }
+                        } catch (err) {
+                            console.error(`[PRESET] Failed parsing preset ${file}:`, err.message);
+                        }
+                    });
+                    presetList.sort((a, b) => (a.label || '').localeCompare(b.label || '', 'id'));
+                } catch (err) {
+                    console.error('[PRESET] Failed reading strategies directory:', err.message);
+                }
+            }
+
+            function populatePresetSelect(selectedId) {
+                const $select = $('#preset-select');
+                const previous = selectedId || activePresetId || 'manual';
+                $select.empty();
+                $select.append('<option value="manual">-- Custom Manual --</option>');
+                presetList.forEach((preset) => {
+                    const option = $('<option>').val(preset.id).text(preset.label);
+                    $select.append(option);
+                });
+                if (previous && $select.find(`option[value="${previous}"]`).length) {
+                    $select.val(previous);
+                } else {
+                    $select.val('manual');
+                }
+            }
+
+            function getPresetById(id) {
+                if (!id) return null;
+                return presetList.find((preset) => preset.id === id) || null;
+            }
+
+            function updatePresetHighlights(preset) {
+                $('.setting-group').removeClass('active');
+                if (!preset || preset.id === 'manual') {
+                    $('#group-frequency').addClass('active');
+                    $('#group-whale').addClass('active');
+                    return;
+                }
+                const cfg = preset.config || {};
+                if (cfg.whale?.enabled) $('#group-whale').addClass('active');
+                if (cfg.freq?.enabled) $('#group-frequency').addClass('active');
+                if (cfg.quality?.enabled) $('#group-quality').addClass('active');
+                if (cfg.timeParam?.enabled) $('#group-openlow').addClass('active');
+                // Ensure at least one active for visual reference
+                if ($('.setting-group.active').length === 0) {
+                    $('#group-frequency').addClass('active');
+                }
+            }
+
+            function updatePresetDescription(preset) {
+                const defaultDesc = 'Pilih preset untuk memuat parameter.';
+                if (!preset || preset.id === 'manual') {
+                    $('#preset-desc').text('Manual Mode: Semua parameter bisa diatur sendiri.');
+                } else {
+                    $('#preset-desc').text(preset.description || defaultDesc);
+                }
+            }
+
+            function setToggleValue(selector, value) {
+                const $el = $(selector);
+                const boolVal = Boolean(value);
+                if ($el.prop('checked') !== boolVal) {
+                    $el.prop('checked', boolVal);
+                }
+                $el.trigger('change');
+            }
+
+            function setInputValue(selector, value) {
+                const $el = $(selector);
+                if ($el.val() !== String(value ?? '')) {
+                    $el.val(value ?? '');
+                }
+            }
+
+            function updateZScoreDisplay() {
+                $('#zscore-val').text($('#var-zscore').val());
+            }
+
+            function updateHakaBadge() {
+                $('#val-haka').text(`${$('#var-haka-ratio').val()}%`);
+            }
+
+            function setWatchlistFromPreset(tickers) {
+                clearWatchlist({ silent: true });
+                if (Array.isArray(tickers)) {
+                    tickers.forEach((ticker) => addTicker(ticker, { silent: true }));
+                }
+                updateFinalWatchlist({ silent: true });
+            }
+
+            function applyPresetConfig(preset) {
+                if (!preset) return;
+                const cfg = preset.config || {};
+                suspendDirtyTracking = true;
+
+                if (cfg.whale) {
+                    setToggleValue('#toggle-whale', cfg.whale.enabled);
+                    setInputValue('#var-whale-val', cfg.whale.minVal ?? '500.000.000');
+                    setInputValue('#var-whale-lot', cfg.whale.minLot ?? 1000);
+                    setInputValue('#var-whale-side', cfg.whale.side ?? 'both');
+                } else {
+                    setToggleValue('#toggle-whale', false);
+                    setInputValue('#var-whale-val', '500.000.000');
+                    setInputValue('#var-whale-lot', 1000);
+                    setInputValue('#var-whale-side', 'both');
+                }
+
+                if (cfg.freq) {
+                    setToggleValue('#toggle-freq', cfg.freq.enabled);
+                    setInputValue('#var-freq-count', cfg.freq.count ?? 15);
+                    setInputValue('#var-freq-time', cfg.freq.time ?? 3);
+                    setInputValue('#var-zscore', cfg.freq.zscore ?? 2.5);
+                    updateZScoreDisplay();
+                } else {
+                    setToggleValue('#toggle-freq', false);
+                    setInputValue('#var-freq-count', 15);
+                    setInputValue('#var-freq-time', 3);
+                    setInputValue('#var-zscore', 2.5);
+                    updateZScoreDisplay();
+                }
+
+                if (cfg.quality) {
+                    setToggleValue('#toggle-quality', cfg.quality.enabled);
+                    setInputValue('#var-price-action', cfg.quality.priceAction ?? 'stable');
+                    setInputValue('#var-avg-lot', cfg.quality.avgLot ?? 10);
+                    setInputValue('#var-haka-ratio', cfg.quality.hakaRatio ?? 70);
+                    updateHakaBadge();
+                    setInputValue('#var-max-spread', cfg.quality.maxSpread ?? 2);
+                    $('#var-wall-check').prop('checked', cfg.quality.wallCheck ?? true);
+                } else {
+                    setToggleValue('#toggle-quality', false);
+                    setInputValue('#var-price-action', 'stable');
+                    setInputValue('#var-avg-lot', 10);
+                    setInputValue('#var-haka-ratio', 70);
+                    updateHakaBadge();
+                    setInputValue('#var-max-spread', 2);
+                    $('#var-wall-check').prop('checked', true);
+                }
+
+                if (cfg.timeParam) {
+                    setToggleValue('#toggle-time-param', cfg.timeParam.enabled);
+                    setInputValue('#var-ol-time', cfg.timeParam.maxTime ?? '09:15');
+                    setInputValue('#var-ol-min-chg', cfg.timeParam.minChg ?? 2.0);
+                } else {
+                    setToggleValue('#toggle-time-param', false);
+                    setInputValue('#var-ol-time', '09:15');
+                    setInputValue('#var-ol-min-chg', 2.0);
+                }
+
+                if (cfg.risk) {
+                    setInputValue('#risk-tp', cfg.risk.tp ?? 2.0);
+                    setInputValue('#risk-sl', cfg.risk.sl ?? -2.0);
+                    setInputValue('#risk-allocation', cfg.risk.allocation ?? '5.000.000');
+                    setInputValue('#risk-target-lot', cfg.risk.targetLot ?? 0);
+                    $('#auto-cutloss').prop('checked', cfg.risk.autoCutloss ?? true);
+                    $('#trailing-stop').prop('checked', cfg.risk.trailingStop ?? false);
+                } else {
+                    setInputValue('#risk-tp', 2.0);
+                    setInputValue('#risk-sl', -2.0);
+                    setInputValue('#risk-allocation', '5.000.000');
+                    setInputValue('#risk-target-lot', 0);
+                    $('#auto-cutloss').prop('checked', true);
+                    $('#trailing-stop').prop('checked', false);
+                }
+
+                setWatchlistFromPreset(cfg.watchlist || []);
+
+                suspendDirtyTracking = false;
+                lastLoadedConfig = gatherConfig();
+                setDirty(false);
+            }
+
+            function setDirty(state) {
+                isDirty = state;
+                const $btn = $('#btn-save');
+                if (state) {
+                    $btn.prop('disabled', false);
+                    $btn.text('💾 SAVE PARAMETERS*');
+                } else {
+                    $btn.prop('disabled', true);
+                    $btn.text('💾 SAVE PARAMETERS');
+                }
+            }
+
+            function markDirty() {
+                if (suspendDirtyTracking) return;
+                setDirty(true);
+            }
+
+            function slugify(str) {
+                return String(str || '')
+                    .trim()
+                    .toLowerCase()
+                    .replace(/[^a-z0-9\-\s_]/g, '')
+                    .replace(/[\s_]+/g, '-');
+            }
+
+            function registerDirtyTracking() {
+                const selectors = [
+                    '#toggle-whale', '#var-whale-val', '#var-whale-side', '#var-whale-lot',
+                    '#toggle-freq', '#var-freq-count', '#var-freq-time', '#var-zscore',
+                    '#toggle-quality', '#var-price-action', '#var-avg-lot', '#var-haka-ratio', '#var-max-spread', '#var-wall-check',
+                    '#toggle-time-param', '#var-ol-time', '#var-ol-min-chg',
+                    '#risk-tp', '#risk-sl', '#risk-allocation', '#risk-target-lot', '#auto-cutloss', '#trailing-stop'
+                ];
+                selectors.forEach((selector) => {
+                    $(selector).on('change', markDirty);
+                });
+                $('#var-zscore').on('input', function () {
+                    updateZScoreDisplay();
+                    markDirty();
+                });
+                $('#var-haka-ratio').on('input', function () {
+                    updateHakaBadge();
+                    markDirty();
+                });
+            }
+
+            function loadPresetById(id) {
+                const preset = getPresetById(id);
+                if (!preset) return false;
+                activePresetId = id;
+                log(`[PRESET] Loading preset ${preset.label}...`);
+                applyPresetConfig(preset);
+                updatePresetHighlights(preset);
+                updatePresetDescription(preset);
+                $('.setting-group.active').css('background-color', '#333');
+                setTimeout(() => $('.setting-group.active').css('background-color', 'transparent'), 200);
+                return true;
+            }
+
+            function clearWatchlist(options = {}) {
+                const { silent = false } = options;
+                const $container = $('#watchlist-container');
+                $container.find('.ticker-badge').remove();
+                $('#empty-msg').show();
+                if (!silent && !suspendDirtyTracking) {
+                    markDirty();
+                }
+            }
+
+            function initPresetSystem() {
+                if (fs && strategiesDir) {
+                    ensureStrategiesDir();
+                    reloadPresetList();
+                }
+                populatePresetSelect(activePresetId);
+                registerDirtyTracking();
+                suspendDirtyTracking = true;
+                $('#preset-select').trigger('change');
+                suspendDirtyTracking = false;
+                lastLoadedConfig = gatherConfig();
+                setDirty(false);
+            }
+
+            if (window.ipcRenderer && window.ipcRenderer.on) {
+                ipcRenderer.on('system-log', (event, msg) => {
+                    log(msg);
+                });
+            }
+
+            // 1. LOGIC PRESET SWITCHING (Preview & Toggle Visibility)
+            $('#preset-select').on('change', function () {
+                const selectedId = $(this).val();
+                if (selectedId === 'manual') {
+                    activePresetId = 'manual';
+                    updatePresetHighlights(null);
+                    updatePresetDescription(null);
+                    lastLoadedConfig = gatherConfig();
+                    setDirty(false);
+                    return;
+                }
+                const preset = getPresetById(selectedId);
+                if (!preset) {
+                    log(`[PRESET] Preset ${selectedId} tidak ditemukan.`);
+                    updatePresetHighlights(null);
+                    updatePresetDescription(null);
+                    activePresetId = 'manual';
+                    return;
+                }
+                loadPresetById(selectedId);
+            });
+
+            // 1b. LOGIC LOAD PRESET (Apply Values)
+            $('#btn-load-preset').on('click', function () {
+                const selectedId = $('#preset-select').val();
+                if (selectedId === 'manual') {
+                    log('UI: Manual mode aktif, tidak ada preset untuk dimuat ulang.');
+                    return;
+                }
+                if (!loadPresetById(selectedId)) {
+                    alert('Preset tidak ditemukan.');
+                }
+            });
+
+            initPresetSystem();
+
+            // 2. LOGIC Z-SCORE SLIDER (Visual Feedback)
+            $('#var-zscore').on('input', function () {
+                $('#zscore-val').text($(this).val());
+            });
+
+            // 3. LOGIC SWITCH BROKER
+            $('#broker-select').on('change', function () {
+                const broker = $(this).val();
+                log(`UI: Requesting broker switch to ${broker.toUpperCase()}...`);
+                ipcRenderer.send('switch-broker', broker);
+            });
+
+            // 4. LOGIC CONNECT BROKER (AUTO-READY)
+            window.updateConnectionStatus = function (isConnected) {
+                if (isConnected) {
+                    $('#connection-dot').removeClass('waiting').addClass('connected');
+                    $('#connection-text').text('Connected Ready').removeClass('text-waiting').addClass('text-success');
+                    $('#btn-start').prop('disabled', false);
+                    log("Broker Connection: READY");
+                } else {
+                    $('#connection-dot').removeClass('connected').addClass('waiting');
+                    $('#connection-text').text('Waiting Connection').removeClass('text-success').addClass('text-waiting');
+                    $('#btn-start').prop('disabled', true);
+                }
+            };
+
+            // 4b. LOGIC GROUP TOGGLES
+            $('#toggle-quality').on('change', function () {
+                const isOn = $(this).is(':checked');
+                const $group = $('#group-quality');
+                if (isOn) {
+                    $group.removeClass('disabled');
+                    $group.find('input, select').not('#toggle-quality').prop('disabled', false);
+                } else {
+                    $group.addClass('disabled');
+                    $group.find('input, select').not('#toggle-quality').prop('disabled', true);
+                }
+            });
+
+            $('#toggle-time-param').on('change', function () {
+                const isOn = $(this).is(':checked');
+                const $group = $('#group-openlow');
+                if (isOn) {
+                    $group.removeClass('disabled');
+                    $group.find('input, select').not('#toggle-time-param').prop('disabled', false);
+                } else {
+                    $group.addClass('disabled');
+                    $group.find('input, select').not('#toggle-time-param').prop('disabled', true);
+                }
+            });
+
+            // Initial State
+            updateConnectionStatus(false);
+
+            // Simulation: Scroll/Click title to toggle
+            $('#app-title').on('click', function () {
+                const isWaiting = $('#connection-dot').hasClass('waiting');
+                updateConnectionStatus(isWaiting);
+            });
+
+            // 4. LOGIC SAVE & START
+            $('#btn-save').on('click', function () {
+                if (!isDirty) {
+                    log('[PRESET] Tidak ada perubahan yang perlu disimpan.');
+                    return;
+                }
+
+                if (!fs || !strategiesDir) {
+                    alert('Save preset hanya tersedia ketika aplikasi dijalankan lewat Electron.');
+                    return;
+                }
+
+                const config = gatherConfig();
+
+                const baseName = activePresetId && activePresetId !== 'manual'
+                    ? `${activePresetId}-custom`
+                    : '';
+                const inputName = prompt('Nama preset baru?', baseName);
+                if (inputName === null) {
+                    log('[PRESET] Penyimpanan dibatalkan.');
+                    return;
+                }
+                const presetName = inputName.trim();
+                if (!presetName) {
+                    alert('Nama preset tidak boleh kosong.');
+                    return;
+                }
+
+                const slug = slugify(presetName);
+                if (!slug) {
+                    alert('Nama preset tidak valid. Gunakan huruf/angka saja.');
+                    return;
+                }
+
+                ensureStrategiesDir();
+                const filePath = path.join(strategiesDir, `${slug}.json`);
+                if (fs.existsSync(filePath)) {
+                    const overwrite = confirm(`Preset dengan nama "${presetName}" sudah ada. Timpa file?`);
+                    if (!overwrite) {
+                        log('[PRESET] Penyimpanan dibatalkan (user menolak overwrite).');
+                        return;
+                    }
+                }
+
+                const { presetId, ...configToSave } = config;
+                const payload = {
+                    id: slug,
+                    label: presetName,
+                    description: `Custom preset disimpan pada ${new Date().toLocaleString('id-ID')}`,
+                    config: configToSave
+                };
+
+                try {
+                    fs.writeFileSync(filePath, JSON.stringify(payload, null, 2), 'utf8');
+                    log(`[PRESET] Preset "${presetName}" disimpan ke ${filePath}.`);
+                    reloadPresetList();
+                    populatePresetSelect(slug);
+                    loadPresetById(slug);
+                    lastLoadedConfig = gatherConfig();
+                    setDirty(false);
+                    if (window.ipcRenderer) {
+                        ipcRenderer.send('update-config', { ...lastLoadedConfig });
+                    }
+                } catch (err) {
+                    console.error('[PRESET] Gagal menyimpan preset:', err);
+                    alert(`Gagal menyimpan preset: ${err.message}`);
+                }
+            });
+
+            // --- LOGIC START / FLATTEN ENGINE ---
+            $('#btn-start').on('click', function () {
+                const $btn = $(this);
+                const isRunning = $btn.hasClass('btn-danger'); // Cek apakah sedang jalan (Merah)
+
+                if (!isRunning) {
+                    // === ACTION: STARTING AGENT ===
+
+                    // 1. Validasi Koneksi
+                    const isConnected = $('#connection-dot').hasClass('connected');
+                    if (!isConnected) {
+                        alert("Please connect to a broker first!");
+                        return;
+                    }
+
+                    // 2. Kunci UI (Locking Mechanism)
+                    // Kita disable semua input konfigurasi agar user tidak ubah strategi saat jalan
+                    $('#broker-select').prop('disabled', true);
+                    $('#preset-select').prop('disabled', true);
+                    $('.setting-group input, .setting-group select').prop('disabled', true);
+                    $('#btn-save').prop('disabled', true);
+
+                    // 3. Ubah Tampilan Tombol jadi PANIC BUTTON
+                    $btn.removeClass('btn-success').addClass('btn-danger');
+                    $btn.html('⛔ <b>FLATTEN & STOP</b> (Panic Exit)');
+
+                    // 4. Kirim Sinyal Start
+                    const strategy = $('#preset-select').val();
+                    ipcRenderer.send('agent-control', {
+                        action: 'START',
+                        strategy: strategy
+                    });
+
+                    // Visual Log
+                    const activeStrat = $('#preset-select option:selected').text();
+                    log(`🚀 AGENT STARTED with [${activeStrat}]. Inputs Locked.`);
+                    $('#connection-text').html('<span class="spinner-grow spinner-grow-sm me-2"></span>AGENT RUNNING').css('color', '#4ade80');
+
+                } else {
+                    // === ACTION: FLATTENING & STOPPING ===
+                    log("⚠️ FLATTEN SIGNAL SENT! Closing all positions...");
+
+                    // 2. Kirim Sinyal FLATTEN ke Main Process -> Pane Kiri
+                    ipcRenderer.send('agent-control', { action: 'FLATTEN' });
+
+                    // 3. UI Feedback (Loading sebentar seolah lagi jual barang)
+                    $btn.prop('disabled', true).text('⏳ FLATTENING...');
+
+                    setTimeout(() => {
+                        // 4. Reset UI setelah Flatten Selesai
+                        $btn.prop('disabled', false);
+                        $btn.removeClass('btn-danger').addClass('btn-success');
+                        $btn.html('▶ START AGENT');
+
+                        // 5. Buka Kunci UI (Unlock)
+                        $('#broker-select').prop('disabled', false);
+                        $('#preset-select').prop('disabled', false);
+                        $('.setting-group input, .setting-group select').prop('disabled', false);
+                        $('#btn-save').prop('disabled', false);
+
+                        log("🛑 AGENT STOPPED. System Safe.");
+                        $('#connection-text').text('Connected Ready').css('color', '#00ff00');
+                    }, 1500); // Simulasi waktu eksekusi flatten 1.5 detik
+                }
+            });
+
+            // 4c. LOGIC DRY RUN
+            $('#btn-dry-run').on('click', async function () {
+                const $btn = $(this);
+                $btn.addClass('btn-warning').removeClass('btn-primary').text('🧪 FETCHING FEATURES...');
+                log("--- FEATURES FETCH (DRY RUN) ---");
+
+                try {
+                    if (window.ipcRenderer && window.ipcRenderer.invoke) {
+                        const result = await ipcRenderer.invoke('fetch-features');
+                        if (result.success) {
+                            log(`✅ ${result.message}`);
+                            log(`💾 Data saved to data/features-emiten.json`);
+                        } else {
+                            log(`❌ Error: ${result.error}`);
+                        }
+                    } else {
+                        log("⚠️ Not in Electron. Cannot fetch features.");
+                    }
+                } catch (err) {
+                    log(`❌ Fetch failed: ${err.message}`);
+                }
+
+                $btn.removeClass('btn-warning').addClass('btn-primary').text('🧪 DRY RUN (Simulation)');
+            });
+
+            // Helper Gather Data
+            function gatherConfig() {
+                const watchlistRaw = $('#final-watchlist').val();
+                const watchlist = watchlistRaw
+                    ? watchlistRaw.split(',').map((t) => t.trim()).filter((t) => t.length > 0)
+                    : [];
+                return {
+                    presetId: activePresetId,
+                    whale: {
+                        minVal: $('#var-whale-val').val(),
+                        side: $('#var-whale-side').val(),
+                        minLot: Number($('#var-whale-lot').val() || 0),
+                        enabled: $('#toggle-whale').is(':checked')
+                    },
+                    freq: {
+                        count: Number($('#var-freq-count').val() || 0),
+                        time: Number($('#var-freq-time').val() || 0),
+                        zscore: Number($('#var-zscore').val() || 0),
+                        enabled: $('#toggle-freq').is(':checked')
+                    },
+                    quality: {
+                        enabled: $('#toggle-quality').is(':checked'),
+                        priceAction: $('#var-price-action').val(),
+                        avgLot: Number($('#var-avg-lot').val() || 0),
+                        hakaRatio: Number($('#var-haka-ratio').val() || 0),
+                        maxSpread: Number($('#var-max-spread').val() || 0),
+                        wallCheck: $('#var-wall-check').is(':checked')
+                    },
+                    timeParam: {
+                        enabled: $('#toggle-time-param').is(':checked'),
+                        maxTime: $('#var-ol-time').val(),
+                        minChg: Number($('#var-ol-min-chg').val() || 0)
+                    },
+                    risk: {
+                        tp: Number($('#risk-tp').val() || 0),
+                        sl: Number($('#risk-sl').val() || 0),
+                        allocation: $('#risk-allocation').val(),
+                        targetLot: Number($('#risk-target-lot').val() || 0),
+                        autoCutloss: $('#auto-cutloss').is(':checked'),
+                        trailingStop: $('#trailing-stop').is(':checked')
+                    },
+                    watchlist
+                };
+            }
+
+            // 5. LOGIC TICKER AUTOCOMPLETE & WATCHLIST
+            let masterEmiten = [];
+            const emitenPath = './data/master-emiten.json';
+
+            // Load Master Emiten Data
+            fetch(emitenPath)
+                .then(response => response.json())
+                .then(data => {
+                    masterEmiten = data;
+                    log(`UI: Loaded ${masterEmiten.length} emiten data for autocomplete.`);
+                })
+                .catch(err => console.warn("UI: Browser mode, autocomplete data will be loaded via IPC if needed or skipped."));
+
+            const $tickerInput = $('#stock-ticker-input');
+            const $results = $('#autocomplete-results');
+            const $container = $('#watchlist-container');
+
+            $tickerInput.on('input', function () {
+                const query = $(this).val().toUpperCase();
+                $results.empty().hide();
+
+                if (query.length < 2) return;
+
+                const filtered = masterEmiten.filter(e => e.ticker.includes(query)).slice(0, 10);
+                if (filtered.length > 0) {
+                    filtered.forEach(e => {
+                        const cleanTicker = e.ticker.replace('.JK', '');
+                        $results.append(`
+                            <div class="autocomplete-item" data-ticker="${cleanTicker}">
+                                <strong>${cleanTicker}</strong>
+                                <span class="sector">${e.sector || 'N/A'}</span>
+                            </div>
+                        `);
+                    });
+                    $results.show();
+                }
+            });
+
+            // Click suggestion
+            $(document).on('click', '.autocomplete-item', function () {
+                const ticker = $(this).data('ticker');
+                addTicker(ticker);
+                $tickerInput.val('');
+                $results.hide();
+            });
+
+            // Close results when clicking outside
+            $(document).on('click', function (e) {
+                if (!$(e.target).closest('.input-group').length) {
+                    $results.hide();
+                }
+            });
+
+            // Manual Add Button
+            $('#btn-add-ticker').on('click', function () {
+                const ticker = $tickerInput.val().toUpperCase();
+                if (ticker) {
+                    addTicker(ticker);
+                    $tickerInput.val('');
+                }
+            });
+
+            function addTicker(ticker, options = {}) {
+                const { silent = false } = options;
+                ticker = (ticker || '').trim().toUpperCase();
+                if (!ticker) return;
+
+                // Check duplicate
+                if ($(`.ticker-badge[data-ticker="${ticker}"]`).length) return;
+
+                $('#empty-msg').hide();
+                const $badge = $(`
+                    <div class="ticker-badge" data-ticker="${ticker}">
+                        ${ticker} <span class="remove-icon">✕</span>
+                    </div>
+                `);
+                $container.append($badge);
+                updateFinalWatchlist({ silent });
+            }
+
+            // Remove Ticker
+            $(document).on('click', '.ticker-badge', function () {
+                $(this).remove();
+                if ($container.children('.ticker-badge').length === 0) {
+                    $('#empty-msg').show();
+                }
+                updateFinalWatchlist();
+            });
+
+            function updateFinalWatchlist(options = {}) {
+                const { silent = false } = options;
+                const tickers = [];
+                $container.find('.ticker-badge').each(function () {
+                    tickers.push($(this).data('ticker'));
+                });
+                $('#final-watchlist').val(tickers.join(','));
+                if (!silent && !suspendDirtyTracking) {
+                    markDirty();
+                }
+            }
+
+            // PRESET WATCHLIST
+            $('#btn-pre-lq45').on('click', () => {
+                const lq45 = ["ASII", "BBCA", "BBNI", "BBRI", "BMRI", "TLKM", "ASII", "UNTR", "ADRO", "PGAS", "ITMG", "PTBA", "INCO", "ANTM", "KLBF", "UNVR", "INDF", "ICBP"];
+                lq45.forEach(t => addTicker(t));
+            });
+
+            $('#btn-pre-kompas').on('click', () => {
+                const stocks = ["BBCA", "BBRI", "BMRI", "BBNI", "TLKM", "ASII", "ADRO", "UNTR", "GOTO", "AMRT"];
+                stocks.forEach(t => addTicker(t));
+            });
+
+            $('#btn-pre-volatile').on('click', () => {
+                const volatile = ["BREN", "TPIA", "BRPT", "PANI", "DSSA", "CUAN", "PTRO"];
+                volatile.forEach(t => addTicker(t));
+            });
+
+            // Pre-fill default watchlist if any
+            updateFinalWatchlist({ silent: true });
+        });
+    </script>
+</body>
+
+</html>
