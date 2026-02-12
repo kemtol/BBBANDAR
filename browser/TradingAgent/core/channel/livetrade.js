@@ -44,9 +44,9 @@ class LiveTradeStream extends EventEmitter {
 
         // Logging
         this.log = console.log;
+  // Init probe (Time & Sales readiness)
+  this.INIT_PROBE_DURATION_MS = 5000;
 
-        // Init probe (Time & Sales readiness)
-        this.INIT_PROBE_DURATION_MS = 15000;
         this.hasInitProbeRun = false;
         this.initProbeActive = false;
         this.initProbeTimer = null;

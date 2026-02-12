@@ -579,12 +579,20 @@
                                     <span class="input-group-text">%</span>
                                 </div>
                             </div>
-                            <div class="col-12">
-                                <label>Capital Allocation per Trade</label>
+                            <div class="col-6">
+                                <label>Max Allocation per Lot</label>
                                 <div class="input-group input-group-sm">
                                     <span class="input-group-text">Rp</span>
-                                    <input type="text" class="form-control" id="risk-allocation" value="5.000.000">
+                                    <input type="text" class="form-control" id="risk-allocation" value="5.000.000" placeholder="Misal: 5.000.000">
                                 </div>
+                            </div>
+                            <div class="col-6">
+                                <label>Target Lot</label>
+                                <div class="input-group input-group-sm">
+                                    <input type="number" class="form-control" id="risk-target-lot" value="0" min="0">
+                                    <span class="input-group-text">Lot</span>
+                                </div>
+                                <small class="text-muted" style="font-size: 10px;">Isi 0 untuk hitung otomatis berdasarkan Max Allocation per Lot.</small>
                             </div>
                             <div class="col-12 mt-3">
                                 <div class="form-check form-switch">
@@ -662,6 +670,18 @@
         } else {
             // Mock ipcRenderer for browser preview
             window.ipcRenderer = { send: (channel, msg) => console.log(`[MOCK IPC] ${channel}:`, msg) };
+        }
+
+        if (window.ipcRenderer && window.ipcRenderer.on) {
+            ipcRenderer.on('broker-login-state', (event, payload = {}) => {
+                const broker = (payload.broker || 'unknown').toUpperCase();
+                const loggedIn = Boolean(payload.loggedIn);
+                const source = payload.source || 'unknown';
+
+                updateConnectionStatus(loggedIn);
+
+                // Additional logs will be delivered via system-log channel from main process
+            });
         }
 
         // Helper Log
@@ -1008,12 +1028,14 @@
                     setInputValue('#risk-tp', cfg.risk.tp ?? 2.0);
                     setInputValue('#risk-sl', cfg.risk.sl ?? -2.0);
                     setInputValue('#risk-allocation', cfg.risk.allocation ?? '5.000.000');
+                    setInputValue('#risk-target-lot', cfg.risk.targetLot ?? 0);
                     $('#auto-cutloss').prop('checked', cfg.risk.autoCutloss ?? true);
                     $('#trailing-stop').prop('checked', cfg.risk.trailingStop ?? false);
                 } else {
                     setInputValue('#risk-tp', 2.0);
                     setInputValue('#risk-sl', -2.0);
                     setInputValue('#risk-allocation', '5.000.000');
+                    setInputValue('#risk-target-lot', 0);
                     $('#auto-cutloss').prop('checked', true);
                     $('#trailing-stop').prop('checked', false);
                 }
@@ -1056,7 +1078,7 @@
                     '#toggle-freq', '#var-freq-count', '#var-freq-time', '#var-zscore',
                     '#toggle-quality', '#var-price-action', '#var-avg-lot', '#var-haka-ratio', '#var-max-spread', '#var-wall-check',
                     '#toggle-time-param', '#var-ol-time', '#var-ol-min-chg',
-                    '#risk-tp', '#risk-sl', '#risk-allocation', '#auto-cutloss', '#trailing-stop'
+                    '#risk-tp', '#risk-sl', '#risk-allocation', '#risk-target-lot', '#auto-cutloss', '#trailing-stop'
                 ];
                 selectors.forEach((selector) => {
                     $(selector).on('change', markDirty);
@@ -1407,6 +1429,7 @@
                         tp: Number($('#risk-tp').val() || 0),
                         sl: Number($('#risk-sl').val() || 0),
                         allocation: $('#risk-allocation').val(),
+                        targetLot: Number($('#risk-target-lot').val() || 0),
                         autoCutloss: $('#auto-cutloss').is(':checked'),
                         trailingStop: $('#trailing-stop').is(':checked')
                     },

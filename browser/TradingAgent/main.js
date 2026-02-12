@@ -1,4 +1,4 @@
-const { app, BrowserWindow, BrowserView, ipcMain, nativeImage } = require('electron');
+const { app, BrowserWindow, BrowserView, ipcMain, nativeImage, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -28,6 +28,7 @@ function createWindow() {
 
   const LEFT_PANE_WIDTH = 420; // Forced mobile width
   let hasShownMainWindow = false;
+  let isLoginTimeoutDialogOpen = false;
 
   // Pane Kiri (Web Sekuritas - Mobile Mode)
   const leftView = new BrowserView({
@@ -168,11 +169,15 @@ function createWindow() {
         }
       }
 
-      if (!didWarmupReady && liveTradeStream.connected) {
+      if (!didWarmupReady) {
         didWarmupReady = true;
         try {
           leftView.webContents.send('warmup-ready', { broker: 'ipot' });
           console.log('[WARMUP] Warmup ready dispatched to left view');
+          const views = win.getBrowserViews();
+          if (views[1] && !views[1].webContents.isDestroyed()) {
+            views[1].webContents.send('system-log', '⚙️ Warmup complete. Listening for IPOT login...');
+          }
         } catch (err) {
           console.warn('[WARMUP] Failed to send warmup-ready:', err.message);
         }
@@ -183,14 +188,16 @@ function createWindow() {
   });
 
   ipcMain.on('broker-login-state', (event, payload) => {
-    const { broker, loggedIn } = payload || {};
-    console.log(`[LOGIN] Broker=${broker} loggedIn=${loggedIn}`);
+    const { broker, loggedIn, source } = payload || {};
+    const brokerKey = broker || 'unknown';
+    console.log(`[LOGIN] Broker=${brokerKey} loggedIn=${loggedIn} source=${source || 'n/a'}`);
 
     global.brokerLoginState = {
       ...(global.brokerLoginState || {}),
-      [broker || 'unknown']: {
+      [brokerKey]: {
         loggedIn: Boolean(loggedIn),
-        ts: Date.now()
+        ts: Date.now(),
+        source
       }
     };
 
@@ -198,6 +205,10 @@ function createWindow() {
       const views = win.getBrowserViews();
       if (views[1] && !views[1].webContents.isDestroyed()) {
         views[1].webContents.send('broker-login-state', payload);
+        const statusMsg = loggedIn
+          ? `✅ Broker ${brokerKey.toUpperCase()} login confirmed (${source || 'unknown'})`
+          : `⚠️ Broker ${brokerKey.toUpperCase()} belum login`;
+        views[1].webContents.send('system-log', statusMsg);
       }
     } catch (err) {
       console.warn('[LOGIN] Failed forwarding login state:', err.message);
@@ -319,6 +330,84 @@ function createWindow() {
 
   ipcMain.on('log-to-terminal', (event, msg) => {
     console.log(`[UI] ${msg}`);
+  });
+
+  ipcMain.on('login-log', (event, payload = {}) => {
+    const broker = (payload.broker || 'unknown').toUpperCase();
+    const message = payload.message || '';
+    const level = (payload.level || 'info').toLowerCase();
+    const formatted = `[LOGIN ${broker}] ${message}`;
+
+    if (level === 'error') {
+      console.warn(formatted);
+    } else {
+      console.log(formatted);
+    }
+
+    try {
+      const views = win.getBrowserViews();
+      if (views[1] && !views[1].webContents.isDestroyed()) {
+        views[1].webContents.send('system-log', formatted);
+      }
+    } catch (err) {
+      console.warn('[LOGIN] Failed forwarding login log:', err.message);
+    }
+  });
+
+  ipcMain.on('login-timeout', async (event, payload = {}) => {
+    if (isLoginTimeoutDialogOpen) {
+      return;
+    }
+
+    isLoginTimeoutDialogOpen = true;
+    const brokerKey = (payload.broker || 'unknown').toUpperCase();
+    const attempts = payload.attempts || 0;
+    const maxAttempts = payload.maxAttempts || attempts;
+    const approxSeconds = attempts * 3; // interval 3s per attempt
+
+    try {
+      const views = win.getBrowserViews();
+      if (views[1] && !views[1].webContents.isDestroyed()) {
+        views[1].webContents.send('system-log', `⏳ ${brokerKey} login belum terdeteksi setelah ${attempts}/${maxAttempts} percobaan.`);
+      }
+
+      const { response } = await dialog.showMessageBox(win, {
+        type: 'question',
+        buttons: ['Lanjutkan Menunggu', 'Tutup Aplikasi'],
+        defaultId: 0,
+        cancelId: 1,
+        title: `${brokerKey} Login Timeout`,
+        message: `Tidak ada aktivitas login ${brokerKey} setelah ${attempts} percobaan (~${approxSeconds} detik).`,
+        detail: 'Anda belum mencoba login dalam waktu dekat. Apakah ingin tetap menunggu?',
+        noLink: true
+      });
+
+      const leftPane = (() => {
+        const panes = win.getBrowserViews();
+        return panes[0];
+      })();
+
+      if (response === 0) {
+        if (views[1] && !views[1].webContents.isDestroyed()) {
+          views[1].webContents.send('system-log', '🔁 Melanjutkan monitoring login (hingga 60 percobaan berikutnya).');
+        }
+        if (leftPane && !leftPane.webContents.isDestroyed()) {
+          leftPane.webContents.send('login-timeout-response', { action: 'continue' });
+        }
+      } else {
+        if (views[1] && !views[1].webContents.isDestroyed()) {
+          views[1].webContents.send('system-log', '⛔ Menutup aplikasi sesuai pilihan pengguna.');
+        }
+        if (leftPane && !leftPane.webContents.isDestroyed()) {
+          leftPane.webContents.send('login-timeout-response', { action: 'close' });
+        }
+        app.quit();
+      }
+    } catch (err) {
+      console.error('[LOGIN] Timeout dialog error:', err.message);
+    } finally {
+      isLoginTimeoutDialogOpen = false;
+    }
   });
 
   // FEATURES FETCH HANDLER (Target Price averages)
