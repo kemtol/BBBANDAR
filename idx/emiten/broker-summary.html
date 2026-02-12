@@ -153,6 +153,20 @@
         .nav-title {
             font-size: 0.9rem !important;
         }
+
+        #filter-row {
+            button {
+                font-size: 0.9rem;
+            }
+        }
+
+        #active-pills {
+            padding: 1rem 0;
+
+            .badge {
+                font-size: 0.9rem;
+            }
+        }
     </style>
 </head>
 
@@ -232,104 +246,134 @@
                     </div>
                     <p class="small text-muted mt-2 mb-0">Memuat data foreign flow...</p>
                 </div>
-                <div class="chart-container-responsive" style="height: 200px; display: none;" id="foreign-chart-container">
+                <div class="chart-container-responsive" style="height: 200px; display: none;"
+                    id="foreign-chart-container">
                     <canvas id="foreign-sentiment-chart"></canvas>
                 </div>
             </div>
             <!-- PRESET BAR -->
-            <div class="mb-2">
+            <div class="mb-2 container">
                 <!-- Row 1: Presets -->
                 <div class="d-flex justify-content-between align-items-center mb-2">
                     <div class="d-flex align-items-center gap-2 flex-wrap">
-                        <span class="text-muted small fw-bold text-uppercase" style="font-size:0.7rem; letter-spacing:0.5px;">Preset</span>
+                        <span class="text-muted fw-bold text-uppercase"
+                            style="font-size:0.85rem; letter-spacing:0.5px;width: 75px;">Preset</span>
                         <div class="btn-group btn-group-sm" id="preset-selector">
-                            <a href="#" class="btn btn-outline-success btn-sm" data-preset="strict" title="Foreign & Smart Money positif setiap hari">
-                                <i class="fa-solid fa-shield-halved me-1"></i>Strict
+                            <a href="#" class="btn btn-outline-secondary btn-sm active" style="width: 75px;font-size: 0.9rem;"
+                                data-preset="all" title="Tampilkan semua">
+                                All
                             </a>
-                            <a href="#" class="btn btn-outline-primary btn-sm" data-preset="smart" title="Smart Money positif setiap hari">
-                                <i class="fa-solid fa-brain me-1"></i>Smart
+                            <a href="#" class="btn btn-outline-primary btn-sm" style="width: 75px;font-size: 0.9rem;" data-preset="smart"
+                                title="Smart Money positif setiap hari">
+                                Smart
                             </a>
-                            <a href="#" class="btn btn-outline-secondary btn-sm active" data-preset="all" title="Tampilkan semua">
-                                <i class="fa-solid fa-border-all me-1"></i>All
+                            <a href="#" class="btn btn-outline-success btn-sm" style="width: 75px;font-size: 0.9rem;" data-preset="strict"
+                                title="Foreign & Smart Money positif setiap hari">
+                                Strict
                             </a>
                         </div>
-                        <small class="text-muted fst-italic" id="preset-desc" style="font-size:0.7rem;">Tanpa filter</small>
+                        <small class="text-muted" id="preset-desc" style="font-size:0.85rem;">Tanpa
+                            filter</small>
                     </div>
                     <small class="text-muted" id="screener-count"></small>
                 </div>
                 <!-- Row 2: Individual Filters -->
-                <div class="d-flex align-items-center gap-2 flex-wrap mb-1" id="filter-row" style="font-size:0.78rem;">
+                <div class="d-flex align-items-center gap-2 flex-wrap mb-1 pt-2 pb-3" id="filter-row">
+                    <span class="text-muted fw-bold text-uppercase"
+                        style="font-size:0.85rem; letter-spacing:0.5px;width: 75px;">FILTER</span>
                     <!-- Foreign Net -->
                     <div class="dropdown">
-                        <button class="btn btn-sm btn-outline-secondary dropdown-toggle py-0 px-2" type="button" data-bs-toggle="dropdown" id="dd-foreign" style="font-size:0.72rem;">
+                        <button class="btn btn-sm btn-outline-secondary dropdown-toggle px-2" type="button"
+                            data-bs-toggle="dropdown" id="dd-foreign">
                             Foreign: Any
                         </button>
                         <ul class="dropdown-menu dropdown-menu-sm">
-                            <li><a class="dropdown-item small" href="#" data-filter="foreign" data-val="any">Any</a></li>
-                            <li><a class="dropdown-item small" href="#" data-filter="foreign" data-val="allPos">Positif tiap hari</a></li>
-                            <li><a class="dropdown-item small" href="#" data-filter="foreign" data-val="dominant">Kumulatif &gt; 0</a></li>
+                            <li><a class="dropdown-item small" href="#" data-filter="foreign" data-val="any">Any</a>
+                            </li>
+                            <li><a class="dropdown-item small" href="#" data-filter="foreign" data-val="allPos">Positif
+                                    tiap hari</a></li>
+                            <li><a class="dropdown-item small" href="#" data-filter="foreign"
+                                    data-val="dominant">Kumulatif &gt; 0</a></li>
                         </ul>
                     </div>
                     <!-- Smart Money -->
                     <div class="dropdown">
-                        <button class="btn btn-sm btn-outline-secondary dropdown-toggle py-0 px-2" type="button" data-bs-toggle="dropdown" id="dd-smart" style="font-size:0.72rem;">
-                            Smart $: Any
+                        <button class="btn btn-sm btn-outline-secondary dropdown-toggle px-2" type="button"
+                            data-bs-toggle="dropdown" id="dd-smart">
+                            Smart: Any
                         </button>
                         <ul class="dropdown-menu dropdown-menu-sm">
                             <li><a class="dropdown-item small" href="#" data-filter="smart" data-val="any">Any</a></li>
-                            <li><a class="dropdown-item small" href="#" data-filter="smart" data-val="allPos">Positif tiap hari</a></li>
-                            <li><a class="dropdown-item small" href="#" data-filter="smart" data-val="positive">Kumulatif &gt; 0</a></li>
+                            <li><a class="dropdown-item small" href="#" data-filter="smart" data-val="allPos">Positif
+                                    tiap hari</a></li>
+                            <li><a class="dropdown-item small" href="#" data-filter="smart"
+                                    data-val="positive">Kumulatif &gt; 0</a></li>
                         </ul>
                     </div>
                     <!-- Streak -->
                     <div class="dropdown hide-mobile">
-                        <button class="btn btn-sm btn-outline-secondary dropdown-toggle py-0 px-2" type="button" data-bs-toggle="dropdown" id="dd-streak" style="font-size:0.72rem;">
+                        <button class="btn btn-sm btn-outline-secondary dropdown-toggle px-2" type="button"
+                            data-bs-toggle="dropdown" id="dd-streak">
                             Streak: Any
                         </button>
                         <ul class="dropdown-menu dropdown-menu-sm">
                             <li><a class="dropdown-item small" href="#" data-filter="streak" data-val="any">Any</a></li>
-                            <li><a class="dropdown-item small" href="#" data-filter="streak" data-val="3">≥ 3 hari</a></li>
-                            <li><a class="dropdown-item small" href="#" data-filter="streak" data-val="5">≥ 5 hari</a></li>
+                            <li><a class="dropdown-item small" href="#" data-filter="streak" data-val="3">≥ 3 hari</a>
+                            </li>
+                            <li><a class="dropdown-item small" href="#" data-filter="streak" data-val="5">≥ 5 hari</a>
+                            </li>
                         </ul>
                     </div>
                     <!-- Effort -->
                     <div class="dropdown hide-mobile">
-                        <button class="btn btn-sm btn-outline-secondary dropdown-toggle py-0 px-2" type="button" data-bs-toggle="dropdown" id="dd-effort" style="font-size:0.72rem;">
+                        <button class="btn btn-sm btn-outline-secondary dropdown-toggle px-2" type="button"
+                            data-bs-toggle="dropdown" id="dd-effort">
                             Effort: Any
                         </button>
                         <ul class="dropdown-menu dropdown-menu-sm">
                             <li><a class="dropdown-item small" href="#" data-filter="effort" data-val="any">Any</a></li>
-                            <li><a class="dropdown-item small" href="#" data-filter="effort" data-val="high">High (z &gt; 1)</a></li>
-                            <li><a class="dropdown-item small" href="#" data-filter="effort" data-val="positive">Positif (z &gt; 0)</a></li>
+                            <li><a class="dropdown-item small" href="#" data-filter="effort" data-val="high">High (z
+                                    &gt; 1)</a></li>
+                            <li><a class="dropdown-item small" href="#" data-filter="effort" data-val="positive">Positif
+                                    (z &gt; 0)</a></li>
                         </ul>
                     </div>
                     <!-- State -->
                     <div class="dropdown">
-                        <button class="btn btn-sm btn-outline-secondary dropdown-toggle py-0 px-2" type="button" data-bs-toggle="dropdown" id="dd-state" style="font-size:0.72rem;">
+                        <button class="btn btn-sm btn-outline-secondary dropdown-toggle px-2" type="button"
+                            data-bs-toggle="dropdown" id="dd-state">
                             State: Any
                         </button>
                         <ul class="dropdown-menu dropdown-menu-sm">
                             <li><a class="dropdown-item small" href="#" data-filter="state" data-val="any">Any</a></li>
-                            <li><a class="dropdown-item small" href="#" data-filter="state" data-val="accum">Accumulation</a></li>
-                            <li><a class="dropdown-item small" href="#" data-filter="state" data-val="markup">Accumulation / Ready Markup</a></li>
+                            <li><a class="dropdown-item small" href="#" data-filter="state"
+                                    data-val="accum">Accumulation</a></li>
+                            <li><a class="dropdown-item small" href="#" data-filter="state"
+                                    data-val="markup">Accumulation / Ready Markup</a></li>
                         </ul>
                     </div>
                     <!-- Window Selector -->
                     <div class="dropdown ms-auto">
-                        <button class="btn btn-sm btn-outline-info dropdown-toggle py-0 px-2" type="button" data-bs-toggle="dropdown" id="dd-window" style="font-size:0.72rem;">
+                        <button class="btn btn-sm btn-outline-info dropdown-toggle py-0 px-2" type="button"
+                            data-bs-toggle="dropdown" id="dd-window">
                             <i class="fa-solid fa-calendar-days me-1"></i>Window: Any
                         </button>
                         <ul class="dropdown-menu dropdown-menu-end dropdown-menu-sm">
-                            <li><a class="dropdown-item small" href="#" data-filter="window" data-val="any">Any window</a></li>
-                            <li><a class="dropdown-item small" href="#" data-filter="window" data-val="2">2D only</a></li>
-                            <li><a class="dropdown-item small" href="#" data-filter="window" data-val="5">5D only</a></li>
-                            <li><a class="dropdown-item small" href="#" data-filter="window" data-val="10">10D only</a></li>
-                            <li><a class="dropdown-item small" href="#" data-filter="window" data-val="20">20D only</a></li>
+                            <li><a class="dropdown-item small" href="#" data-filter="window" data-val="any">Any
+                                    window</a></li>
+                            <li><a class="dropdown-item small" href="#" data-filter="window" data-val="2">2D only</a>
+                            </li>
+                            <li><a class="dropdown-item small" href="#" data-filter="window" data-val="5">5D only</a>
+                            </li>
+                            <li><a class="dropdown-item small" href="#" data-filter="window" data-val="10">10D only</a>
+                            </li>
+                            <li><a class="dropdown-item small" href="#" data-filter="window" data-val="20">20D only</a>
+                            </li>
                         </ul>
                     </div>
                 </div>
                 <!-- Row 3: Active filter pills -->
-                <div id="active-pills" class="d-flex flex-wrap gap-1 mb-1" style="min-height:0;"></div>
+                <div id="active-pills" class="d-flex flex-wrap gap-1 mb-1 border-top" style="min-height:0;"></div>
             </div>
             <div class="card card-swing">
                 <div class="table-responsive">
@@ -361,7 +405,7 @@
                     </table>
                 </div>
             </div>
-            
+
             <!-- PAGINATION -->
             <nav id="pagination-nav" class="d-flex justify-content-between align-items-center my-3">
                 <div class="text-muted small">
@@ -407,6 +451,19 @@
                 <div class="tab-pane fade show active" id="summary-pane" role="tabpanel">
                     <!-- CHART -->
                     <div class="mb-1">
+                        <div class="d-flex justify-content-between align-items-center mb-1 px-1">
+                            <div class="d-flex align-items-center gap-2 flex-wrap" style="font-size:0.7rem;">
+                                <span style="color:#198754;">━ Foreign</span>
+                                <span style="color:#dc3545;">━ Retail</span>
+                                <span style="color:#0d6efd;">━ Local</span>
+                                <span class="text-muted">|</span>
+                                <span style="color:rgba(25,135,84,0.6);">▮ Inst</span>
+                                <span style="color:rgba(220,53,69,0.6);">▮ Retail</span>
+                                <span class="text-muted">|</span>
+                                <span style="color:#f59e0b;">- - Price</span>
+                            </div>
+                            <small class="text-muted fst-italic" style="font-size:0.65rem;">line=cumulative, bar=daily net</small>
+                        </div>
                         <div class="chart-container-responsive">
                             <canvas id="detailChart"></canvas>
                         </div>
@@ -430,6 +487,10 @@
                                 <div class="col">
                                     <div class="small text-muted">Net Quality</div>
                                     <div id="feat-quality" class="fw-bold">-</div>
+                                </div>
+                                <div class="col">
+                                    <div class="small text-muted">VWAP</div>
+                                    <div id="feat-vwap" class="fw-bold">-</div>
                                 </div>
                                 <div class="col">
                                     <div class="small text-muted">Elasticity</div>
@@ -505,7 +566,7 @@
     <script src="component.js"></script>
 
     <!-- MAIN APP LOGIC -->
-    <script src="broker-summary.js?v=16"></script>
+    <script src="broker-summary.js?v=17"></script>
 </body>
 
 </html>

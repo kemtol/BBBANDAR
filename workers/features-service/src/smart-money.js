@@ -18,6 +18,8 @@ export class SmartMoney {
         let local = { buy_val: 0, sell_val: 0 };
         let retail = { buy_val: 0, sell_val: 0 };
         let close = 0;
+        let totalValue = 0;
+        let totalVolume = 0;
 
         // CHECK IF IPOT STRUCTURE (has broker_summary with arrays)
         if (d.broker_summary && (Array.isArray(d.broker_summary.brokers_buy) || Array.isArray(d.broker_summary.brokers_sell))) {
@@ -28,6 +30,16 @@ export class SmartMoney {
                 close = parseFloat(bs.stock_summary.average_price);
             } else if (d.bandar_detector && d.bandar_detector.average) {
                 close = parseFloat(d.bandar_detector.average);
+            }
+
+            // Extract Total Value & Volume for VWAP calculation
+            if (bs.stock_summary) {
+                totalValue = parseFloat(bs.stock_summary.total_value) || 0;
+                totalVolume = parseFloat(bs.stock_summary.total_volume_shares) || 0;
+            }
+            if (totalValue === 0 && d.bandar_detector) {
+                totalValue = parseFloat(d.bandar_detector.value) || 0;
+                totalVolume = parseFloat(d.bandar_detector.volume) || 0;
             }
 
             // Aggregate Brokers
@@ -55,6 +67,8 @@ export class SmartMoney {
             foreign = d.foreign || { buy_val: 0, sell_val: 0 };
             retail = d.retail || { buy_val: 0, sell_val: 0 };
             local = d.local || { buy_val: 0, sell_val: 0 };
+            totalValue = parseFloat(bd.value) || 0;
+            totalVolume = parseFloat(bd.volume) || 0;
         }
 
         const grossBuy = (foreign.buy_val || 0) + (retail.buy_val || 0) + (local.buy_val || 0);
@@ -88,10 +102,15 @@ export class SmartMoney {
         const epsilon = 1e-9;
         const elasticity = result / (Math.abs(net) + epsilon);
 
+        // VWAP Deviation: compare close to rolling VWAP (Σ Value / Σ Volume)
+        // Daily VWAP = totalValue / totalVolume (already provided by IPOT as average_price)
+        // For rolling VWAP we need cumulative value & volume over the window — stored per day
+        const dailyVwap = totalVolume > 0 ? totalValue / totalVolume : close;
+
         const currentMetrics = {
             date: dateStr,
             close,
-            metrics: { effort, result, net, ngr, elas: elasticity, ret }
+            metrics: { effort, result, net, ngr, elas: elasticity, ret, totalValue, totalVolume }
         };
 
         // 3. Build Temporary Series for Z-Score Calculation
@@ -109,7 +128,7 @@ export class SmartMoney {
         for (const w of windows) {
             const slice = fullSeries.slice(Math.max(0, n - w), n);
             if (slice.length < 2) {
-                z_scores[w] = { effort: 0, result: 0, ngr: 0, elas: 0 };
+                z_scores[w] = { effort: 0, result: 0, ngr: 0, elas: 0, vwap: 0 };
                 continue;
             }
 
@@ -137,7 +156,24 @@ export class SmartMoney {
             const elasStd = SmartMoney.stdDev(elasVals, elasMean);
             const elasZ = elasStd === 0 ? 0 : (elasticity - elasMean) / elasStd;
 
-            z_scores[w] = { effort: effZ, result: resZ, ngr: ngrZ, elas: elasZ };
+            // VWAP Deviation Z — Rolling VWAP = Σ(totalValue) / Σ(totalVolume) over window
+            let vwapZ = 0;
+            const sumVal = slice.reduce((s, d) => s + (d.metrics.totalValue || 0), 0);
+            const sumVol = slice.reduce((s, d) => s + (d.metrics.totalVolume || 0), 0);
+            const rollingVwap = sumVol > 0 ? sumVal / sumVol : 0;
+            if (rollingVwap > 0 && close > 0) {
+                // Compute deviation of each day's close from rolling VWAP
+                const devs = slice.map(d => {
+                    const c = d.close || 0;
+                    return rollingVwap > 0 ? (c - rollingVwap) / rollingVwap : 0;
+                });
+                const currentDev = (close - rollingVwap) / rollingVwap;
+                const devMean = devs.reduce((a, b) => a + b, 0) / devs.length;
+                const devStd = SmartMoney.stdDev(devs, devMean);
+                vwapZ = devStd === 0 ? 0 : (currentDev - devMean) / devStd;
+            }
+
+            z_scores[w] = { effort: effZ, result: resZ, ngr: ngrZ, elas: elasZ, vwap: vwapZ };
         }
 
         // 5. Classification (Based on Window 20)

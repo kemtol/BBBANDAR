@@ -1368,7 +1368,8 @@ export default {
                     e: parseFloat(z[w].effort?.toFixed(2)),
                     r: parseFloat(z[w].result?.toFixed(2)),
                     n: parseFloat(z[w].ngr?.toFixed(2)),
-                    el: parseFloat(z[w].elas?.toFixed(2)) // Expose Elasticity
+                    el: parseFloat(z[w].elas?.toFixed(2)), // Expose Elasticity
+                    v: parseFloat(z[w].vwap?.toFixed(2)) || 0 // VWAP Deviation Z
                 };
             }
 

@@ -163,6 +163,7 @@ async function loadScreenerData() {
             const resultZ = i.z?.["20"]?.r || 0;
             const ngr = i.z?.["20"]?.n || 0;
             const elasticity = i.z?.["20"]?.el || 0;
+            const vwapZ = i.z?.["20"]?.v || 0;
 
             const stateBonus = (state === 'ACCUMULATION' || state === 'READY_MARKUP') ? 2
                              : (state === 'TRANSITION') ? 1 : 0;
@@ -184,7 +185,7 @@ async function loadScreenerData() {
                 sm5:  i.accum?.["5"]?.sm || 0,
                 sm10: i.accum?.["10"]?.sm || 0,
                 sm20: i.accum?.["20"]?.sm || 0,
-                metrics: { effortZ, resultZ, ngr, elasticity }
+                metrics: { effortZ, resultZ, ngr, elasticity, vwapZ }
             };
         });
 
@@ -366,7 +367,7 @@ async function loadForeignSentiment(days = 7) {
         const totalNet = netValues.reduce((a, b) => a + b, 0);
         const trend = totalNet >= 0 ? 'text-success' : 'text-danger';
         const arrow = totalNet >= 0 ? '↑' : '↓';
-        $('#foreign-sentiment-widget h6').html(`Foreign Flow 10 Saham Cap Terbesar<span class="d-block my-3 ${trend} fw-bold">${arrow} Rp ${Math.abs(totalNet).toFixed(1)} B</span>`);
+        $('#foreign-sentiment-widget h6').html(`Foreign Flow 10 Saham Cap Terbesar<span class="d-block mb-3 mt-2 ${trend} fw-bold" style="font-size:2rem"><i style="font-weight:900">${arrow}</i> Rp ${Math.abs(totalNet).toFixed(1)} B</span>`);
         
     } catch (e) {
         console.error('Error loading foreign sentiment:', e);
@@ -420,7 +421,7 @@ function syncFilterDropdowns() {
     Object.keys(FILTER_LABELS).forEach(key => {
         const ddId = key === 'window' ? '#dd-window' : `#dd-${key}`;
         const label = FILTER_LABELS[key][activeFilters[key]] || 'Any';
-        const prefix = key === 'foreign' ? 'Foreign' : key === 'smart' ? 'Smart $' : key === 'streak' ? 'Streak' : key === 'effort' ? 'Effort' : key === 'state' ? 'State' : '';
+        const prefix = key === 'foreign' ? 'Foreign' : key === 'smart' ? 'Smart' : key === 'streak' ? 'Streak' : key === 'effort' ? 'Effort' : key === 'state' ? 'State' : '';
         if (key === 'window') {
             $(ddId).html(`<i class="fa-solid fa-calendar-days me-1"></i>Window: ${label}`);
         } else {
@@ -459,9 +460,9 @@ function renderFilterPills() {
         if (activeFilters[key] !== 'any') {
             const label = FILTER_LABELS[key][activeFilters[key]];
             const color = PILL_COLORS[key] || 'secondary';
-            const prefix = key === 'foreign' ? 'Foreign' : key === 'smart' ? 'Smart $' : key === 'streak' ? 'Streak' : key === 'effort' ? 'Effort' : key === 'state' ? 'State' : key === 'window' ? 'Window' : key;
+            const prefix = key === 'foreign' ? 'Foreign' : key === 'smart' ? 'Smart' : key === 'streak' ? 'Streak' : key === 'effort' ? 'Effort' : key === 'state' ? 'State' : key === 'window' ? 'Window' : key;
             $pills.append(`
-                <span class="badge rounded-pill bg-${color} bg-opacity-10 text-${color}" style="font-size:0.68rem; cursor:pointer;" data-remove-filter="${key}">
+                <span class="badge bg-${color} bg-opacity-10 text-${color}" style="cursor:pointer;" data-remove-filter="${key}">
                     ${prefix}: ${label} <i class="fa-solid fa-xmark ms-1"></i>
                 </span>
             `);
@@ -594,6 +595,13 @@ function getBadge(val, type, showScore = false) {
         if (val < 0.5) return `<span class="text-danger">Rigid</span>${score}`;
         return `<span class="text-secondary">Normal</span>${score}`;
     }
+    if (type === 'vwap') {
+        if (val > 1.0) return `<span class="text-success fw-bold">Above</span>${score}`;
+        if (val > 0) return `<span style="color:#198754">Fair+</span>${score}`;
+        if (val < -1.0) return `<span class="text-danger fw-bold">Below</span>${score}`;
+        if (val < 0) return `<span style="color:#dc3545">Fair−</span>${score}`;
+        return `<span class="text-secondary">Fair</span>${score}`;
+    }
     return val;
 }
 
@@ -646,7 +654,7 @@ function renderScreenerTable(candidates) {
         else if (wData.allPos) indicator = '<span class="text-primary" style="font-size:0.55rem;">◐</span> ';
         const streak = wData.streak || 0;
         const streakBadge = streak >= 3 ? `<sup class="text-success" style="font-size:0.55rem;">${streak}🔥</sup>` : '';
-        return `${indicator}<span class="${color} fw-bold" style="font-size:0.78rem;">${formatted}</span>${streakBadge}`;
+        return `${indicator}<span class="${color} fw-bold" >${formatted}</span>${streakBadge}`;
     };
 
     candidates.forEach((item, idx) => {
@@ -657,7 +665,7 @@ function renderScreenerTable(candidates) {
                 <td class="text-center text-muted small">${idx + 1}</td>
                 <td class="fw-bold">
                     <img src="${logoUrl}" alt="" style="height: 20px; width: auto; margin-right: 6px; vertical-align: middle; border-radius: 3px;" onerror="this.style.display='none'">
-                    <a href="?kode=${item.symbol}">${item.symbol}</a>
+                    <a href="?kode=${item.symbol}" style="text-decoration:none;">${item.symbol}</a>
                 </td>
                 <td class="text-center">${fmtSm(item.w2)}</td>
                 <td class="text-center">${fmtSm(item.w5)}</td>
@@ -691,6 +699,7 @@ async function loadZScoreFeatures(symbol) {
                 $('#feat-effort').html(getBadge(z.e || 0, 'effort'));
                 $('#feat-response').html(getBadge(z.r || 0, 'result'));
                 $('#feat-quality').html(getBadge(z.n || 0, 'ngr'));
+                $('#feat-vwap').html(getBadge(z.v || 0, 'vwap'));
                 $('#feat-elasticity').html(getBadge(z.el || 0, 'elasticity'));
                 $('#feat-state').html(getStateBadgeSimple(state));
                 $('#zscore-features-card').removeClass('d-none');
@@ -721,6 +730,7 @@ async function loadZScoreFeatures(symbol) {
             $('#feat-effort').html(getBadge(features.effort, 'effort'));
             $('#feat-response').html(getBadge(features.response, 'result'));
             $('#feat-quality').html(getBadge(features.quality, 'ngr'));
+            $('#feat-vwap').html(getBadge(features.vwap || 0, 'vwap'));
             $('#feat-elasticity').html(getBadge(features.elasticity, 'elasticity'));
             $('#feat-state').html(getStateBadgeSimple(features.state));
             $('#zscore-features-card').removeClass('d-none');
@@ -1396,10 +1406,26 @@ function renderChart(history) {
         return `${d.getDate()}/${d.getMonth() + 1}`;
     });
 
+    // === Cumulative Net Value (solid lines) ===
     let accF = 0, accR = 0, accL = 0;
-    const fData = validHistory.map(h => { accF += (h.data.foreign?.net_val || 0); return accF; });
-    const rData = validHistory.map(h => { accR += (h.data.retail?.net_val || 0); return accR; });
-    const lData = validHistory.map(h => { accL += (h.data.local?.net_val || 0); return accL; });
+    // === Daily Net Value (bar chart — always paired: inst vs retail) ===
+    const fData = [], rData = [], lData = [];
+    const barInstData = [], barRetData = [];
+
+    validHistory.forEach((h) => {
+        const netF = h.data?.foreign?.net_val || 0;
+        const netR = h.data?.retail?.net_val || 0;
+        const netL = h.data?.local?.net_val || 0;
+
+        // Cumulative Net Value (position — solid lines)
+        accF += netF; fData.push(accF);
+        accR += netR; rData.push(accR);
+        accL += netL; lData.push(accL);
+
+        // Daily Net (bar chart — institution vs retail, always mirror)
+        barInstData.push(netF + netL);  // Institution = Foreign + Local
+        barRetData.push(netR);           // Retail (= -(F+L), always opposite)
+    });
 
     // Price Data (Avg Price)
     const priceData = validHistory.map(h => h.data.price || null);
@@ -1420,9 +1446,38 @@ function renderChart(history) {
                     yAxisID: 'y1',
                     tension: 0.1
                 },
+                // --- Cumulative Net Value (solid) ---
                 { label: 'Foreign', data: fData, borderColor: '#198754', tension: 0.1, borderWidth: 2, pointRadius: 0, yAxisID: 'y' },
                 { label: 'Retail', data: rData, borderColor: '#dc3545', tension: 0.1, borderWidth: 2, pointRadius: 0, yAxisID: 'y' },
-                { label: 'Local', data: lData, borderColor: '#0d6efd', tension: 0.1, borderWidth: 2, pointRadius: 0, yAxisID: 'y' }
+                { label: 'Local', data: lData, borderColor: '#0d6efd', tension: 0.1, borderWidth: 2, pointRadius: 0, yAxisID: 'y' },
+                // --- Daily Net Value (paired bars: green=institution, red=retail) ---
+                // Winner (positive) gets stronger opacity, loser (negative) gets lighter
+                {
+                    label: 'Institution',
+                    type: 'bar',
+                    data: barInstData,
+                    backgroundColor: barInstData.map(v => v >= 0 ? 'rgba(25,135,84,0.45)' : 'rgba(25,135,84,0.12)'),
+                    borderColor: barInstData.map(v => v >= 0 ? 'rgba(25,135,84,0.8)' : 'rgba(25,135,84,0.25)'),
+                    borderWidth: 1,
+                    yAxisID: 'y',
+                    order: 10,
+                    stack: 'daily',
+                    barPercentage: 0.5,
+                    categoryPercentage: 0.9
+                },
+                {
+                    label: 'Retail Net',
+                    type: 'bar',
+                    data: barRetData,
+                    backgroundColor: barRetData.map(v => v >= 0 ? 'rgba(220,53,69,0.45)' : 'rgba(220,53,69,0.12)'),
+                    borderColor: barRetData.map(v => v >= 0 ? 'rgba(220,53,69,0.8)' : 'rgba(220,53,69,0.25)'),
+                    borderWidth: 1,
+                    yAxisID: 'y',
+                    order: 11,
+                    stack: 'daily',
+                    barPercentage: 0.5,
+                    categoryPercentage: 0.9
+                }
             ]
         },
         options: {
