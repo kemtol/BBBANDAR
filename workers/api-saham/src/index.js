@@ -1894,6 +1894,111 @@ export default {
         }
       }
 
+      // ============================================
+      // AI ANALYTICS: POST /ai/analyze-broksum
+      // Receives screenshot (base64) + symbol, calls OpenAI Vision API
+      // ============================================
+      if (url.pathname === "/ai/analyze-broksum" && req.method === "POST") {
+        if (!env.OPENAI_API_KEY) {
+          return json({ ok: false, error: "Missing OPENAI_API_KEY in environment" }, 500);
+        }
+
+        const contentType = req.headers.get("Content-Type") || "";
+        if (!contentType.includes("application/json")) {
+          return json({ ok: false, error: "Expected application/json body" }, 400);
+        }
+
+        const body = await req.json();
+        const { image_base64, symbol } = body;
+
+        if (!image_base64 || !symbol) {
+          return json({ ok: false, error: "Missing required fields: image_base64, symbol" }, 400);
+        }
+
+        // Read prompt from R2
+        let systemPrompt;
+        try {
+          const promptObj = await env.SSSAHAM_EMITEN.get("prompt/brokersummary_detail_emiten_openai.txt");
+          if (promptObj) {
+            systemPrompt = await promptObj.text();
+          } else {
+            // Fallback: hardcoded minimal prompt
+            systemPrompt = "Kamu adalah analis saham Indonesia. Analisis screenshot broker summary ini dan berikan analisis fund flow komprehensif dalam Bahasa Indonesia.";
+          }
+        } catch (e) {
+          console.error("[AI] Failed to read prompt from R2:", e);
+          systemPrompt = "Kamu adalah analis saham Indonesia. Analisis screenshot broker summary ini dan berikan analisis fund flow komprehensif dalam Bahasa Indonesia.";
+        }
+
+        // Call OpenAI Vision API (gpt-4.1)
+        const OPENAI_URL = "https://api.openai.com/v1/chat/completions";
+        const visionPayload = {
+          model: "gpt-4.1",
+          messages: [
+            {
+              role: "system",
+              content: systemPrompt
+            },
+            {
+              role: "user",
+              content: [
+                {
+                  type: "text",
+                  text: `Analisis screenshot halaman Broker Summary untuk emiten ${symbol} berikut ini:`
+                },
+                {
+                  type: "image_url",
+                  image_url: {
+                    url: `data:image/png;base64,${image_base64}`,
+                    detail: "high"
+                  }
+                }
+              ]
+            }
+          ],
+          max_tokens: 4096
+        };
+
+        try {
+          console.log(`[AI] Calling OpenAI Vision for ${symbol}...`);
+          const aiResp = await fetch(OPENAI_URL, {
+            method: "POST",
+            headers: {
+              "Authorization": `Bearer ${env.OPENAI_API_KEY}`,
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify(visionPayload)
+          });
+
+          if (!aiResp.ok) {
+            const errText = await aiResp.text();
+            console.error(`[AI] OpenAI error: ${aiResp.status} ${errText}`);
+            return json({ ok: false, error: `OpenAI API error: ${aiResp.status}`, details: errText }, 502);
+          }
+
+          const aiData = await aiResp.json();
+          const analysis = aiData.choices?.[0]?.message?.content || "";
+          const usage = aiData.usage || {};
+
+          console.log(`[AI] Analysis complete for ${symbol}. Tokens: ${usage.total_tokens || 'N/A'}`);
+
+          return json({
+            ok: true,
+            symbol,
+            model: "gpt-4.1",
+            analysis,
+            usage: {
+              prompt_tokens: usage.prompt_tokens,
+              completion_tokens: usage.completion_tokens,
+              total_tokens: usage.total_tokens
+            }
+          });
+        } catch (aiErr) {
+          console.error(`[AI] Error calling OpenAI:`, aiErr);
+          return json({ ok: false, error: "Failed to call OpenAI", details: aiErr.message }, 500);
+        }
+      }
+
       // 7. Docs/Health
       if (url.pathname === "/health") return json({ ok: true, service: "api-saham" });
 

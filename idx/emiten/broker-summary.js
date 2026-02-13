@@ -837,6 +837,9 @@ async function initDetailMode(symbol) {
     `);
     $('#nav-back').removeClass('d-none').attr('href', '?'); // Show back button, link to index
 
+    // Show AI Analytics button
+    $('#ai-analytics-bar').attr('style', '').addClass('d-flex');
+
     // Load Z-Score Features for this symbol
     loadZScoreFeatures(symbol);
 
@@ -1546,4 +1549,155 @@ function renderChart(history) {
             }
         }]
     });
+}
+
+// =========================================
+// AI ANALYTICS: Screenshot + OpenAI Vision
+// =========================================
+async function runAIAnalysis() {
+    const symbol = kodeParam;
+    if (!symbol) {
+        alert('Tidak ada emiten yang dipilih.');
+        return;
+    }
+
+    const btn = document.getElementById('btn-ai-analyze');
+    const modal = new bootstrap.Modal(document.getElementById('aiResultModal'));
+    const resultBody = document.getElementById('ai-result-body');
+    const tokenInfo = document.getElementById('ai-token-info');
+
+    // Set modal title
+    document.getElementById('ai-modal-symbol').textContent = symbol;
+
+    // Show loading state
+    btn.classList.add('analyzing');
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin me-1"></i> Capturing...';
+
+    resultBody.innerHTML = `
+        <div class="text-center py-5">
+            <div class="spinner-border text-warning" role="status"></div>
+            <p class="small text-muted mt-2">Mengambil screenshot halaman...</p>
+        </div>
+    `;
+    tokenInfo.textContent = '';
+    modal.show();
+
+    try {
+        // Step 1: Capture screenshot of the summary pane
+        console.log('[AI] Capturing screenshot of #summary-pane...');
+        const summaryPane = document.getElementById('summary-pane');
+
+        const canvas = await html2canvas(summaryPane, {
+            backgroundColor: '#ffffff',
+            scale: 2, // Higher resolution for better AI reading
+            useCORS: true,
+            logging: false,
+            // Ensure chart canvas is properly captured
+            onclone: function(clonedDoc) {
+                // Chart.js canvases need special handling
+                const originalCanvases = summaryPane.querySelectorAll('canvas');
+                const clonedCanvases = clonedDoc.getElementById('summary-pane').querySelectorAll('canvas');
+                originalCanvases.forEach((origCanvas, i) => {
+                    if (clonedCanvases[i]) {
+                        const ctx = clonedCanvases[i].getContext('2d');
+                        clonedCanvases[i].width = origCanvas.width;
+                        clonedCanvases[i].height = origCanvas.height;
+                        ctx.drawImage(origCanvas, 0, 0);
+                    }
+                });
+            }
+        });
+
+        // Convert to base64 (strip the data:image/png;base64, prefix)
+        const dataUrl = canvas.toDataURL('image/png');
+        const base64 = dataUrl.split(',')[1];
+
+        console.log(`[AI] Screenshot captured. Size: ~${(base64.length * 0.75 / 1024).toFixed(0)} KB`);
+
+        // Step 2: Update loading state
+        btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin me-1"></i> Analyzing...';
+        resultBody.innerHTML = `
+            <div class="text-center py-5">
+                <div class="spinner-border text-warning" role="status"></div>
+                <p class="small text-muted mt-2">Mengirim ke AI untuk analisis...<br>Ini bisa memakan waktu 15-30 detik.</p>
+            </div>
+        `;
+
+        // Step 3: Send to backend
+        console.log(`[AI] Sending to backend for ${symbol}...`);
+        const response = await fetch(`${WORKER_BASE_URL}/ai/analyze-broksum`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                image_base64: base64,
+                symbol: symbol
+            })
+        });
+
+        const result = await response.json();
+
+        if (!result.ok) {
+            throw new Error(result.error || 'AI analysis failed');
+        }
+
+        console.log(`[AI] Analysis complete. Tokens used: ${result.usage?.total_tokens || 'N/A'}`);
+
+        // Step 4: Render result (Markdown → HTML)
+        resultBody.innerHTML = renderMarkdownToHTML(result.analysis);
+
+        // Token info
+        if (result.usage) {
+            tokenInfo.textContent = `Model: ${result.model} | Tokens: ${result.usage.total_tokens?.toLocaleString() || 'N/A'} (prompt: ${result.usage.prompt_tokens?.toLocaleString()}, completion: ${result.usage.completion_tokens?.toLocaleString()})`;
+        }
+
+    } catch (error) {
+        console.error('[AI] Analysis error:', error);
+        resultBody.innerHTML = `
+            <div class="alert alert-danger">
+                <i class="fa-solid fa-circle-exclamation me-1"></i>
+                <strong>Gagal menganalisis:</strong> ${error.message}
+            </div>
+            <p class="text-muted small">Pastikan koneksi internet stabil dan coba lagi.</p>
+        `;
+    } finally {
+        // Reset button
+        btn.classList.remove('analyzing');
+        btn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles me-1"></i> AI Analysis';
+    }
+}
+
+/**
+ * Simple Markdown → HTML converter for AI analysis output
+ */
+function renderMarkdownToHTML(md) {
+    if (!md) return '<p class="text-muted">Tidak ada hasil analisis.</p>';
+
+    let html = md
+        // Headers
+        .replace(/^### (.*$)/gm, '<h3>$1</h3>')
+        .replace(/^## (.*$)/gm, '<h2 style="font-size:1.1rem;font-weight:700;margin-top:1.2rem;border-bottom:1px solid #eee;padding-bottom:4px;">$1</h2>')
+        .replace(/^# (.*$)/gm, '<h1 style="font-size:1.2rem;font-weight:700;">$1</h1>')
+        // Bold & Italic
+        .replace(/\*\*\*(.*?)\*\*\*/g, '<strong><em>$1</em></strong>')
+        .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+        .replace(/\*(.*?)\*/g, '<em>$1</em>')
+        // Unordered list
+        .replace(/^\- (.*$)/gm, '<li>$1</li>')
+        // Paragraphs (double newline)
+        .replace(/\n\n/g, '</p><p>')
+        // Single newline within paragraph
+        .replace(/\n/g, '<br>');
+
+    // Wrap consecutive <li> in <ul>
+    html = html.replace(/(<li>.*?<\/li>)(?:\s*<br>)?/gs, '$1');
+    html = html.replace(/((?:<li>.*?<\/li>\s*)+)/gs, '<ul>$1</ul>');
+
+    // Wrap in paragraph
+    html = '<p>' + html + '</p>';
+
+    // Clean up empty paragraphs
+    html = html.replace(/<p>\s*<\/p>/g, '');
+    html = html.replace(/<p>\s*<br>\s*<\/p>/g, '');
+
+    return html;
 }
