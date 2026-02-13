@@ -193,6 +193,27 @@
             pointer-events: none;
             opacity: 0.7;
         }
+
+        #ai-thumbnails img {
+            height: 80px;
+            border-radius: 4px;
+            border: 1px solid #dee2e6;
+            cursor: pointer;
+            transition: transform 0.15s;
+            object-fit: cover;
+        }
+
+        #ai-thumbnails img:hover {
+            transform: scale(1.5);
+            z-index: 10;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        }
+
+        #ai-thumbnails .thumb-label {
+            font-size: 0.6rem;
+            text-align: center;
+            color: #6b7280;
+        }
     </style>
 </head>
 
@@ -479,22 +500,30 @@
                 </button>
             </div>
 
-            <!-- AI Result Modal -->
+            <!-- AI Result Modal (centered) -->
             <div class="modal fade" id="aiResultModal" tabindex="-1">
-                <div class="modal-dialog modal-lg modal-dialog-scrollable">
+                <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
                     <div class="modal-content">
                         <div class="modal-header py-2">
                             <h6 class="modal-title"><i class="fa-solid fa-robot me-1"></i> AI Broker Flow Analysis — <span id="ai-modal-symbol"></span></h6>
                             <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                         </div>
                         <div class="modal-body" id="ai-result-body">
-                            <div class="text-center py-5">
-                                <div class="spinner-border text-warning" role="status"></div>
-                                <p class="small text-muted mt-2">Menganalisis screenshot dengan AI...</p>
+                            <!-- Thumbnail strip -->
+                            <div id="ai-thumbnails" class="d-flex gap-2 flex-wrap mb-3 p-2 bg-light rounded" style="display:none !important;"></div>
+                            <!-- Analysis content -->
+                            <div id="ai-analysis-content">
+                                <div class="text-center py-5">
+                                    <div class="spinner-border text-warning" role="status"></div>
+                                    <p class="small text-muted mt-2">Menganalisis screenshot dengan AI...</p>
+                                </div>
                             </div>
                         </div>
                         <div class="modal-footer py-1">
                             <small class="text-muted me-auto" id="ai-token-info"></small>
+                            <button type="button" class="btn btn-sm btn-outline-warning" id="btn-ai-refresh" style="display:none;" onclick="runAIAnalysis(true)">
+                                <i class="fa-solid fa-rotate-right me-1"></i> Refresh
+                            </button>
                             <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Tutup</button>
                         </div>
                     </div>
@@ -622,7 +651,7 @@
     <script src="component.js"></script>
 
     <!-- MAIN APP LOGIC -->
-    <script src="broker-summary.js?v=19"></script>
+    <script src="broker-summary.js?v=20"></script>
 </body>
 
 </html>

@@ -8,7 +8,7 @@ const PUBLIC_PATHS = new Set(["/", "/docs", "/console", "/openapi.json", "/healt
 function withCORS(resp) {
   const headers = new Headers(resp.headers || {});
   headers.set("Access-Control-Allow-Origin", "*");
-  headers.set("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+  headers.set("Access-Control-Allow-Methods", "GET,POST,PUT,OPTIONS");
   headers.set("Access-Control-Allow-Headers", "Content-Type, X-API-KEY");
 
   return new Response(resp.body, {
@@ -1898,9 +1898,10 @@ export default {
       // AI ANALYTICS
       // ============================================
 
-      // PUT /ai/screenshot?symbol=BBCA  — upload raw image to R2, return key
+      // PUT /ai/screenshot?symbol=BBCA&label=7d  — upload raw image to R2
       if (url.pathname === "/ai/screenshot" && req.method === "PUT") {
         const symbol = (url.searchParams.get("symbol") || "").toUpperCase();
+        const label = url.searchParams.get("label") || "default";
         if (!symbol) return json({ ok: false, error: "Missing ?symbol=" }, 400);
 
         const ct = req.headers.get("Content-Type") || "";
@@ -1909,21 +1910,22 @@ export default {
         }
 
         const ext = ct.includes("jpeg") || ct.includes("jpg") ? "jpg" : "png";
-        const ts = Date.now();
-        const key = `ai-screenshots/${symbol}_${ts}.${ext}`;
+        const today = new Date().toISOString().split("T")[0];
+        const key = `ai-screenshots/${symbol}/${today}_${label}.${ext}`;
 
         const imgBytes = await req.arrayBuffer();
         console.log(`[AI] Uploading screenshot: ${key} (${(imgBytes.byteLength / 1024).toFixed(0)} KB)`);
 
         await env.SSSAHAM_EMITEN.put(key, imgBytes, {
           httpMetadata: { contentType: ct },
-          customMetadata: { symbol, uploaded_at: new Date().toISOString() }
+          customMetadata: { symbol, label, uploaded_at: new Date().toISOString() }
         });
 
-        return json({ ok: true, key, size_kb: Math.round(imgBytes.byteLength / 1024) });
+        const publicUrl = `https://api-saham.mkemalw.workers.dev/ai/screenshot?key=${encodeURIComponent(key)}`;
+        return json({ ok: true, key, url: publicUrl, size_kb: Math.round(imgBytes.byteLength / 1024) });
       }
 
-      // GET /ai/screenshot?key=...  — serve image from R2 (for OpenAI to fetch)
+      // GET /ai/screenshot?key=...  — serve image from R2
       if (url.pathname === "/ai/screenshot" && req.method === "GET") {
         const key = url.searchParams.get("key");
         if (!key) return json({ ok: false, error: "Missing ?key=" }, 400);
@@ -1934,12 +1936,12 @@ export default {
         return withCORS(new Response(obj.body, {
           headers: {
             "Content-Type": obj.httpMetadata?.contentType || "image/jpeg",
-            "Cache-Control": "public, max-age=3600"
+            "Cache-Control": "public, max-age=86400"
           }
         }));
       }
 
-      // POST /ai/analyze-broksum  — receive { symbol, image_key }, call OpenAI Vision via URL
+      // POST /ai/analyze-broksum  — multi-image, cached per day
       if (url.pathname === "/ai/analyze-broksum" && req.method === "POST") {
         if (!env.OPENAI_API_KEY) {
           return json({ ok: false, error: "Missing OPENAI_API_KEY in environment" }, 500);
@@ -1951,30 +1953,50 @@ export default {
         }
 
         const body = await req.json();
-        const { symbol, image_key } = body;
+        const { symbol, image_keys } = body;  // image_keys = [{key, label},...]
+        const forceRefresh = body.force === true;
 
-        if (!symbol || !image_key) {
-          return json({ ok: false, error: "Missing required fields: symbol, image_key" }, 400);
+        if (!symbol || !image_keys || !image_keys.length) {
+          return json({ ok: false, error: "Missing required fields: symbol, image_keys[]" }, 400);
         }
 
-        // Build public URL for the screenshot (served by this worker)
-        const imageUrl = `https://api-saham.mkemalw.workers.dev/ai/screenshot?key=${encodeURIComponent(image_key)}`;
+        // ── Cache Check ──
+        const today = new Date().toISOString().split("T")[0];
+        const cacheKey = `ai-cache/${symbol}/${today}.json`;
 
-        // Read prompt from R2
+        if (!forceRefresh) {
+          try {
+            const cached = await env.SSSAHAM_EMITEN.get(cacheKey);
+            if (cached) {
+              const cachedData = await cached.json();
+              console.log(`[AI] Cache HIT for ${symbol} (${today})`);
+              return json({ ...cachedData, cached: true });
+            }
+          } catch (_) {}
+        }
+
+        // ── Build image URLs for OpenAI ──
+        const imageContents = image_keys.map(ik => ({
+          type: "image_url",
+          image_url: {
+            url: `https://api-saham.mkemalw.workers.dev/ai/screenshot?key=${encodeURIComponent(ik.key)}`,
+            detail: "low"
+          }
+        }));
+
+        const labelList = image_keys.map(ik => ik.label).join(", ");
+
+        // ── Read prompt ──
         let systemPrompt;
         try {
           const promptObj = await env.SSSAHAM_EMITEN.get("prompt/brokersummary_detail_emiten_openai.txt");
-          if (promptObj) {
-            systemPrompt = await promptObj.text();
-          } else {
-            systemPrompt = "Kamu adalah analis saham Indonesia. Analisis screenshot broker summary ini dan berikan analisis fund flow komprehensif dalam Bahasa Indonesia.";
-          }
-        } catch (e) {
-          console.error("[AI] Failed to read prompt from R2:", e);
+          systemPrompt = promptObj ? await promptObj.text() : null;
+        } catch (_) {}
+        if (!systemPrompt) {
           systemPrompt = "Kamu adalah analis saham Indonesia. Analisis screenshot broker summary ini dan berikan analisis fund flow komprehensif dalam Bahasa Indonesia.";
         }
 
-        // Call OpenAI Vision API — URL mode (no base64, much cheaper)
+        // ── Call OpenAI Vision ──
         const OPENAI_URL = "https://api.openai.com/v1/chat/completions";
         const visionPayload = {
           model: "gpt-4.1",
@@ -1985,15 +2007,9 @@ export default {
               content: [
                 {
                   type: "text",
-                  text: `Analisis screenshot halaman Broker Summary untuk emiten ${symbol} berikut ini:`
+                  text: `Analisis screenshot halaman Broker Summary untuk emiten ${symbol}. Screenshot yang tersedia: ${labelList}. Gabungkan analisis dari semua screenshot.`
                 },
-                {
-                  type: "image_url",
-                  image_url: {
-                    url: imageUrl,
-                    detail: "low"   // low=85 tokens fixed, high=bisa 1000+ tokens
-                  }
-                }
+                ...imageContents
               ]
             }
           ],
@@ -2001,7 +2017,7 @@ export default {
         };
 
         try {
-          console.log(`[AI] Calling OpenAI Vision for ${symbol} (url: ${imageUrl})`);
+          console.log(`[AI] Calling OpenAI for ${symbol} with ${image_keys.length} images`);
           const aiResp = await fetch(OPENAI_URL, {
             method: "POST",
             headers: {
@@ -2023,20 +2039,33 @@ export default {
 
           console.log(`[AI] Done for ${symbol}. Tokens: ${usage.total_tokens || 'N/A'}`);
 
-          // Cleanup: delete screenshot from R2 (no longer needed)
-          try { await env.SSSAHAM_EMITEN.delete(image_key); } catch (_) {}
-
-          return json({
+          const result = {
             ok: true,
             symbol,
             model: "gpt-4.1",
             analysis,
+            screenshots: image_keys.map(ik => ({
+              label: ik.label,
+              url: `https://api-saham.mkemalw.workers.dev/ai/screenshot?key=${encodeURIComponent(ik.key)}`
+            })),
             usage: {
               prompt_tokens: usage.prompt_tokens,
               completion_tokens: usage.completion_tokens,
               total_tokens: usage.total_tokens
-            }
-          });
+            },
+            analyzed_at: new Date().toISOString()
+          };
+
+          // ── Save to cache (TTL 24h) ──
+          try {
+            await env.SSSAHAM_EMITEN.put(cacheKey, JSON.stringify(result), {
+              httpMetadata: { contentType: "application/json" },
+              customMetadata: { symbol, generated_at: new Date().toISOString() }
+            });
+            console.log(`[AI] Cached result: ${cacheKey}`);
+          } catch (_) {}
+
+          return json(result);
         } catch (aiErr) {
           console.error(`[AI] Error calling OpenAI:`, aiErr);
           return json({ ok: false, error: "Failed to call OpenAI", details: aiErr.message }, 500);

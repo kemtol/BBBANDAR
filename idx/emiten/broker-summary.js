@@ -1552,120 +1552,179 @@ function renderChart(history) {
 }
 
 // =========================================
-// AI ANALYTICS: Screenshot + OpenAI Vision
+// AI ANALYTICS: Multi-Screenshot + OpenAI Vision + Cache
 // =========================================
-async function runAIAnalysis() {
+
+/**
+ * Capture a DOM element as JPEG blob
+ */
+async function captureElement(el) {
+    const canvas = await html2canvas(el, {
+        backgroundColor: '#ffffff',
+        scale: 1,
+        useCORS: true,
+        logging: false,
+        onclone: function(clonedDoc) {
+            const origCanvases = el.querySelectorAll('canvas');
+            const cloneCanvases = clonedDoc.getElementById(el.id)?.querySelectorAll('canvas') || [];
+            origCanvases.forEach((oc, i) => {
+                if (cloneCanvases[i]) {
+                    const ctx = cloneCanvases[i].getContext('2d');
+                    cloneCanvases[i].width = oc.width;
+                    cloneCanvases[i].height = oc.height;
+                    ctx.drawImage(oc, 0, 0);
+                }
+            });
+        }
+    });
+    return new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.75));
+}
+
+/**
+ * Upload a blob to R2 and return {key, url}
+ */
+async function uploadScreenshot(blob, symbol, label) {
+    const resp = await fetch(`${WORKER_BASE_URL}/ai/screenshot?symbol=${symbol}&label=${encodeURIComponent(label)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'image/jpeg' },
+        body: blob
+    });
+    const result = await resp.json();
+    if (!result.ok) throw new Error(result.error || `Upload ${label} failed`);
+    return { key: result.key, url: result.url, label, size_kb: result.size_kb };
+}
+
+/**
+ * Load broker summary data for a given range (for off-screen screenshot)
+ */
+async function fetchBrokerRange(symbol, days) {
+    const end = new Date();
+    const start = new Date();
+    start.setDate(end.getDate() - days);
+    const from = start.toISOString().split('T')[0];
+    const to = end.toISOString().split('T')[0];
+    const resp = await fetch(`${WORKER_BASE_URL}/cache-summary?symbol=${symbol}&from=${from}&to=${to}`);
+    return resp.json();
+}
+
+/**
+ * Main AI Analysis function — captures current view, uploads, sends to AI
+ */
+async function runAIAnalysis(forceRefresh = false) {
     const symbol = kodeParam;
-    if (!symbol) {
-        alert('Tidak ada emiten yang dipilih.');
-        return;
-    }
+    if (!symbol) return alert('Tidak ada emiten yang dipilih.');
 
     const btn = document.getElementById('btn-ai-analyze');
-    const modal = new bootstrap.Modal(document.getElementById('aiResultModal'));
-    const resultBody = document.getElementById('ai-result-body');
+    const modal = bootstrap.Modal.getOrCreateInstance(document.getElementById('aiResultModal'));
+    const thumbsContainer = document.getElementById('ai-thumbnails');
+    const analysisContent = document.getElementById('ai-analysis-content');
     const tokenInfo = document.getElementById('ai-token-info');
+    const refreshBtn = document.getElementById('btn-ai-refresh');
 
-    // Set modal title
+    // Set title
     document.getElementById('ai-modal-symbol').textContent = symbol;
 
-    // Show loading state
+    // Reset UI
     btn.classList.add('analyzing');
     btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin me-1"></i> Capturing...';
-
-    resultBody.innerHTML = `
-        <div class="text-center py-5">
+    thumbsContainer.style.display = 'none';
+    thumbsContainer.innerHTML = '';
+    refreshBtn.style.display = 'none';
+    tokenInfo.textContent = '';
+    analysisContent.innerHTML = `
+        <div class="text-center py-4">
             <div class="spinner-border text-warning" role="status"></div>
             <p class="small text-muted mt-2">Mengambil screenshot halaman...</p>
         </div>
     `;
-    tokenInfo.textContent = '';
     modal.show();
 
     try {
-        // Step 1: Capture screenshot of the summary pane
-        console.log('[AI] Capturing screenshot of #summary-pane...');
+        // ── Step 1: Capture current summary pane ──
+        console.log('[AI] Step 1: Capturing current summary pane...');
         const summaryPane = document.getElementById('summary-pane');
+        const currentBlob = await captureElement(summaryPane);
+        console.log(`[AI] Current view captured: ${(currentBlob.size / 1024).toFixed(0)} KB`);
 
-        const canvas = await html2canvas(summaryPane, {
-            backgroundColor: '#ffffff',
-            scale: 1, // scale 1 = hemat token, cukup untuk AI
-            useCORS: true,
-            logging: false,
-            onclone: function(clonedDoc) {
-                const originalCanvases = summaryPane.querySelectorAll('canvas');
-                const clonedCanvases = clonedDoc.getElementById('summary-pane').querySelectorAll('canvas');
-                originalCanvases.forEach((origCanvas, i) => {
-                    if (clonedCanvases[i]) {
-                        const ctx = clonedCanvases[i].getContext('2d');
-                        clonedCanvases[i].width = origCanvas.width;
-                        clonedCanvases[i].height = origCanvas.height;
-                        ctx.drawImage(origCanvas, 0, 0);
-                    }
-                });
-            }
-        });
-
-        // Convert to JPEG blob (much smaller than PNG)
-        const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.75));
-        console.log(`[AI] Screenshot captured. Size: ${(blob.size / 1024).toFixed(0)} KB`);
-
-        // Step 2: Upload screenshot to R2
+        // ── Step 2: Upload screenshots ──
+        analysisContent.innerHTML = `
+            <div class="text-center py-4">
+                <div class="spinner-border text-warning" role="status"></div>
+                <p class="small text-muted mt-2">Mengunggah screenshot...</p>
+            </div>
+        `;
         btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin me-1"></i> Uploading...';
-        resultBody.innerHTML = `
-            <div class="text-center py-5">
-                <div class="spinner-border text-warning" role="status"></div>
-                <p class="small text-muted mt-2">Mengunggah screenshot ke server...</p>
+
+        // Determine label based on current date range
+        const fromDate = $('#date-from').val();
+        const toDate = $('#date-to').val();
+        const daysDiff = Math.round((new Date(toDate) - new Date(fromDate)) / (1000*60*60*24));
+        const rangeLabel = `brokerflow-${daysDiff}d`;
+
+        const uploaded = await uploadScreenshot(currentBlob, symbol, rangeLabel);
+        console.log(`[AI] Uploaded: ${uploaded.key} (${uploaded.size_kb} KB)`);
+
+        // Show thumbnail
+        thumbsContainer.style.display = '';
+        thumbsContainer.classList.add('d-flex');
+        thumbsContainer.innerHTML = `
+            <div class="text-center">
+                <img src="${uploaded.url}" alt="${uploaded.label}" title="${uploaded.label}" loading="lazy">
+                <div class="thumb-label">${uploaded.label}</div>
             </div>
         `;
 
-        const uploadResp = await fetch(`${WORKER_BASE_URL}/ai/screenshot?symbol=${symbol}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'image/jpeg' },
-            body: blob
-        });
-        const uploadResult = await uploadResp.json();
-        if (!uploadResult.ok) throw new Error(uploadResult.error || 'Upload failed');
-
-        console.log(`[AI] Uploaded to R2: ${uploadResult.key} (${uploadResult.size_kb} KB)`);
-
-        // Step 3: Call AI analysis with image key (no base64!)
+        // ── Step 3: Call AI analysis ──
+        analysisContent.innerHTML = `
+            <div class="text-center py-4">
+                <div class="spinner-border text-warning" role="status"></div>
+                <p class="small text-muted mt-2">AI sedang menganalisis...<br>Bisa memakan waktu 15-30 detik.</p>
+            </div>
+        `;
         btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin me-1"></i> Analyzing...';
-        resultBody.innerHTML = `
-            <div class="text-center py-5">
-                <div class="spinner-border text-warning" role="status"></div>
-                <p class="small text-muted mt-2">AI sedang menganalisis...<br>Ini bisa memakan waktu 15-30 detik.</p>
-            </div>
-        `;
 
         const response = await fetch(`${WORKER_BASE_URL}/ai/analyze-broksum`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                symbol: symbol,
-                image_key: uploadResult.key
+                symbol,
+                image_keys: [{ key: uploaded.key, label: uploaded.label }],
+                force: forceRefresh
             })
         });
 
         const result = await response.json();
+        if (!result.ok) throw new Error(result.error || 'AI analysis failed');
 
-        if (!result.ok) {
-            throw new Error(result.error || 'AI analysis failed');
+        console.log(`[AI] Analysis complete. Tokens: ${result.usage?.total_tokens || 'N/A'}, Cached: ${result.cached || false}`);
+
+        // ── Step 4: Show thumbnails from result (may include cached screenshots) ──
+        if (result.screenshots && result.screenshots.length) {
+            thumbsContainer.style.display = '';
+            thumbsContainer.classList.add('d-flex');
+            thumbsContainer.innerHTML = result.screenshots.map(s => `
+                <div class="text-center">
+                    <img src="${s.url}" alt="${s.label}" title="${s.label}" loading="lazy">
+                    <div class="thumb-label">${s.label}</div>
+                </div>
+            `).join('');
         }
 
-        console.log(`[AI] Analysis complete. Tokens used: ${result.usage?.total_tokens || 'N/A'}`);
-
-        // Step 4: Render result (Markdown → HTML)
-        resultBody.innerHTML = renderMarkdownToHTML(result.analysis);
+        // ── Step 5: Render analysis ──
+        analysisContent.innerHTML = renderMarkdownToHTML(result.analysis);
 
         // Token info
         if (result.usage) {
-            tokenInfo.textContent = `Model: ${result.model} | Tokens: ${result.usage.total_tokens?.toLocaleString() || 'N/A'} (prompt: ${result.usage.prompt_tokens?.toLocaleString()}, completion: ${result.usage.completion_tokens?.toLocaleString()})`;
+            const cachedTag = result.cached ? ' | ♻️ CACHED' : '';
+            tokenInfo.textContent = `Model: ${result.model} | Tokens: ${result.usage.total_tokens?.toLocaleString() || 'N/A'}${cachedTag}`;
         }
+
+        // Show refresh button
+        refreshBtn.style.display = '';
 
     } catch (error) {
         console.error('[AI] Analysis error:', error);
-        resultBody.innerHTML = `
+        analysisContent.innerHTML = `
             <div class="alert alert-danger">
                 <i class="fa-solid fa-circle-exclamation me-1"></i>
                 <strong>Gagal menganalisis:</strong> ${error.message}
@@ -1673,7 +1732,6 @@ async function runAIAnalysis() {
             <p class="text-muted small">Pastikan koneksi internet stabil dan coba lagi.</p>
         `;
     } finally {
-        // Reset button
         btn.classList.remove('analyzing');
         btn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles me-1"></i> AI Analysis';
     }
