@@ -1589,12 +1589,10 @@ async function runAIAnalysis() {
 
         const canvas = await html2canvas(summaryPane, {
             backgroundColor: '#ffffff',
-            scale: 2, // Higher resolution for better AI reading
+            scale: 1, // scale 1 = hemat token, cukup untuk AI
             useCORS: true,
             logging: false,
-            // Ensure chart canvas is properly captured
             onclone: function(clonedDoc) {
-                // Chart.js canvases need special handling
                 const originalCanvases = summaryPane.querySelectorAll('canvas');
                 const clonedCanvases = clonedDoc.getElementById('summary-pane').querySelectorAll('canvas');
                 originalCanvases.forEach((origCanvas, i) => {
@@ -1608,29 +1606,44 @@ async function runAIAnalysis() {
             }
         });
 
-        // Convert to base64 (strip the data:image/png;base64, prefix)
-        const dataUrl = canvas.toDataURL('image/png');
-        const base64 = dataUrl.split(',')[1];
+        // Convert to JPEG blob (much smaller than PNG)
+        const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.75));
+        console.log(`[AI] Screenshot captured. Size: ${(blob.size / 1024).toFixed(0)} KB`);
 
-        console.log(`[AI] Screenshot captured. Size: ~${(base64.length * 0.75 / 1024).toFixed(0)} KB`);
+        // Step 2: Upload screenshot to R2
+        btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin me-1"></i> Uploading...';
+        resultBody.innerHTML = `
+            <div class="text-center py-5">
+                <div class="spinner-border text-warning" role="status"></div>
+                <p class="small text-muted mt-2">Mengunggah screenshot ke server...</p>
+            </div>
+        `;
 
-        // Step 2: Update loading state
+        const uploadResp = await fetch(`${WORKER_BASE_URL}/ai/screenshot?symbol=${symbol}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'image/jpeg' },
+            body: blob
+        });
+        const uploadResult = await uploadResp.json();
+        if (!uploadResult.ok) throw new Error(uploadResult.error || 'Upload failed');
+
+        console.log(`[AI] Uploaded to R2: ${uploadResult.key} (${uploadResult.size_kb} KB)`);
+
+        // Step 3: Call AI analysis with image key (no base64!)
         btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin me-1"></i> Analyzing...';
         resultBody.innerHTML = `
             <div class="text-center py-5">
                 <div class="spinner-border text-warning" role="status"></div>
-                <p class="small text-muted mt-2">Mengirim ke AI untuk analisis...<br>Ini bisa memakan waktu 15-30 detik.</p>
+                <p class="small text-muted mt-2">AI sedang menganalisis...<br>Ini bisa memakan waktu 15-30 detik.</p>
             </div>
         `;
 
-        // Step 3: Send to backend
-        console.log(`[AI] Sending to backend for ${symbol}...`);
         const response = await fetch(`${WORKER_BASE_URL}/ai/analyze-broksum`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                image_base64: base64,
-                symbol: symbol
+                symbol: symbol,
+                image_key: uploadResult.key
             })
         });
 

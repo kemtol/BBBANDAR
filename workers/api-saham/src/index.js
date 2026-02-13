@@ -1895,9 +1895,51 @@ export default {
       }
 
       // ============================================
-      // AI ANALYTICS: POST /ai/analyze-broksum
-      // Receives screenshot (base64) + symbol, calls OpenAI Vision API
+      // AI ANALYTICS
       // ============================================
+
+      // PUT /ai/screenshot?symbol=BBCA  — upload raw image to R2, return key
+      if (url.pathname === "/ai/screenshot" && req.method === "PUT") {
+        const symbol = (url.searchParams.get("symbol") || "").toUpperCase();
+        if (!symbol) return json({ ok: false, error: "Missing ?symbol=" }, 400);
+
+        const ct = req.headers.get("Content-Type") || "";
+        if (!ct.startsWith("image/")) {
+          return json({ ok: false, error: "Content-Type must be image/*" }, 400);
+        }
+
+        const ext = ct.includes("jpeg") || ct.includes("jpg") ? "jpg" : "png";
+        const ts = Date.now();
+        const key = `ai-screenshots/${symbol}_${ts}.${ext}`;
+
+        const imgBytes = await req.arrayBuffer();
+        console.log(`[AI] Uploading screenshot: ${key} (${(imgBytes.byteLength / 1024).toFixed(0)} KB)`);
+
+        await env.SSSAHAM_EMITEN.put(key, imgBytes, {
+          httpMetadata: { contentType: ct },
+          customMetadata: { symbol, uploaded_at: new Date().toISOString() }
+        });
+
+        return json({ ok: true, key, size_kb: Math.round(imgBytes.byteLength / 1024) });
+      }
+
+      // GET /ai/screenshot?key=...  — serve image from R2 (for OpenAI to fetch)
+      if (url.pathname === "/ai/screenshot" && req.method === "GET") {
+        const key = url.searchParams.get("key");
+        if (!key) return json({ ok: false, error: "Missing ?key=" }, 400);
+
+        const obj = await env.SSSAHAM_EMITEN.get(key);
+        if (!obj) return json({ ok: false, error: "Not found" }, 404);
+
+        return withCORS(new Response(obj.body, {
+          headers: {
+            "Content-Type": obj.httpMetadata?.contentType || "image/jpeg",
+            "Cache-Control": "public, max-age=3600"
+          }
+        }));
+      }
+
+      // POST /ai/analyze-broksum  — receive { symbol, image_key }, call OpenAI Vision via URL
       if (url.pathname === "/ai/analyze-broksum" && req.method === "POST") {
         if (!env.OPENAI_API_KEY) {
           return json({ ok: false, error: "Missing OPENAI_API_KEY in environment" }, 500);
@@ -1909,11 +1951,14 @@ export default {
         }
 
         const body = await req.json();
-        const { image_base64, symbol } = body;
+        const { symbol, image_key } = body;
 
-        if (!image_base64 || !symbol) {
-          return json({ ok: false, error: "Missing required fields: image_base64, symbol" }, 400);
+        if (!symbol || !image_key) {
+          return json({ ok: false, error: "Missing required fields: symbol, image_key" }, 400);
         }
+
+        // Build public URL for the screenshot (served by this worker)
+        const imageUrl = `https://api-saham.mkemalw.workers.dev/ai/screenshot?key=${encodeURIComponent(image_key)}`;
 
         // Read prompt from R2
         let systemPrompt;
@@ -1922,7 +1967,6 @@ export default {
           if (promptObj) {
             systemPrompt = await promptObj.text();
           } else {
-            // Fallback: hardcoded minimal prompt
             systemPrompt = "Kamu adalah analis saham Indonesia. Analisis screenshot broker summary ini dan berikan analisis fund flow komprehensif dalam Bahasa Indonesia.";
           }
         } catch (e) {
@@ -1930,15 +1974,12 @@ export default {
           systemPrompt = "Kamu adalah analis saham Indonesia. Analisis screenshot broker summary ini dan berikan analisis fund flow komprehensif dalam Bahasa Indonesia.";
         }
 
-        // Call OpenAI Vision API (gpt-4.1)
+        // Call OpenAI Vision API — URL mode (no base64, much cheaper)
         const OPENAI_URL = "https://api.openai.com/v1/chat/completions";
         const visionPayload = {
           model: "gpt-4.1",
           messages: [
-            {
-              role: "system",
-              content: systemPrompt
-            },
+            { role: "system", content: systemPrompt },
             {
               role: "user",
               content: [
@@ -1949,8 +1990,8 @@ export default {
                 {
                   type: "image_url",
                   image_url: {
-                    url: `data:image/png;base64,${image_base64}`,
-                    detail: "high"
+                    url: imageUrl,
+                    detail: "low"   // low=85 tokens fixed, high=bisa 1000+ tokens
                   }
                 }
               ]
@@ -1960,7 +2001,7 @@ export default {
         };
 
         try {
-          console.log(`[AI] Calling OpenAI Vision for ${symbol}...`);
+          console.log(`[AI] Calling OpenAI Vision for ${symbol} (url: ${imageUrl})`);
           const aiResp = await fetch(OPENAI_URL, {
             method: "POST",
             headers: {
@@ -1980,7 +2021,10 @@ export default {
           const analysis = aiData.choices?.[0]?.message?.content || "";
           const usage = aiData.usage || {};
 
-          console.log(`[AI] Analysis complete for ${symbol}. Tokens: ${usage.total_tokens || 'N/A'}`);
+          console.log(`[AI] Done for ${symbol}. Tokens: ${usage.total_tokens || 'N/A'}`);
+
+          // Cleanup: delete screenshot from R2 (no longer needed)
+          try { await env.SSSAHAM_EMITEN.delete(image_key); } catch (_) {}
 
           return json({
             ok: true,
