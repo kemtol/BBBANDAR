@@ -19,6 +19,7 @@ let pendingLoginSource = null;
 let isWarmupActive = false;
 let waitingForUserDecision = false;
 let tokenSignalSent = false;
+let lastAccountInfoHash = null;
 
 function broadcastLoginLog(level, message) {
     ipcRenderer.send('login-log', {
@@ -45,6 +46,41 @@ function logLoginError(message) {
         console.warn(`[${currentBroker.toUpperCase()} CLIENT] ${message}`);
     }
     broadcastLoginLog('error', message);
+}
+
+function relayAccountInfo(accountData) {
+    if (!accountData || typeof accountData !== 'object') {
+        return;
+    }
+    const rawList = Array.isArray(accountData.custcode)
+        ? accountData.custcode
+        : accountData.custcode ? [accountData.custcode] : [];
+    const custcodes = rawList
+        .map((code) => {
+            try {
+                return String(code).trim();
+            } catch (_) {
+                return '';
+            }
+        })
+        .filter(Boolean);
+
+    const payload = {
+        broker: currentBroker,
+        custcodes,
+        main: typeof accountData.main === 'string' ? accountData.main : null
+    };
+
+    if (!payload.main && custcodes.length > 0) {
+        payload.main = custcodes[0];
+    }
+
+    const serialized = JSON.stringify(payload);
+    if (serialized === lastAccountInfoHash) {
+        return;
+    }
+    lastAccountInfoHash = serialized;
+    ipcRenderer.send('broker-account-info', payload);
 }
 
 function makeMapKey(socketId, requestId) {
@@ -125,6 +161,7 @@ function handleInboundMessage(socketId, rawData) {
     if (meta.service === 'porto' && meta.cmd === 'MYACCOUNT') {
         const status = parsed.data?.status;
         if (status === 'OK') {
+            relayAccountInfo(parsed.data?.data);
             handleLoginConfirmed('MYACCOUNT');
         } else if (status) {
             logLoginError(`MYACCOUNT response status=${status}`);
@@ -277,6 +314,7 @@ function startLoginListener(broker, maxAttempts = LOGIN_INITIAL_ATTEMPTS) {
     lastBroadcastState = null;
     waitingForUserDecision = false;
     tokenSignalSent = false;
+    lastAccountInfoHash = null;
     requestMap.clear();
 
     if (maxAttempts === LOGIN_INITIAL_ATTEMPTS) {
@@ -349,6 +387,7 @@ function startLoginListener(broker, maxAttempts = LOGIN_INITIAL_ATTEMPTS) {
 
 function handleBrokerSwitch(broker) {
     currentBroker = broker || 'ipot';
+    lastAccountInfoHash = null;
     if (isWarmupActive) {
         logLogin(`Broker switched to ${currentBroker.toUpperCase()}, restarting login listener`);
         startLoginListener(currentBroker);
@@ -388,4 +427,5 @@ window.addEventListener('beforeunload', () => {
     pendingLoginConfirm = false;
     pendingLoginSource = null;
     lastBroadcastState = null;
+    lastAccountInfoHash = null;
 });

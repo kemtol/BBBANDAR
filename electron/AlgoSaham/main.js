@@ -10,6 +10,7 @@ const riskManager = require('./core/risk/risk_controller');
 const tapeStream = require('./core/tns/stream');
 const whaleTracker = require('./core/features/whale');
 const tokenEngine = require('./core/engine/token-engine');
+const executionEngine = require('./core/engine/execution');
 const featuresChannel = require('./core/channel/features');
 const liveTradeStream = require('./core/channel/livetrade');
 
@@ -25,6 +26,38 @@ function createWindow() {
     show: false,
     backgroundColor: '#000000'
   });
+
+  const relaySystemLog = (message) => {
+    try {
+      const msgString = typeof message === 'string' ? message : JSON.stringify(message);
+      console.log(msgString);
+      const views = win.getBrowserViews();
+      if (views[1] && !views[1].webContents.isDestroyed()) {
+        views[1].webContents.send('system-log', msgString);
+      }
+    } catch (_) {
+      // ignore broadcast errors
+    }
+  };
+
+  const maskCustcode = (value) => {
+    if (!value) return '(n/a)';
+    const str = String(value);
+    if (str.length <= 4) {
+      return `${str[0] || ''}***`;
+    }
+    return `${str.slice(0, 3)}***${str.slice(-2)}`;
+  };
+
+  const executionDiagnostics = {
+    custcodeMissing: false,
+    agentTokenMissing: false,
+    appSessionMissing: false,
+    cookieError: false,
+    paneUnavailable: false
+  };
+
+  global.activeBroker = global.activeBroker || 'ipot';
 
   const LEFT_PANE_WIDTH = 420; // Forced mobile width
   let hasShownMainWindow = false;
@@ -53,6 +86,152 @@ function createWindow() {
   leftView.webContents.loadURL('https://indopremier.com/#ipot/app/marketlive').catch(err => {
     console.error(`[MAIN] Initial load failed: ${err.message}`);
   });
+
+  const ensureExecutionConnection = async () => {
+    if (global.activeBroker && global.activeBroker !== 'ipot') {
+      return;
+    }
+
+    if (!leftView || leftView.webContents.isDestroyed()) {
+      if (!executionDiagnostics.paneUnavailable) {
+        relaySystemLog('[EXEC] Pane broker belum siap untuk koneksi eksekusi.');
+        executionDiagnostics.paneUnavailable = true;
+      }
+      return;
+    }
+    executionDiagnostics.paneUnavailable = false;
+
+    if (executionEngine.isConnected() || executionEngine.isConnecting()) {
+      return;
+    }
+
+    const custcode = tokenEngine.getPrimaryCustcode('ipot');
+    if (!custcode) {
+      if (!executionDiagnostics.custcodeMissing) {
+        relaySystemLog('[EXEC] Custcode belum tersedia (menunggu MYACCOUNT).');
+        executionDiagnostics.custcodeMissing = true;
+      }
+      return;
+    }
+    executionDiagnostics.custcodeMissing = false;
+
+    let agentToken = tokenEngine.getAgentToken('ipot');
+    if (!agentToken) {
+      try {
+        agentToken = await tokenEngine.extractAgentToken(leftView.webContents, 'ipot');
+      } catch (err) {
+        if (!executionDiagnostics.agentTokenMissing) {
+          relaySystemLog(`[EXEC] Gagal mengambil agent token: ${err.message}`);
+          executionDiagnostics.agentTokenMissing = true;
+        }
+        return;
+      }
+    }
+
+    if (!agentToken) {
+      if (!executionDiagnostics.agentTokenMissing) {
+        relaySystemLog('[EXEC] Agent token belum tersedia. Pastikan sudah login IPOT.');
+        executionDiagnostics.agentTokenMissing = true;
+      }
+      return;
+    }
+    executionDiagnostics.agentTokenMissing = false;
+
+    let cookieHeader = '';
+    let appSession = tokenEngine.getPublicToken();
+
+    try {
+      const cookieList = await leftView.webContents.session.cookies.get({ domain: '.indopremier.com' });
+      if (Array.isArray(cookieList) && cookieList.length > 0) {
+        cookieHeader = cookieList.map(({ name, value }) => `${name}=${value}`).join('; ');
+        const appSessionCookie = cookieList.find((c) => c.name === 'appsession' && c.value);
+        if (appSessionCookie) {
+          appSession = appSessionCookie.value;
+        }
+      }
+      executionDiagnostics.cookieError = false;
+    } catch (err) {
+      if (!executionDiagnostics.cookieError) {
+        relaySystemLog(`[EXEC] Gagal membaca cookie sesi: ${err.message}`);
+        executionDiagnostics.cookieError = true;
+      }
+      return;
+    }
+
+    if (!appSession) {
+      if (!executionDiagnostics.appSessionMissing) {
+        relaySystemLog('[EXEC] Token appsession belum tersedia untuk koneksi eksekusi.');
+        executionDiagnostics.appSessionMissing = true;
+      }
+      return;
+    }
+    executionDiagnostics.appSessionMissing = false;
+
+    const userAgent = leftView.webContents.getUserAgent();
+
+    try {
+      await executionEngine.connect({
+        appSession,
+        agentToken,
+        custcode,
+        cookies: cookieHeader,
+        userAgent,
+        logger: relaySystemLog
+      });
+    } catch (err) {
+      relaySystemLog(`[EXEC] Koneksi eksekusi gagal: ${err.message}`);
+    }
+  };
+
+  const teardownExecutionConnection = (reason) => {
+    if (executionEngine.isConnected() || executionEngine.isConnecting()) {
+      const suffix = reason ? ` (${reason})` : '';
+      relaySystemLog(`[EXEC] Memutus koneksi eksekusi${suffix}.`);
+    }
+    executionEngine.disconnect();
+    executionDiagnostics.custcodeMissing = false;
+    executionDiagnostics.agentTokenMissing = false;
+    executionDiagnostics.appSessionMissing = false;
+    executionDiagnostics.cookieError = false;
+    executionDiagnostics.paneUnavailable = false;
+  };
+
+  if (executionEngine.listenerCount('connected') === 0) {
+    executionEngine.on('connected', () => {
+      relaySystemLog('🤝 Execution engine connected and ready.');
+    });
+    executionEngine.on('disconnected', ({ code } = {}) => {
+      const suffix = typeof code !== 'undefined' ? ` (code ${code})` : '';
+      relaySystemLog(`⚠️ Execution engine disconnected${suffix}.`);
+    });
+    executionEngine.on('error', (err) => {
+      if (err && err.message) {
+        relaySystemLog(`[EXEC] Socket error: ${err.message}`);
+      }
+    });
+    executionEngine.on('order-ack', (ack) => {
+      if (!ack) return;
+      const order = ack.order;
+      const summary = order
+        ? `${order.side} ${order.code} @${order.price} x${order.lot}`
+        : `cid=${ack.cid}`;
+      relaySystemLog(`[ORDER][ACK] ${summary} status=${ack.status} ref=${ack.jatsorderno || '-'} msg=${ack.message || 'OK'}`);
+    });
+    executionEngine.on('order-error', (payload) => {
+      if (!payload) return;
+      const order = payload.order;
+      const summary = order
+        ? `${order.side} ${order.code} @${order.price} x${order.lot}`
+        : `cid=${payload.cid}`;
+      relaySystemLog(`[ORDER][ERROR] ${summary} status=${payload.status || 'ERR'} msg=${payload.message || '-'}`);
+    });
+    executionEngine.on('order-update', (update) => {
+      if (!update) return;
+      const priceLabel = Number.isFinite(update.price) ? update.price : '-';
+      const volLabel = Number.isFinite(update.vol) ? update.vol : '-';
+      relaySystemLog(`[ORDER][UPDATE] ${update.cmd} ${update.code} status=${update.status} price=${priceLabel} vol=${volLabel} ref=${update.jatsorderno || '-'}`);
+    });
+  }
 
   // Helpers: features cache freshness check
   const FEATURES_PATH = path.join(__dirname, 'data', 'features-emiten.json');
@@ -93,15 +272,7 @@ function createWindow() {
       win.show();
     }
 
-    const sendLog = (msg) => {
-      console.log(msg);
-      try {
-        const views = win.getBrowserViews();
-        if (views[1] && !views[1].webContents.isDestroyed()) {
-          views[1].webContents.send('system-log', msg);
-        }
-      } catch (_) { }
-    };
+    const sendLog = relaySystemLog;
 
     sendLog('🔑 Get public token...');
 
@@ -213,6 +384,41 @@ function createWindow() {
     } catch (err) {
       console.warn('[LOGIN] Failed forwarding login state:', err.message);
     }
+
+    const brokerKeyLower = brokerKey.toLowerCase();
+    if (brokerKeyLower === 'ipot') {
+      if (loggedIn) {
+        ensureExecutionConnection().catch((err) => {
+          relaySystemLog(`[EXEC] Ensure execution connection failed: ${err.message}`);
+        });
+      } else if (source !== 'INIT') {
+        tokenEngine.clearAccountInfo('ipot');
+        teardownExecutionConnection('login state off');
+      }
+    }
+  });
+
+  ipcMain.on('broker-account-info', (event, payload = {}) => {
+    const broker = (payload.broker || 'unknown').toLowerCase();
+    if (broker !== 'ipot') {
+      return;
+    }
+
+    tokenEngine.setAccountInfo('ipot', {
+      custcodes: payload.custcodes,
+      main: payload.main
+    });
+
+    const primary = tokenEngine.getPrimaryCustcode('ipot');
+    if (primary) {
+      relaySystemLog(`[ACCOUNT] Custcode ready (${maskCustcode(primary)}).`);
+    } else {
+      relaySystemLog('[ACCOUNT] Custcode info received.');
+    }
+
+    ensureExecutionConnection().catch((err) => {
+      relaySystemLog(`[EXEC] Ensure execution connection failed: ${err.message}`);
+    });
   });
 
   // Pane Kanan (Signal Dashboard)
@@ -262,6 +468,9 @@ function createWindow() {
   ipcMain.on('switch-broker', (event, broker) => {
     console.log(`[MAIN] Received switch-broker request: ${broker}`);
     global.activeBroker = broker;
+    if (broker !== 'ipot') {
+      teardownExecutionConnection('switch broker');
+    }
     let url = '';
     if (broker === 'ipot') {
       url = 'https://indopremier.com/#ipot/app/marketlive';
@@ -277,6 +486,12 @@ function createWindow() {
       console.log(`[MAIN] Loading URL: ${url}`);
       leftView.webContents.loadURL(url).catch(err => {
         console.error(`[MAIN] Failed to load URL: ${err.message}`);
+      });
+    }
+
+    if (broker === 'ipot') {
+      ensureExecutionConnection().catch((err) => {
+        relaySystemLog(`[EXEC] Ensure execution connection failed: ${err.message}`);
       });
     }
   });
@@ -351,6 +566,56 @@ function createWindow() {
       }
     } catch (err) {
       console.warn('[LOGIN] Failed forwarding login log:', err.message);
+    }
+  });
+
+  ipcMain.on('test-order', async (event, payload = {}) => {
+    const activeBroker = (global.activeBroker || 'ipot').toLowerCase();
+    if (activeBroker !== 'ipot') {
+      relaySystemLog('[ORDER] Test order hanya tersedia untuk broker IPOT saat ini.');
+      return;
+    }
+
+    const side = String(payload.side || '').toUpperCase();
+    const code = String(payload.code || '').toUpperCase().trim();
+    const lot = Number(payload.lot || 1);
+    const price = Number(payload.price);
+
+    if (!['BUY', 'SELL'].includes(side)) {
+      relaySystemLog('[ORDER] Invalid test order side.');
+      return;
+    }
+    if (!code || code.length < 2) {
+      relaySystemLog('[ORDER] Invalid ticker untuk test order.');
+      return;
+    }
+    if (!Number.isInteger(lot) || lot <= 0) {
+      relaySystemLog('[ORDER] Invalid lot untuk test order.');
+      return;
+    }
+    if (!Number.isFinite(price) || price <= 0) {
+      relaySystemLog('[ORDER] Invalid price untuk test order.');
+      return;
+    }
+
+    try {
+      if (!executionEngine.isConnected()) {
+        await ensureExecutionConnection();
+      }
+
+      if (!executionEngine.isConnected()) {
+        relaySystemLog('[ORDER] Execution engine belum siap. Pastikan IPOT sudah login.');
+        return;
+      }
+
+      const orderParams = { code, price, lot };
+      const cid = side === 'SELL'
+        ? executionEngine.placeSell(orderParams)
+        : executionEngine.placeBuy(orderParams);
+
+      relaySystemLog(`[ORDER][SUBMIT] ${side} ${code} @${price} x${lot} (cid=${cid})`);
+    } catch (err) {
+      relaySystemLog(`[ORDER][ERROR] Submit gagal: ${err.message}`);
     }
   });
 
@@ -461,5 +726,10 @@ function createWindow() {
 app.whenReady().then(createWindow);
 
 app.on('window-all-closed', () => {
+  try {
+    executionEngine.disconnect();
+  } catch (_) {
+    // ignore shutdown errors
+  }
   if (process.platform !== 'darwin') app.quit();
 });

@@ -76,6 +76,10 @@ Berdasarkan sniffing WebSocket aplikasi resmi IPOT, berikut urutan event saat us
 
 Semua ID dihasilkan client-side demi mengurangi round-trip.
 
+### 3.4 Modul Per Broker (Login vs Eksekusi)
+- **Login Detection Adapter**: setiap broker punya adapter terpisah (`core/login/adapters/{broker}.js`) yang menangani polling token, intercept WebSocket, dan emit custcode secara aman ke main process. Preload hanya bertindak sebagai registry/dispatcher.
+- **Execution Engine**: order engine per broker berada di `core/engine/execution/{broker}.js` dan diakses via router (`core/engine/execution/index.js`). Router ini memastikan API (`connect`, `placeBuy`, `placeSell`, event emitter) konsisten lintas broker.
+- **Stream**: modul publik (Time & Sales, features) tetap shared; tidak perlu dipecah per broker karena tidak membawa kredensial sensitif.
 
 ---
 
@@ -247,7 +251,12 @@ if (lastPrice <= stopPrice) {
 ## 7. Developer Checklist
 
 
-### 7.1 Modul Eksekusi (`core/engine/execution.js`)
+### 7.1 Router & Adapter Setup
+- [ ] `core/engine/execution/index.js` sebagai registry, memetakan broker → engine dan meneruskan event secara seragam.
+- [ ] `core/engine/execution/ipot.js` (dan broker lain nantinya) berisi implementasi WebSocket + payload spesifik.
+- [ ] `core/login/adapters/ipot.js` menangani deteksi login & ekstraksi custcode; `preload.js` hanya memilih adapter aktif.
+
+### 7.2 Modul Eksekusi IPOT (`core/engine/execution/ipot.js`)
 - [ ] `IDGenerator` (cid/cmdid auto-increment).  
 - [ ] `buildSubmitPayload({ side, code, price, lot, custcode })`.  
 - [ ] `sendOrder(payload)` → `ws.send(JSON.stringify(payload))`.  
@@ -256,12 +265,12 @@ if (lastPrice <= stopPrice) {
 
 
 
-### 7.2 Integrasi Strategi
+### 7.3 Integrasi Strategi
 - [ ] API `execution.placeBuy(params)` & `execution.placeSell(params)`.
 - [ ] Registrasi listener di modul order status untuk stop/TP.
 
 
-### 7.3 UI Hooks (sementara)
+### 7.4 UI Hooks (sementara)
 - [ ] Tombol dummy: “Test BUY 1 Lot” & “Test SELL 1 Lot” pada dashboard untuk QA manual.  
 - [ ] Panel log menampilkan ack & update status order secara realtime.
 

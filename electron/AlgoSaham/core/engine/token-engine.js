@@ -17,6 +17,7 @@ class TokenEngine extends EventEmitter {
             ipotAgent: null,     // IPOT authenticated token
             stockbitAgent: null  // Stockbit authenticated token
         };
+        this.accounts = {}; // broker -> { custcodes: [], main: string|null, updatedAt }
     }
 
     /**
@@ -242,6 +243,64 @@ class TokenEngine extends EventEmitter {
     /** @param {'ipot'|'stockbit'} broker */
     getAgentToken(broker) {
         return broker === 'ipot' ? this.state.ipotAgent : this.state.stockbitAgent;
+    }
+
+    /**
+     * Store sanitized account information (custcode, main account)
+     * @param {string} broker
+     * @param {Object} info
+     * @param {string[]|string} [info.custcodes]
+     * @param {string} [info.main]
+     */
+    setAccountInfo(broker, info = {}) {
+        if (!broker) return;
+        const key = broker.toLowerCase();
+        const custcodes = Array.isArray(info.custcodes)
+            ? info.custcodes.map(String).filter(Boolean)
+            : info.custcodes ? [String(info.custcodes)] : [];
+        const main = info.main ? String(info.main) : (custcodes[0] || null);
+        this.accounts[key] = {
+            custcodes,
+            main,
+            updatedAt: Date.now()
+        };
+        this.emit('account-info-ready', { broker: key, custcodes, main });
+    }
+
+    /**
+     * Retrieve stored account information for a broker
+     * @param {string} broker
+     * @returns {{custcodes: string[], main: string|null, updatedAt: number}|null}
+     */
+    getAccountInfo(broker) {
+        if (!broker) return null;
+        const key = broker.toLowerCase();
+        return this.accounts[key] || null;
+    }
+
+    /**
+     * Get primary custcode (main account if available)
+     * @param {string} broker
+     * @returns {string|null}
+     */
+    getPrimaryCustcode(broker) {
+        const info = this.getAccountInfo(broker);
+        if (!info) return null;
+        if (info.main) return info.main;
+        if (Array.isArray(info.custcodes) && info.custcodes.length > 0) {
+            return info.custcodes[0];
+        }
+        return null;
+    }
+
+    /**
+     * Clear stored account info (e.g., on logout)
+     * @param {string} broker
+     */
+    clearAccountInfo(broker) {
+        if (!broker) return;
+        const key = broker.toLowerCase();
+        delete this.accounts[key];
     }
 
     /**

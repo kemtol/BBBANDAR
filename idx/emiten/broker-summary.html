@@ -206,7 +206,7 @@
         #ai-thumbnails img:hover {
             transform: scale(1.5);
             z-index: 10;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
         }
 
         #ai-thumbnails .thumb-label {
@@ -306,16 +306,16 @@
                         <span class="text-muted fw-bold text-uppercase"
                             style="font-size:0.85rem; letter-spacing:0.5px;width: 75px;">Preset</span>
                         <div class="btn-group btn-group-sm" id="preset-selector">
-                            <a href="#" class="btn btn-outline-secondary btn-sm active" style="width: 75px;font-size: 0.9rem;"
-                                data-preset="all" title="Tampilkan semua">
+                            <a href="#" class="btn btn-outline-secondary btn-sm active"
+                                style="width: 75px;font-size: 0.9rem;" data-preset="all" title="Tampilkan semua">
                                 All
                             </a>
-                            <a href="#" class="btn btn-outline-primary btn-sm" style="width: 75px;font-size: 0.9rem;" data-preset="smart"
-                                title="Smart Money positif setiap hari">
+                            <a href="#" class="btn btn-outline-primary btn-sm" style="width: 75px;font-size: 0.9rem;"
+                                data-preset="smart" title="Smart Money positif setiap hari">
                                 Smart
                             </a>
-                            <a href="#" class="btn btn-outline-success btn-sm" style="width: 75px;font-size: 0.9rem;" data-preset="strict"
-                                title="Foreign & Smart Money positif setiap hari">
+                            <a href="#" class="btn btn-outline-success btn-sm" style="width: 75px;font-size: 0.9rem;"
+                                data-preset="strict" title="Foreign & Smart Money positif setiap hari">
                                 Strict
                             </a>
                         </div>
@@ -494,8 +494,8 @@
             </ul>
 
             <!-- AI Analytics Button -->
-            <div id="ai-analytics-bar" class="d-flex justify-content-end mb-2" style="display:none !important;">
-                <button id="btn-ai-analyze" class="btn btn-sm btn-outline-warning" onclick="runAIAnalysis()">
+            <div id="ai-analytics-bar" class="d-flex justify-content-center mb-2" style="display:none !important;">
+                <button id="btn-ai-analyze" class="btn btn-sm btn-outline-primary" onclick="runAIAnalysis()">
                     <i class="fa-solid fa-wand-magic-sparkles me-1"></i> AI Analysis
                 </button>
             </div>
@@ -505,12 +505,15 @@
                 <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
                     <div class="modal-content">
                         <div class="modal-header py-2">
-                            <h6 class="modal-title"><i class="fa-solid fa-robot me-1"></i> AI Broker Flow Analysis — <span id="ai-modal-symbol"></span></h6>
+                            <h6 class="modal-title">AI Broker Flow Analysis —
+                                <span id="ai-modal-symbol"></span>
+                            </h6>
                             <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                         </div>
                         <div class="modal-body" id="ai-result-body">
                             <!-- Thumbnail strip -->
-                            <div id="ai-thumbnails" class="d-flex gap-2 flex-wrap mb-3 p-2 bg-light rounded" style="display:none !important;"></div>
+                            <div id="ai-thumbnails" class="d-flex gap-2 flex-wrap mb-3 p-2 bg-light rounded"
+                                style="display:none !important;"></div>
                             <!-- Analysis content -->
                             <div id="ai-analysis-content">
                                 <div class="text-center py-5">
@@ -521,10 +524,12 @@
                         </div>
                         <div class="modal-footer py-1">
                             <small class="text-muted me-auto" id="ai-token-info"></small>
-                            <button type="button" class="btn btn-sm btn-outline-warning" id="btn-ai-refresh" style="display:none;" onclick="runAIAnalysis(true)">
+                            <button type="button" class="btn btn-sm btn-outline-warning" id="btn-ai-refresh"
+                                style="display:none;" onclick="runAIAnalysis(true)">
                                 <i class="fa-solid fa-rotate-right me-1"></i> Refresh
                             </button>
-                            <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Tutup</button>
+                            <button type="button" class="btn btn-sm btn-secondary"
+                                data-bs-dismiss="modal">Tutup</button>
                         </div>
                     </div>
                 </div>
@@ -540,13 +545,12 @@
                                 <span style="color:#198754;">━ Foreign</span>
                                 <span style="color:#dc3545;">━ Retail</span>
                                 <span style="color:#0d6efd;">━ Local</span>
-                                <span class="text-muted">|</span>
                                 <span style="color:rgba(25,135,84,0.6);">▮ Inst</span>
                                 <span style="color:rgba(220,53,69,0.6);">▮ Retail</span>
-                                <span class="text-muted">|</span>
-                                <span style="color:#f59e0b;">- - Price</span>
+                                <span style="color:#ffa200;">- - Price</span>
                             </div>
-                            <small class="text-muted fst-italic" style="font-size:0.65rem;">line=cumulative, bar=daily net</small>
+                            <small class="text-muted" style="font-size:0.75rem;">line: cumulative, bar: daily
+                                net</small>
                         </div>
                         <div class="chart-container-responsive">
                             <canvas id="detailChart"></canvas>

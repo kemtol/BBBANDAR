@@ -621,6 +621,12 @@
                     <button class="btn btn-success py-3 fw-bold" id="btn-start" disabled>
                         ▶ START AGENT
                     </button>
+                    <button class="btn btn-warning py-2 fw-bold" id="btn-test-buy">
+                        🛒 TEST BUY 1 LOT
+                    </button>
+                    <button class="btn btn-danger py-2 fw-bold" id="btn-test-sell">
+                        📤 TEST SELL 1 LOT
+                    </button>
                 </div>
 
                 <div class="card mt-3 mb-0 flex-grow-1 d-flex flex-column">
@@ -1365,6 +1371,58 @@
                         $('#connection-text').text('Connected Ready').css('color', '#00ff00');
                     }, 1500); // Simulasi waktu eksekusi flatten 1.5 detik
                 }
+            });
+
+            function getDefaultTestTicker() {
+                const firstBadge = $('#watchlist-container .ticker-badge').first();
+                if (firstBadge.length) {
+                    return String(firstBadge.data('ticker') || '').toUpperCase();
+                }
+                const inputVal = $('#stock-ticker-input').val();
+                if (inputVal) {
+                    return String(inputVal).toUpperCase();
+                }
+                return 'GOTO';
+            }
+
+            function sendTestOrder(side) {
+                if (!window.ipcRenderer || typeof window.ipcRenderer.send !== 'function') {
+                    log('[ORDER] IPC belum siap untuk mengirim test order.');
+                    return;
+                }
+                const defaultTicker = getDefaultTestTicker();
+                const promptTitle = side === 'SELL' ? 'Ticker untuk TEST SELL?' : 'Ticker untuk TEST BUY?';
+                const codeInput = prompt(promptTitle, defaultTicker);
+                if (!codeInput) {
+                    return;
+                }
+                const code = codeInput.trim().toUpperCase();
+                if (!code) {
+                    alert('Ticker tidak boleh kosong.');
+                    return;
+                }
+                const pricePrompt = `Harga (tick) untuk ${code}?`;
+                const priceInput = prompt(pricePrompt, '');
+                const price = Number(priceInput);
+                if (!Number.isFinite(price) || price <= 0) {
+                    alert('Harga tidak valid. Order dibatalkan.');
+                    return;
+                }
+                window.ipcRenderer.send('test-order', {
+                    side,
+                    code,
+                    price,
+                    lot: 1
+                });
+                log(`[UI] Test ${side} 1 lot dikirim: ${code} @${price}.`);
+            }
+
+            $('#btn-test-buy').on('click', function () {
+                sendTestOrder('BUY');
+            });
+
+            $('#btn-test-sell').on('click', function () {
+                sendTestOrder('SELL');
             });
 
             // 4c. LOGIC DRY RUN
