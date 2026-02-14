@@ -9,7 +9,23 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#ffffff" />
+    <meta name="theme-color" content="#0b0b0e" />
+
+    <script>
+        (function () {
+            const STORAGE_KEY = 'ui:theme';
+            const root = document.documentElement;
+            try {
+                const saved = window.localStorage ? localStorage.getItem(STORAGE_KEY) : null;
+                const theme = saved || 'dark';
+                root.setAttribute('data-theme', theme);
+                root.style.colorScheme = theme === 'dark' ? 'dark' : 'light';
+            } catch (error) {
+                root.setAttribute('data-theme', 'dark');
+                root.style.colorScheme = 'dark';
+            }
+        })();
+    </script>
 
     <title>SSSAHAM - Detail Emiten</title>
 
@@ -22,19 +38,37 @@
     <!-- Bootstrap & Font Awesome -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css" rel="stylesheet" />
+    <link rel="stylesheet" href="../../theme.css" />
     <link href="component.css" rel="stylesheet" />
 
     <style>
-        .card-swing {
-            border-radius: 12px;
-            border: none;
+        :root {
+            --table-header-text: var(--muted);
+            --table-hover-bg: #f1f5f9;
         }
 
-        .card-swing-header {
-            background: #f9fafb;
-            border-bottom: 1px solid rgba(148, 163, 184, 0.4);
-            border-radius: 12px 12px 0 0;
+        :root[data-theme="dark"] {
+            --table-hover-bg: rgba(255, 255, 255, 0.05);
+        }
+
+        .card-swing {
+            border-radius: var(--card-radius);
+            border: 1px solid var(--card-divider);
+            box-shadow: none;
+            background: transparent !important;
+        }
+
+        .card-swing-header,
+        .card-header {
+            background: transparent;
+            border-bottom: 1px solid var(--card-divider);
+            border-radius: var(--card-radius) var(--card-radius) 0 0;
             padding: 0.5rem 0.75rem;
+        }
+
+        .card-body,
+        .card-header {
+            color: var(--text);
         }
 
         .quadrant-badge {
@@ -54,10 +88,47 @@
             font-weight: 600;
         }
 
+        .table-orderflow {
+            font-size: 0.9rem;
+            white-space: nowrap;
+            color: var(--text);
+        }
+
+        .table-orderflow thead th {
+            text-transform: uppercase;
+            font-size: 0.9rem;
+            color: var(--table-header-text);
+            border-bottom-color: var(--border);
+        }
+
+        .table-orderflow tbody tr {
+            cursor: pointer;
+        }
+
+        .table-orderflow tbody tr:hover {
+            background-color: var(--table-hover-bg);
+        }
+
+        .table-orderflow thead th.sortable {
+            position: relative;
+            padding-right: 14px;
+        }
+
+        .sort-icon {
+            position: absolute;
+            right: 2px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: var(--table-header-text);
+        }
+
+        .sort-icon.active {
+            opacity: 1;
+        }
+
         #timeseries-table td,
         #timeseries-table th {
             vertical-align: middle;
-            font-size: 0.9rem;
             text-align: center;
         }
 
@@ -72,8 +143,8 @@
 
 <body>
     <!-- NAVBAR -->
-    <nav class="navbar sticky-top border-bottom">
-        <div class="container d-flex align-items-center" style="max-width: 1200px;">
+    <nav class="navbar sticky-top border-bottom py-3">
+        <div class="container d-flex align-items-center" style="max-width: 1440px;">
             <a href="index.html" class="d-flex align-items-center text-decoration-none me-2">
                 <i class="fa-solid fa-chevron-left"></i>
                 <span class="small d-none">Kembali</span>
@@ -174,24 +245,22 @@
         </div>
         <!-- TIME SERIES TABLE -->
         <div id="table-container" class="card card-swing mb-4">
-            <div class="card-body p-0">
-                <div class="table-responsive">
-                    <table class="table table-sm mb-0" id="timeseries-table">
-                        <thead class="table-light">
-                            <tr>
-                                <th class="text-center">Date</th>
-                                <th class="text-center">Time</th>
-                                <th class="text-end">Harga</th>
-                                <th class="text-end">Δ Harga</th>
-                                <th class="text-end">Moment %</th>
-                                <th class="text-end">Absorb</th>
-                                <th class="text-end">CVD</th>
-                                <th class="text-end">Value (cum)</th>
-                            </tr>
-                        </thead>
-                        <tbody></tbody>
-                    </table>
-                </div>
+            <div class="table-responsive">
+                <table class="table table-hover mb-0 table-orderflow align-middle" id="timeseries-table">
+                    <thead>
+                        <tr>
+                            <th class="text-center">Date</th>
+                            <th class="text-center">Time</th>
+                            <th class="text-end">Harga</th>
+                            <th class="text-end">Δ Harga</th>
+                            <th class="text-end">Moment %</th>
+                            <th class="text-end">Absorb</th>
+                            <th class="text-end">CVD</th>
+                            <th class="text-end">Value (cum)</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
             </div>
         </div>
     </div>
@@ -546,6 +615,8 @@
 
             const data = { datasets };
 
+            const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+
             const options = {
                 responsive: true,
                 maintainAspectRatio: false,
@@ -586,19 +657,43 @@
                             }
                         },
                         title: { display: true, text: "Waktu (WIB)" },
-                        grid: { display: true, color: 'rgba(241,245,249,1)' }
+                        grid: {
+                            display: !isDark,
+                            color: isDark ? 'transparent' : 'rgba(241,245,249,1)'
+                        },
+                        border: {
+                            display: !isDark,
+                            color: isDark ? 'transparent' : 'rgba(226,232,240,1)'
+                        },
+                        ticks: {
+                            color: isDark ? '#94a3b8' : '#475569'
+                        }
                     },
                     y: {
                         position: 'left',
                         min: minY - yPadding,
                         max: maxY + yPadding,
                         title: { display: true, text: "Harga" },
-                        grid: { display: true, color: 'rgba(241,245,249,1)' }
+                        grid: {
+                            display: !isDark,
+                            color: isDark ? 'transparent' : 'rgba(241,245,249,1)'
+                        },
+                        border: {
+                            display: !isDark,
+                            color: isDark ? 'transparent' : 'rgba(226,232,240,1)'
+                        },
+                        ticks: {
+                            color: isDark ? '#94a3b8' : '#475569'
+                        }
                     },
                     y1: {
                         position: 'right',
                         title: { display: true, text: "CVD", color: '#fbbf24' },
                         grid: { display: false },
+                        border: {
+                            display: !isDark,
+                            color: isDark ? 'transparent' : 'rgba(226,232,240,1)'
+                        },
                         ticks: { color: '#fbbf24' }
                     }
                 },

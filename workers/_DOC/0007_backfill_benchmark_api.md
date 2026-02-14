@@ -254,7 +254,7 @@
 
 <body>
     <nav class="navbar sticky-top py-3">
-        <div class="container d-flex align-items-center" style="max-width: 1440px; position: relative;">
+        <div class="container d-flex align-items-center" style="max-width: 1200px; position: relative;">
             <div style="width:72px;" class="d-flex align-items-center">
                 <i class="fa-solid fa-circle-half-stroke" id="theme-toggle-icon" title="Toggle theme (Shift + D)"></i>
             </div>
@@ -816,6 +816,8 @@
                             ...p
                         })),
                         backgroundColor: filtered.map(p => colorByContext(p)),
+
+
                         borderWidth: 0
                     }]
                 };
@@ -853,8 +855,8 @@
                     scales: {
                         x: {
                             title: { display: true, text: "Power (Net Delta %)" },
-                            min: xMin,
-                            max: xMax,
+                            min: xMin, max: xMax,
+
                             grid: {
                                 display: !isDark,
                                 color: isDark ? 'transparent' : 'rgba(241,245,249,1)'
@@ -869,8 +871,8 @@
                         },
                         y: {
                             title: { display: true, text: "Absorption Score (ABS(CVD))" },
-                            min: 0,
-                            max: yMax,
+                            min: 0, max: yMax,
+
                             grid: {
                                 display: !isDark,
                                 color: isDark ? 'transparent' : 'rgba(241,245,249,1)'

@@ -72,6 +72,35 @@ function getTradingDays(days, startDate = new Date(), startOffsetDays = 1) {
     return dates;
 }
 
+// Helper: Get recent trading days including today if weekday
+function getRecentTradingDays(days) {
+    const tradingDays = [];
+    const now = new Date();
+
+    for (let i = 0; i < days * 2 && tradingDays.length < days; i++) {
+        const d = new Date(now);
+        d.setDate(d.getDate() - i);
+        const dow = d.getDay(); // 0 Sun, 6 Sat
+        if (dow !== 0 && dow !== 6) {
+            tradingDays.push(d.toISOString().split('T')[0]);
+        }
+    }
+    return tradingDays;
+}
+
+function clampInt(value, min, max, fallback) {
+    const n = parseInt(value, 10);
+    if (Number.isNaN(n)) return fallback;
+    return Math.max(min, Math.min(max, n));
+}
+
+function percentileFromSorted(sortedNums, percentile01) {
+    if (!Array.isArray(sortedNums) || sortedNums.length === 0) return 0;
+    const idx = Math.ceil(percentile01 * sortedNums.length) - 1;
+    const safeIdx = Math.min(sortedNums.length - 1, Math.max(0, idx));
+    return sortedNums[safeIdx];
+}
+
 // Helper: Add CORS headers
 function withCors(headers = {}) {
     return {
@@ -225,7 +254,7 @@ export default {
                 "/scrape", "/backfill-queue", "/trigger-full-flow", "/init",
                 "/backfill/status", "/backfill/resume", "/backfill/pause", "/backfill/reset",
                 "/debug-token", "/test-range", "/auto-backfill",
-                "/backfill-flow", "/trigger-accum"
+                "/backfill-flow", "/trigger-accum", "/benchmark-backfill"
             ];
             if (sensitiveRoutes.includes(path)) {
                 const keyError = requireKey(request, env);
@@ -396,16 +425,7 @@ export default {
                 }
 
                 // Generate trading days
-                const tradingDays = [];
-                const now = new Date();
-                for (let i = 0; i < days * 1.5 && tradingDays.length < days; i++) {
-                    const d = new Date(now);
-                    d.setDate(d.getDate() - i);
-                    const dow = d.getDay();
-                    if (dow !== 0 && dow !== 6) {
-                        tradingDays.push(d.toISOString().split('T')[0]);
-                    }
-                }
+                const tradingDays = getRecentTradingDays(days);
 
                 let processed = 0, errors = 0;
                 for (const sym of watchlist) {
@@ -425,6 +445,31 @@ export default {
                     tickers: watchlist.length,
                     days: tradingDays.length
                 }), { headers: withCors({ "Content-Type": "application/json" }) });
+            }
+
+            // ROUTE: Benchmark heavy backfill flow with latency stats
+            if (path === "/benchmark-backfill") {
+                const days = clampInt(url.searchParams.get("days"), 1, 90, 30);
+                const tickers = clampInt(url.searchParams.get("tickers"), 1, 80, 24);
+                const concurrency = clampInt(url.searchParams.get("concurrency"), 1, 10, 6);
+                const dryRun = url.searchParams.get("dry_run") === "true";
+                const symbolsRaw = (url.searchParams.get("symbols") || "").trim();
+                const symbols = symbolsRaw
+                    ? symbolsRaw.split(",").map(s => s.trim().toUpperCase()).filter(Boolean)
+                    : [];
+
+                const result = await this.benchmarkBackfillFlow(env, {
+                    days,
+                    tickers,
+                    concurrency,
+                    symbols,
+                    dryRun
+                });
+
+                return new Response(JSON.stringify(result), {
+                    status: result.ok ? 200 : 400,
+                    headers: withCors({ "Content-Type": "application/json" })
+                });
             }
 
             // ROUTE: Manually trigger accum preprocessor
@@ -994,6 +1039,126 @@ export default {
         }), {
             headers: { "Content-Type": "application/json" }
         });
+    },
+
+    async benchmarkBackfillFlow(env, { days = 30, tickers = 24, concurrency = 6, symbols = [], dryRun = false } = {}) {
+        const startedAt = Date.now();
+        const sourceList = Array.isArray(symbols) && symbols.length > 0
+            ? symbols
+            : await this.getWatchlistFromKV(env);
+
+        const uniqueSymbols = Array.from(new Set(
+            (sourceList || [])
+                .map(s => (s || "").toUpperCase().replace(/\.JK$/, ""))
+                .filter(s => /^[A-Z0-9]{2,6}$/.test(s))
+        ));
+
+        if (uniqueSymbols.length === 0) {
+            return {
+                ok: false,
+                error: "No symbols available for benchmark"
+            };
+        }
+
+        const selected = uniqueSymbols.slice(0, tickers);
+        const tradingDays = getRecentTradingDays(days);
+
+        if (dryRun) {
+            return {
+                ok: true,
+                dry_run: true,
+                params: {
+                    days,
+                    requested_tickers: tickers,
+                    selected_tickers: selected.length,
+                    concurrency: Math.min(concurrency, selected.length),
+                    symbols_provided: symbols.length > 0
+                },
+                trading_days_count: tradingDays.length,
+                sample_symbols: selected.slice(0, 20),
+                sample_dates: tradingDays.slice(0, 10)
+            };
+        }
+
+        let cursor = 0;
+        const workerCount = Math.max(1, Math.min(concurrency, selected.length));
+        const rows = new Array(selected.length);
+
+        const worker = async () => {
+            while (cursor < selected.length) {
+                const idx = cursor++;
+                const ticker = selected[idx];
+                const t0 = Date.now();
+                let processed = 0;
+                let errors = 0;
+
+                for (const date of tradingDays) {
+                    try {
+                        await backfillFlowFromR2(env, ticker, date);
+                        processed++;
+                    } catch (e) {
+                        errors++;
+                    }
+                }
+
+                const elapsedMs = Date.now() - t0;
+                rows[idx] = {
+                    ticker,
+                    processed,
+                    errors,
+                    elapsed_ms: elapsedMs,
+                    elapsed_sec: Number((elapsedMs / 1000).toFixed(3)),
+                    mean_day_ms: tradingDays.length > 0
+                        ? Number((elapsedMs / tradingDays.length).toFixed(1))
+                        : 0
+                };
+            }
+        };
+
+        await Promise.all(Array.from({ length: workerCount }, () => worker()));
+
+        const wallMs = Date.now() - startedAt;
+        const orderedRows = rows.filter(Boolean);
+        const sortedTickerSecs = orderedRows.map(r => r.elapsed_sec).sort((a, b) => a - b);
+
+        const totalProcessed = orderedRows.reduce((sum, r) => sum + r.processed, 0);
+        const totalErrors = orderedRows.reduce((sum, r) => sum + r.errors, 0);
+        const tickersWithErrors = orderedRows.filter(r => r.errors > 0).length;
+        const meanTickerSec = sortedTickerSecs.length > 0
+            ? sortedTickerSecs.reduce((sum, v) => sum + v, 0) / sortedTickerSecs.length
+            : 0;
+
+        const slowest = [...orderedRows]
+            .sort((a, b) => b.elapsed_ms - a.elapsed_ms)
+            .slice(0, 10);
+
+        return {
+            ok: true,
+            params: {
+                days,
+                requested_tickers: tickers,
+                selected_tickers: orderedRows.length,
+                concurrency: workerCount,
+                symbols_provided: symbols.length > 0
+            },
+            coverage: {
+                trading_days_count: tradingDays.length,
+                first_date: tradingDays[0] || null,
+                last_date: tradingDays[tradingDays.length - 1] || null
+            },
+            summary: {
+                wall_sec: Number((wallMs / 1000).toFixed(3)),
+                total_processed: totalProcessed,
+                total_errors: totalErrors,
+                tickers_with_errors: tickersWithErrors,
+                mean_ticker_sec: Number(meanTickerSec.toFixed(3)),
+                p50_ticker_sec: Number(percentileFromSorted(sortedTickerSecs, 0.50).toFixed(3)),
+                p95_ticker_sec: Number(percentileFromSorted(sortedTickerSecs, 0.95).toFixed(3)),
+                p99_ticker_sec: Number(percentileFromSorted(sortedTickerSecs, 0.99).toFixed(3))
+            },
+            slowest_tickers: slowest,
+            sample_symbols: selected.slice(0, 20)
+        };
     },
 
     // Helper: list dates between from..to (inclusive), skip weekends

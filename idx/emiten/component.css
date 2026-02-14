@@ -3,7 +3,7 @@
 #app.container,
 .container,
 .chat-wrapper {
-    max-width: 1200px;
+    max-width: 1440px;
     margin: 0 auto;
 }
 
@@ -13,11 +13,12 @@ body {
 
 /* Navbar Branding */
 .navbar {
-    background-color: #aeffff !important;
+    background-color: var(--navbar-bg) !important;
     transition: transform 0.3s ease-in-out;
     position: sticky;
     top: 0;
     z-index: 1030;
+    color: var(--navbar-text);
 }
 
 .navbar.hidden {
@@ -26,7 +27,7 @@ body {
 
 .navbar i.fa-chevron-left {
     font-size: 1rem;
-    color: #644fe5;
+    color: var(--navbar-text);
 }
 
 .nav-title {
@@ -34,7 +35,7 @@ body {
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%);
-    color: #644fe5;
+    color: var(--navbar-highlight);
     transition: opacity 0.3s ease;
     opacity: 1;
     font-size: 0.9rem;
@@ -49,12 +50,12 @@ body {
 
 /* Unified Tab Styling */
 .nav-tabs {
-    border-bottom: 2px solid #e9ecef;
+    border-bottom: 2px solid var(--border);
 }
 
 .nav-tabs .nav-link {
     border: none;
-    color: #6c757d;
+    color: var(--text-muted);
     font-weight: 500;
     padding: 0.75rem 1rem;
     transition: all 0.2s ease;
@@ -62,16 +63,16 @@ body {
 }
 
 .nav-tabs .nav-link:hover {
-    color: #463CFF;
+    color: var(--navbar-highlight);
     border: none;
     background: transparent;
 }
 
 .nav-tabs .nav-link.active {
-    color: #463CFF;
+    color: var(--navbar-highlight);
     background: transparent;
     border: none;
-    border-bottom: 2px solid #463CFF;
+    border-bottom: 2px solid var(--navbar-highlight);
     margin-bottom: -2px;
 }
 
@@ -84,8 +85,18 @@ body {
 /* Navbar Icon Sizing */
 .navbar i {
     font-size: 0.9rem;
-    color: #644fe5;
+    color: var(--navbar-text);
     cursor: pointer;
+}
+
+#theme-toggle-icon {
+    transition: color 0.2s ease;
+}
+
+#theme-toggle-icon:hover,
+#theme-toggle-icon:focus {
+    color: var(--navbar-highlight);
+    outline: none;
 }
 
 /* Search Panel */
@@ -95,11 +106,11 @@ body {
     right: -100%;
     width: 100%;
     height: 100vh;
-    background-color: #463CFF;
+    background-color: var(--search-panel-bg);
     z-index: 2000;
     transition: right 0.3s ease-in-out;
     padding: 20px;
-    color: white;
+    color: var(--search-panel-text);
 }
 
 #search-panel.open {
@@ -110,32 +121,34 @@ body {
     #search-panel {
         width: 350px;
         right: -350px;
-        border-left: 1px solid rgba(255, 255, 255, 0.1);
+        border-left: 1px solid var(--border-muted);
     }
 }
 
 .search-input {
     width: 100%;
-    background: rgba(255, 255, 255, 0.1);
-    border: 1px solid rgba(255, 255, 255, 0.2);
+    background: var(--search-input-bg);
+    border: 1px solid var(--search-input-border);
     border-radius: 8px;
     padding: 12px 16px;
-    color: white;
+    color: var(--search-input-text);
     font-size: 1rem;
     outline: none;
+    transition: border-color 0.2s ease, background 0.2s ease;
 }
 
 .search-input::placeholder {
-    color: rgba(255, 255, 255, 0.5);
+    color: var(--search-input-placeholder);
 }
 
 .search-input:focus {
-    background: rgba(255, 255, 255, 0.15);
-    border-color: rgba(255, 255, 255, 0.3);
+    background: var(--search-input-bg);
+    border-color: var(--primary);
+    box-shadow: 0 0 0 2px var(--focus-ring);
 }
 
 .search-history-item {
-    background: rgba(255, 255, 255, 0.05);
+    background: var(--search-history-bg);
     border-radius: 8px;
     padding: 12px 16px;
     margin-bottom: 8px;
@@ -143,9 +156,10 @@ body {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    transition: background 0.2s;
+    transition: background 0.2s ease, color 0.2s ease;
+    color: var(--search-panel-text);
 }
 
 .search-history-item:hover {
-    background: rgba(255, 255, 255, 0.1);
+    background: var(--search-history-hover);
 }

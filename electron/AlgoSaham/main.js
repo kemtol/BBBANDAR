@@ -92,6 +92,8 @@ function createWindow() {
       return;
     }
 
+    executionEngine.setActiveBroker('ipot');
+
     if (!leftView || leftView.webContents.isDestroyed()) {
       if (!executionDiagnostics.paneUnavailable) {
         relaySystemLog('[EXEC] Pane broker belum siap untuk koneksi eksekusi.');
@@ -388,6 +390,7 @@ function createWindow() {
     const brokerKeyLower = brokerKey.toLowerCase();
     if (brokerKeyLower === 'ipot') {
       if (loggedIn) {
+        executionEngine.setActiveBroker('ipot');
         ensureExecutionConnection().catch((err) => {
           relaySystemLog(`[EXEC] Ensure execution connection failed: ${err.message}`);
         });
@@ -416,6 +419,7 @@ function createWindow() {
       relaySystemLog('[ACCOUNT] Custcode info received.');
     }
 
+    executionEngine.setActiveBroker('ipot');
     ensureExecutionConnection().catch((err) => {
       relaySystemLog(`[EXEC] Ensure execution connection failed: ${err.message}`);
     });
@@ -490,6 +494,7 @@ function createWindow() {
     }
 
     if (broker === 'ipot') {
+      executionEngine.setActiveBroker('ipot');
       ensureExecutionConnection().catch((err) => {
         relaySystemLog(`[EXEC] Ensure execution connection failed: ${err.message}`);
       });
@@ -599,6 +604,7 @@ function createWindow() {
     }
 
     try {
+      executionEngine.setActiveBroker('ipot');
       if (!executionEngine.isConnected()) {
         await ensureExecutionConnection();
       }

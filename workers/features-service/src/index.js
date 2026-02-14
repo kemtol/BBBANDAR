@@ -1360,16 +1360,24 @@ export default {
 
         const items = results.map(r => {
             const z = JSON.parse(r.metrics_json || "{}");
+            const zWithFallback = { ...z };
+
+            // Backward-compat: historical rows may not have 2D window.
+            // If missing, derive 2D payload from 5D so frontend VWAP 2D doesn't go blank.
+            if (!zWithFallback["2"] && zWithFallback["5"]) {
+                zWithFallback["2"] = { ...zWithFallback["5"] };
+            }
 
             // Minify keys for frontend
             const zMin = {};
-            for (const w of Object.keys(z)) {
+            for (const w of Object.keys(zWithFallback)) {
+                const src = zWithFallback[w] || {};
                 zMin[w] = {
-                    e: parseFloat(z[w].effort?.toFixed(2)),
-                    r: parseFloat(z[w].result?.toFixed(2)),
-                    n: parseFloat(z[w].ngr?.toFixed(2)),
-                    el: parseFloat(z[w].elas?.toFixed(2)), // Expose Elasticity
-                    v: parseFloat(z[w].vwap?.toFixed(2)) || 0 // VWAP Deviation Z
+                    e: parseFloat(src.effort?.toFixed(2)),
+                    r: parseFloat(src.result?.toFixed(2)),
+                    n: parseFloat(src.ngr?.toFixed(2)),
+                    el: parseFloat(src.elas?.toFixed(2)), // Expose Elasticity
+                    v: parseFloat(src.vwap?.toFixed(2)) || 0 // VWAP Deviation Z
                 };
             }
 

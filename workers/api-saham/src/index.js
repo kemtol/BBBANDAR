@@ -1,3 +1,5 @@
+// Import audit & backfill util
+import { auditAndBackfillDailyBrokerFlow } from "./audit-backfill-daily.js";
 import openapi from "./openapi.json";
 
 const PUBLIC_PATHS = new Set(["/", "/docs", "/console", "/openapi.json", "/health", "/screener", "/screener-accum", "/cache-summary", "/features/history"]);
@@ -520,9 +522,24 @@ async function calculateRangeData(env, symbol, startDate, endDate) {
 // Worker Entry
 // ==============================
 export default {
-  async fetch(req, env) {
+  async fetch(req, env, ctx) {
+    const url = new URL(req.url);
+    // INTERNAL: Trigger audit & backfill daily broker flow
+    if (url.pathname === "/internal/audit-backfill-daily" && req.method === "POST") {
+      try {
+        const logs = [];
+        const triggerLimit = Number(url.searchParams.get("limit") || "40");
+        const log = (msg) => { logs.push(msg); console.log(msg); };
+        const result = await auditAndBackfillDailyBrokerFlow(env, {
+          log,
+          triggerLimit
+        });
+        return json({ ok: true, logs, result });
+      } catch (e) {
+        return json({ ok: false, error: e.message, stack: e.stack }, 500);
+      }
+    }
     try {
-      const url = new URL(req.url);
       console.log(`[API-SAHAM] Request: ${req.method} ${url.pathname} (v2026-02-04)`);
 
       // CORS
@@ -550,9 +567,19 @@ export default {
           }
         }
 
-        // If empty (weekend or no data), search back up to 7 days for last available data
-        if (isEmpty) {
-          console.log(`[SUMMARY] Empty or weekend (day=${dayOfWeek}), searching DB for recent data...`);
+        const validation = cachedData?.validation || {};
+        const withFootprint = Number(validation.with_footprint || validation.data_sources?.FULL || 0);
+        const zscoreOnly = Number(validation.zscore_only || validation.data_sources?.ZSCORE || 0);
+        const isZscoreOnlySummary = withFootprint === 0 && zscoreOnly > 0;
+        const needsFallback = isEmpty || isWeekend || isZscoreOnlySummary;
+
+        // If empty/weekend/zscore-only summary, search back up to 7 days for last FULL trading data.
+        if (needsFallback) {
+          const triggerReasons = [];
+          if (isEmpty) triggerReasons.push("EMPTY");
+          if (isWeekend) triggerReasons.push("WEEKEND");
+          if (isZscoreOnlySummary) triggerReasons.push("ZSCORE_ONLY");
+          console.log(`[SUMMARY] Fallback triggered: ${triggerReasons.join("+") || "UNKNOWN"} (day=${dayOfWeek}), searching DB for recent data...`);
 
           // Try up to 7 days back to find last trading day with data
           for (let daysBack = 1; daysBack <= 7; daysBack++) {
@@ -1359,6 +1386,7 @@ export default {
               t: row.t,
               // All window accum data
               accum: row.accum,
+              coverage: row.coverage || null,
               // Z-score data (if available)
               s: screenerItem?.s || null,
               sc: screenerItem?.sc || null,
@@ -1898,31 +1926,153 @@ export default {
       // AI ANALYTICS
       // ============================================
 
-      // PUT /ai/screenshot?symbol=BBCA&label=7d  — upload raw image to R2
+      async function resolveScreenshotKey(env, symbol, date, label) {
+        for (const ext of SCREENSHOT_EXTENSIONS) {
+          const key = `ai-screenshots/${symbol}/${date}_${label}.${ext}`;
+          try {
+            const head = await env.SSSAHAM_EMITEN.head(key);
+            if (head) return key;
+          } catch (_) {
+            // ignore head errors
+          }
+        }
+        return null;
+      }
+
+      function scheduleIntradayCapture(env, symbol, date) {
+        const payload = JSON.stringify({ symbol, date, label: INTRADAY_LABEL });
+
+        if (env.AI_SCREENSHOT_SERVICE) {
+          return env.AI_SCREENSHOT_SERVICE.fetch(
+            new Request("https://ai-screenshot-service/capture/broker-intraday", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: payload
+            })
+          );
+        }
+
+        if (env.AI_SCREENSHOT_SERVICE_URL) {
+          const base = env.AI_SCREENSHOT_SERVICE_URL.replace(/\/$/, "");
+          return fetch(`${base}/capture/broker-intraday`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: payload
+          });
+        }
+
+        console.warn("[AI] No AI_SCREENSHOT_SERVICE configured");
+        return null;
+      }
+
+      async function ensureScreenshotAvailability(env, ctx, symbol, date, label, { forceRefresh = false } = {}) {
+        let key = await resolveScreenshotKey(env, symbol, date, label);
+        if (key) return key;
+
+        const triggerPromise = scheduleIntradayCapture(env, symbol, date);
+        if (triggerPromise) {
+          const guarded = triggerPromise.catch(err => console.error("[AI] Capture trigger failed:", err));
+          if (ctx && ctx.waitUntil) {
+            ctx.waitUntil(guarded);
+          }
+        }
+
+        const attempts = forceRefresh ? 6 : 3;
+        const delayMs = forceRefresh ? 1500 : 1000;
+
+        for (let attempt = 0; attempt < attempts; attempt++) {
+          await sleep(delayMs);
+          key = await resolveScreenshotKey(env, symbol, date, label);
+          if (key) return key;
+        }
+
+        return null;
+      }
+
+      function sanitizeJsonString(raw) {
+        if (typeof raw !== "string") return null;
+        let trimmed = raw.trim();
+
+        if (trimmed.startsWith("```")) {
+          trimmed = trimmed.replace(/^```(?:json)?/i, "").replace(/```$/i, "").trim();
+        }
+
+        const firstBrace = trimmed.indexOf("{");
+        const lastBrace = trimmed.lastIndexOf("}");
+        if (firstBrace !== -1 && lastBrace !== -1 && lastBrace >= firstBrace) {
+          trimmed = trimmed.slice(firstBrace, lastBrace + 1);
+        }
+
+        return trimmed;
+      }
+
+      function parseModelJson(raw) {
+        const sanitized = sanitizeJsonString(raw);
+        if (!sanitized) {
+          throw new Error("Model response kosong / tidak mengandung JSON");
+        }
+        return JSON.parse(sanitized);
+      }
+
+      // PUT /ai/screenshot?symbol=BBCA&label=7d — upload raw image ke R2
       if (url.pathname === "/ai/screenshot" && req.method === "PUT") {
-        const symbol = (url.searchParams.get("symbol") || "").toUpperCase();
-        const label = url.searchParams.get("label") || "default";
-        if (!symbol) return json({ ok: false, error: "Missing ?symbol=" }, 400);
+        const symbolParam = (url.searchParams.get("symbol") || "").trim().toUpperCase();
+        const labelParam = (url.searchParams.get("label") || "default").trim();
+        const origin = (url.searchParams.get("origin") || "client").toLowerCase();
+
+        if (!symbolParam) {
+          return json({ ok: false, error: "Missing ?symbol=" }, 400);
+        }
 
         const ct = req.headers.get("Content-Type") || "";
         if (!ct.startsWith("image/")) {
           return json({ ok: false, error: "Content-Type must be image/*" }, 400);
         }
 
-        const ext = ct.includes("jpeg") || ct.includes("jpg") ? "jpg" : "png";
         const today = new Date().toISOString().split("T")[0];
-        const key = `ai-screenshots/${symbol}/${today}_${label}.${ext}`;
+        let ext = "jpg";
+        if (ct.includes("png")) ext = "png";
+        else if (ct.includes("webp")) ext = "webp";
+        else if (ct.includes("jpeg")) ext = "jpg";
+
+        const resolvedLabel = labelParam.toLowerCase();
+        const key = `ai-screenshots/${symbolParam}/${today}_${resolvedLabel}.${ext}`;
 
         const imgBytes = await req.arrayBuffer();
-        console.log(`[AI] Uploading screenshot: ${key} (${(imgBytes.byteLength / 1024).toFixed(0)} KB)`);
+        const sizeKb = Math.round(imgBytes.byteLength / 1024);
+        console.log(`[AI] Upload screenshot ${symbolParam}/${resolvedLabel} (${sizeKb} KB)`);
 
         await env.SSSAHAM_EMITEN.put(key, imgBytes, {
-          httpMetadata: { contentType: ct },
-          customMetadata: { symbol, label, uploaded_at: new Date().toISOString() }
+          httpMetadata: {
+            contentType: ct,
+            cacheControl: `public, max-age=${SCREENSHOT_TTL_SECONDS}`
+          },
+          customMetadata: {
+            symbol: symbolParam,
+            label: resolvedLabel,
+            origin,
+            version: SCREENSHOT_VERSION,
+            uploaded_at: new Date().toISOString()
+          }
         });
 
+        if (origin !== "service" && resolvedLabel !== INTRADAY_LABEL) {
+          const trigger = scheduleIntradayCapture(env, symbolParam, today);
+          if (trigger) {
+            ctx.waitUntil(trigger.catch(err => console.error("[AI] Auto capture trigger failed:", err)));
+          }
+        }
+
         const publicUrl = `https://api-saham.mkemalw.workers.dev/ai/screenshot?key=${encodeURIComponent(key)}`;
-        return json({ ok: true, key, url: publicUrl, size_kb: Math.round(imgBytes.byteLength / 1024) });
+        return json({
+          ok: true,
+          key,
+          url: publicUrl,
+          size_kb: sizeKb,
+          origin,
+          label: resolvedLabel,
+          date: today
+        });
       }
 
       // GET /ai/screenshot?key=...  — serve image from R2
@@ -1953,30 +2103,56 @@ export default {
         }
 
         const body = await req.json();
-        const { symbol, image_keys } = body;  // image_keys = [{key, label},...]
+        const { symbol, image_keys } = body; // image_keys = [{key, label}, ...]
         const forceRefresh = body.force === true;
 
-        if (!symbol || !image_keys || !image_keys.length) {
+        const normalizedSymbol = (symbol || "").toString().trim().toUpperCase();
+        const originalKeys = Array.isArray(image_keys) ? image_keys : [];
+
+        if (!normalizedSymbol || originalKeys.length === 0) {
           return json({ ok: false, error: "Missing required fields: symbol, image_keys[]" }, 400);
         }
 
-        // ── Cache Check ──
         const today = new Date().toISOString().split("T")[0];
-        const cacheKey = `ai-cache/${symbol}/${today}.json`;
+        const cacheKey = `ai-cache/${normalizedSymbol}/${today}.json`;
 
         if (!forceRefresh) {
           try {
             const cached = await env.SSSAHAM_EMITEN.get(cacheKey);
             if (cached) {
               const cachedData = await cached.json();
-              console.log(`[AI] Cache HIT for ${symbol} (${today})`);
+              console.log(`[AI] Cache HIT for ${normalizedSymbol} (${today})`);
               return json({ ...cachedData, cached: true });
             }
           } catch (_) {}
         }
 
-        // ── Build image URLs for OpenAI ──
-        const imageContents = image_keys.map(ik => ({
+        const aggregatedMap = new Map();
+        originalKeys.forEach((ik) => {
+          if (!ik || typeof ik.key !== "string") return;
+          const key = ik.key;
+          const labelRaw = typeof ik.label === "string" ? ik.label.trim() : "screenshot";
+          const normalizedLabel = (labelRaw || "screenshot").toLowerCase();
+          aggregatedMap.set(key, { key, label: labelRaw || "screenshot", normalizedLabel });
+        });
+
+        const labelPresence = new Set(Array.from(aggregatedMap.values()).map(item => item.normalizedLabel));
+        if (!labelPresence.has(INTRADAY_LABEL)) {
+          const intradayKey = await ensureScreenshotAvailability(env, ctx, normalizedSymbol, today, INTRADAY_LABEL, { forceRefresh });
+          if (intradayKey) {
+            aggregatedMap.set(intradayKey, { key: intradayKey, label: "intraday", normalizedLabel: INTRADAY_LABEL });
+            labelPresence.add(INTRADAY_LABEL);
+          } else {
+            console.warn(`[AI] Intraday screenshot unavailable for ${normalizedSymbol}`);
+          }
+        }
+
+        const aggregatedKeys = Array.from(aggregatedMap.values());
+        if (aggregatedKeys.length === 0) {
+          return json({ ok: false, error: "No valid screenshots available" }, 400);
+        }
+
+        const imageContents = aggregatedKeys.map(ik => ({
           type: "image_url",
           image_url: {
             url: `https://api-saham.mkemalw.workers.dev/ai/screenshot?key=${encodeURIComponent(ik.key)}`,
@@ -1984,7 +2160,7 @@ export default {
           }
         }));
 
-        const labelList = image_keys.map(ik => ik.label).join(", ");
+        const labelList = aggregatedKeys.map(ik => ik.label).join(", ");
 
         // ── Read prompt ──
         let systemPrompt;
@@ -2006,9 +2182,10 @@ export default {
               role: "user",
               content: [
                 {
-                  type: "text",
-                  text: `Analisis screenshot halaman Broker Summary untuk emiten ${symbol}. Screenshot yang tersedia: ${labelList}. Gabungkan analisis dari semua screenshot.`
-                },
+                      type: "text",
+    text: `Analisis screenshot halaman Broker Summary untuk emiten ${normalizedSymbol}. Screenshot yang tersedia: ${labelList}. Gabungkan analisis dari semua screenshot dan kembalikan JSON valid sesuai schema.`
+  },
+
                 ...imageContents
               ]
             }
@@ -2017,7 +2194,7 @@ export default {
         };
 
         try {
-          console.log(`[AI] Calling OpenAI for ${symbol} with ${image_keys.length} images`);
+          console.log(`[AI] Calling OpenAI for ${normalizedSymbol} with ${aggregatedKeys.length} images`);
           const aiResp = await fetch(OPENAI_URL, {
             method: "POST",
             headers: {
@@ -2034,20 +2211,61 @@ export default {
           }
 
           const aiData = await aiResp.json();
-          const analysis = aiData.choices?.[0]?.message?.content || "";
+          const rawContent = aiData.choices?.[0]?.message?.content || "";
           const usage = aiData.usage || {};
 
-          console.log(`[AI] Done for ${symbol}. Tokens: ${usage.total_tokens || 'N/A'}`);
+          console.log(`[AI] Done for ${normalizedSymbol}. Tokens: ${usage.total_tokens || 'N/A'}`);
+
+          let analysisJson;
+          try {
+            analysisJson = parseModelJson(rawContent);
+          } catch (parseErr) {
+            console.error("[AI] JSON parse error:", parseErr.message);
+            return json({
+              ok: false,
+              error: "Model output is not valid JSON",
+              parse_error: parseErr.message,
+              raw_output: rawContent
+            }, 502);
+          }
+
+          if (!analysisJson || typeof analysisJson !== "object") {
+            return json({
+              ok: false,
+              error: "Model returned invalid JSON structure",
+              raw_output: rawContent
+            }, 502);
+          }
+
+          analysisJson.meta = analysisJson.meta && typeof analysisJson.meta === "object" ? analysisJson.meta : {};
+          analysisJson.meta.symbol = analysisJson.meta.symbol || normalizedSymbol;
+          analysisJson.meta.date_range = analysisJson.meta.date_range || analysisJson.meta.range || "unknown";
+          analysisJson.meta.screenshots = Array.from(new Set(aggregatedKeys.map(k => k.label)));
+          if (typeof analysisJson.meta.confidence !== "number" || Number.isNaN(analysisJson.meta.confidence)) {
+            analysisJson.meta.confidence = Number(analysisJson.meta.confidence) || 0;
+          }
+
+          if (analysisJson.recommendation && typeof analysisJson.recommendation === "object") {
+            const rec = analysisJson.recommendation;
+            if (!Array.isArray(rec.rationale)) rec.rationale = [];
+            if (!Array.isArray(rec.risks)) rec.risks = [];
+            if (typeof rec.confidence !== "number" || Number.isNaN(rec.confidence)) {
+              rec.confidence = Number(rec.confidence) || 0;
+            }
+          }
+
+          const screenshotsPayload = aggregatedKeys.map(ik => ({
+            label: ik.label,
+            url: `https://api-saham.mkemalw.workers.dev/ai/screenshot?key=${encodeURIComponent(ik.key)}`
+          }));
 
           const result = {
             ok: true,
-            symbol,
+            symbol: normalizedSymbol,
             model: "gpt-4.1",
-            analysis,
-            screenshots: image_keys.map(ik => ({
-              label: ik.label,
-              url: `https://api-saham.mkemalw.workers.dev/ai/screenshot?key=${encodeURIComponent(ik.key)}`
-            })),
+            analysis: analysisJson,
+            analysis_raw: rawContent,
+            screenshots: screenshotsPayload,
             usage: {
               prompt_tokens: usage.prompt_tokens,
               completion_tokens: usage.completion_tokens,
@@ -2056,14 +2274,15 @@ export default {
             analyzed_at: new Date().toISOString()
           };
 
-          // ── Save to cache (TTL 24h) ──
           try {
             await env.SSSAHAM_EMITEN.put(cacheKey, JSON.stringify(result), {
               httpMetadata: { contentType: "application/json" },
-              customMetadata: { symbol, generated_at: new Date().toISOString() }
+              customMetadata: { symbol: normalizedSymbol, generated_at: new Date().toISOString() }
             });
             console.log(`[AI] Cached result: ${cacheKey}`);
-          } catch (_) {}
+          } catch (cacheErr) {
+            console.error("[AI] Failed to cache result:", cacheErr);
+          }
 
           return json(result);
         } catch (aiErr) {
@@ -2088,4 +2307,3 @@ export default {
     }
   }
 };
-

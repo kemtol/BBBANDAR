@@ -19,7 +19,7 @@
  */
 
 const WINDOWS = [2, 5, 10, 20];
-const MAX_LOOKBACK_DAYS = 30; // Fetch 30 calendar days to cover 20 trading days
+const MAX_LOOKBACK_DAYS = 45; // Extra buffer for long holiday periods
 
 /**
  * Main entry point. Called from scheduled() handler.
@@ -41,9 +41,17 @@ export async function runAccumPreprocessor(env, { sendWebhook }) {
     let rows;
     try {
         const { results } = await env.SSSAHAM_DB.prepare(`
-            SELECT date, ticker, foreign_net, local_net, retail_net, smart_net, price
+            SELECT
+                date,
+                ticker,
+                SUM(COALESCE(foreign_net, 0)) AS foreign_net,
+                SUM(COALESCE(local_net, 0)) AS local_net,
+                SUM(COALESCE(retail_net, 0)) AS retail_net,
+                SUM(COALESCE(smart_net, 0)) AS smart_net,
+                MAX(COALESCE(price, 0)) AS price
             FROM daily_broker_flow
             WHERE date >= ? AND date <= ?
+            GROUP BY date, ticker
             ORDER BY ticker, date ASC
         `).bind(startDate, endDate).all();
 
@@ -72,19 +80,26 @@ export async function runAccumPreprocessor(env, { sendWebhook }) {
 
     // 3. Compute accumulation for each ticker × window
     const items = [];
+    let incompleteWindows = 0;
 
     for (const [ticker, days] of tickerMap) {
         // Days are already sorted ASC by query
         const accum = {};
+        const coverage = {};
+        const availableDays = days.length;
 
         for (const w of WINDOWS) {
-            // Take the last `w` trading days
-            const windowDays = days.slice(-w);
+            const complete = availableDays >= w;
+            coverage[w] = { required: w, available: availableDays, complete };
 
-            if (windowDays.length === 0) {
+            // Strict integrity: only compute window metrics if data is complete.
+            // This prevents 5D/10D/20D from reusing 2D values on sparse tickers.
+            if (!complete) {
                 accum[w] = null;
+                incompleteWindows++;
                 continue;
             }
+            const windowDays = days.slice(-w);
 
             // Cumulative sums
             let fn = 0, ln = 0, rn = 0;
@@ -132,11 +147,12 @@ export async function runAccumPreprocessor(env, { sendWebhook }) {
                 foreignAllPos,
                 foreignDominant,
                 days: windowDays.length,
+                complete: true,
                 pctChg,
             };
         }
 
-        items.push({ t: ticker, accum });
+        items.push({ t: ticker, accum, coverage });
     }
 
     // 4. Write to R2 cache
@@ -160,11 +176,13 @@ export async function runAccumPreprocessor(env, { sendWebhook }) {
     }
 
     const elapsed = Date.now() - startMs;
-    const summary = `✅ **Accum Preprocessor Complete**\nTickers: ${items.length}\nWindows: ${WINDOWS.join(', ')}\nD1 rows: ${rows.length}\nTime: ${elapsed}ms`;
+    const summary = `✅ **Accum Preprocessor Complete**\nTickers: ${items.length}\nWindows: ${WINDOWS.join(', ')}\nD1 rows: ${rows.length}\nIncomplete windows: ${incompleteWindows}\nTime: ${elapsed}ms`;
     console.log(`[ACCUM] ${summary}`);
-    await sendWebhook(env, summary);
+    if (typeof sendWebhook === 'function') {
+        await sendWebhook(env, summary);
+    }
 
-    return { items: items.length, elapsed };
+    return { items: items.length, elapsed, incompleteWindows };
 }
 
 // ========================================

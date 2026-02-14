@@ -864,10 +864,18 @@ This table maps each **filter option** on the screener UI to the underlying arti
 | **Smart Money** | `> 0 (Accumulation)` | Cumulative SM positive | `accum[w].sm > 0` | ✅ Yes |
 | **Smart Money** | `> 0 Every Day` | SM positive each day | `accum[w].allPos` | ✅ Yes |
 | **Smart Money** | `< 0 (Distribution)` | Cumulative SM negative | `accum[w].sm < 0` | ✅ Yes |
-| **Streak** | `≥ 2D / 3D / 5D` | Min consecutive sm > 0 days | `accum[w].streak >= N` | ✅ Yes |
-| **Price Chg** | `↑ Positive` / `↓ Negative` / `> 3%` | Price change over window | `accum[w].pctChg` | ✅ Yes |
-| **Effort** | `Extreme` / `High+` | Z-score effort label | `z["20"].e > 1.0` (or > 0.5) | ❌ Fixed W20 |
-| **State** | `Accum` / `Trans` / `Neutral` | Z-score state classifier | `s` = AC / TR / NE | ❌ Fixed W20 |
+| **Trend** | `Streak ≥ 3 hari` | Min consecutive sm > 0 days | `accum[w].streak >= 3` | ✅ Yes |
+| **Trend** | `Trend 5D Up` | Acceleration short-term vs 5D baseline | `avg(sm2) > avg(sm5)` | ❌ Candidate-level |
+| **Trend** | `Trend 10D Up` | 5D stronger vs 10D baseline | `avg(sm5) > avg(sm10)` | ❌ Candidate-level |
+| **Trend** | `Trend 20D Up` | 10D stronger vs 20D baseline | `avg(sm10) > avg(sm20)` | ❌ Candidate-level |
+| **Effort Rel** | `Any` / `2D>5D` / `2D>10D` / `2D>20D` / `5D>10D` / `5D>20D` / `10D>20D` / `2D≥5D≥10D≥20D` | Relational gate for effort z-score across horizons | `e2,e5,e10,e20` from `z[w].e` | ❌ Candidate-level |
+| **NGR Rel** | `Any` / `2D>5D` / `2D>10D` / `2D>20D` / `5D>10D` / `5D>20D` / `10D>20D` / `2D≥5D≥10D≥20D` | Relational gate for NGR z-score across horizons | `n2,n5,n10,n20` from `z[w].n` | ❌ Candidate-level |
+| **VWAP Rel** | `Any` / `2D>5D` / `2D>10D` / `2D>20D` / `5D>10D` / `5D>20D` / `10D>20D` / `2D≥5D≥10D≥20D` | Relational gate for VWAP z-score across horizons | `v2,v5,v10,v20` from `z[w].v` | ❌ Candidate-level |
+| **Relation Combine** | Multiple dropdown aktif bersamaan | Semua gate relation harus lolos bersamaan | `passEffort && passNgr && passVwap` | ❌ Candidate-level |
+| **Horizon** | `Any / 2D / 5D / 10D / 20D` | Selects which accumulation window is evaluated | `w ∈ {2,5,10,20}` | ✅ Yes |
+| **Effort** | `High` / `Positif` | Effort z-score gate (legacy fixed) | `effort20 > 1` / `effort20 > 0` | ❌ Fixed W20 |
+| **State** | `Accumulation` / `Accumulation + Ready Markup` | Z-score state classifier | `s` = AC / RM | ❌ Fixed W20 |
+| **View (eye icon)** | `Show 2D/5D/10D/20D` | Controls visible table columns only | `.col-h{2|5|10|20}` show/hide | UI only |
 
 ### 16.11 R2 Artifact Storage Map
 
@@ -899,8 +907,8 @@ This table maps each **filter option** on the screener UI to the underlying arti
 
 ---
 
-*Document Version: 1.4*
+*Document Version: 1.7*
 *Created: 2026-02-10*
-*Last Updated: 2026-02-12*
+*Last Updated: 2026-02-14*
 *Author: Copilot + mkemalw*
-*Changelog: v1.4 — Added Section 16: Screener Feature & Artifact Granularity Matrix*
+*Changelog: v1.7 — Z-Score filters migrated to dropdown relation per metric (Effort Rel, NGR Rel, VWAP Rel) with AND combination across active dropdowns*

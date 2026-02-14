@@ -110,18 +110,22 @@ let accumFilter = 'all'; // legacy compat
 const activeFilters = {
     foreign: 'any',   // any | allPos | dominant
     smart:   'any',   // any | allPos | positive
-    streak:  'any',   // any | 3 | 5
+    streak:  'any',   // any | s3 | trend5up | trend10up | trend20up
+    zeffort: 'any',   // any | 2gt5 | 2gt10 | 2gt20 | 5gt10 | 5gt20 | 10gt20 | ladderUp
+    zngr:    'any',   // any | 2gt5 | 2gt10 | 2gt20 | 5gt10 | 5gt20 | 10gt20 | ladderUp
+    zvwap:   'any',   // any | 2gt5 | 2gt10 | 2gt20 | 5gt10 | 5gt20 | 10gt20 | ladderUp
     effort:  'any',   // any | high | positive
     state:   'any',   // any | accum | markup
-    window:  'any'    // any | 2 | 5 | 10 | 20
+    horizon:  'any'    // any | 2 | 5 | 10 | 20
 };
 let activePreset = 'all';
+const visibleHorizonCols = { "2": true, "5": true, "10": true, "20": true };
 
 // Preset recipes
 const PRESETS = {
-    strict: { foreign:'allPos', smart:'allPos', streak:'any', effort:'any', state:'any', window:'any' },
-    smart:  { foreign:'any',    smart:'allPos', streak:'any', effort:'any', state:'any', window:'any' },
-    all:    { foreign:'any',    smart:'any',    streak:'any', effort:'any', state:'any', window:'any' }
+    strict: { foreign:'allPos', smart:'allPos', streak:'any', zeffort:'any', zngr:'any', zvwap:'any', effort:'any', state:'any', horizon:'any' },
+    smart:  { foreign:'any',    smart:'allPos', streak:'any', zeffort:'any', zngr:'any', zvwap:'any', effort:'any', state:'any', horizon:'any' },
+    all:    { foreign:'any',    smart:'any',    streak:'any', zeffort:'any', zngr:'any', zvwap:'any', effort:'any', state:'any', horizon:'any' }
 };
 
 const PRESET_DESC = {
@@ -133,14 +137,17 @@ const PRESET_DESC = {
 const FILTER_LABELS = {
     foreign: { any:'Any', allPos:'Positif tiap hari', dominant:'Kumulatif > 0' },
     smart:   { any:'Any', allPos:'Positif tiap hari', positive:'Kumulatif > 0' },
-    streak:  { any:'Any', '3':'≥ 3 hari', '5':'≥ 5 hari' },
+    streak:  { any:'Any', s3:'Streak ≥ 3 hari', trend5up:'Trend 5D Up', trend10up:'Trend 10D Up', trend20up:'Trend 20D Up' },
+    zeffort: { any:'Any', '2gt5':'2D > 5D', '2gt10':'2D > 10D', '2gt20':'2D > 20D', '5gt10':'5D > 10D', '5gt20':'5D > 20D', '10gt20':'10D > 20D', ladderUp:'2D ≥ 5D ≥ 10D ≥ 20D' },
+    zngr:    { any:'Any', '2gt5':'2D > 5D', '2gt10':'2D > 10D', '2gt20':'2D > 20D', '5gt10':'5D > 10D', '5gt20':'5D > 20D', '10gt20':'10D > 20D', ladderUp:'2D ≥ 5D ≥ 10D ≥ 20D' },
+    zvwap:   { any:'Any', '2gt5':'2D > 5D', '2gt10':'2D > 10D', '2gt20':'2D > 20D', '5gt10':'5D > 10D', '5gt20':'5D > 20D', '10gt20':'10D > 20D', ladderUp:'2D ≥ 5D ≥ 10D ≥ 20D' },
     effort:  { any:'Any', high:'High (z > 1)', positive:'Positif (z > 0)' },
     state:   { any:'Any', accum:'Accumulation', markup:'Accum / Ready Markup' },
-    window:  { any:'Any window', '2':'2D only', '5':'5D only', '10':'10D only', '20':'20D only' }
+    horizon:  { any:'Any horizon', '2':'2D only', '5':'5D only', '10':'10D only', '20':'20D only' }
 };
 
 const PILL_COLORS = {
-    foreign:'success', smart:'primary', streak:'warning', effort:'info', state:'danger', window:'secondary'
+    foreign:'success', smart:'primary', streak:'warning', zeffort:'dark', zngr:'dark', zvwap:'dark', effort:'info', state:'danger', horizon:'secondary'
 };
 
 async function loadScreenerData() {
@@ -149,32 +156,61 @@ async function loadScreenerData() {
         $('#tbody-index').html('');
 
         const response = await fetch(`${WORKER_BASE_URL}/screener-accum`);
+        if (!response.ok) {
+            throw new Error(`screener-accum HTTP ${response.status}`);
+        }
         const data = await response.json();
 
-        if (!data || !data.items || data.items.length === 0) {
-            $('#tbody-index').html('<tr><td colspan="9" class="text-center text-muted">Accum data not yet generated.</td></tr>');
+        if (!data || !Array.isArray(data.items) || data.items.length === 0) {
+            $('#tbody-index').html('<tr><td colspan="19" class="text-center text-muted">Accum data not yet generated.</td></tr>');
             return;
         }
 
         // Map all items with all windows
         allCandidates = data.items.map(i => {
             const state = i.s ? mapState(i.s) : 'NEUTRAL';
-            const effortZ = i.z?.["20"]?.e || 0;
+            const effort2 = i.z?.["2"]?.e ?? i.z?.["5"]?.e ?? 0;
+            const effort5 = i.z?.["5"]?.e ?? 0;
+            const effort10 = i.z?.["10"]?.e ?? 0;
+            const effort20 = i.z?.["20"]?.e ?? 0;
+
             const resultZ = i.z?.["20"]?.r || 0;
-            const ngr = i.z?.["20"]?.n || 0;
+            const ngr20 = i.z?.["20"]?.n || 0;
+            const ngr2 = i.z?.["2"]?.n ?? i.z?.["5"]?.n ?? ngr20;
+            const ngr5 = i.z?.["5"]?.n ?? ngr20;
+            const ngr10 = i.z?.["10"]?.n ?? ngr20;
             const elasticity = i.z?.["20"]?.el || 0;
-            const vwapZ = i.z?.["20"]?.v || 0;
+            // Backend lama belum expose window "2" untuk z-score, fallback ke 5D agar kolom tidak kosong.
+            const vwap2Raw = i.z?.["2"]?.v ?? i.z?.["5"]?.v;
+            const vwap5Raw = i.z?.["5"]?.v;
+            const vwap10Raw = i.z?.["10"]?.v;
+            const vwap20Raw = i.z?.["20"]?.v;
+            const vwap2 = (typeof vwap2Raw === 'number' && Number.isFinite(vwap2Raw)) ? vwap2Raw : null;
+            const vwap5 = (typeof vwap5Raw === 'number' && Number.isFinite(vwap5Raw)) ? vwap5Raw : null;
+            const vwap10 = (typeof vwap10Raw === 'number' && Number.isFinite(vwap10Raw)) ? vwap10Raw : null;
+            const vwap20 = (typeof vwap20Raw === 'number' && Number.isFinite(vwap20Raw)) ? vwap20Raw : null;
 
             const stateBonus = (state === 'ACCUMULATION' || state === 'READY_MARKUP') ? 2
-                             : (state === 'TRANSITION') ? 1 : 0;
-            const effortBonus = effortZ > 0 ? Math.min(effortZ * 2, 4) : 0;
-            const ngrBonus = ngr > 0 ? 1 : 0;
-            const simpleScore = effortBonus + stateBonus + ngrBonus;
+                : (state === 'TRANSITION') ? 1 : 0;
+            const calcFlow = (eff, ngrVal) => {
+                const effortBonus = eff > 0 ? Math.min(eff * 2, 4) : 0;
+                const ngrBonus = ngrVal > 0 ? 1 : 0;
+                return effortBonus + stateBonus + ngrBonus;
+            };
+
+            const flow2 = calcFlow(effort2, ngr2);
+            const flow5 = calcFlow(effort5, ngr5);
+            const flow10 = calcFlow(effort10, ngr10);
+            const flow20 = calcFlow(effort20, ngr20);
 
             return {
                 symbol: i.t,
                 state,
-                score: simpleScore,
+                score: flow20,
+                flow2,
+                flow5,
+                flow10,
+                flow20,
                 // Per-window accum data
                 w2: i.accum?.["2"] || null,
                 w5: i.accum?.["5"] || null,
@@ -185,16 +221,33 @@ async function loadScreenerData() {
                 sm5:  i.accum?.["5"]?.sm || 0,
                 sm10: i.accum?.["10"]?.sm || 0,
                 sm20: i.accum?.["20"]?.sm || 0,
-                metrics: { effortZ, resultZ, ngr, elasticity, vwapZ }
+                metrics: {
+                    effort2, effort5, effort10, effort20,
+                    ngr2, ngr5, ngr10, ngr20,
+                    resultZ, ngr: ngr20, elasticity,
+                    vwap2, vwap5, vwap10, vwap20
+                },
+                trend: {
+                    // Use per-day averages to avoid bias from cumulative window length differences.
+                    avg2:  (i.accum?.["2"]?.sm || 0) / 2,
+                    avg5:  (i.accum?.["5"]?.sm || 0) / 5,
+                    avg10: (i.accum?.["10"]?.sm || 0) / 10,
+                    avg20: (i.accum?.["20"]?.sm || 0) / 20,
+                    effortUp: effort2 >= effort5 && effort5 >= effort10 && effort10 >= effort20,
+                    ngrUp: (ngr2 >= ngr5) && (ngr5 >= ngr10) && (ngr10 >= ngr20),
+                    vwapUp: (vwap2 ?? -Infinity) >= (vwap5 ?? -Infinity) &&
+                            (vwap5 ?? -Infinity) >= (vwap10 ?? -Infinity) &&
+                            (vwap10 ?? -Infinity) >= (vwap20 ?? -Infinity)
+                }
             };
-        });
+        }).filter(Boolean);
 
         applyFilter();
         loadForeignSentiment();
 
     } catch (error) {
-        console.error(error);
-        $('#tbody-index').html('<tr><td colspan="9" class="text-center text-danger">Error loading screener data</td></tr>');
+        console.error('[Brokerflow] loadScreenerData failed:', error);
+        $('#tbody-index').html('<tr><td colspan="19" class="text-center text-danger">Error loading screener data</td></tr>');
     } finally {
         $('#loading-indicator').hide();
         $('#app').fadeIn();
@@ -207,7 +260,7 @@ async function loadScreenerData() {
  * If a specific window is selected, only that window is checked.
  */
 function applyFilter() {
-    const wKey = activeFilters.window;
+    const wKey = activeFilters.horizon;
 
     currentCandidates = allCandidates.filter(c => {
         // Determine which windows to check
@@ -227,20 +280,33 @@ function applyFilter() {
             if (activeFilters.smart === 'allPos' && !w.allPos) return false;
             if (activeFilters.smart === 'positive' && (w.sm || 0) <= 0) return false;
 
-            // Streak filter
-            if (activeFilters.streak !== 'any') {
-                const minStreak = parseInt(activeFilters.streak);
-                if ((w.streak || 0) < minStreak) return false;
+            // Streak / Trend filter
+            if (activeFilters.streak === 's3') {
+                if ((w.streak || 0) < 3) return false;
+            } else if (activeFilters.streak === 'trend5up') {
+                if (!(c.trend.avg2 > c.trend.avg5)) return false;
+            } else if (activeFilters.streak === 'trend10up') {
+                if (!(c.trend.avg5 > c.trend.avg10)) return false;
+            } else if (activeFilters.streak === 'trend20up') {
+                if (!(c.trend.avg10 > c.trend.avg20)) return false;
             }
 
             return true;
         });
     });
 
-    // Non-window filters (effort, state) — applied on candidate level
+    // Z-score relation filters (candidate-level, AND across selected dropdowns)
+    currentCandidates = currentCandidates.filter(c => {
+        if (!matchesZRelation(activeFilters.zeffort, c.metrics.effort2, c.metrics.effort5, c.metrics.effort10, c.metrics.effort20)) return false;
+        if (!matchesZRelation(activeFilters.zngr, c.metrics.ngr2, c.metrics.ngr5, c.metrics.ngr10, c.metrics.ngr20)) return false;
+        if (!matchesZRelation(activeFilters.zvwap, c.metrics.vwap2, c.metrics.vwap5, c.metrics.vwap10, c.metrics.vwap20)) return false;
+        return true;
+    });
+
+    // Non-horizon filters (effort, state) — applied on candidate level
     if (activeFilters.effort !== 'any') {
         currentCandidates = currentCandidates.filter(c => {
-            const ez = c.metrics.effortZ;
+            const ez = c.metrics.effort20;
             if (activeFilters.effort === 'high') return ez > 1;
             if (activeFilters.effort === 'positive') return ez > 0;
             return true;
@@ -257,6 +323,20 @@ function applyFilter() {
     $('#screener-count').text(`${currentCandidates.length} emiten`);
     renderFilterPills();
     sortCandidates(sortState.key, sortState.desc);
+}
+
+function matchesZRelation(mode, z2, z5, z10, z20) {
+    if (!mode || mode === 'any') return true;
+    if (![z2, z5, z10, z20].every(v => typeof v === 'number' && Number.isFinite(v))) return false;
+
+    if (mode === '2gt5') return z2 > z5;
+    if (mode === '2gt10') return z2 > z10;
+    if (mode === '2gt20') return z2 > z20;
+    if (mode === '5gt10') return z5 > z10;
+    if (mode === '5gt20') return z5 > z20;
+    if (mode === '10gt20') return z10 > z20;
+    if (mode === 'ladderUp') return z2 >= z5 && z5 >= z10 && z10 >= z20;
+    return true;
 }
 
 // Foreign Sentiment Chart - Cumulative of 10 MVP Stocks
@@ -419,19 +499,28 @@ $(document).on('click', '[data-filter][data-val]', function(e) {
 
 function syncFilterDropdowns() {
     Object.keys(FILTER_LABELS).forEach(key => {
-        const ddId = key === 'window' ? '#dd-window' : `#dd-${key}`;
+        const ddId = key === 'horizon' ? '#dd-horizon' : `#dd-${key}`;
         const label = FILTER_LABELS[key][activeFilters[key]] || 'Any';
-        const prefix = key === 'foreign' ? 'Foreign' : key === 'smart' ? 'Smart' : key === 'streak' ? 'Streak' : key === 'effort' ? 'Effort' : key === 'state' ? 'State' : '';
-        if (key === 'window') {
-            $(ddId).html(`<i class="fa-solid fa-calendar-days me-1"></i>Window: ${label}`);
+        const prefix = key === 'foreign' ? 'Foreign'
+            : key === 'smart' ? 'Smart'
+            : key === 'streak' ? 'Trend'
+            : key === 'zeffort' ? 'Effort Rel'
+            : key === 'zngr' ? 'NGR Rel'
+            : key === 'zvwap' ? 'VWAP Rel'
+            : key === 'effort' ? 'Effort'
+            : key === 'state' ? 'State'
+            : key === 'horizon' ? 'Horizon'
+            : '';
+        if (key === 'horizon') {
+            $(ddId).text(`Horizon: ${label}`);
         } else {
             $(ddId).text(`${prefix}: ${label}`);
         }
         // Highlight active dropdown when not 'any'
         if (activeFilters[key] !== 'any') {
-            $(ddId).removeClass('btn-outline-secondary btn-outline-info').addClass(key === 'window' ? 'btn-info text-white' : `btn-${PILL_COLORS[key]} text-white`);
+            $(ddId).removeClass('btn-outline-secondary btn-outline-info').addClass(key === 'horizon' ? 'btn-info text-white' : `btn-${PILL_COLORS[key]} text-white`);
         } else {
-            $(ddId).removeClass(`btn-${PILL_COLORS[key]} btn-info text-white`).addClass(key === 'window' ? 'btn-outline-info' : 'btn-outline-secondary');
+            $(ddId).removeClass(`btn-${PILL_COLORS[key]} btn-info text-white`).addClass(key === 'horizon' ? 'btn-outline-info' : 'btn-outline-secondary');
         }
     });
 }
@@ -460,7 +549,16 @@ function renderFilterPills() {
         if (activeFilters[key] !== 'any') {
             const label = FILTER_LABELS[key][activeFilters[key]];
             const color = PILL_COLORS[key] || 'secondary';
-            const prefix = key === 'foreign' ? 'Foreign' : key === 'smart' ? 'Smart' : key === 'streak' ? 'Streak' : key === 'effort' ? 'Effort' : key === 'state' ? 'State' : key === 'window' ? 'Window' : key;
+            const prefix = key === 'foreign' ? 'Foreign'
+                : key === 'smart' ? 'Smart'
+                : key === 'streak' ? 'Trend'
+                : key === 'zeffort' ? 'Effort Rel'
+                : key === 'zngr' ? 'NGR Rel'
+                : key === 'zvwap' ? 'VWAP Rel'
+                : key === 'effort' ? 'Effort'
+                : key === 'state' ? 'State'
+                : key === 'horizon' ? 'Horizon'
+                : key;
             $pills.append(`
                 <span class="badge bg-${color} bg-opacity-10 text-${color}" style="cursor:pointer;" data-remove-filter="${key}">
                     ${prefix}: ${label} <i class="fa-solid fa-xmark ms-1"></i>
@@ -487,11 +585,35 @@ function sortCandidates(key, desc) {
         if (key === 'symbol') { valA = a.symbol; valB = b.symbol; }
         else if (key === 'state') { valA = a.state; valB = b.state; }
         else if (key === 'score') { valA = a.score; valB = b.score; }
+        else if (key === 'flow2') { valA = a.flow2 || 0; valB = b.flow2 || 0; }
+        else if (key === 'flow5') { valA = a.flow5 || 0; valB = b.flow5 || 0; }
+        else if (key === 'flow10') { valA = a.flow10 || 0; valB = b.flow10 || 0; }
+        else if (key === 'flow20') { valA = a.flow20 || 0; valB = b.flow20 || 0; }
         else if (key === 'sm2')  { valA = a.sm2  || 0; valB = b.sm2  || 0; }
         else if (key === 'sm5')  { valA = a.sm5  || 0; valB = b.sm5  || 0; }
         else if (key === 'sm10') { valA = a.sm10 || 0; valB = b.sm10 || 0; }
         else if (key === 'sm20') { valA = a.sm20 || 0; valB = b.sm20 || 0; }
-        else if (key === 'effort') { valA = a.metrics.effortZ; valB = b.metrics.effortZ; }
+        else if (key === 'vwap2') {
+            valA = (typeof a.metrics.vwap2 === 'number' && Number.isFinite(a.metrics.vwap2)) ? a.metrics.vwap2 : -Infinity;
+            valB = (typeof b.metrics.vwap2 === 'number' && Number.isFinite(b.metrics.vwap2)) ? b.metrics.vwap2 : -Infinity;
+        }
+        else if (key === 'vwap5') {
+            valA = (typeof a.metrics.vwap5 === 'number' && Number.isFinite(a.metrics.vwap5)) ? a.metrics.vwap5 : -Infinity;
+            valB = (typeof b.metrics.vwap5 === 'number' && Number.isFinite(b.metrics.vwap5)) ? b.metrics.vwap5 : -Infinity;
+        }
+        else if (key === 'vwap10') {
+            valA = (typeof a.metrics.vwap10 === 'number' && Number.isFinite(a.metrics.vwap10)) ? a.metrics.vwap10 : -Infinity;
+            valB = (typeof b.metrics.vwap10 === 'number' && Number.isFinite(b.metrics.vwap10)) ? b.metrics.vwap10 : -Infinity;
+        }
+        else if (key === 'vwap20') {
+            valA = (typeof a.metrics.vwap20 === 'number' && Number.isFinite(a.metrics.vwap20)) ? a.metrics.vwap20 : -Infinity;
+            valB = (typeof b.metrics.vwap20 === 'number' && Number.isFinite(b.metrics.vwap20)) ? b.metrics.vwap20 : -Infinity;
+        }
+        else if (key === 'effort') { valA = a.metrics.effort20; valB = b.metrics.effort20; }
+        else if (key === 'effort2') { valA = a.metrics.effort2; valB = b.metrics.effort2; }
+        else if (key === 'effort5') { valA = a.metrics.effort5; valB = b.metrics.effort5; }
+        else if (key === 'effort10') { valA = a.metrics.effort10; valB = b.metrics.effort10; }
+        else if (key === 'effort20') { valA = a.metrics.effort20; valB = b.metrics.effort20; }
         else if (key === 'response') { valA = a.metrics.resultZ; valB = b.metrics.resultZ; }
         else if (key === 'quality') { valA = a.metrics.ngr; valB = b.metrics.ngr; }
         else if (key === 'elasticity') { valA = a.metrics.elasticity; valB = b.metrics.elasticity; }
@@ -575,10 +697,9 @@ function mapState(s) {
 function getBadge(val, type, showScore = false) {
     const score = showScore ? ` <small class="text-muted">(${val.toFixed(2)})</small>` : '';
     if (type === 'effort') {
-        if (val > 1.0) return `<span class="text-danger fw-bold">Extreme</span>${score}`;
-        if (val > 0.5) return `<span style="color:#fd7e14" class="fw-bold">High</span>${score}`;
-        if (val < -0.5) return `<span class="text-muted">Low</span>${score}`;
-        return `<span class="text-secondary">Normal</span>${score}`;
+        if (typeof val !== 'number' || !Number.isFinite(val)) return `<span class="text-muted">-</span>`;
+        const cls = val > 0 ? 'text-success' : (val < 0 ? 'text-danger' : 'text-secondary');
+        return `<span class="${cls}">${val.toFixed(2)}</span>${score}`;
     }
     if (type === 'result') {
         if (val > 1.0) return `<span class="text-danger fw-bold">Volatile</span>${score}`;
@@ -596,11 +717,9 @@ function getBadge(val, type, showScore = false) {
         return `<span class="text-secondary">Normal</span>${score}`;
     }
     if (type === 'vwap') {
-        if (val > 1.0) return `<span class="text-success fw-bold">Above</span>${score}`;
-        if (val > 0) return `<span style="color:#198754">Fair+</span>${score}`;
-        if (val < -1.0) return `<span class="text-danger fw-bold">Below</span>${score}`;
-        if (val < 0) return `<span style="color:#dc3545">Fair−</span>${score}`;
-        return `<span class="text-secondary">Fair</span>${score}`;
+        if (typeof val !== 'number' || !Number.isFinite(val)) return `<span class="text-muted">-</span>`;
+        const cls = val > 0 ? 'text-success' : (val < 0 ? 'text-danger' : 'text-secondary');
+        return `<span class="${cls}">${val.toFixed(2)}</span>`;
     }
     return val;
 }
@@ -667,18 +786,48 @@ function renderScreenerTable(candidates) {
                     <img src="${logoUrl}" alt="" style="height: 20px; width: auto; margin-right: 6px; vertical-align: middle; border-radius: 3px;" onerror="this.style.display='none'">
                     <a href="?kode=${item.symbol}" style="text-decoration:none;">${item.symbol}</a>
                 </td>
-                <td class="text-center">${fmtSm(item.w2)}</td>
-                <td class="text-center">${fmtSm(item.w5)}</td>
-                <td class="text-center hide-mobile">${fmtSm(item.w10)}</td>
-                <td class="text-center hide-mobile">${fmtSm(item.w20)}</td>
-                <td class="text-center">${getFlowScore(item.score)}</td>
-                <td class="text-center hide-mobile">${getBadge(m.effortZ, 'effort')}</td>
+                <td class="text-center col-h2">${fmtSm(item.w2)}</td>
+                <td class="text-center col-h5">${fmtSm(item.w5)}</td>
+                <td class="text-center hide-mobile col-h10">${fmtSm(item.w10)}</td>
+                <td class="text-center hide-mobile col-h20">${fmtSm(item.w20)}</td>
+                <td class="text-center hide-mobile col-h2">${getBadge(m.vwap2, 'vwap')}</td>
+                <td class="text-center hide-mobile col-h5">${getBadge(m.vwap5, 'vwap')}</td>
+                <td class="text-center hide-mobile col-h10">${getBadge(m.vwap10, 'vwap')}</td>
+                <td class="text-center hide-mobile col-h20">${getBadge(m.vwap20, 'vwap')}</td>
+                <td class="text-center col-h2">${getFlowScore(item.flow2)}</td>
+                <td class="text-center col-h5">${getFlowScore(item.flow5)}</td>
+                <td class="text-center hide-mobile col-h10">${getFlowScore(item.flow10)}</td>
+                <td class="text-center hide-mobile col-h20">${getFlowScore(item.flow20)}</td>
+                <td class="text-center col-h2">${getBadge(m.effort2, 'effort')}</td>
+                <td class="text-center col-h5">${getBadge(m.effort5, 'effort')}</td>
+                <td class="text-center hide-mobile col-h10">${getBadge(m.effort10, 'effort')}</td>
+                <td class="text-center hide-mobile col-h20">${getBadge(m.effort20, 'effort')}</td>
                 <td class="text-center">${getStateText(item.state)}</td>
             </tr>
         `;
         tbody.append(row);
     });
+
+    applyColumnVisibility();
 }
+
+function applyColumnVisibility() {
+    ['2', '5', '10', '20'].forEach(h => {
+        const show = visibleHorizonCols[h] !== false;
+        $(`.col-h${h}`).toggleClass('d-none', !show);
+    });
+}
+
+$(document).on('change', '[data-view-horizon]', function() {
+    const h = String($(this).data('view-horizon'));
+    visibleHorizonCols[h] = $(this).is(':checked');
+
+    const activeCount = Object.values(visibleHorizonCols).filter(Boolean).length;
+    const suffix = activeCount === 4 ? 'All' : `${activeCount}/4`;
+    $('#dd-view').html(`<i class="fa-solid fa-eye me-1"></i>View: ${suffix}`);
+
+    applyColumnVisibility();
+});
 
 // =========================================
 // Z-SCORE FEATURES (For Detail View)
@@ -699,10 +848,15 @@ async function loadZScoreFeatures(symbol) {
                 $('#feat-effort').html(getBadge(z.e || 0, 'effort'));
                 $('#feat-response').html(getBadge(z.r || 0, 'result'));
                 $('#feat-quality').html(getBadge(z.n || 0, 'ngr'));
-                $('#feat-vwap').html(getBadge(z.v || 0, 'vwap'));
+                $('#feat-vwap').html(getBadge(z.v ?? null, 'vwap'));
                 $('#feat-elasticity').html(getBadge(z.el || 0, 'elasticity'));
                 $('#feat-state').html(getStateBadgeSimple(state));
                 $('#zscore-features-card').removeClass('d-none');
+                // /screener only contains { t, s, sc, z }.
+                // Fetch accum windows from /screener-accum so "Accum 2D/5D/10D/20D" is not blank.
+                const accumItem = await fetchAccumItemBySymbol(symbol);
+                const itemWithAccum = accumItem ? { ...item, accum: accumItem.accum } : item;
+                renderHorizonMetricsFromScreener(itemWithAccum, state);
                 return;
             }
         }
@@ -730,21 +884,113 @@ async function loadZScoreFeatures(symbol) {
             $('#feat-effort').html(getBadge(features.effort, 'effort'));
             $('#feat-response').html(getBadge(features.response, 'result'));
             $('#feat-quality').html(getBadge(features.quality, 'ngr'));
-            $('#feat-vwap').html(getBadge(features.vwap || 0, 'vwap'));
+            $('#feat-vwap').html(getBadge(features.vwap ?? null, 'vwap'));
             $('#feat-elasticity').html(getBadge(features.elasticity, 'elasticity'));
             $('#feat-state').html(getStateBadgeSimple(features.state));
             $('#zscore-features-card').removeClass('d-none');
+            $('#horizon-metrics-card').addClass('d-none');
             return;
         }
         
         // No data available - hide card
         console.log(`[ZScore] No data, hiding card`);
         $('#zscore-features-card').addClass('d-none');
+        $('#horizon-metrics-card').addClass('d-none');
         
     } catch (error) {
         console.error('[ZScore] Error:', error);
         $('#zscore-features-card').addClass('d-none');
+        $('#horizon-metrics-card').addClass('d-none');
     }
+}
+
+async function fetchAccumItemBySymbol(symbol) {
+    try {
+        const resp = await fetch(`${WORKER_BASE_URL}/screener-accum`);
+        if (!resp.ok) return null;
+        const data = await resp.json();
+        if (!data || !Array.isArray(data.items)) return null;
+        return data.items.find(i => i.t === symbol) || null;
+    } catch (e) {
+        console.warn(`[Accum] Failed to fetch screener-accum for ${symbol}:`, e);
+        return null;
+    }
+}
+
+function renderHorizonMetricsFromScreener(item, mappedState) {
+    const windows = ["2", "5", "10", "20"];
+    const z = item?.z || {};
+    const accum = item?.accum || {};
+    const stateBonus = (mappedState === 'ACCUMULATION' || mappedState === 'READY_MARKUP') ? 2
+        : (mappedState === 'TRANSITION') ? 1 : 0;
+
+    const getZVal = (w, key) => {
+        if (typeof z?.[w]?.[key] === 'number' && Number.isFinite(z[w][key])) return z[w][key];
+        if (w === "2" && typeof z?.["5"]?.[key] === 'number' && Number.isFinite(z["5"][key])) return z["5"][key];
+        if (typeof z?.["20"]?.[key] === 'number' && Number.isFinite(z["20"][key])) return z["20"][key];
+        return null;
+    };
+
+    const calcFlow = (eff, ngrVal) => {
+        if (typeof eff !== 'number' || !Number.isFinite(eff) || typeof ngrVal !== 'number' || !Number.isFinite(ngrVal)) {
+            return null;
+        }
+        const effortBonus = eff > 0 ? Math.min(eff * 2, 4) : 0;
+        const ngrBonus = ngrVal > 0 ? 1 : 0;
+        return effortBonus + stateBonus + ngrBonus;
+    };
+
+    const byWindow = {};
+    windows.forEach(w => {
+        const effort = getZVal(w, 'e');
+        const ngr = getZVal(w, 'n');
+        byWindow[w] = {
+            smartMoney: accum?.[w]?.sm ?? null,
+            vwap: getZVal(w, 'v'),
+            effort,
+            flow: calcFlow(effort, ngr)
+        };
+    });
+
+    const fmtSmartMoney = (val) => {
+        if (typeof val !== 'number' || !Number.isFinite(val)) return '<span class="text-muted">-</span>';
+        const abs = Math.abs(val);
+        let formatted;
+        if (abs >= 1e12) formatted = (val / 1e12).toFixed(1) + 'T';
+        else if (abs >= 1e9) formatted = (val / 1e9).toFixed(1) + 'B';
+        else if (abs >= 1e6) formatted = (val / 1e6).toFixed(0) + 'M';
+        else formatted = (val / 1e3).toFixed(0) + 'K';
+        const cls = val > 0 ? 'text-success' : (val < 0 ? 'text-danger' : 'text-secondary');
+        return `<span class="${cls} fw-bold">${formatted}</span>`;
+    };
+
+    const fmtFlow = (val) => {
+        if (typeof val !== 'number' || !Number.isFinite(val)) return '<span class="text-muted">-</span>';
+        if (val >= 5) return `<span class="text-success fw-bold">${val.toFixed(1)}</span>`;
+        if (val >= 3) return `<span class="text-primary fw-bold">${val.toFixed(1)}</span>`;
+        if (val >= 1) return `<span style="color:#fd7e14" class="fw-bold">${val.toFixed(1)}</span>`;
+        return `<span class="text-muted">${val.toFixed(1)}</span>`;
+    };
+
+    const rows = [
+        { label: 'Accum', key: 'smartMoney', formatter: fmtSmartMoney },
+        { label: 'V-WAP', key: 'vwap', formatter: (v) => getBadge(v, 'vwap') },
+        { label: 'Flow', key: 'flow', formatter: fmtFlow },
+        { label: 'Effort', key: 'effort', formatter: (v) => getBadge(v, 'effort') }
+    ];
+
+    let html = '';
+    rows.forEach(r => {
+        html += `<tr>
+            <td class="fw-semibold">${r.label}</td>
+            <td class="text-center">${r.formatter(byWindow["2"][r.key])}</td>
+            <td class="text-center">${r.formatter(byWindow["5"][r.key])}</td>
+            <td class="text-center">${r.formatter(byWindow["10"][r.key])}</td>
+            <td class="text-center">${r.formatter(byWindow["20"][r.key])}</td>
+        </tr>`;
+    });
+    $('#horizon-metrics-tbody').html(html);
+    $('#horizon-metrics-card').removeClass('d-none');
 }
 
 function calculateFeaturesFromHistory(history) {
@@ -813,14 +1059,15 @@ function getSignalBadge(signal) {
 
 function getStateBadgeSimple(state) {
     const colors = {
-        'OFF_THE_LOW': 'bg-success',
-        'ACCUMULATION': 'bg-primary',
-        'READY_MARKUP': 'bg-info',
-        'POTENTIAL_TOP': 'bg-warning text-dark',
-        'DISTRIBUTION': 'bg-danger',
-        'NEUTRAL': 'bg-secondary'
+        'OFF_THE_LOW': 'text-success fw-bold',
+        'ACCUMULATION': 'text-success fw-bold',
+        'READY_MARKUP': 'text-info fw-bold',
+        'POTENTIAL_TOP': 'text-warning fw-bold',
+        'DISTRIBUTION': 'text-danger fw-bold',
+        'NEUTRAL': 'text-muted'
     };
-    return `<span class="badge ${colors[state] || 'bg-secondary'}">${state ? state.replace('_', ' ') : '-'}</span>`;
+    const label = state ? state.replaceAll('_', ' ') : '-';
+    return `<span class="${colors[state] || 'text-muted'}">${label}</span>`;
 }
 
 // =========================================
@@ -1694,32 +1941,78 @@ async function runAIAnalysis(forceRefresh = false) {
         });
 
         const result = await response.json();
-        if (!result.ok) throw new Error(result.error || 'AI analysis failed');
+
+        if (!result.ok) {
+            const errorMessage = result.error || 'AI analysis failed';
+            const parseHint = result.parse_error ? `<div class="small text-muted mt-1">${escapeHTML(result.parse_error)}</div>` : '';
+            const rawOutput = result.raw_output ? `<details class="mt-3"><summary class="small text-muted">Output mentah</summary><pre class="bg-body-secondary small p-3 rounded">${escapeHTML(result.raw_output)}</pre></details>` : '';
+            analysisContent.innerHTML = `
+                <div class="alert alert-danger">
+                    <i class="fa-solid fa-circle-exclamation me-1"></i>
+                    <strong>Gagal menganalisis:</strong> ${escapeHTML(errorMessage)}
+                    ${parseHint}
+                </div>
+                ${rawOutput}
+            `;
+            if (Array.isArray(result.screenshots) && result.screenshots.length) {
+                thumbsContainer.style.display = '';
+                thumbsContainer.classList.add('d-flex');
+                thumbsContainer.innerHTML = result.screenshots.map(s => `
+                    <div class="text-center">
+                        <img src="${escapeHTML(s.url)}" alt="${escapeHTML(s.label)}" title="${escapeHTML(s.label)}" loading="lazy">
+                        <div class="thumb-label">${escapeHTML(s.label)}</div>
+                    </div>
+                `).join('');
+            }
+            tokenInfo.textContent = '';
+            refreshBtn.style.display = '';
+            return;
+        }
 
         console.log(`[AI] Analysis complete. Tokens: ${result.usage?.total_tokens || 'N/A'}, Cached: ${result.cached || false}`);
 
-        // ── Step 4: Show thumbnails from result (may include cached screenshots) ──
-        if (result.screenshots && result.screenshots.length) {
+        if (Array.isArray(result.screenshots) && result.screenshots.length) {
             thumbsContainer.style.display = '';
             thumbsContainer.classList.add('d-flex');
-            thumbsContainer.innerHTML = result.screenshots.map(s => `
-                <div class="text-center">
-                    <img src="${s.url}" alt="${s.label}" title="${s.label}" loading="lazy">
-                    <div class="thumb-label">${s.label}</div>
-                </div>
-            `).join('');
+                            thumbsContainer.innerHTML = result.screenshots.map(s => `
+                    <div class="text-center">
+                        <img src="${escapeHTML(s.url)}" alt="${escapeHTML(s.label)}" title="${escapeHTML(s.label)}" loading="lazy">
+                        <div class="thumb-label">${escapeHTML(s.label)}</div>
+                    </div>
+                `).join('');
+
         }
 
-        // ── Step 5: Render analysis ──
-        analysisContent.innerHTML = renderMarkdownToHTML(result.analysis);
+        let analysisData = result.analysis;
+        if (analysisData && typeof analysisData === 'string') {
+            try {
+                analysisData = JSON.parse(analysisData);
+            } catch (_) {
+                analysisData = null;
+            }
+        }
 
-        // Token info
+        if (analysisData && typeof analysisData === 'object') {
+            analysisContent.innerHTML = renderAnalysisJSON(analysisData);
+        } else {
+            const rawOutput = result.analysis_raw || '';
+            analysisContent.innerHTML = `
+                <div class="alert alert-warning">
+                    <i class="fa-solid fa-triangle-exclamation me-1"></i>
+                    <strong>Analisis belum tersedia.</strong> Model tidak mengembalikan JSON valid.
+                </div>
+                ${rawOutput ? `<details class="mt-3"><summary class="small text-muted">Output mentah</summary><pre class="bg-body-secondary small p-3 rounded">${escapeHTML(rawOutput)}</pre></details>` : ''}
+            `;
+        }
+
         if (result.usage) {
             const cachedTag = result.cached ? ' | ♻️ CACHED' : '';
-            tokenInfo.textContent = `Model: ${result.model} | Tokens: ${result.usage.total_tokens?.toLocaleString() || 'N/A'}${cachedTag}`;
+            const metaConfidence = analysisData && analysisData.meta && typeof analysisData.meta.confidence === 'number'
+                ? ` | Confidence: ${(analysisData.meta.confidence * 100).toFixed(0)}%`
+                : '';
+            tokenInfo.textContent = `Model: ${result.model} | Tokens: ${result.usage.total_tokens?.toLocaleString() || 'N/A'}${cachedTag}${metaConfidence}`;
         }
 
-        // Show refresh button
         refreshBtn.style.display = '';
 
     } catch (error) {
@@ -1737,38 +2030,190 @@ async function runAIAnalysis(forceRefresh = false) {
     }
 }
 
-/**
- * Simple Markdown → HTML converter for AI analysis output
- */
-function renderMarkdownToHTML(md) {
-    if (!md) return '<p class="text-muted">Tidak ada hasil analisis.</p>';
+function escapeHTML(value) {
+    if (value === null || value === undefined) return '';
+    return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
 
-    let html = md
-        // Headers
-        .replace(/^### (.*$)/gm, '<h3>$1</h3>')
-        .replace(/^## (.*$)/gm, '<h2 style="font-size:1.1rem;font-weight:700;margin-top:1.2rem;border-bottom:1px solid #eee;padding-bottom:4px;">$1</h2>')
-        .replace(/^# (.*$)/gm, '<h1 style="font-size:1.2rem;font-weight:700;">$1</h1>')
-        // Bold & Italic
-        .replace(/\*\*\*(.*?)\*\*\*/g, '<strong><em>$1</em></strong>')
-        .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-        .replace(/\*(.*?)\*/g, '<em>$1</em>')
-        // Unordered list
-        .replace(/^\- (.*$)/gm, '<li>$1</li>')
-        // Paragraphs (double newline)
-        .replace(/\n\n/g, '</p><p>')
-        // Single newline within paragraph
-        .replace(/\n/g, '<br>');
+function renderListSection(title, items) {
+    if (!Array.isArray(items)) return '';
+    const filtered = items
+        .map(item => (item === null || item === undefined ? '' : String(item).trim()))
+        .filter(item => item && item.toLowerCase() !== 'unknown');
+    if (!filtered.length) return '';
 
-    // Wrap consecutive <li> in <ul>
-    html = html.replace(/(<li>.*?<\/li>)(?:\s*<br>)?/gs, '$1');
-    html = html.replace(/((?:<li>.*?<\/li>\s*)+)/gs, '<ul>$1</ul>');
+    const listMarkup = filtered.map(item => `<li>${escapeHTML(item)}</li>`).join('');
+    if (!listMarkup) return '';
 
-    // Wrap in paragraph
-    html = '<p>' + html + '</p>';
+    return `
+        <div class="mb-3">
+            <div class="text-uppercase small text-muted fw-semibold mb-1">${escapeHTML(title)}</div>
+            <ul class="mb-0 ps-3">${listMarkup}</ul>
+        </div>
+    `;
+}
 
-    // Clean up empty paragraphs
-    html = html.replace(/<p>\s*<\/p>/g, '');
-    html = html.replace(/<p>\s*<br>\s*<\/p>/g, '');
+function renderMetaSection(meta) {
+    const symbol = escapeHTML(meta.symbol || '-');
+    const range = escapeHTML(meta.date_range || 'unknown');
+    const confidence = typeof meta.confidence === 'number' && !Number.isNaN(meta.confidence)
+        ? `${(meta.confidence * 100).toFixed(0)}%`
+        : 'n/a';
+    const screenshots = Array.isArray(meta.screenshots) && meta.screenshots.length
+        ? escapeHTML(meta.screenshots.join(', '))
+        : '-';
 
-    return html;
+    return `
+        <div class="mb-3">
+            <div class="text-uppercase small text-muted fw-semibold mb-1">Metadata</div>
+            <div class="d-flex flex-wrap gap-4">
+                <div>
+                    <div class="text-muted small">Symbol</div>
+                    <div class="fw-bold">${symbol}</div>
+                </div>
+                <div>
+                    <div class="text-muted small">Rentang Tanggal</div>
+                    <div class="fw-bold">${range}</div>
+                </div>
+                <div>
+                    <div class="text-muted small">Confidence</div>
+                    <div class="fw-bold">${confidence}</div>
+                </div>
+                <div>
+                    <div class="text-muted small">Screenshots</div>
+                    <div class="fw-bold">${screenshots}</div>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+function renderFundFlowSection(section) {
+    if (!section || typeof section !== 'object') return '';
+    const items = [];
+    if (section.foreign_trend && section.foreign_trend !== 'unknown') items.push(`Foreign: ${section.foreign_trend}`);
+    if (section.local_trend && section.local_trend !== 'unknown') items.push(`Local: ${section.local_trend}`);
+    if (section.retail_trend && section.retail_trend !== 'unknown') items.push(`Retail: ${section.retail_trend}`);
+    if (section.dominant_side && section.dominant_side !== 'unknown') items.push(`Dominan: ${section.dominant_side}`);
+    if (section.divergence && section.divergence !== 'unknown') items.push(`Divergensi: ${section.divergence}`);
+    if (Array.isArray(section.notes)) {
+        section.notes.filter(Boolean).forEach(note => items.push(note));
+    }
+    return renderListSection('Analisis Fund Flow', items);
+}
+
+function renderSmartMoneySection(section) {
+    if (!section || typeof section !== 'object') return '';
+    const items = [];
+    if (section.state && section.state !== 'UNKNOWN') items.push(`State: ${section.state}`);
+    if (section.assessment) items.push(section.assessment);
+    if (section.scores && typeof section.scores === 'object') {
+        const { effort, price_response, net_quality, vwap, elasticity } = section.scores;
+        if (effort) items.push(`Effort: ${effort}`);
+        if (price_response) items.push(`Price Response: ${price_response}`);
+        if (net_quality) items.push(`Net Quality: ${net_quality}`);
+        if (vwap) items.push(`VWAP: ${vwap}`);
+        if (elasticity) items.push(`Elasticity: ${elasticity}`);
+    }
+    return renderListSection('Analisis Smart Money', items);
+}
+
+function renderBrokerSection(section) {
+    if (!section || typeof section !== 'object') return '';
+    const buyers = Array.isArray(section.top_net_buyers) ? section.top_net_buyers.slice(0, 5) : [];
+    const sellers = Array.isArray(section.top_net_sellers) ? section.top_net_sellers.slice(0, 5) : [];
+
+    const buyerMarkup = buyers.length ? `
+        <div class="mb-2">
+            <div class="small text-muted">Top Net Buyers</div>
+            <ul class="mb-0 ps-3">
+                ${buyers.map(b => `<li><strong>${escapeHTML(b.code || '-')}</strong> (${escapeHTML((b.type || 'unknown').toString())}) — ${escapeHTML(b.value || 'unknown')}${b.comment ? ` · ${escapeHTML(b.comment)}` : ''}</li>`).join('')}
+            </ul>
+        </div>` : '';
+
+    const sellerMarkup = sellers.length ? `
+        <div class="mb-2">
+            <div class="small text-muted">Top Net Sellers</div>
+            <ul class="mb-0 ps-3">
+                ${sellers.map(s => `<li><strong>${escapeHTML(s.code || '-')}</strong> (${escapeHTML((s.type || 'unknown').toString())}) — ${escapeHTML(s.value || 'unknown')}${s.comment ? ` · ${escapeHTML(s.comment)}` : ''}</li>`).join('')}
+            </ul>
+        </div>` : '';
+
+    const patternsMarkup = renderListSection('Pola Broker', Array.isArray(section.patterns) ? section.patterns : []);
+
+    if (!buyerMarkup && !sellerMarkup && !patternsMarkup) return '';
+    return `
+        <div class="mb-3">
+            <div class="text-uppercase small text-muted fw-semibold mb-1">Broker Kunci</div>
+            ${buyerMarkup}
+            ${sellerMarkup}
+            ${patternsMarkup}
+        </div>
+    `;
+}
+
+function renderTechnicalSection(section) {
+    if (!section || typeof section !== 'object') return '';
+    const items = [];
+    if (Array.isArray(section.supports) && section.supports.length) items.push(`Support: ${section.supports.join(', ')}`);
+    if (Array.isArray(section.resistances) && section.resistances.length) items.push(`Resistance: ${section.resistances.join(', ')}`);
+    if (Array.isArray(section.accumulation_zones) && section.accumulation_zones.length) items.push(`Zona akumulasi: ${section.accumulation_zones.join(', ')}`);
+    if (Array.isArray(section.intraday_notes)) {
+        section.intraday_notes.filter(Boolean).forEach(note => items.push(note));
+    }
+    return renderListSection('Level Teknikal', items);
+}
+
+function renderRecommendationSection(section) {
+    if (!section || typeof section !== 'object') return '';
+    const rows = [];
+    if (section.phase) {
+        rows.push(`<div><div class="text-muted small">Fase</div><div class="fw-bold">${escapeHTML(section.phase)}</div></div>`);
+    }
+    if (section.rating) {
+        rows.push(`<div><div class="text-muted small">Rating</div><div class="fw-bold">${escapeHTML(section.rating)}</div></div>`);
+    }
+    const confidence = typeof section.confidence === 'number' && !Number.isNaN(section.confidence)
+        ? `${(section.confidence * 100).toFixed(0)}%`
+        : 'n/a';
+    rows.push(`<div><div class="text-muted small">Confidence</div><div class="fw-bold">${confidence}</div></div>`);
+
+    const rationale = renderListSection('Alasan', Array.isArray(section.rationale) ? section.rationale : []);
+    const risks = renderListSection('Risiko', Array.isArray(section.risks) ? section.risks : []);
+
+    return `
+        <div class="mb-3">
+            <div class="text-uppercase small text-muted fw-semibold mb-1">Kesimpulan & Rekomendasi</div>
+            <div class="d-flex flex-wrap gap-4 mb-2">
+                ${rows.join('')}
+            </div>
+            ${rationale}
+            ${risks}
+        </div>
+    `;
+}
+
+function renderAnalysisJSON(data) {
+    if (!data || typeof data !== 'object') {
+        return '<p class="text-muted">Analisis tidak tersedia.</p>';
+    }
+
+    const sections = [];
+    sections.push(renderMetaSection(data.meta || {}));
+    sections.push(renderListSection('Ringkasan Eksekutif', Array.isArray(data.executive_summary) ? data.executive_summary : []));
+    sections.push(renderFundFlowSection(data.fund_flow));
+    sections.push(renderSmartMoneySection(data.smart_money));
+    sections.push(renderBrokerSection(data.key_brokers));
+    sections.push(renderTechnicalSection(data.technical_levels));
+    sections.push(renderRecommendationSection(data.recommendation));
+
+    const jsonDump = escapeHTML(JSON.stringify(data, null, 2));
+    sections.push(`<details class="mt-3"><summary class="small text-muted">Lihat JSON mentah</summary><pre class="bg-body-secondary small p-3 rounded">${jsonDump}</pre></details>`);
+
+    return sections.filter(Boolean).join('');
 }

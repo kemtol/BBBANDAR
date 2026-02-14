@@ -8,15 +8,109 @@
 
 /* ---------- 1) THEME TOKENS ---------- */
 :root {
+  color-scheme: light;
   --bg: #f6f8fb;
   --surface: #ffffff;
+  --surface-alt: #f1f5f9;
+  --surface-elevated: #ffffff;
   --text: #0f172a;
-  --muted: #64748b;
+  --text-secondary: #334155;
+  --text-muted: #64748b;
+  --text-inverse: #0b0b0e;
+  --muted: var(--text-muted);
   --border: #e5e7eb;
+  --border-muted: rgba(148, 163, 184, 0.35);
   --radius: 12px;
   --primary: #1e90ff;
   /* dodgerblue */
   --primary-hover: #1877d4;
+  --accent-primary: #f2a900;
+  --accent-positive: #198754;
+  --accent-negative: #dc3545;
+  --accent-info: #0d6efd;
+  --accent-warning: #f59e0b;
+  --overlay: rgba(15, 23, 42, 0.55);
+  --shadow-elevated: 0 12px 24px rgba(15, 23, 42, 0.12);
+  --navbar-bg: #aeffff;
+  --navbar-text: #644fe5;
+  --navbar-highlight: #463cff;
+  --search-panel-bg: #463cff;
+  --search-panel-text: #ffffff;
+  --search-input-bg: rgba(255, 255, 255, 0.1);
+  --search-input-border: rgba(255, 255, 255, 0.2);
+  --search-input-text: #ffffff;
+  --search-input-placeholder: rgba(255, 255, 255, 0.5);
+  --search-history-bg: rgba(255, 255, 255, 0.05);
+  --search-history-hover: rgba(255, 255, 255, 0.1);
+  --btn-outline-secondary-hover: rgba(30, 144, 255, 0.08);
+  --focus-ring: rgba(30, 144, 255, 0.18);
+  --bs-body-bg: var(--bg);
+  --bs-body-color: var(--text);
+  --bs-border-color: var(--border);
+  --bs-card-bg: var(--surface);
+  --bs-card-color: var(--text);
+  --bs-primary: var(--primary);
+  --bs-secondary: #6c757d;
+  --bs-secondary-color: var(--text-muted);
+  --bs-tertiary-bg: var(--surface-alt);
+  --bs-dropdown-bg: var(--surface);
+  --bs-dropdown-link-color: var(--text);
+  --bs-dropdown-link-hover-bg: rgba(15, 23, 42, 0.05);
+  --bs-dropdown-link-hover-color: var(--text);
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0b0b0e;
+  --surface: #14141a;
+  --surface-alt: #1f1f26;
+  --surface-elevated: #1f1f26;
+  --text: #f5f5f7;
+  --text-secondary: #c3c3cd;
+  --text-muted: #9292a6;
+  --text-inverse: #0b0b0e;
+  --muted: var(--text-muted);
+  --border: #2a2a33;
+  --border-muted: rgba(82, 94, 106, 0.55);
+  --primary: #3a8bff;
+  --primary-hover: #70a7ff;
+  --accent-primary: #f2a900;
+  --accent-positive: #4ecb71;
+  --accent-negative: #ff5252;
+  --accent-info: #70a7ff;
+  --accent-warning: #f2a900;
+  --overlay: rgba(7, 7, 10, 0.7);
+  --shadow-elevated: 0 20px 36px rgba(0, 0, 0, 0.55);
+  --navbar-bg: #14141a;
+  --navbar-text: #f5f5f7;
+  --navbar-highlight: #f2a900;
+  --search-panel-bg: #1f1f26;
+  --search-panel-text: #f5f5f7;
+  --search-input-bg: rgba(245, 245, 247, 0.08);
+  --search-input-border: rgba(195, 195, 205, 0.25);
+  --search-input-text: #f5f5f7;
+  --search-input-placeholder: rgba(195, 195, 205, 0.6);
+  --search-history-bg: rgba(20, 20, 26, 0.6);
+  --search-history-hover: rgba(242, 169, 0, 0.18);
+  --btn-outline-secondary-hover: rgba(242, 169, 0, 0.18);
+  --focus-ring: rgba(58, 139, 255, 0.35);
+  --bs-body-bg: var(--bg);
+  --bs-body-color: var(--text);
+  --bs-border-color: var(--border);
+  --bs-card-bg: var(--surface);
+  --bs-card-color: var(--text);
+  --bs-primary: var(--primary);
+  --bs-secondary: var(--text-secondary);
+  --bs-secondary-color: var(--text-muted);
+  --bs-tertiary-bg: var(--surface-alt);
+  --bs-dropdown-bg: var(--surface-alt);
+  --bs-dropdown-link-color: var(--text);
+  --bs-dropdown-link-hover-bg: rgba(242, 169, 0, 0.12);
+  --bs-dropdown-link-hover-color: var(--text);
 }
 
 * {

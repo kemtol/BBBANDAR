@@ -1,6 +1,77 @@
 // Header Logic for SSSAHAM Emiten Pages
 
+const THEME_STORAGE_KEY = 'ui:theme';
+let themeKeyListenerAttached = false;
+
+function applyTheme(theme, persist = true) {
+    const root = document.documentElement;
+    if (!root || !theme) return;
+    root.setAttribute('data-theme', theme);
+    root.style.colorScheme = theme === 'dark' ? 'dark' : 'light';
+    if (persist) {
+        try {
+            localStorage.setItem(THEME_STORAGE_KEY, theme);
+        } catch (error) {
+            // ignore persistence errors
+        }
+    }
+}
+
+function getCurrentTheme() {
+    const root = document.documentElement;
+    return root ? root.getAttribute('data-theme') : 'dark';
+}
+
+function toggleTheme() {
+    const current = getCurrentTheme();
+    const next = current === 'dark' ? 'light' : 'dark';
+    applyTheme(next, true);
+}
+
+function initThemeControls() {
+    const root = document.documentElement;
+    const stored = (() => {
+        try {
+            return localStorage.getItem(THEME_STORAGE_KEY);
+        } catch (error) {
+            return null;
+        }
+    })();
+    const initialTheme = root?.getAttribute('data-theme') || stored || 'dark';
+    applyTheme(initialTheme, false);
+
+    const toggleIcon = document.getElementById('theme-toggle-icon');
+    if (toggleIcon) {
+        toggleIcon.setAttribute('role', 'button');
+        toggleIcon.setAttribute('tabindex', '0');
+        toggleIcon.addEventListener('click', toggleTheme);
+        toggleIcon.addEventListener('keypress', (event) => {
+            if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                toggleTheme();
+            }
+        });
+    }
+
+    if (!themeKeyListenerAttached) {
+        document.addEventListener('keydown', (event) => {
+            if (event.shiftKey && event.key && event.key.toLowerCase() === 'd') {
+                event.preventDefault();
+                toggleTheme();
+            }
+        });
+        themeKeyListenerAttached = true;
+    }
+
+    window.SSSAHAMTheme = {
+        toggle: toggleTheme,
+        set: (theme) => applyTheme(theme, true),
+        get: () => getCurrentTheme(),
+    };
+}
+
 $(document).ready(function () {
+    initThemeControls();
     // Smart Sticky Header
     let lastScrollY = window.scrollY;
     const navbar = document.querySelector('.navbar');

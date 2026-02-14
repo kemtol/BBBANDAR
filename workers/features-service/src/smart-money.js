@@ -119,9 +119,9 @@ export class SmartMoney {
         const fullSeries = [...existingHistory, currentMetrics];
         const n = fullSeries.length;
 
-        // 4. Calculate Z-Scores for Windows [5, 10, 20, 60]
+        // 4. Calculate Z-Scores for Windows [2, 5, 10, 20, 60]
         const z_scores = {};
-        const windows = [5, 10, 20, 60];
+        const windows = [2, 5, 10, 20, 60];
 
         // Need at least window size? No, calculate what we can.
 

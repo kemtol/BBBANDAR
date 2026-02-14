@@ -91,6 +91,65 @@ export default {
             }
         }
 
+        if (path === "/capture/broker-intraday" && request.method === "POST") {
+            let payload = {};
+            try {
+                payload = await request.json();
+            } catch (_) {}
+
+            const symbol = (payload.symbol || "").toString().trim().toUpperCase();
+            if (!symbol) {
+                return new Response(JSON.stringify({ ok: false, error: "symbol is required" }), {
+                    status: 400,
+                    headers: corsHeaders("application/json")
+                });
+            }
+
+            const baseUrl = (payload.base_url || env.AI_SCREENSHOT_BASE || "https://buy.sssaham.com").replace(/\/$/, "");
+            const targetUrl = `${baseUrl}/idx/emiten/detail.html?kode=${symbol}`;
+            const uploadBase = (payload.upload_base || env.AI_SCREENSHOT_UPLOAD_URL || "https://api-saham.mkemalw.workers.dev/ai/screenshot").replace(/\/$/, "");
+            const label = (payload.label || "intraday").toString().toLowerCase();
+
+            const browser = await puppeteer.launch(env.BROWSER);
+            const page = await browser.newPage();
+
+            try {
+                await page.setViewport({ width: 1440, height: 900 });
+                await page.goto(targetUrl, { waitUntil: "networkidle2", timeout: 60000 });
+                await page.waitForSelector('#chart-container canvas', { timeout: 60000 });
+                await page.waitForFunction(() => {
+                    const canvas = document.querySelector('#footprintChart');
+                    return canvas && canvas.offsetWidth > 0 && canvas.offsetHeight > 0;
+                }, { timeout: 30000 });
+
+                const targetEl = await page.$('#app');
+                const screenshotBuffer = await (targetEl ? targetEl.screenshot({ type: "jpeg", quality: 80 }) : page.screenshot({ type: "jpeg", quality: 80 }));
+
+                const uploadUrl = `${uploadBase}?symbol=${symbol}&label=${encodeURIComponent(label)}&origin=service`;
+                const uploadResp = await fetch(uploadUrl, {
+                    method: "PUT",
+                    headers: { "Content-Type": "image/jpeg" },
+                    body: screenshotBuffer
+                });
+                const uploadJson = await uploadResp.json();
+                if (!uploadResp.ok || !uploadJson.ok) {
+                    throw new Error(uploadJson.error || `Upload failed (${uploadResp.status})`);
+                }
+
+                return new Response(JSON.stringify({ ok: true, symbol, label, key: uploadJson.key }), {
+                    headers: corsHeaders("application/json")
+                });
+            } catch (err) {
+                console.error("[AI Capture] Error:", err);
+                return new Response(JSON.stringify({ ok: false, error: err.message }), {
+                    status: 500,
+                    headers: corsHeaders("application/json")
+                });
+            } finally {
+                await browser.close();
+            }
+        }
+
         // CORS Preflight
         if (request.method === "OPTIONS") {
             return new Response(null, { headers: corsHeaders() });
