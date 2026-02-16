@@ -34,6 +34,14 @@
         {
             "binding": "FEATURES_SERVICE",
             "service": "features-service"
+        },
+        {
+            "binding": "AI_SCREENSHOT_SERVICE",
+            "service": "ai-screenshot-service"
+        },
+        {
+            "binding": "IDX_HANDLER",
+            "service": "idx-handler"
         }
     ]
 }

@@ -1,151 +1,3 @@
-/**
- * ============================================================
- * api-saham (Cloudflare Worker) — Endpoint Documentation (v2026-02-04)
- * ============================================================
- *
- * Purpose
- * - Public API for screener, broker summary range, footprint/ orderflow, AI screenshot+analysis.
- * - Mostly READS data from R2/D1, and WRITES only derived caches (SSSAHAM_EMITEN) + AI artifacts.
- * - Can TRIGGER upstream repair/backfill services (does not write raw taping files directly).
- *
- * Global behavior
- * - CORS enabled for all responses via withCORS()
- * - OPTIONS preflight returns 204
- *
- * Storage / bindings (high-level)
- * - env.SSSAHAM_EMITEN (R2): features cache, logo cache, AI screenshots & AI analysis cache, cache-summary results
- * - env.RAW_BROKSUM (R2): raw broker-summary daily files and per-ticker broksum caches
- * - env.FOOTPRINT_BUCKET (R2): raw footprint 1m jsonl segments and processed daily footprint files
- * - env.SSSAHAM_DB (D1): brokers table, temp_footprint_consolidate, daily_features, scraping_logs
- * - env.BROKSUM_SERVICE (Service Binding): triggers broker summary backfill
- * - external: livetrade-taping-agregator repair-footprint trigger
- * - env.AI_SCREENSHOT_SERVICE / *_URL: screenshot capture service trigger
- *
- * ------------------------------------------------------------
- * PUBLIC ENDPOINTS
- * ------------------------------------------------------------
- *
- * GET /health
- * - Health check
- * - Returns: { ok: true, service: "api-saham" }
- *
- * GET /screener
- * - Returns latest Z-score screener (via pointer features/latest.json)
- * - Reads: SSSAHAM_EMITEN
- *
- * GET /screener-accum[?window=2|5|10|20]
- * - Returns accumulation scanner data (prebuilt) merged with screener z-score fields
- * - Reads: SSSAHAM_EMITEN (cache/screener-accum-latest.json, features/latest.json -> pointer)
- *
- * GET /features/history?symbol=BBRI
- * - Returns per-ticker z-score audit trail JSON
- * - Reads: SSSAHAM_EMITEN features/z_score/emiten/{ticker}.json
- *
- * GET /features/calculate?symbol=BBRI
- * - On-demand feature calc (z-ish) using broksum cache first, then D1 footprint fallback
- * - Reads: RAW_BROKSUM broksum/{ticker}/cache.json, D1 temp_footprint_consolidate
- *
- * GET /brokers
- * - Returns brokers table as ARRAY
- * - Reads: D1 brokers
- *
- * GET /cache-summary?symbol=BBRI&from=YYYY-MM-DD&to=YYYY-MM-DD[&cache=default|rebuild|off][&reload=true][&include_orderflow=false]
- * - Range broker summary aggregation + top brokers + aggregated foreign/retail/local
- * - Cache read/write (R2): broker/summary/v4/{symbol}/{from}_{to}.json
- * - If include_orderflow (default true): attaches /orderflow snapshot (D1 temp_footprint_consolidate + daily_features)
- * - TRIGGERS (indirect): if data empty/incomplete -> env.BROKSUM_SERVICE auto-backfill (fire-and-forget)
- * - Writes (derived): SSSAHAM_EMITEN cache
- *
- * GET /foreign-flow-scanner
- * - Returns pre-computed foreign flow trend
- * - Reads: SSSAHAM_EMITEN features/foreign-flow-scanner.json
- *
- * GET /foreign-sentiment?days=7
- * - Gross foreign buy/sell/net for MVP tickers + cumulative
- * - Cache R2: cache/foreign-sentiment-{days}d-v1.json (TTL ~1h)
- * - Reads: RAW_BROKSUM {ticker}/{date}.json, brokers mapping from D1 (retail classification)
- * - Writes: SSSAHAM_EMITEN cache
- *
- * GET /footprint/summary
- * - Returns footprint hybrid summary from features/footprint-summary.json
- * - Weekend / empty / zscore-only fallback: calculates last FULL day via calculateFootprintRange() scanning up to 7 days back
- * - Reads: SSSAHAM_EMITEN features/footprint-summary.json, D1 temp_footprint_consolidate (+ daily_features as context)
- *
- * GET /footprint/range?from=YYYY-MM-DD&to=YYYY-MM-DD
- * - Calculates footprint hybrid over a date range using D1 temp_footprint_consolidate + daily_features context
- * - Reads: D1
- *
- * GET /footprint-raw-hist?kode=BBRI[&date=YYYY-MM-DD]
- * - Returns minute-level chart components: { buckets, tableData, candles, is_repairing, is_fallback }
- * - Reads raw 1m segments (00-23 UTC): FOOTPRINT_BUCKET footprint/{kode}/1m/YYYY/MM/DD/HH.jsonl
- * - Fallback sources (if broken/empty/incomplete):
- *   P1: SSSAHAM_EMITEN processed/{kode}/intraday.json
- *   P2: FOOTPRINT_BUCKET processed/{dateStr}.json (pick ticker)
- * - TRIGGERS: if decision.repair && non-sparse -> POST livetrade-taping-agregator /repair-footprint (fire-and-forget)
- *
- * GET /symbol?kode=BBRI
- * - Returns snapshot + state + repair/fallback flags (chart detail lives in /footprint-raw-hist)
- * - Reads: D1 temp_footprint_consolidate + daily_features, FOOTPRINT_BUCKET raw segments (00-23 UTC)
- * - Same fallback strategy (P1/P2) + same repair trigger gating
- *
- * GET /audit/logs?limit=100
- * - Returns scraping logs (D1)
- * - Reads: D1 scraping_logs
- *
- * GET /audit-trail?symbol=BBRI&limit=100
- * - Returns audit entries for symbol from R2
- * - Reads: SSSAHAM_EMITEN audit/{symbol}.json
- *
- * GET /logo?ticker=BBRI
- * - Serves logo image from R2 cache or read-through from upstream assets.stockbit.com
- * - Reads/Writes: SSSAHAM_EMITEN logo/{ticker}.png
- *
- * GET /debug/raw-file?key=...
- * - Debug helper to inspect RAW_BROKSUM object body
- * - Reads: RAW_BROKSUM
- *
- * ------------------------------------------------------------
- * AI ENDPOINTS
- * ------------------------------------------------------------
- *
- * PUT /ai/screenshot?symbol=BBRI&label=7d[&origin=client|service]
- * - Uploads image/* to R2 with key: ai-screenshots/{symbol}/{today}_{label}.{ext}
- * - Writes: SSSAHAM_EMITEN ai-screenshots/...
- * - Side-effect: if origin !== "service" and label != "intraday", triggers intraday capture scheduling
- *
- * GET /ai/screenshot?key=ai-screenshots/...
- * - Serves stored screenshot image from R2
- *
- * POST /ai/analyze-broksum
- * Body: { symbol: "BBRI", image_keys: [{key,label}, ...], force?: true }
- * - Ensures "intraday" screenshot exists (may trigger capture and poll for availability)
- * - Calls OpenAI vision (gpt-4.1) to produce JSON analysis, retries once if JSON invalid
- * - Fallback: Grok text-only if OpenAI fails (requires GROK_API_KEY)
- * - Caches result daily: ai-cache/{symbol}/{today}.json (SSSAHAM_EMITEN)
- *
- * ------------------------------------------------------------
- * INTERNAL / OPS ENDPOINTS
- * ------------------------------------------------------------
- *
- * POST /internal/audit-backfill-daily?limit=40
- * - Triggers audit/backfill daily broker flow util
- * - Reads/Writes depend on auditAndBackfillDailyBrokerFlow implementation
- *
- * GET /integrity-scan
- * - Proxy to env.FEATURES_SERVICE.fetch(req)
- *
- * ------------------------------------------------------------
- * Side-effect summary (important!)
- * ------------------------------------------------------------
- * - This worker DOES NOT write raw taping streams directly (footprint jsonl / raw broksum daily json).
- * - It CAN trigger:
- *   - livetrade footprint repair/backfill via external /repair-footprint
- *   - broksum backfill via env.BROKSUM_SERVICE /auto-backfill
- * - It DOES write derived caches to SSSAHAM_EMITEN (cache-summary, logos, AI screenshots/analysis).
- */
-
-// Import audit & backfill util
-import { auditAndBackfillDailyBrokerFlow } from "./audit-backfill-daily.js";
 import openapi from "./openapi.json";
 
 const PUBLIC_PATHS = new Set(["/", "/docs", "/console", "/openapi.json", "/health", "/screener", "/screener-accum", "/cache-summary", "/features/history"]);
@@ -165,112 +17,6 @@ function withCORS(resp) {
   });
 }
 
-function shouldRepairFootprint({ candles, dateStr, completion, missingSessionHours, brokenFound }) {
-  const nowWIB = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Jakarta" }));
-  const todayWIB = `${nowWIB.getFullYear()}-${String(nowWIB.getMonth() + 1).padStart(2, "0")}-${String(nowWIB.getDate()).padStart(2, "0")}`;
-  const isPastDay = dateStr !== todayWIB;
-
-  const noData = !candles || candles.length === 0;
-
-  const reason = completion?.reason || null;
-  const isSparse = reason === "SPARSE_DATA";
-
-  const incompleteNotSparse =
-    completion?.isIncomplete && !isSparse;
-
-  // IMPORTANT:
-  // - missingSessionHours hanya meaningful untuk PAST DAY, dan hanya kalau bukan SPARSE
-  const missingHeuristic =
-    isPastDay && !isSparse && (missingSessionHours >= 2);
-
-  const repair =
-    noData ||
-    brokenFound ||
-    incompleteNotSparse ||
-    missingHeuristic;
-
-  // priority: kalau datanya ada tapi incomplete (non-sparse) -> high
-  const priority = (incompleteNotSparse && !noData) ? "high" : "normal";
-
-  const missingRatio = missingSessionHours / 8; // 02..09 UTC (8 jam)
-
-  return { repair, priority, missingSessionHours, missingRatio, reason };
-}
-
-function isRepairEnabled(env) {
-  const raw = env?.REPAIR_ENABLED;
-  if (raw === undefined || raw === null) return true;
-
-  if (typeof raw === "boolean") return raw;
-
-  if (typeof raw === "string") {
-    const value = raw.trim().toLowerCase();
-    return !["0", "false", "off", "no"].includes(value);
-  }
-
-  return Boolean(raw);
-}
-
-async function countMissingSessionHours(env, kode, dateStr) {
-  const [y, m, d] = dateStr.split("-");
-  let missing = 0;
-
-  // NOTE: we check hour-segment objects 02..09 UTC (8 segments).
-  // This is a storage-segment heuristic, NOT "market duration" hours.
-  for (let hh = 2; hh <= 9; hh++) {
-    const hStr = String(hh).padStart(2, "0");
-    const key = `footprint/${kode}/1m/${y}/${m}/${d}/${hStr}.jsonl`;
-    const obj = await env.FOOTPRINT_BUCKET.head(key);
-    if (!obj) missing++;
-  }
-  return missing;
-}
-
-function resolveOHLC(candle) {
-  const isFiniteNumber = (val) => typeof val === "number" && Number.isFinite(val);
-  const ohlc = candle?.ohlc || {};
-
-  const fallbackBase = isFiniteNumber(candle?.open)
-    ? candle.open
-    : isFiniteNumber(candle?.close)
-    ? candle.close
-    : isFiniteNumber(candle?.price)
-    ? candle.price
-    : 0;
-
-  const open = isFiniteNumber(ohlc.o) ? ohlc.o : fallbackBase;
-  const close = isFiniteNumber(ohlc.c)
-    ? ohlc.c
-    : isFiniteNumber(candle?.close)
-    ? candle.close
-    : fallbackBase;
-
-  const high = isFiniteNumber(ohlc.h) ? ohlc.h : Math.max(open, close);
-  const low = isFiniteNumber(ohlc.l) ? ohlc.l : Math.min(open, close);
-
-  return { open, high, low, close };
-}
-
-
-// ==============================
-// UTC Trading Calendar Helpers
-// ==============================
-// Use T12:00Z to avoid timezone edge-shifts
-function isWeekendUTC(dateStr) {
-  const d = new Date(`${dateStr}T12:00:00Z`);
-  const dow = d.getUTCDay(); // 0=Sun,6=Sat
-  return dow === 0 || dow === 6;
-}
-
-function prevTradingDayUTC(dateStr) {
-  let d = new Date(`${dateStr}T12:00:00Z`);
-  do {
-    d = new Date(d.getTime() - 86400000); // -1 day
-  } while ([0, 6].includes(d.getUTCDay()));
-  return d.toISOString().slice(0, 10);
-}
-
-
 function json(data, status = 200, extraHeaders = {}) {
   return withCORS(
     new Response(JSON.stringify(data, null, 2), {
@@ -282,152 +28,6 @@ function json(data, status = 200, extraHeaders = {}) {
       }
     })
   );
-}
-
-function buildEmitenQuery(filters = {}) {
-  const clauses = [];
-  const params = [];
-
-  const status = normalizeStatusFilter(filters.status);
-  if (status) {
-    clauses.push("status = ? COLLATE NOCASE");
-    params.push(status);
-  }
-
-  const sector = normalizeSectorFilter(filters.sector);
-  if (sector) {
-    clauses.push("sector = ? COLLATE NOCASE");
-    params.push(sector);
-  }
-
-  const q = normalizeSearchQuery(filters.q);
-  if (q) {
-    clauses.push("ticker LIKE ? COLLATE NOCASE");
-    params.push(`%${q}%`);
-  }
-
-  const whereClause = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
-  const limit = clampLimit(filters.limit);
-
-  const sql = `
-    SELECT ticker, sector, industry, status, created_at, updated_at
-    FROM emiten
-    ${whereClause}
-    ORDER BY ticker ASC
-    LIMIT ?
-  `;
-
-  params.push(limit);
-  return { sql, params };
-}
-
-async function fetchEmitenList(env, filters = {}) {
-  if (!env?.SSSAHAM_DB?.prepare) {
-    throw new Error("SSSAHAM_DB binding is missing");
-  }
-
-  const { sql, params } = buildEmitenQuery(filters);
-  const statement = env.SSSAHAM_DB.prepare(sql);
-  const runner = params.length ? statement.bind(...params) : statement;
-  const { results } = await runner.all();
-  return (results || []).map((row) => ({
-    ticker: row.ticker,
-    sector: row.sector ?? null,
-    industry: row.industry ?? null,
-    status: row.status ?? null,
-    created_at: row.created_at ?? null,
-    updated_at: row.updated_at ?? null
-  }));
-}
-
-function clampLimit(limitValue, defaultValue = 500) {
-  if (limitValue === undefined || limitValue === null || limitValue === "") {
-    return defaultValue;
-  }
-
-  const num = Number(limitValue);
-  if (!Number.isFinite(num)) return defaultValue;
-  const clamped = Math.min(Math.max(Math.floor(num), 1), 2000);
-  return clamped;
-}
-
-function normalizeStatusFilter(value) {
-  if (value === undefined || value === null) return "ACTIVE";
-  const upper = String(value).trim().toUpperCase();
-  if (!upper) return "ACTIVE";
-  if (upper === "ALL") return null;
-  return upper;
-}
-
-function normalizeSectorFilter(value) {
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  return trimmed.length ? trimmed : null;
-}
-
-function normalizeSearchQuery(value) {
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  return trimmed.replace(/[\%_]/g, "");
-}
-
-function getIdxSyncToken(env) {
-  const raw = env?.IDX_SYNC_TOKEN;
-  if (typeof raw !== "string") return null;
-  const trimmed = raw.trim();
-  return trimmed.length ? trimmed : null;
-}
-
-function requireIdxAdmin(req, env) {
-  const token = getIdxSyncToken(env);
-  if (!token) {
-    return { ok: false, response: json({ error: "IDX_SYNC_TOKEN not configured" }, 500) };
-  }
-
-  const provided = normalizeTokenHeader(req.headers.get("x-admin-token")) || extractBearerToken(req.headers.get("authorization"));
-  if (provided && provided === token) {
-    return { ok: true };
-  }
-
-  return { ok: false, response: json({ error: "Unauthorized" }, 401) };
-}
-
-function normalizeTokenHeader(value) {
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  return trimmed.length ? trimmed : null;
-}
-
-function extractBearerToken(value) {
-  if (typeof value !== "string") return null;
-  const match = value.match(/^Bearer\s+(.+)$/i);
-  return match ? normalizeTokenHeader(match[1]) : null;
-}
-
-async function proxyIdxSync(env) {
-  if (!env?.IDX_HANDLER?.fetch) {
-    throw new Error("IDX_HANDLER binding is missing");
-  }
-
-  const headers = new Headers({ "content-type": "application/json" });
-  const token = getIdxSyncToken(env);
-  if (token) headers.set("x-admin-token", token);
-
-  const resp = await env.IDX_HANDLER.fetch("https://idx-handler/internal/idx/sync-emiten", {
-    method: "POST",
-    headers
-  });
-
-  const text = await resp.text();
-  let data;
-  try {
-    data = JSON.parse(text);
-  } catch (err) {
-    data = { raw: text || null };
-  }
-
-  return { status: resp.status, data };
 }
 
 // ==============================
@@ -460,27 +60,18 @@ async function calculateFootprintRange(env, fromDateStr, toDateStr) {
 
   // 2. Fetch Footprint Aggregates (L1)
   const { results } = await env.SSSAHAM_DB.prepare(`
-  SELECT 
-      ticker,
-      SUM(vol) as total_vol,
-      SUM(delta) as total_delta,
-      MIN(time_key) as first_time,
-      MAX(time_key) as last_time,
-
-      -- prefer true high/low, fallback to close if high/low missing/bad
-      MAX(CASE WHEN high IS NOT NULL AND high > 0 THEN high ELSE close END) AS high,
-      MIN(CASE WHEN low  IS NOT NULL AND low  > 0 THEN low  ELSE close END) AS low,
-
-      -- keep close-range too (debug/telemetry)
-      MAX(close) AS close_hi,
-      MIN(close) AS close_lo
-
-  FROM temp_footprint_consolidate
-  WHERE time_key >= ? AND time_key <= ?
-  GROUP BY ticker
-`).bind(startTs, endTs).all();
-
-
+        SELECT 
+            ticker,
+            SUM(vol) as total_vol,
+            SUM(delta) as total_delta,
+            MIN(time_key) as first_time,
+            MAX(time_key) as last_time,
+            MAX(close) as high,
+            MIN(close) as low
+        FROM temp_footprint_consolidate
+        WHERE time_key >= ? AND time_key <= ?
+        GROUP BY ticker
+    `).bind(startTs, endTs).all();
 
   if (!results || results.length === 0) return { items: [] };
 
@@ -491,17 +82,7 @@ async function calculateFootprintRange(env, fromDateStr, toDateStr) {
 
   for (let i = 0; i < results.length; i += BATCH_SIZE) {
     const chunk = results.slice(i, i + BATCH_SIZE);
-    const conditions = chunk.map(r => {
-      const t = String(r.ticker || "")
-        .toUpperCase()
-        .replace(/[^A-Z0-9]/g, ""); // keep it strict
-
-      const first = Number(r.first_time) || 0;
-      const last = Number(r.last_time) || 0;
-
-      if (!t || !first || !last) return null;
-      return `(ticker = '${t}' AND time_key IN (${first}, ${last}))`;
-    }).filter(Boolean).join(" OR ");
+    const conditions = chunk.map(r => `(ticker = '${r.ticker}' AND time_key IN (${r.first_time}, ${r.last_time}))`).join(" OR ");
 
     if (conditions) {
       const { results: ohlc } = await env.SSSAHAM_DB.prepare(`
@@ -564,105 +145,87 @@ function normalize(value, min, max) {
 
 /**
  * Checks if the fetched footprint data is complete based on market hours.
- * NOTE:
- * - Source is 1m rows, BUT completeness uses "5m activity buckets" heuristic:
- *   expectedBuckets5m ~ how many 5-minute windows should have activity for non-sparse tickers.
- * - This prevents sparse tickers from being treated as "broken/incomplete".
- *
- * Market hours: 09:00 - 16:00 WIB (02:00 - 09:00 UTC)
+ * Market: 09:00 - 16:00 WIB (02:00 - 09:00 UTC)
  */
 function checkDataCompleteness(candles, dateStr) {
-  if (!candles || candles.length === 0) {
-    return { isIncomplete: true, reason: "NO_DATA" };
-  }
+  if (!candles || candles.length === 0) return { isIncomplete: true, reason: "NO_DATA" };
 
   const now = new Date();
+  // Get current time in WIB
   const nowWIB = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Jakarta" }));
-  const todayWIBStr = `${nowWIB.getFullYear()}-${String(nowWIB.getMonth() + 1).padStart(2, "0")}-${String(nowWIB.getDate()).padStart(2, "0")}`;
+  const todayWIBStr = `${nowWIB.getFullYear()}-${String(nowWIB.getMonth() + 1).padStart(2, '0')}-${String(nowWIB.getDate()).padStart(2, '0')}`;
   const nowUTC = now.toISOString().slice(11, 16);
-  const nowWIBTime = `${String(nowWIB.getHours()).padStart(2, "0")}:${String(nowWIB.getMinutes()).padStart(2, "0")}`;
+  const nowWIBTime = `${String(nowWIB.getHours()).padStart(2, '0')}:${String(nowWIB.getMinutes()).padStart(2, '0')}`;
 
+  const lastCandle = candles[candles.length - 1];
+  const lastCandleDate = new Date(lastCandle.t0);
+  const lastCandleWIB = new Date(lastCandleDate.toLocaleString("en-US", { timeZone: "Asia/Jakarta" }));
+  const lastCandleUTC = lastCandleDate.toISOString().slice(11, 16);
+  const lastWIBTime = `${String(lastCandleWIB.getHours()).padStart(2, '0')}:${String(lastCandleWIB.getMinutes()).padStart(2, '0')}`;
+
+  const lastH = lastCandleWIB.getHours();
+  const lastM = lastCandleWIB.getMinutes();
   const isToday = dateStr === todayWIBStr;
+  const nowH = nowWIB.getHours();
+  const nowM = nowWIB.getMinutes();
   const dayOfWeek = nowWIB.getDay(); // 0=Sun, 6=Sat
   const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
 
-  // pick last traded candle if possible (vol>0), else fallback to last row
-  const lastTraded = [...candles].reverse().find(c => (c?.vol || 0) > 0) || candles[candles.length - 1];
-  const lastCandleDate = new Date(lastTraded.t0);
-  const lastCandleWIB = new Date(lastCandleDate.toLocaleString("en-US", { timeZone: "Asia/Jakarta" }));
-  const lastCandleUTC = lastCandleDate.toISOString().slice(11, 16);
-  const lastWIBTime = `${String(lastCandleWIB.getHours()).padStart(2, "0")}:${String(lastCandleWIB.getMinutes()).padStart(2, "0")}`;
-
+  // Market hours constants
   const marketOpenHour = 9;
   const marketCloseHour = 16;
 
   console.log(`[COMPLETION] ========================================`);
   console.log(`[COMPLETION] dateStr=${dateStr}, isToday=${isToday}`);
   console.log(`[COMPLETION] NOW: ${nowWIBTime} WIB (${nowUTC} UTC), Weekend=${isWeekend}`);
-  console.log(`[COMPLETION] Last traded: ${lastWIBTime} WIB (${lastCandleUTC} UTC)`);
-  console.log(`[COMPLETION] Row count: ${candles.length}`);
+  console.log(`[COMPLETION] Last candle: ${lastWIBTime} WIB (${lastCandleUTC} UTC)`);
+  console.log(`[COMPLETION] Candle count: ${candles.length}`);
 
-  // Count traded rows only
-  const tradedRows = candles.reduce((n, c) => n + (((c?.vol || 0) > 0) ? 1 : 0), 0);
-
-  // Expected "activity buckets" in 5-minute windows (heuristic)
-  let expectedBuckets5m = 0;
-
-  if (isToday && !isWeekend && nowWIB.getHours() >= marketOpenHour) {
-    const nowH = nowWIB.getHours();
-    const nowM = nowWIB.getMinutes();
+  // Calculate expected candles based on elapsed market time
+  let expectedCandles = 0;
+  if (isToday && !isWeekend && nowH >= marketOpenHour) {
+    // Today: calculate from 09:00 to current time (or market close if past 16:00)
     const effectiveEndH = Math.min(nowH, marketCloseHour);
     const effectiveEndM = nowH < marketCloseHour ? nowM : 0;
-
-    const elapsedMins = Math.max(0, (effectiveEndH - marketOpenHour) * 60 + effectiveEndM);
-    expectedBuckets5m = Math.floor(elapsedMins / 5);
-    console.log(`[COMPLETION] Today buckets: ~${expectedBuckets5m} (elapsed ${elapsedMins} mins / 5)`);
+    const elapsedMins = (effectiveEndH - marketOpenHour) * 60 + effectiveEndM;
+    expectedCandles = Math.floor(elapsedMins / 5); // 5-min candles
+    console.log(`[COMPLETION] Today: 09:00-${nowWIBTime} WIB = ${elapsedMins} mins = ~${expectedCandles} expected candles`);
   } else if (!isToday) {
-    expectedBuckets5m = 84; // 09:00-16:00 WIB = 7h => 420 mins / 5 = 84 buckets
-    console.log(`[COMPLETION] Past day buckets: ~84`);
+    // Past trading day: full session 09:00-16:00 = 7 hours = 420 mins = 84 candles
+    expectedCandles = 84;
+    console.log(`[COMPLETION] Past day: Full session 09:00-16:00 = ~84 expected candles`);
   }
 
   // Sparse check with 50% tolerance (allow sparse stocks like CASA)
-  const sparseThreshold = Math.max(Math.floor(expectedBuckets5m * 0.5), 5);
-  console.log(`[COMPLETION] Sparse threshold: ${sparseThreshold} (50% of ${expectedBuckets5m})`);
-  console.log(`[COMPLETION] Traded rows: ${tradedRows}`);
+  const sparseThreshold = Math.max(Math.floor(expectedCandles * 0.5), 5);
+  console.log(`[COMPLETION] Sparse threshold: ${sparseThreshold} (50% of ${expectedCandles})`);
 
-  if (expectedBuckets5m > 0 && tradedRows < sparseThreshold) {
-    console.log(`[COMPLETION] RESULT: SPARSE_DATA (${tradedRows} < ${sparseThreshold})`);
-    return {
-      isIncomplete: true,
-      reason: "SPARSE_DATA",
-      tradedRows,
-      expectedBuckets5m,
-      threshold: sparseThreshold
-    };
+  // 1. Sparse Data Check - relative to expected candles
+  if (expectedCandles > 0 && candles.length < sparseThreshold) {
+    console.log(`[COMPLETION] RESULT: SPARSE_DATA (${candles.length} < ${sparseThreshold})`);
+    return { isIncomplete: true, reason: "SPARSE_DATA", count: candles.length, expected: expectedCandles, threshold: sparseThreshold };
   }
 
-  // Past Day Completeness: should reach at least 15:50 WIB (non-sparse only, because sparse already returned above)
+  // 2. Past Day Completeness: Should reach at least 15:50 WIB
   if (!isToday) {
-    const lastH = lastCandleWIB.getHours();
-    const lastM = lastCandleWIB.getMinutes();
-
     if (lastH < 15 || (lastH === 15 && lastM < 50)) {
-      console.log(`[COMPLETION] RESULT: PAST_DAY_INCOMPLETE (last traded ${lastWIBTime}, expected >= 15:50)`);
+      console.log(`[COMPLETION] RESULT: PAST_DAY_INCOMPLETE (last candle at ${lastWIBTime}, expected >= 15:50)`);
       return { isIncomplete: true, reason: "PAST_DAY_INCOMPLETE", last: lastWIBTime };
     }
   } else if (!isWeekend) {
-    // Today stale check: during market hours, last traded should be within 20 mins
-    const nowH = nowWIB.getHours();
+    // 3. Today Stale Check: During market hours, data should be within 20 mins
     if (nowH >= marketOpenHour && nowH < marketCloseHour) {
       const diffMs = nowWIB.getTime() - lastCandleWIB.getTime();
       if (diffMs > 20 * 60000) {
-        console.log(`[COMPLETION] RESULT: TODAY_STALE (${Math.floor(diffMs / 60000)} mins)`);
+        console.log(`[COMPLETION] RESULT: TODAY_STALE (last candle ${Math.floor(diffMs / 60000)} mins ago)`);
         return { isIncomplete: true, reason: "TODAY_STALE", diffMins: Math.floor(diffMs / 60000) };
       }
     }
   }
 
   console.log(`[COMPLETION] RESULT: COMPLETE ✓`);
-  return { isIncomplete: false, expectedBuckets5m, tradedRows };
+  return { isIncomplete: false, expectedCandles, actualCandles: candles.length };
 }
-
 
 function getSignal(score, deltaPct, histZNGR, histState, pricePct) {
   // Hybrid Signal Alignment
@@ -754,7 +317,7 @@ function calculateHybridItem(footprint, context) {
   };
 }
 
-async function calculateRangeData(env, ctx, symbol, startDate, endDate) {
+async function calculateRangeData(env, symbol, startDate, endDate) {
   const results = [];
   const accBrokers = {};
   const errors = [];
@@ -777,7 +340,7 @@ async function calculateRangeData(env, ctx, symbol, startDate, endDate) {
   for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
     const dateStr = d.toISOString().split('T')[0];
     // Skip weekends
-    if (isWeekendUTC(dateStr)) continue;
+    if (d.getDay() === 0 || d.getDay() === 6) continue;
 
     const key = `${symbol}/${dateStr}.json`; // Key format from scrapper
 
@@ -873,12 +436,8 @@ async function calculateRangeData(env, ctx, symbol, startDate, endDate) {
       console.log(`[BACKFILL] Triggering for ${symbol}: ${reason}`);
 
       // Fire & Forget
-      const p = env.BROKSUM_SERVICE.fetch(
-        `http://internal/auto-backfill?symbol=${encodeURIComponent(symbol)}&days=90&force=false`
-      ).catch(e => console.error("Backfill Trigger Failed:", e));
-
-      if (ctx?.waitUntil) ctx.waitUntil(p);
-
+      env.BROKSUM_SERVICE.fetch(`http://internal/auto-backfill?symbol=${symbol}&days=90&force=false`)
+        .catch(e => console.error("Backfill Trigger Failed:", e));
 
       if (results.length === 0) {
         return {
@@ -957,243 +516,24 @@ async function calculateRangeData(env, ctx, symbol, startDate, endDate) {
   };
 }
 
-function getTodayOrderflowWindow(now = new Date()) {
-  const nowWIB = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Jakarta" }));
-  const year = nowWIB.getFullYear();
-  const month = String(nowWIB.getMonth() + 1).padStart(2, "0");
-  const day = String(nowWIB.getDate()).padStart(2, "0");
-  const dateStr = `${year}-${month}-${day}`;
-
-  const sessionStartUTC = new Date(`${dateStr}T02:00:00Z`).getTime();
-  const sessionEndUTC = new Date(`${dateStr}T09:00:00Z`).getTime();
-
-  let endTs = now.getTime();
-  if (endTs < sessionStartUTC) endTs = sessionStartUTC;
-  if (endTs > sessionEndUTC) endTs = sessionEndUTC;
-
-  return { dateStr, startTs: sessionStartUTC, endTs };
-}
-
-function mapQuadrant(deltaPct, pricePct) {
-  if (deltaPct >= 0 && pricePct >= 0) return "Q1";
-  if (deltaPct < 0 && pricePct >= 0) return "Q2";
-  if (deltaPct < 0 && pricePct < 0) return "Q3";
-  return "Q4";
-}
-
-function toOrderflowBubblePoint(symbol, snapshot) {
-  if (!snapshot) return null;
-  return {
-    ticker: symbol,
-    x: snapshot.delta_pct,
-    y: snapshot.mom_pct,
-    r: snapshot.net_value || 0,
-    quadrant: snapshot.quadrant,
-    absorb: snapshot.absorb,
-    score: snapshot.score ?? null,
-    snapshot_at: snapshot.snapshot_at
-  };
-}
-
-function buildFromFallbackTimeline(kode, dateStr, fallbackData) {
-  const timeline = Array.isArray(fallbackData?.timeline) ? fallbackData.timeline : [];
-
-  const buckets = [];
-  const tableData = [];
-  const candles = [];
-
-  for (const entry of timeline) {
-    if (!entry || typeof entry.t !== "string") continue;
-
-    const tStr = entry.t.trim(); // "HH:MM"
-    // WIB timestamp (safe parsing)
-    const ts = new Date(`${dateStr}T${tStr}:00+07:00`).getTime();
-
-    const p = Number(entry.p || 0);
-    const v = Number(entry.v || 0);
-    const a = Number(entry.a || 0);
-
-    // If m not present, derive from delta/vol
-    const mRaw = entry.m ?? (v > 0 ? (a / v) * 50 + 50 : 50);
-    const m = Number(Number(mRaw).toFixed(2));
-
-    // absCvd heuristic (same shape as your tableData)
-    const abs = v > 0 ? (Math.abs(a / v) * 100) / (1 + 0) : 0;
-
-    // Candles: fallback only has 1 price, so flat OHLC
-    candles.push({ x: ts, o: p, h: p, l: p, c: p });
-
-    // Table rows
-    tableData.push({
-      t: tStr,
-      x: ts,
-      p,
-      v,
-      a,
-      m,
-      abs: Number(abs.toFixed(2))
-    });
-
-    // Buckets: match your existing fallback-bubble shape
-    buckets.push({
-      t: tStr,
-      x: ts,
-      p,
-      v,
-      m,
-      a,
-      is_fallback: true,
-      side: a >= 0 ? "buy" : "sell"
-    });
-  }
-
-  buckets.sort((a, b) => a.x - b.x);
-  tableData.sort((a, b) => a.x - b.x);
-  candles.sort((a, b) => a.x - b.x);
-
-  return { buckets, tableData, candles };
-}
-
-
-async function getOrderflowSnapshot(env, symbol) {
-  if (!env?.SSSAHAM_DB || !symbol) return null;
-
-  const normalizedSymbol = symbol.toUpperCase();
-  const { dateStr, startTs, endTs } = getTodayOrderflowWindow();
-
-  try {
-    const aggregate = await env.SSSAHAM_DB.prepare(`
-      SELECT 
-        SUM(vol) as total_vol,
-        SUM(delta) as total_delta,
-        MIN(time_key) as first_ts,
-        MAX(time_key) as last_ts,
-        MAX(high) as high,
-        MIN(low) as low
-      FROM temp_footprint_consolidate
-      WHERE ticker = ? AND time_key >= ? AND time_key <= ?
-    `).bind(normalizedSymbol, startTs, endTs).first();
-
-    if (!aggregate || !aggregate.total_vol || aggregate.total_vol <= 0 || !aggregate.first_ts || !aggregate.last_ts) {
-      return null;
-    }
-
-    const { results: ocRows = [] } = await env.SSSAHAM_DB.prepare(`
-  SELECT time_key, open, close
-  FROM temp_footprint_consolidate
-  WHERE ticker = ? AND time_key IN (?, ?)
-`).bind(normalizedSymbol, aggregate.first_ts, aggregate.last_ts).all();
-
-    const firstRow = ocRows.find(r => r.time_key === aggregate.first_ts) || ocRows[0] || {};
-    const lastRow = ocRows.find(r => r.time_key === aggregate.last_ts) || ocRows[ocRows.length - 1] || {};
-
-    const open = Number(firstRow.open || lastRow.open || 0);
-    const close = Number(lastRow.close || firstRow.close || 0);
-
-    if (!open || !close) return null;
-
-    const ctx = await env.SSSAHAM_DB.prepare(`
-      SELECT state as hist_state, z_ngr as hist_z_ngr
-      FROM daily_features
-      WHERE ticker = ? AND date < ?
-      ORDER BY date DESC
-      LIMIT 1
-    `).bind(normalizedSymbol, dateStr).first() || {};
-
-    const hybridInput = {
-      ticker: normalizedSymbol,
-      open,
-      close,
-      total_vol: Number(aggregate.total_vol) || 0,
-      total_delta: Number(aggregate.total_delta) || 0,
-      high: Number(aggregate.high || close),
-      low: Number(aggregate.low || close)
-    };
-
-    const hybrid = calculateHybridItem(hybridInput, {
-      hist_state: ctx.hist_state,
-      hist_z_ngr: ctx.hist_z_ngr
-    });
-
-    if (!hybrid) return null;
-
-    const netValue = hybrid.v && close ? hybrid.v * close : null;
-    const snapshotAt = aggregate.last_ts ? new Date(aggregate.last_ts).toISOString() : new Date().toISOString();
-
-    return {
-      ticker: normalizedSymbol,
-      price: close,
-      delta_pct: hybrid.d,
-      price_pct: hybrid.p,
-      mom_pct: hybrid.p,
-      absorb: hybrid.div,
-      cvd: Number(aggregate.total_delta || 0),
-      net_value: netValue,
-      volume: hybrid.v,
-      range: hybrid.r,
-      score: hybrid.sc,
-      signal: hybrid.sig,
-      quadrant: mapQuadrant(hybrid.d, hybrid.p),
-      context_state: hybrid.ctx_st,
-      context_z: hybrid.ctx_net,
-      snapshot_at: snapshotAt,
-      generated_at: new Date().toISOString(),
-      source: "d1"
-    };
-  } catch (err) {
-    console.error("[orderflow] snapshot failed:", err);
-    return null;
-  }
-}
-
 // ==============================
 // Worker Entry
 // ==============================
 export default {
-  async fetch(req, env, ctx) {
-    const url = new URL(req.url);
-    // INTERNAL: Trigger audit & backfill daily broker flow
-    if (url.pathname === "/internal/audit-backfill-daily" && req.method === "POST") {
-      try {
-        const logs = [];
-        const triggerLimit = Number(url.searchParams.get("limit") || "40");
-        const log = (msg) => { logs.push(msg); console.log(msg); };
-        const result = await auditAndBackfillDailyBrokerFlow(env, {
-          log,
-          triggerLimit
-        });
-        return json({ ok: true, logs, result });
-      } catch (e) {
-        return json({ ok: false, error: e.message, stack: e.stack }, 500);
-      }
-    }
+  async fetch(req, env) {
     try {
+      const url = new URL(req.url);
       console.log(`[API-SAHAM] Request: ${req.method} ${url.pathname} (v2026-02-04)`);
 
       // CORS
       if (req.method === "OPTIONS") return withCORS(new Response(null, { status: 204 }));
 
-      if (url.pathname === "/admin/emiten/sync" && req.method === "POST") {
-        const auth = requireIdxAdmin(req, env);
-        if (!auth.ok) return auth.response;
-
-        try {
-          const result = await proxyIdxSync(env);
-          return json(result.data, result.status);
-        } catch (err) {
-          console.error("[/admin/emiten/sync] Failed to trigger idx-handler", err);
-          return json({ error: "IDX sync failed", details: err.message }, 502);
-        }
-      }
-
       // 0. GET /footprint/summary (Hybrid Bubble Chart - Static Live)
       if (url.pathname === "/footprint/summary" && req.method === "GET") {
         // WEEKEND FALLBACK: Check if today is weekend and fallback to last trading day's summary
-        // WEEKEND FALLBACK (UTC): check weekend by UTC date string
         const now = new Date();
-        const todayUTC = now.toISOString().slice(0, 10);
-        const isWeekend = isWeekendUTC(todayUTC);
-
+        const dayOfWeek = now.getDay(); // 0 = Sunday, 6 = Saturday
+        const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
 
         let key = "features/footprint-summary.json";
         let object = await env.SSSAHAM_EMITEN.get(key);
@@ -1210,19 +550,9 @@ export default {
           }
         }
 
-        const validation = cachedData?.validation || {};
-        const withFootprint = Number(validation.with_footprint || validation.data_sources?.FULL || 0);
-        const zscoreOnly = Number(validation.zscore_only || validation.data_sources?.ZSCORE || 0);
-        const isZscoreOnlySummary = withFootprint === 0 && zscoreOnly > 0;
-        const needsFallback = isEmpty || isWeekend || isZscoreOnlySummary;
-
-        // If empty/weekend/zscore-only summary, search back up to 7 days for last FULL trading data.
-        if (needsFallback) {
-          const triggerReasons = [];
-          if (isEmpty) triggerReasons.push("EMPTY");
-          if (isWeekend) triggerReasons.push("WEEKEND");
-          if (isZscoreOnlySummary) triggerReasons.push("ZSCORE_ONLY");
-          console.log(`[SUMMARY] Fallback triggered: ${triggerReasons.join("+") || "UNKNOWN"} (todayUTC=${todayUTC}), searching DB for recent data...`);
+        // If empty (weekend or no data), search back up to 7 days for last available data
+        if (isEmpty) {
+          console.log(`[SUMMARY] Empty or weekend (day=${dayOfWeek}), searching DB for recent data...`);
 
           // Try up to 7 days back to find last trading day with data
           for (let daysBack = 1; daysBack <= 7; daysBack++) {
@@ -1288,21 +618,22 @@ export default {
       }
 
       // NEW: GET /footprint-raw-hist?kode=BBRI&date=2026-02-06
-      // NEW: GET /footprint-raw-hist?kode=BBRI&date=2026-02-06
       if (url.pathname === "/footprint-raw-hist" && req.method === "GET") {
         const kode = url.searchParams.get("kode");
-        const now = new Date();
-        const nowWIB = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Jakarta" }));
-        const todayWIBStr = `${nowWIB.getFullYear()}-${String(nowWIB.getMonth() + 1).padStart(2, "0")}-${String(nowWIB.getDate()).padStart(2, "0")}`;
-
-        let dateStr = url.searchParams.get("date") || todayWIBStr;
+        let dateStr = url.searchParams.get("date") || new Date().toISOString().split("T")[0];
         if (!kode) return json({ error: "Missing kode" }, 400);
 
-        // WEEKEND FALLBACK (UTC): If requested date is weekend, fallback to previous trading day
-        if (isWeekendUTC(dateStr)) {
-          const fallback = prevTradingDayUTC(dateStr);
-          console.log(`[API] Weekend fallback (UTC): ${dateStr} -> ${fallback}`);
-          dateStr = fallback;
+        // WEEKEND FALLBACK: If requested date is weekend, fallback to Friday
+        const requestedDate = new Date(dateStr);
+        const dayOfWeek = requestedDate.getDay(); // 0 = Sunday, 6 = Saturday
+        if (dayOfWeek === 0) { // Sunday -> Friday
+          requestedDate.setDate(requestedDate.getDate() - 2);
+          dateStr = requestedDate.toISOString().split("T")[0];
+          console.log(`[API] Weekend fallback: Sunday -> ${dateStr}`);
+        } else if (dayOfWeek === 6) { // Saturday -> Friday
+          requestedDate.setDate(requestedDate.getDate() - 1);
+          dateStr = requestedDate.toISOString().split("T")[0];
+          console.log(`[API] Weekend fallback: Saturday -> ${dateStr}`);
         }
 
         try {
@@ -1312,6 +643,7 @@ export default {
           const hourKeys = [];
           for (let h = 0; h <= 23; h++) {
             const hStr = h.toString().padStart(2, "0");
+            // Correct format using slashes: footprint/KODE/1m/YYYY/MM/DD/HH.jsonl
             hourKeys.push({ h: hStr, key: `footprint/${kode}/1m/${y}/${m}/${d}/${hStr}.jsonl` });
           }
 
@@ -1347,18 +679,18 @@ export default {
           // ========================================
           const now = new Date();
           const nowWIB = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Jakarta" }));
-          const todayWIBStr = `${nowWIB.getFullYear()}-${String(nowWIB.getMonth() + 1).padStart(2, "0")}-${String(nowWIB.getDate()).padStart(2, "0")}`;
+          const todayWIBStr = `${nowWIB.getFullYear()}-${String(nowWIB.getMonth() + 1).padStart(2, '0')}-${String(nowWIB.getDate()).padStart(2, '0')}`;
           const dayOfWeek = nowWIB.getDay(); // 0=Sun, 6=Sat
-          const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+          const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
           const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
           const isToday = dateStr === todayWIBStr;
           const nowHour = nowWIB.getHours();
           const nowMin = nowWIB.getMinutes();
 
           console.log(`\n========== [THOUGHT PROCESS] ${kode} @ ${dateStr} ==========`);
-          console.log(`[🕐 NOW] Today is ${todayWIBStr} (${dayNames[dayOfWeek]}), Time: ${nowHour}:${String(nowMin).padStart(2, "0")} WIB`);
-          console.log(`[📅 CONTEXT] Today is ${isWeekend ? "WEEKEND" : "WEEKDAY"}`);
-          console.log(`[📊 REQUEST] User requested data for: ${dateStr} (${isToday ? "TODAY" : "PAST DAY"})`);
+          console.log(`[🕐 NOW] Today is ${todayWIBStr} (${dayNames[dayOfWeek]}), Time: ${nowHour}:${String(nowMin).padStart(2, '0')} WIB`);
+          console.log(`[📅 CONTEXT] Today is ${isWeekend ? 'WEEKEND' : 'WEEKDAY'}`);
+          console.log(`[📊 REQUEST] User requested data for: ${dateStr} (${isToday ? 'TODAY' : 'PAST DAY'})`);
           console.log(`[📁 R2 FETCH] Found ${allCandles.length} candles from ${hourKeys.length} hour segments`);
 
           // PHASE 3: Smart Completion Check
@@ -1371,11 +703,11 @@ export default {
             const lastCandleWIB = new Date(new Date(lastCandle.t0).toLocaleString("en-US", { timeZone: "Asia/Jakarta" }));
             const lastH = lastCandleWIB.getHours();
             const lastM = lastCandleWIB.getMinutes();
-            console.log(`[📈 CHART] Last candle at ${lastH}:${String(lastM).padStart(2, "0")} WIB`);
+            console.log(`[📈 CHART] Last candle at ${lastH}:${String(lastM).padStart(2, '0')} WIB`);
             if (!isToday) {
-              console.log(`[📈 CHART] For past day, market close is 15:50 WIB. Last candle ${lastH > 15 || (lastH === 15 && lastM >= 50) ? "REACHES" : "DOES NOT REACH"} market close`);
+              console.log(`[📈 CHART] For past day, market close is 15:50 WIB. Last candle ${lastH >= 15 && lastM >= 50 ? 'REACHES' : 'DOES NOT REACH'} market close`);
             } else {
-              console.log(`[📈 CHART] For today, expecting data up to ~${nowHour}:${String(nowMin).padStart(2, "0")} WIB`);
+              console.log(`[📈 CHART] For today, expecting data up to ~${nowHour}:${String(nowMin).padStart(2, '0')} WIB`);
             }
           }
 
@@ -1395,50 +727,33 @@ export default {
             }
           }
 
-          console.log(`[🔍 DATA QUALITY] Skeletal/Broken: ${isBroken ? "YES ❌" : "NO ✅"}`);
-          console.log(`[🔍 DATA QUALITY] Incomplete: ${isIncomplete ? `YES ❌ (${completion.reason})` : "NO ✅"}`);
-          console.log(`[📊 TABLE] Expected: ${isToday ? "1 row per traded minute so far" : "~200-300 rows for full day"}. Actual: ${allCandles.length} rows`);
-          console.log(`[📊 TABLE] Status: ${allCandles.length >= 20 || (isToday && allCandles.length >= 3) ? "LIKELY OK ✅" : "SPARSE ⚠️"}`);
-
-          // ======================
-          // DECISION (Repair gating) - MUST exist before repair trigger
-          // ======================
-          const missingSessionHours = await countMissingSessionHours(env, kode, dateStr);
-
-          const decision = shouldRepairFootprint({
-            candles: allCandles,
-            dateStr,
-            completion,
-            missingSessionHours,
-            brokenFound: isBroken
-          });
-
-          // For fallback gating: treat SPARSE as normal (don't fallback just because sparse)
-          const treatAsIncomplete = completion.isIncomplete && completion.reason !== "SPARSE_DATA";
-
+          console.log(`[🔍 DATA QUALITY] Skeletal/Broken: ${isBroken ? 'YES ❌' : 'NO ✅'}`);
+          console.log(`[🔍 DATA QUALITY] Incomplete: ${isIncomplete ? `YES ❌ (${completion.reason})` : 'NO ✅'}`);
+          console.log(`[📊 TABLE] Expected: ${isToday ? '1 row per traded minute so far' : '~200-300 rows for full day'}. Actual: ${allCandles.length} rows`);
+          console.log(`[📊 TABLE] Status: ${allCandles.length >= 20 || (isToday && allCandles.length >= 3) ? 'LIKELY OK ✅' : 'SPARSE ⚠️'}`);
 
           // FALLBACK LOGIC
           let isFallback = false;
           let fallbackData = null;
-          let fallbackLevel1Status = "NOT_CHECKED";
-          let fallbackLevel2Status = "NOT_CHECKED";
+          let fallbackLevel1Status = 'NOT_CHECKED';
+          let fallbackLevel2Status = 'NOT_CHECKED';
 
-          if (isBroken || allCandles.length === 0 || treatAsIncomplete) {
-            console.log(`[🔄 FALLBACK] Triggering fallback due to: ${isBroken ? "BROKEN" : ""} ${allCandles.length === 0 ? "EMPTY" : ""} ${treatAsIncomplete ? `INCOMPLETE(${completion.reason})` : ""}`);
+          if (isBroken || allCandles.length === 0 || isIncomplete) {
+            console.log(`[🔄 FALLBACK] Triggering fallback due to: ${isBroken ? 'BROKEN' : ''} ${allCandles.length === 0 ? 'EMPTY' : ''} ${isIncomplete ? `INCOMPLETE(${completion.reason})` : ''}`);
 
-            // PRIORITY 1: processed/KODE/intraday.json
+            // PRIORITY 1: saham/processed/KODE/intraday.json
             const p1Key = `processed/${kode}/intraday.json`;
             const p1Obj = await env.SSSAHAM_EMITEN.get(p1Key);
             if (p1Obj) {
               fallbackData = await p1Obj.json();
               isFallback = true;
-              fallbackLevel1Status = "FOUND ✅";
+              fallbackLevel1Status = 'FOUND ✅';
               console.log(`[🔄 FALLBACK] Level 1: ${p1Key} -> FOUND ✅`);
             } else {
-              fallbackLevel1Status = "NOT_FOUND ❌";
+              fallbackLevel1Status = 'NOT_FOUND ❌';
               console.log(`[🔄 FALLBACK] Level 1: ${p1Key} -> NOT FOUND ❌`);
 
-              // PRIORITY 2: FOOTPRINT_BUCKET processed/YYYY-MM-DD.json
+              // PRIORITY 2: tape-data-saham/processed/YYYY-MM-DD.json
               const p2Key = `processed/${dateStr}.json`;
               const p2Obj = await env.FOOTPRINT_BUCKET.get(p2Key);
               if (p2Obj) {
@@ -1447,14 +762,14 @@ export default {
                 if (tickerData) {
                   fallbackData = tickerData;
                   isFallback = true;
-                  fallbackLevel2Status = "FOUND ✅";
+                  fallbackLevel2Status = 'FOUND ✅';
                   console.log(`[🔄 FALLBACK] Level 2: ${p2Key} (ticker: ${kode}) -> FOUND ✅`);
                 } else {
-                  fallbackLevel2Status = "TICKER_NOT_IN_FILE ❌";
+                  fallbackLevel2Status = 'TICKER_NOT_IN_FILE ❌';
                   console.log(`[🔄 FALLBACK] Level 2: ${p2Key} exists but ${kode} not in items -> NOT FOUND ❌`);
                 }
               } else {
-                fallbackLevel2Status = "FILE_NOT_FOUND ❌";
+                fallbackLevel2Status = 'FILE_NOT_FOUND ❌';
                 console.log(`[🔄 FALLBACK] Level 2: ${p2Key} -> NOT FOUND ❌`);
               }
             }
@@ -1462,69 +777,58 @@ export default {
             console.log(`[🔄 FALLBACK] Not needed - data is complete ✅`);
           }
 
-          // REPAIR TRIGGER (Async) - Only for truly broken/incomplete, NOT sparse
-          const repairAllowed = isRepairEnabled(env);
-          const shouldTriggerRepair = repairAllowed && decision.repair && decision.reason !== "SPARSE_DATA";
-
-          if (shouldTriggerRepair) {
-            const repairUrl =
-              `https://livetrade-taping-agregator.mkemalw.workers.dev/repair-footprint` +
-              `?kode=${kode}&date=${dateStr}` +
-              (decision.priority === "high" ? "&priority=high" : "");
-
-            console.log(`[🔧 REPAIR] Triggering ${decision.priority.toUpperCase()} repair: ${repairUrl}`);
-
-            if (ctx?.waitUntil) {
+          // REPAIR TRIGGER (Asynchronous) - Only for truly incomplete data, NOT sparse stocks
+          // SPARSE_DATA is a stock characteristic, not broken data
+          const shouldRepair = isBroken || allCandles.length === 0 || (isIncomplete && completion.reason !== 'SPARSE_DATA');
+          if (shouldRepair) {
+            const isHighPriority = isIncomplete && allCandles.length > 0;
+            const repairUrl = `https://livetrade-taping-agregator.mkemalw.workers.dev/repair-footprint?kode=${kode}&date=${dateStr}${isHighPriority ? '&priority=high' : ''}`;
+            console.log(`[🔧 REPAIR] Triggering ${isHighPriority ? 'HIGH PRIORITY' : 'NORMAL'} repair: ${repairUrl}`);
+            if (typeof ctx !== "undefined" && ctx.waitUntil) {
               ctx.waitUntil(fetch(repairUrl, { method: "POST" }).catch(e => console.error("[REPAIR] Trigger failed:", e.message)));
             } else {
               fetch(repairUrl, { method: "POST" }).catch(e => console.error("[REPAIR] Trigger failed:", e.message));
             }
           } else {
-            if (!repairAllowed && decision.repair && decision.reason !== "SPARSE_DATA") {
-              console.log(`[🔧 REPAIR] Skipped (REPAIR_ENABLED=false)`);
-            } else {
-              console.log(`[🔧 REPAIR] Not needed${decision.reason === "SPARSE_DATA" ? " (sparse stock, not broken)" : ""}`);
-            }
+            console.log(`[🔧 REPAIR] Not needed${completion.reason === 'SPARSE_DATA' ? ' (sparse stock, not broken)' : ''}`);
           }
 
-          // is_repairing should be false for SPARSE_DATA or when kill switch is off
-          const isRepairing = shouldTriggerRepair;
+          // is_repairing should be false for SPARSE_DATA (sparse stocks are normal, not broken)
+          const isRepairing = isBroken || allCandles.length === 0 || (isIncomplete && !isFallback && completion.reason !== 'SPARSE_DATA');
           console.log(`[📤 RESPONSE] is_fallback: ${isFallback}, is_repairing: ${isRepairing}`);
           console.log(`========== [END THOUGHT PROCESS] ==========\n`);
 
-          if (allCandles.length === 0 && !isFallback) {
-            return json({ status: "OK", buckets: [], history: [], candles: [], is_repairing: shouldTriggerRepair });
-          }
+          if (allCandles.length === 0 && !isFallback) return json({ status: "OK", buckets: [], history: [], candles: [], is_repairing: true });
 
-          // RESOLUTION: 1-minute (direct from R2) to ensure alignment for sparse data
+          // RESOLUTION: 1-minute (direct from R2) to ensure alignment for CASA/sparse data
           allCandles.sort((a, b) => a.t0 - b.t0);
 
           const history = [];
           const tableData = [];
           const candles = [];
 
-          // If fallback is found, map its timeline to our result
+          // If fallback is found, we'll map its timeline to our result
+          // fallbackData.timeline: [ { t: "09:00", p: 1325, v: 112, m: 50, a: 0 }, ... ]
           const fallbackTimelineMap = new Map();
-          if (isFallback && fallbackData && Array.isArray(fallbackData.timeline)) {
-            for (const entry of fallbackData.timeline) {
-              if (!entry || typeof entry.t !== "string") continue;
-              fallbackTimelineMap.set(entry.t.trim(), entry);
-            }
+          if (isFallback && fallbackData && fallbackData.timeline) {
+            fallbackData.timeline.forEach(entry => {
+              fallbackTimelineMap.set(entry.t, entry);
+            });
           }
-
 
           allCandles.forEach(c => {
             const dateObj = new Date(c.t0);
-            const timeStr = dateObj.toLocaleTimeString("en-GB", {
-              hour: "2-digit", minute: "2-digit", timeZone: "Asia/Jakarta"
+            const timeStr = dateObj.toLocaleTimeString('en-GB', {
+              hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Jakarta'
             });
 
             // Chart candle
-            const { open, high, low, close } = resolveOHLC(c);
+            const open = c.ohlc.o;
+            const close = c.ohlc.c;
             const pricePct = open > 0 ? ((close - open) / open) * 100 : 0;
-            const absCvd = c.vol > 0 ? (Math.abs(c.delta / c.vol) * 100) / (1 + Math.abs(pricePct)) : 0;
+            const absCvd = c.vol > 0 ? Math.abs(c.delta / c.vol) * 100 / (1 + Math.abs(pricePct)) : 0;
 
-            candles.push({ x: c.t0, o: open, h: high, l: low, c: close });
+            candles.push({ x: c.t0, o: open, h: c.ohlc.h, l: c.ohlc.l, c: close });
 
             // Table Summary (1 row per minute)
             tableData.push({
@@ -1542,6 +846,9 @@ export default {
               c.levels.forEach(lvl => {
                 const totalV = lvl.bv + lvl.av;
                 if (totalV > 0) {
+                  const buyRatio = (lvl.bv / totalV) * 100;
+                  const delta = lvl.bv - lvl.av;
+
                   history.push({
                     t: timeStr,
                     x: c.t0,
@@ -1549,11 +856,12 @@ export default {
                     v: totalV,
                     bv: lvl.bv,
                     av: lvl.av,
-                    side: lvl.bv >= lvl.av ? "buy" : "sell"
+                    side: lvl.bv >= lvl.av ? 'buy' : 'sell'
                   });
                 }
               });
-            } else if (isFallback && (c.vol || 0) > 0 && fallbackTimelineMap.has(timeStr)) {              // Inject fallback bubble for this minute
+            } else if (isFallback && fallbackTimelineMap.has(timeStr)) {
+              // Inject fallback bubble for this minute
               const f = fallbackTimelineMap.get(timeStr);
               history.push({
                 t: timeStr,
@@ -1563,19 +871,20 @@ export default {
                 m: f.m,
                 a: f.a,
                 is_fallback: true,
-                side: f.a >= 0 ? "buy" : "sell"
+                side: f.a >= 0 ? 'buy' : 'sell'
               });
             } else if (c.vol > 0) {
-              // Synthetic bubble when no levels exist (keeps sparse trades visible)
+              // Fallback: Create a bubble from candle OHLC data when no levels exist
+              // This ensures sparse stocks still show their data points
               history.push({
                 t: timeStr,
                 x: c.t0,
-                p: close,
+                p: close, // Use close price as bubble center
                 v: c.vol,
                 bv: c.delta > 0 ? (c.vol + c.delta) / 2 : c.vol / 2,
                 av: c.delta < 0 ? (c.vol - c.delta) / 2 : c.vol / 2,
-                side: c.delta >= 0 ? "buy" : "sell",
-                is_synthetic: true
+                side: c.delta >= 0 ? 'buy' : 'sell',
+                is_synthetic: true // Mark as synthetic for debugging
               });
             }
           });
@@ -1593,7 +902,6 @@ export default {
         }
       }
 
-
       // NEW: GET /symbol?kode=BBRI&mode=footprint
       if (url.pathname === "/symbol" && req.method === "GET") {
         const kode = url.searchParams.get("kode");
@@ -1604,16 +912,7 @@ export default {
           const latestRow = await env.SSSAHAM_DB.prepare(
             "SELECT MAX(date) as last_date FROM temp_footprint_consolidate WHERE ticker = ?"
           ).bind(kode).first();
-
-          let dateStr = latestRow?.last_date || new Date().toISOString().slice(0, 10);
-
-          // If the resolved date is weekend in UTC, roll back to previous trading day
-          if (isWeekendUTC(dateStr)) {
-            const fallback = prevTradingDayUTC(dateStr);
-            console.log(`[SYMBOL] Weekend fallback (UTC): ${dateStr} -> ${fallback}`);
-            dateStr = fallback;
-          }
-
+          const dateStr = latestRow?.last_date || new Date().toISOString().split("T")[0];
           const [y, m, d] = dateStr.split("-");
 
           // 2. Fetch Granular Footprint from R2 (00-23 UTC)
@@ -1658,202 +957,65 @@ export default {
             }
           }
 
-          // ======================
-          // DECISION (Repair gating) - MUST exist before fallback/repair trigger
-          // ======================
-
-          // For fallback gating: treat SPARSE as normal (don't fallback just because sparse)
-          const treatAsIncomplete = completion.isIncomplete && completion.reason !== "SPARSE_DATA";
-
-          // Missing-session heuristic is only meaningful when PAST DAY / non-sparse / broken-ish.
-          // (avoid extra R2 HEAD calls when data looks normal)
-          let missingSessionHours = 0;
-          if (allCandles.length === 0 || isBroken || treatAsIncomplete) {
-            missingSessionHours = await countMissingSessionHours(env, kode, dateStr);
-          }
-
-          const decision = shouldRepairFootprint({
-            candles: allCandles,
-            dateStr,
-            completion,
-            missingSessionHours,
-            brokenFound: isBroken
-          });
-
-
           // FALLBACK LOGIC
-
-          // ======================
-          // SOURCE SELECTION (P0 -> P2)
-          // P0: Raw R2 segments (00-23 UTC) -> allCandles
-          // P1: SSSAHAM_EMITEN `processed/${kode}/intraday.json`
-          // P2: FOOTPRINT_BUCKET `processed/${dateStr}.json` (pick ticker)
-          // ======================
-
-          // For fallback gating: treat SPARSE as normal (don't fallback just because sparse)
-
           let isFallback = false;
-          let fallbackFrom = null; // "p1" | "p2" | null
           let fallbackData = null;
-          let fallbackLevel1Status = "NOT_CHECKED";
-          let fallbackLevel2Status = "NOT_CHECKED";
 
-          const needFallback = isBroken || allCandles.length === 0 || treatAsIncomplete;
-
-          // ---- P0 status log
-          console.log(
-            `[SOURCE] P0 raw: candles=${allCandles.length}, broken=${isBroken ? "YES" : "NO"}, incomplete=${isIncomplete ? `YES(${completion.reason})` : "NO"}`
-          );
-
-          // ---- P1 then P2
-          if (needFallback) {
-            console.log(`[SOURCE] P0 unusable -> try P1 then P2`);
-
-            // P1: processed/KODE/intraday.json
+          if (isBroken || allCandles.length === 0 || isIncomplete) {
+            console.log(`[SYMBOL] Fallback triggered for ${kode}: broken=${isBroken}, empty=${allCandles.length === 0}, incomplete=${isIncomplete} (${completion.reason})`);
             const p1Key = `processed/${kode}/intraday.json`;
             const p1Obj = await env.SSSAHAM_EMITEN.get(p1Key);
-
             if (p1Obj) {
-              try {
-                fallbackData = await p1Obj.json();
-                isFallback = true;
-                fallbackFrom = "p1";
-                fallbackLevel1Status = "FOUND ✅";
-                console.log(`[SOURCE] P1 FOUND ✅ -> ${p1Key}`);
-              } catch (e) {
-                fallbackLevel1Status = `PARSE_ERROR ❌ (${e.message})`;
-                console.error(`[SOURCE] P1 parse error:`, e.message);
-              }
+              fallbackData = await p1Obj.json();
+              isFallback = true;
             } else {
-              fallbackLevel1Status = "NOT_FOUND ❌";
-              console.log(`[SOURCE] P1 NOT FOUND ❌ -> ${p1Key}`);
-            }
-
-            // P2: processed/YYYY-MM-DD.json (ticker slice)
-            if (!isFallback) {
               const p2Key = `processed/${dateStr}.json`;
               const p2Obj = await env.FOOTPRINT_BUCKET.get(p2Key);
-
               if (p2Obj) {
-                try {
-                  const fullDaily = await p2Obj.json();
-                  const tickerData = (fullDaily.items || []).find(item => item.t === kode);
-
-                  if (tickerData) {
-                    fallbackData = tickerData;
-                    isFallback = true;
-                    fallbackFrom = "p2";
-                    fallbackLevel2Status = "FOUND ✅";
-                    console.log(`[SOURCE] P2 FOUND ✅ -> ${p2Key} (ticker ${kode})`);
-                  } else {
-                    fallbackLevel2Status = "TICKER_NOT_IN_FILE ❌";
-                    console.log(`[SOURCE] P2 exists but ${kode} not in items ❌ -> ${p2Key}`);
-                  }
-                } catch (e) {
-                  fallbackLevel2Status = `PARSE_ERROR ❌ (${e.message})`;
-                  console.error(`[SOURCE] P2 parse error:`, e.message);
+                const fullDaily = await p2Obj.json();
+                const tickerData = (fullDaily.items || []).find(item => item.t === kode);
+                if (tickerData) {
+                  fallbackData = tickerData;
+                  isFallback = true;
                 }
-              } else {
-                fallbackLevel2Status = "FILE_NOT_FOUND ❌";
-                console.log(`[SOURCE] P2 NOT FOUND ❌ -> ${p2Key}`);
               }
             }
-          } else {
-            console.log(`[SOURCE] P0 OK ✅ (no fallback)`);
           }
 
-          // ======================
-          // REPAIR TRIGGER (Async) - Only for truly broken/incomplete, NOT sparse
-          // ======================
-          const repairAllowed = isRepairEnabled(env);
-          const shouldTriggerRepair = repairAllowed && decision.repair && decision.reason !== "SPARSE_DATA";
-
-          if (shouldTriggerRepair) {
-            const repairUrl =
-              `https://livetrade-taping-agregator.mkemalw.workers.dev/repair-footprint` +
-              `?kode=${kode}&date=${dateStr}` +
-              (decision.priority === "high" ? "&priority=high" : "");
-
-            console.log(`[🔧 REPAIR] Triggering ${decision.priority.toUpperCase()} repair: ${repairUrl}`);
-
-            if (ctx?.waitUntil) {
-              ctx.waitUntil(fetch(repairUrl, { method: "POST" }).catch(e => console.error("[REPAIR] Trigger failed:", e.message)));
+          // REPAIR TRIGGER (Asynchronous)
+          if (isBroken || allCandles.length === 0 || isIncomplete) {
+            const isHighPriority = isIncomplete && allCandles.length > 0;
+            const repairUrl = `https://livetrade-taping-agregator.mkemalw.workers.dev/repair-footprint?kode=${kode}&date=${dateStr}${isHighPriority ? '&priority=high' : ''}`;
+            if (typeof ctx !== "undefined" && ctx.waitUntil) {
+              ctx.waitUntil(fetch(repairUrl, { method: "POST" }).catch(e => { }));
             } else {
-              fetch(repairUrl, { method: "POST" }).catch(e => console.error("[REPAIR] Trigger failed:", e.message));
-            }
-          } else {
-            if (!repairAllowed && decision.repair && decision.reason !== "SPARSE_DATA") {
-              console.log(`[🔧 REPAIR] Skipped (REPAIR_ENABLED=false)`);
-            } else {
-              console.log(`[🔧 REPAIR] Not needed${decision.reason === "SPARSE_DATA" ? " (sparse stock, not broken)" : ""}`);
+              fetch(repairUrl, { method: "POST" }).catch(e => { });
             }
           }
 
-          // is_repairing should be false for SPARSE_DATA or when kill switch is off
-          const isRepairing = shouldTriggerRepair;
-
-          console.log(`[📤 RESPONSE] source=${isFallback ? (fallbackFrom || "fallback") : "p0"}, is_fallback=${isFallback}, is_repairing=${isRepairing}`);
-          console.log(`[📤 RESPONSE] p1=${fallbackLevel1Status}, p2=${fallbackLevel2Status}`);
-          console.log(`========== [END THOUGHT PROCESS] ==========\n`);
-
-          // ======================
-          // EMPTY P0 HANDLING:
-          // If P0 empty BUT P1/P2 has timeline -> return fallback-only chart immediately
-          // ======================
-          if (allCandles.length === 0) {
-            if (isFallback && fallbackData && Array.isArray(fallbackData.timeline) && fallbackData.timeline.length > 0) {
-              const fb = buildFromFallbackTimeline(kode, dateStr, fallbackData);
-
-              return json({
-                status: "OK",
-                buckets: fb.buckets,
-                tableData: fb.tableData,
-                candles: fb.candles,
-                is_repairing: isRepairing,
-                is_fallback: true
-              });
-            }
-
-            // No raw + no usable fallback -> return empty but signal repairing
-            return json({
-              status: "OK",
-              buckets: [],
-              tableData: [],
-              candles: [],
-              is_repairing: isRepairing,
-              is_fallback: false
-            });
+          if (allCandles.length === 0 && !isFallback) {
+            return json({ snapshot: { ticker: kode, date: dateStr, history: [] }, state: null, is_repairing: true });
           }
-
 
           // 3. Aggregate 1m -> 5m buckets
           allCandles.sort((a, b) => a.t0 - b.t0);
-          // PATCH D: build fallback timeline map once (avoid O(n^2) find per candle)
-          const fallbackTimelineMap = new Map();
-          if (isFallback && fallbackData && Array.isArray(fallbackData.timeline)) {
-            for (const entry of fallbackData.timeline) {
-              if (!entry || typeof entry.t !== "string") continue;
-              fallbackTimelineMap.set(entry.t.trim(), entry); // key: "HH:MM"
-            }
-          }
 
           const buckets = new Map(); // timeKey5m -> { t0, levels: Map<p, {bv, av}>, o, h, l, c, vol, delta }
 
           allCandles.forEach(c => {
             const t0_5m = Math.floor(c.t0 / 300000) * 300000;
-            const { open, high, low, close } = resolveOHLC(c);
             if (!buckets.has(t0_5m)) {
               buckets.set(t0_5m, {
                 t0: t0_5m,
                 levels: new Map(),
-                o: open, h: high, l: low, c: close,
+                o: c.ohlc.o, h: c.ohlc.h, l: c.ohlc.l, c: c.ohlc.c,
                 vol: 0, delta: 0
               });
             }
             const b = buckets.get(t0_5m);
-            b.h = Math.max(b.h, high);
-            b.l = Math.min(b.l, low);
-            b.c = close;
+            b.h = Math.max(b.h, c.ohlc.h);
+            b.l = Math.min(b.l, c.ohlc.l);
+            b.c = c.ohlc.c;
             b.vol += c.vol;
             b.delta += c.delta;
 
@@ -1864,29 +1026,27 @@ export default {
                 bl.bv += lvl.bv;
                 bl.av += lvl.av;
               });
-            } else if (fallbackTimelineMap.size > 0 && (c.vol || 0) > 0) {
-              // PATCH D: O(1) lookup by "HH:MM"
+            } else if (isFallback && fallbackData && fallbackData.timeline) {
+              // Try to find matching time in fallback timeline
               const dateObj = new Date(c.t0);
-              const timeStr = dateObj.toLocaleTimeString("en-GB", {
-                hour: "2-digit",
-                minute: "2-digit",
-                timeZone: "Asia/Jakarta"
+              const timeStr = dateObj.toLocaleTimeString('en-GB', {
+                hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Jakarta'
               });
-
-              const f = fallbackTimelineMap.get(timeStr);
+              const f = fallbackData.timeline.find(entry => entry.t === timeStr);
               if (f) {
                 if (!b.levels.has(f.p)) b.levels.set(f.p, { p: f.p, bv: 0, av: 0, is_fallback: true });
                 const bl = b.levels.get(f.p);
-
+                // Fallback often only provides total vol and delta, we have to estimate bv/av
+                // f.v is total vol, f.a is delta
+                // bv + av = v
+                // bv - av = a
+                // 2bv = v + a -> bv = (v + a) / 2
                 const bv = (f.v + f.a) / 2;
                 const av = f.v - bv;
-
                 bl.bv += bv;
                 bl.av += av;
               }
             }
-
-
           });
 
           // 4. Final Data Prep for Frontend
@@ -1965,8 +1125,8 @@ export default {
               quadrant: stateRow.quadrant_st === 'ACCUMULATION' ? 1 : (stateRow.quadrant_st === 'DISTRIBUTION' ? 3 : 2),
               score: stateRow.score
             } : null,
-            // is_repairing should reflect actual repair trigger state
-            is_repairing: isRepairing,
+            // is_repairing should be false for SPARSE_DATA (sparse stocks are normal, not broken)
+            is_repairing: isBroken || allCandles.length === 0 || (isIncomplete && !isFallback && completion.reason !== 'SPARSE_DATA'),
             is_fallback: isFallback
           });
 
@@ -2015,11 +1175,11 @@ export default {
           const CACHE_VERSION = 'v2'; // Bump to invalidate cache
           const CACHE_TTL_SECONDS = 3600; // 1 hour
           const FOREIGN_CODES = new Set(['ZP', 'YU', 'KZ', 'RX', 'BK', 'AK', 'CS', 'CG', 'DB', 'ML', 'CC', 'DX', 'FS', 'LG', 'NI', 'OD']);
-
+          
           // Check cache first
           const cacheKey = `cache/screener-mvp-${CACHE_VERSION}.json`;
           const cachedObj = await env.SSSAHAM_EMITEN.get(cacheKey);
-
+          
           if (cachedObj) {
             const cached = await cachedObj.json();
             const cacheAge = (Date.now() - (cached.timestamp || 0)) / 1000;
@@ -2031,7 +1191,7 @@ export default {
               }), { headers: { "Content-Type": "application/json" } }));
             }
           }
-
+          
           // Fetch screener data
           const pointerObj = await env.SSSAHAM_EMITEN.get("features/latest.json");
           if (!pointerObj) return json({ items: [] });
@@ -2041,7 +1201,7 @@ export default {
             if (!actualObj) return json({ items: [] });
             screenerData = await actualObj.json();
           }
-
+          
           // Get last 2 trading days (skip today as data may be incomplete)
           const dates = [];
           const today = new Date();
@@ -2053,42 +1213,42 @@ export default {
               dates.push(d.toISOString().split('T')[0]);
             }
           }
-
+          
           // Filter stocks by last 2 days foreign+local positive
           const filteredItems = [];
           const brokersMap = {};
-
+          
           // Fetch brokers mapping
           try {
             const { results } = await env.SSSAHAM_DB.prepare("SELECT * FROM brokers").all();
             if (results) results.forEach(b => brokersMap[b.code] = b);
-          } catch (e) { }
-
+          } catch (e) {}
+          
           const isRetail = (code) => {
             const b = brokersMap[code];
             if (!b) return false;
             return (b.category || '').toLowerCase().includes('retail');
           };
-
+          
           for (const item of screenerData.items || []) {
             const ticker = item.t;
             let passFilter = true;
             let flowData = { day1: null, day2: null };
-
+            
             for (let dayIdx = 0; dayIdx < dates.length && passFilter; dayIdx++) {
               const dateStr = dates[dayIdx];
               try {
                 const key = `${ticker}/${dateStr}.json`;
                 const obj = await env.RAW_BROKSUM.get(key);
                 if (!obj) { passFilter = false; continue; }
-
+                
                 const fileData = await obj.json();
                 const bs = fileData?.data?.broker_summary;
                 if (!bs) { passFilter = false; continue; }
-
+                
                 let foreignBuy = 0, foreignSell = 0;
                 let localBuy = 0, localSell = 0;
-
+                
                 if (bs.brokers_buy && Array.isArray(bs.brokers_buy)) {
                   bs.brokers_buy.forEach(b => {
                     if (!b) return;
@@ -2098,7 +1258,7 @@ export default {
                     else if (!isRetail(code)) localBuy += val;
                   });
                 }
-
+                
                 if (bs.brokers_sell && Array.isArray(bs.brokers_sell)) {
                   bs.brokers_sell.forEach(b => {
                     if (!b) return;
@@ -2108,23 +1268,23 @@ export default {
                     else if (!isRetail(code)) localSell += val;
                   });
                 }
-
+                
                 const foreignNet = foreignBuy - foreignSell;
                 const localNet = localBuy - localSell;
-
+                
                 // Filter: foreign AND local must be positive (smart money inflow)
                 if (foreignNet <= 0 || localNet <= 0) {
                   passFilter = false;
                 }
-
+                
                 if (dayIdx === 0) flowData.day1 = { foreign: foreignNet, local: localNet, date: dateStr };
                 else flowData.day2 = { foreign: foreignNet, local: localNet, date: dateStr };
-
+                
               } catch (e) {
                 passFilter = false;
               }
             }
-
+            
             if (passFilter && flowData.day1 && flowData.day2) {
               filteredItems.push({
                 ...item,
@@ -2132,22 +1292,22 @@ export default {
               });
             }
           }
-
+          
           const responseData = {
             items: filteredItems,
             date: screenerData.date,
             filter: 'foreign+local > 0 last 2 days',
             total: filteredItems.length
           };
-
+          
           // Store in cache
           try {
             await env.SSSAHAM_EMITEN.put(cacheKey, JSON.stringify({
               timestamp: Date.now(),
               data: responseData
             }));
-          } catch (e) { }
-
+          } catch (e) {}
+          
           return withCORS(new Response(JSON.stringify({
             ...responseData,
             cached: false
@@ -2199,7 +1359,6 @@ export default {
               t: row.t,
               // All window accum data
               accum: row.accum,
-              coverage: row.coverage || null,
               // Z-score data (if available)
               s: screenerItem?.s || null,
               sc: screenerItem?.sc || null,
@@ -2229,15 +1388,15 @@ export default {
           const MVP_TICKERS = ['BREN', 'BBCA', 'DSSA', 'BBRI', 'TPIA', 'AMMN', 'BYAN', 'DCII', 'BMRI', 'TLKM'];
           const FOREIGN_CODES = new Set(['ZP', 'YU', 'KZ', 'RX', 'BK', 'AK', 'CS', 'CG', 'DB', 'ML', 'CC', 'DX', 'FS', 'LG', 'NI', 'OD']);
           const days = Math.min(parseInt(url.searchParams.get('days') || '7'), 90); // Max 90 days
-
+          
           // Check cache first
           const cacheKey = `cache/foreign-sentiment-${days}d-${CACHE_VERSION}.json`;
           const cachedObj = await env.SSSAHAM_EMITEN.get(cacheKey);
-
+          
           if (cachedObj) {
             const cached = await cachedObj.json();
             const cacheAge = (Date.now() - (cached.timestamp || 0)) / 1000;
-
+            
             if (cacheAge < CACHE_TTL_SECONDS) {
               // Return cached data
               return withCORS(new Response(JSON.stringify({
@@ -2247,7 +1406,7 @@ export default {
               }), { headers: { "Content-Type": "application/json" } }));
             }
           }
-
+          
           // Generate date list (trading days only)
           const dates = [];
           const today = new Date();
@@ -2260,25 +1419,25 @@ export default {
             }
             if (dates.length >= days) break;
           }
-
+          
           const result = {};
-
+          
           // Fetch data for each ticker
           for (const ticker of MVP_TICKERS) {
             const tickerData = [];
-
+            
             for (const dateStr of dates) {
               try {
                 const key = `${ticker}/${dateStr}.json`;
                 const obj = await env.RAW_BROKSUM.get(key);
                 if (!obj) continue;
-
+                
                 const fileData = await obj.json();
                 const bs = fileData?.data?.broker_summary;
                 if (!bs) continue;
-
+                
                 let foreignBuy = 0, foreignSell = 0;
-
+                
                 // Process buyers
                 if (bs.brokers_buy && Array.isArray(bs.brokers_buy)) {
                   bs.brokers_buy.forEach(b => {
@@ -2287,7 +1446,7 @@ export default {
                     }
                   });
                 }
-
+                
                 // Process sellers
                 if (bs.brokers_sell && Array.isArray(bs.brokers_sell)) {
                   bs.brokers_sell.forEach(b => {
@@ -2296,7 +1455,7 @@ export default {
                     }
                   });
                 }
-
+                
                 tickerData.push({
                   date: dateStr,
                   buy: foreignBuy,
@@ -2307,12 +1466,12 @@ export default {
                 // Skip missing data
               }
             }
-
+            
             // Sort by date ascending
             tickerData.sort((a, b) => a.date.localeCompare(b.date));
             result[ticker] = tickerData;
           }
-
+          
           // Calculate cumulative total across all tickers per day
           const sortedDates = dates.sort();
           const cumulative = sortedDates.map(dateStr => {
@@ -2332,14 +1491,14 @@ export default {
               net: totalBuy - totalSell
             };
           });
-
-          const responseData = {
+          
+          const responseData = { 
             tickers: MVP_TICKERS,
             data: result,
             cumulative: cumulative,
             dates: sortedDates
           };
-
+          
           // Store in cache (await to ensure it completes)
           try {
             await env.SSSAHAM_EMITEN.put(cacheKey, JSON.stringify({
@@ -2349,7 +1508,7 @@ export default {
           } catch (cacheErr) {
             console.error('Cache write failed:', cacheErr);
           }
-
+          
           return withCORS(new Response(JSON.stringify({
             ...responseData,
             cached: false
@@ -2404,9 +1563,9 @@ export default {
           // Strategy 1: Check if data exists in R2 cache (from broker-summary)
           const cacheKey = `broksum/${ticker}/cache.json`;
           const cacheObj = await env.RAW_BROKSUM.get(cacheKey);
-
+          
           let days = [];
-
+          
           if (cacheObj) {
             // Use broker summary cache data
             const cacheData = await cacheObj.json();
@@ -2419,7 +1578,7 @@ export default {
               })).filter(d => d.close > 0);
             }
           }
-
+          
           // Strategy 2: Fallback to D1 footprint data
           if (days.length < 5) {
             const startDate = new Date();
@@ -2437,14 +1596,14 @@ export default {
               ORDER BY date DESC
               LIMIT 20
             `).bind(ticker, startDateStr).all();
-
+            
             if (results && results.length > days.length) {
               days = results;
             }
           }
 
           if (days.length < 5) {
-            return json({
+            return json({ 
               symbol: ticker,
               source: "none",
               message: "Insufficient data for calculation",
@@ -2458,10 +1617,10 @@ export default {
 
           // Effort = avg volume over period
           const avgVol = days.reduce((s, d) => s + (d.total_vol || 0), 0) / n;
-
+          
           // Result = price change from first to last
-          const priceChange = days[n - 1].close && days[0].close
-            ? ((days[n - 1].close - days[0].close) / days[0].close) * 100
+          const priceChange = days[n-1].close && days[0].close 
+            ? ((days[n-1].close - days[0].close) / days[0].close) * 100 
             : 0;
 
           // Net Quality = avg delta % (how consistent is buying)
@@ -2476,7 +1635,7 @@ export default {
           // Determine state based on delta trend
           const recentDelta = days.slice(-5).reduce((s, d) => s + (d.total_delta || 0), 0);
           const earlyDelta = days.slice(0, 5).reduce((s, d) => s + (d.total_delta || 0), 0);
-
+          
           let state = "NEUTRAL";
           if (recentDelta > earlyDelta * 1.5 && recentDelta > 0) state = "ACCUMULATION";
           else if (recentDelta < earlyDelta * 0.5 && recentDelta < 0) state = "DISTRIBUTION";
@@ -2485,7 +1644,7 @@ export default {
 
           // Normalize to z-score-like values (-3 to +3 range)
           const normalize = (val, min, max) => Math.max(-3, Math.min(3, ((val - min) / (max - min || 1)) * 6 - 3));
-
+          
           const features = {
             effort: normalize(avgVol, 0, 10000000),
             response: normalize(priceChange, -10, 10),
@@ -2498,7 +1657,7 @@ export default {
             symbol: ticker,
             source: "on_demand",
             days_used: n,
-            period: `${days[0].date} to ${days[n - 1].date}`,
+            period: `${days[0].date} to ${days[n-1].date}`,
             features: features,
             raw: {
               avg_volume: Math.round(avgVol),
@@ -2513,22 +1672,6 @@ export default {
       }
 
       // 3. GET /brokers (Mapping for frontend)
-      if (url.pathname === "/emiten" && req.method === "GET") {
-        try {
-          const data = await fetchEmitenList(env, {
-            status: url.searchParams.get("status"),
-            q: url.searchParams.get("q"),
-            sector: url.searchParams.get("sector"),
-            limit: url.searchParams.get("limit")
-          });
-
-          return json({ data, meta: { count: data.length } });
-        } catch (err) {
-          console.error("[/emiten] Failed to fetch list", err);
-          return json({ error: "Failed to fetch emiten list", details: err.message }, 500);
-        }
-      }
-
       if (url.pathname === "/brokers" && req.method === "GET") {
         try {
           const { results } = await env.SSSAHAM_DB.prepare("SELECT * FROM brokers").all();
@@ -2555,7 +1698,6 @@ export default {
         const symbol = url.searchParams.get("symbol");
         const from = url.searchParams.get("from");
         const to = url.searchParams.get("to");
-        const includeOrderflow = url.searchParams.get("include_orderflow") !== "false";
 
         let cacheMode = url.searchParams.get("cache") || "default";
         if (url.searchParams.get("reload") === "true") cacheMode = "rebuild";
@@ -2568,31 +1710,9 @@ export default {
         if (cacheMode === "default") {
           const cached = await env.SSSAHAM_EMITEN.get(key);
           if (cached) {
-            let cachedData = null;
-            try {
-              cachedData = await cached.json();
-            } catch (_) { }
-
-            if (cachedData && cachedData.summary && cachedData.summary.foreign) {
-              if (includeOrderflow) {
-                try {
-                  const snapshot = await getOrderflowSnapshot(env, symbol);
-                  if (snapshot) {
-                    cachedData.orderflow = snapshot;
-                    const bubblePoint = toOrderflowBubblePoint(symbol, snapshot);
-                    cachedData.bubble = cachedData.bubble || {};
-                    cachedData.bubble.orderflow = bubblePoint ? [bubblePoint] : [];
-                  } else {
-                    delete cachedData.orderflow;
-                    if (cachedData.bubble && cachedData.bubble.orderflow) {
-                      cachedData.bubble.orderflow = [];
-                    }
-                  }
-                } catch (err) {
-                  console.error("[cache-summary] attach orderflow (cache) failed:", err);
-                }
-              }
-
+            const cachedData = await cached.json();
+            // Validate Structure (Check if "foreign" summary exists)
+            if (cachedData.summary && cachedData.summary.foreign) {
               return withCORS(new Response(JSON.stringify(cachedData), {
                 headers: {
                   "Content-Type": "application/json",
@@ -2606,22 +1726,7 @@ export default {
         }
 
         // Calculate
-        const data = await calculateRangeData(env, ctx, symbol, from, to);
-        if (includeOrderflow) {
-          try {
-            const snapshot = await getOrderflowSnapshot(env, symbol);
-            if (snapshot) {
-              data.orderflow = snapshot;
-              const bubblePoint = toOrderflowBubblePoint(symbol, snapshot);
-              if (bubblePoint) {
-                data.bubble = data.bubble || {};
-                data.bubble.orderflow = [bubblePoint];
-              }
-            }
-          } catch (err) {
-            console.error("[cache-summary] attach orderflow failed:", err);
-          }
-        }
+        const data = await calculateRangeData(env, symbol, from, to);
 
         /**
  * @worker api-saham
@@ -2662,34 +1767,7 @@ export default {
         if (cacheMode !== "off") {
           const ttl = cacheMode === "rebuild" ? 604800 : 172800; // 7 days or 2 days
 
-          let payloadToCache = data;
-          if (includeOrderflow) {
-            try {
-              const cloned = JSON.parse(JSON.stringify(data));
-              delete cloned.orderflow;
-              if (cloned.bubble && cloned.bubble.orderflow) {
-                delete cloned.bubble.orderflow;
-                if (Object.keys(cloned.bubble).length === 0) {
-                  delete cloned.bubble;
-                }
-              }
-              payloadToCache = cloned;
-            } catch (err) {
-              console.error("[cache-summary] clone cache payload failed:", err);
-              const shallow = { ...data };
-              delete shallow.orderflow;
-              if (shallow.bubble && shallow.bubble.orderflow) {
-                shallow.bubble = { ...shallow.bubble };
-                delete shallow.bubble.orderflow;
-                if (Object.keys(shallow.bubble).length === 0) {
-                  delete shallow.bubble;
-                }
-              }
-              payloadToCache = shallow;
-            }
-          }
-
-          await env.SSSAHAM_EMITEN.put(key, JSON.stringify(payloadToCache), {
+          await env.SSSAHAM_EMITEN.put(key, JSON.stringify(data), {
             httpMetadata: {
               contentType: "application/json",
               cacheControl: `public, max-age=${ttl}`
@@ -2819,159 +1897,32 @@ export default {
       // ============================================
       // AI ANALYTICS
       // ============================================
-      const SCREENSHOT_TTL_SECONDS = 86400; // 24 hours
-      const SCREENSHOT_VERSION = "v1";
-      const INTRADAY_LABEL = "intraday";
-      const SCREENSHOT_EXTENSIONS = ["jpg", "png", "webp"];
 
-
-      async function resolveScreenshotKey(env, symbol, date, label) {
-        for (const ext of SCREENSHOT_EXTENSIONS) {
-          const key = `ai-screenshots/${symbol}/${date}_${label}.${ext}`;
-          try {
-            const head = await env.SSSAHAM_EMITEN.head(key);
-            if (head) return key;
-          } catch (_) {
-            // ignore head errors
-          }
-        }
-        return null;
-      }
-
-      function scheduleIntradayCapture(env, symbol, date) {
-        const payload = JSON.stringify({ symbol, date, label: INTRADAY_LABEL });
-
-        if (env.AI_SCREENSHOT_SERVICE) {
-          return env.AI_SCREENSHOT_SERVICE.fetch(
-            new Request("https://ai-screenshot-service/capture/broker-intraday", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: payload
-            })
-          );
-        }
-
-        if (env.AI_SCREENSHOT_SERVICE_URL) {
-          const base = env.AI_SCREENSHOT_SERVICE_URL.replace(/\/$/, "");
-          return fetch(`${base}/capture/broker-intraday`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: payload
-          });
-        }
-
-        console.warn("[AI] No AI_SCREENSHOT_SERVICE configured");
-        return null;
-      }
-
-      async function ensureScreenshotAvailability(env, ctx, symbol, date, label, { forceRefresh = false } = {}) {
-        let key = await resolveScreenshotKey(env, symbol, date, label);
-        if (key) return key;
-
-        const triggerPromise = scheduleIntradayCapture(env, symbol, date);
-        if (triggerPromise) {
-          const guarded = triggerPromise.catch(err => console.error("[AI] Capture trigger failed:", err));
-          if (ctx && ctx.waitUntil) {
-            ctx.waitUntil(guarded);
-          }
-        }
-
-        const attempts = forceRefresh ? 6 : 3;
-        const delayMs = forceRefresh ? 1500 : 1000;
-
-        for (let attempt = 0; attempt < attempts; attempt++) {
-          await sleep(delayMs);
-          key = await resolveScreenshotKey(env, symbol, date, label);
-          if (key) return key;
-        }
-
-        return null;
-      }
-
-      function sanitizeJsonString(raw) {
-        if (typeof raw !== "string") return null;
-        let trimmed = raw.trim();
-
-        if (trimmed.startsWith("```")) {
-          trimmed = trimmed.replace(/^```(?:json)?/i, "").replace(/```$/i, "").trim();
-        }
-
-        const firstBrace = trimmed.indexOf("{");
-        const lastBrace = trimmed.lastIndexOf("}");
-        if (firstBrace !== -1 && lastBrace !== -1 && lastBrace >= firstBrace) {
-          trimmed = trimmed.slice(firstBrace, lastBrace + 1);
-        }
-
-        return trimmed;
-      }
-
-      function parseModelJson(raw) {
-        const sanitized = sanitizeJsonString(raw);
-        if (!sanitized) {
-          throw new Error("Model response kosong / tidak mengandung JSON");
-        }
-        return JSON.parse(sanitized);
-      }
-
-      // PUT /ai/screenshot?symbol=BBCA&label=7d — upload raw image ke R2
+      // PUT /ai/screenshot?symbol=BBCA&label=7d  — upload raw image to R2
       if (url.pathname === "/ai/screenshot" && req.method === "PUT") {
-        const symbolParam = (url.searchParams.get("symbol") || "").trim().toUpperCase();
-        const labelParam = (url.searchParams.get("label") || "default").trim();
-        const origin = (url.searchParams.get("origin") || "client").toLowerCase();
-
-        if (!symbolParam) {
-          return json({ ok: false, error: "Missing ?symbol=" }, 400);
-        }
+        const symbol = (url.searchParams.get("symbol") || "").toUpperCase();
+        const label = url.searchParams.get("label") || "default";
+        if (!symbol) return json({ ok: false, error: "Missing ?symbol=" }, 400);
 
         const ct = req.headers.get("Content-Type") || "";
         if (!ct.startsWith("image/")) {
           return json({ ok: false, error: "Content-Type must be image/*" }, 400);
         }
 
+        const ext = ct.includes("jpeg") || ct.includes("jpg") ? "jpg" : "png";
         const today = new Date().toISOString().split("T")[0];
-        let ext = "jpg";
-        if (ct.includes("png")) ext = "png";
-        else if (ct.includes("webp")) ext = "webp";
-        else if (ct.includes("jpeg")) ext = "jpg";
-
-        const resolvedLabel = labelParam.toLowerCase();
-        const key = `ai-screenshots/${symbolParam}/${today}_${resolvedLabel}.${ext}`;
+        const key = `ai-screenshots/${symbol}/${today}_${label}.${ext}`;
 
         const imgBytes = await req.arrayBuffer();
-        const sizeKb = Math.round(imgBytes.byteLength / 1024);
-        console.log(`[AI] Upload screenshot ${symbolParam}/${resolvedLabel} (${sizeKb} KB)`);
+        console.log(`[AI] Uploading screenshot: ${key} (${(imgBytes.byteLength / 1024).toFixed(0)} KB)`);
 
         await env.SSSAHAM_EMITEN.put(key, imgBytes, {
-          httpMetadata: {
-            contentType: ct,
-            cacheControl: `public, max-age=${SCREENSHOT_TTL_SECONDS}`
-          },
-          customMetadata: {
-            symbol: symbolParam,
-            label: resolvedLabel,
-            origin,
-            version: SCREENSHOT_VERSION,
-            uploaded_at: new Date().toISOString()
-          }
+          httpMetadata: { contentType: ct },
+          customMetadata: { symbol, label, uploaded_at: new Date().toISOString() }
         });
-
-        if (origin !== "service" && resolvedLabel !== INTRADAY_LABEL) {
-          const trigger = scheduleIntradayCapture(env, symbolParam, today);
-          if (trigger) {
-            ctx.waitUntil(trigger.catch(err => console.error("[AI] Auto capture trigger failed:", err)));
-          }
-        }
 
         const publicUrl = `https://api-saham.mkemalw.workers.dev/ai/screenshot?key=${encodeURIComponent(key)}`;
-        return json({
-          ok: true,
-          key,
-          url: publicUrl,
-          size_kb: sizeKb,
-          origin,
-          label: resolvedLabel,
-          date: today
-        });
+        return json({ ok: true, key, url: publicUrl, size_kb: Math.round(imgBytes.byteLength / 1024) });
       }
 
       // GET /ai/screenshot?key=...  — serve image from R2
@@ -2991,7 +1942,6 @@ export default {
       }
 
       // POST /ai/analyze-broksum  — multi-image, cached per day
-      // POST /ai/analyze-broksum  — multi-image, cached per day
       if (url.pathname === "/ai/analyze-broksum" && req.method === "POST") {
         if (!env.OPENAI_API_KEY) {
           return json({ ok: false, error: "Missing OPENAI_API_KEY in environment" }, 500);
@@ -3003,84 +1953,30 @@ export default {
         }
 
         const body = await req.json();
-        const { symbol, image_keys } = body; // [{key,label}, ...]
+        const { symbol, image_keys } = body;  // image_keys = [{key, label},...]
         const forceRefresh = body.force === true;
 
-        const normalizedSymbol = (symbol || "").toString().trim().toUpperCase();
-        const originalKeys = Array.isArray(image_keys) ? image_keys : [];
-        if (!normalizedSymbol || originalKeys.length === 0) {
+        if (!symbol || !image_keys || !image_keys.length) {
           return json({ ok: false, error: "Missing required fields: symbol, image_keys[]" }, 400);
         }
 
+        // ── Cache Check ──
         const today = new Date().toISOString().split("T")[0];
-        const cacheKey = `ai-cache/${normalizedSymbol}/${today}.json`;
+        const cacheKey = `ai-cache/${symbol}/${today}.json`;
 
         if (!forceRefresh) {
           try {
             const cached = await env.SSSAHAM_EMITEN.get(cacheKey);
             if (cached) {
               const cachedData = await cached.json();
-              console.log(`[AI] Cache HIT for ${normalizedSymbol} (${today})`);
+              console.log(`[AI] Cache HIT for ${symbol} (${today})`);
               return json({ ...cachedData, cached: true });
             }
-          } catch (_) { }
+          } catch (_) {}
         }
 
-        // --- de-dupe & normalize screenshot keys
-        const aggregatedMap = new Map();
-        originalKeys.forEach((ik) => {
-          if (!ik || typeof ik.key !== "string") return;
-          const key = ik.key;
-          const labelRaw = typeof ik.label === "string" ? ik.label.trim() : "screenshot";
-          const normalizedLabel = (labelRaw || "screenshot").toLowerCase();
-          aggregatedMap.set(key, { key, label: labelRaw || "screenshot", normalizedLabel });
-        });
-
-        const INTRADAY_LABEL = "intraday"; // keep same constant as your file
-        const labelPresence = new Set(Array.from(aggregatedMap.values()).map(x => x.normalizedLabel));
-        if (!labelPresence.has(INTRADAY_LABEL)) {
-          const intradayKey = await ensureScreenshotAvailability(env, ctx, normalizedSymbol, today, INTRADAY_LABEL, { forceRefresh });
-          if (intradayKey) {
-            aggregatedMap.set(intradayKey, { key: intradayKey, label: "intraday", normalizedLabel: INTRADAY_LABEL });
-            labelPresence.add(INTRADAY_LABEL);
-          } else {
-            console.warn(`[AI] Intraday screenshot unavailable for ${normalizedSymbol}`);
-          }
-        }
-
-        const aggregatedKeys = Array.from(aggregatedMap.values());
-        if (aggregatedKeys.length === 0) {
-          return json({ ok: false, error: "No valid screenshots available" }, 400);
-        }
-
-        // --- validate screenshot existence (HEAD)
-        for (const ik of aggregatedKeys) {
-          try {
-            const head = await env.SSSAHAM_EMITEN.head(ik.key);
-            if (!head) {
-              return json({ ok: false, error: `Screenshot not found: ${ik.label || ik.key}` }, 400);
-            }
-          } catch (headErr) {
-            console.error(`[AI] HEAD failed for ${ik.key}:`, headErr);
-            return json({ ok: false, error: `Cannot read screenshot: ${ik.label || ik.key}` }, 500);
-          }
-        }
-
-        // --- load system prompt
-        let systemPrompt = null;
-        try {
-          const promptObj = await env.SSSAHAM_EMITEN.get("prompt/brokersummary_detail_emiten_openai.txt");
-          systemPrompt = promptObj ? await promptObj.text() : null;
-        } catch (_) { }
-        if (!systemPrompt) {
-          systemPrompt = "Kamu adalah analis saham Indonesia. Analisis screenshot broker summary ini dan berikan analisis fund flow komprehensif dalam Bahasa Indonesia.";
-        }
-
-        const OPENAI_URL = "https://api.openai.com/v1/chat/completions";
-        const GROK_URL = "https://api.x.ai/v1/chat/completions";
-
-        const labelList = aggregatedKeys.map(ik => ik.label).join(", ");
-        const imageContents = aggregatedKeys.map(ik => ({
+        // ── Build image URLs for OpenAI ──
+        const imageContents = image_keys.map(ik => ({
           type: "image_url",
           image_url: {
             url: `https://api-saham.mkemalw.workers.dev/ai/screenshot?key=${encodeURIComponent(ik.key)}`,
@@ -3088,6 +1984,20 @@ export default {
           }
         }));
 
+        const labelList = image_keys.map(ik => ik.label).join(", ");
+
+        // ── Read prompt ──
+        let systemPrompt;
+        try {
+          const promptObj = await env.SSSAHAM_EMITEN.get("prompt/brokersummary_detail_emiten_openai.txt");
+          systemPrompt = promptObj ? await promptObj.text() : null;
+        } catch (_) {}
+        if (!systemPrompt) {
+          systemPrompt = "Kamu adalah analis saham Indonesia. Analisis screenshot broker summary ini dan berikan analisis fund flow komprehensif dalam Bahasa Indonesia.";
+        }
+
+        // ── Call OpenAI Vision ──
+        const OPENAI_URL = "https://api.openai.com/v1/chat/completions";
         const visionPayload = {
           model: "gpt-4.1",
           messages: [
@@ -3095,7 +2005,10 @@ export default {
             {
               role: "user",
               content: [
-                { type: "text", text: `Analisis screenshot halaman Broker Summary untuk emiten ${normalizedSymbol}. Screenshot yang tersedia: ${labelList}. Gabungkan analisis dari semua screenshot dan kembalikan JSON valid sesuai schema.` },
+                {
+                  type: "text",
+                  text: `Analisis screenshot halaman Broker Summary untuk emiten ${symbol}. Screenshot yang tersedia: ${labelList}. Gabungkan analisis dari semua screenshot.`
+                },
                 ...imageContents
               ]
             }
@@ -3103,11 +2016,9 @@ export default {
           max_tokens: 4096
         };
 
-        async function callOpenAIWithJsonRetry() {
-          let usage = {};
-          let rawContent = "";
-
-          const resp = await fetch(OPENAI_URL, {
+        try {
+          console.log(`[AI] Calling OpenAI for ${symbol} with ${image_keys.length} images`);
+          const aiResp = await fetch(OPENAI_URL, {
             method: "POST",
             headers: {
               "Authorization": `Bearer ${env.OPENAI_API_KEY}`,
@@ -3116,185 +2027,50 @@ export default {
             body: JSON.stringify(visionPayload)
           });
 
-          if (!resp.ok) {
-            const errText = await resp.text();
-            throw new Error(`OpenAI API error: ${resp.status} - ${errText}`);
+          if (!aiResp.ok) {
+            const errText = await aiResp.text();
+            console.error(`[AI] OpenAI error: ${aiResp.status} ${errText}`);
+            return json({ ok: false, error: `OpenAI API error: ${aiResp.status}`, details: errText }, 502);
           }
 
-          const data = await resp.json();
-          rawContent = data.choices?.[0]?.message?.content || "";
-          usage = data.usage || {};
+          const aiData = await aiResp.json();
+          const analysis = aiData.choices?.[0]?.message?.content || "";
+          const usage = aiData.usage || {};
 
-          try {
-            const analysisJson = parseModelJson(rawContent);
-            return { analysisJson, rawContent, usage };
-          } catch (parseErr) {
-            console.error("[AI] First JSON parse failed, retrying:", parseErr.message);
+          console.log(`[AI] Done for ${symbol}. Tokens: ${usage.total_tokens || 'N/A'}`);
 
-            const correctionPayload = {
-              ...visionPayload,
-              messages: [
-                ...visionPayload.messages,
-                { role: "assistant", content: rawContent },
-                {
-                  role: "user",
-                  content: `The previous response was not valid JSON. Error: ${parseErr.message}. Please correct the output and provide only the valid JSON object, without any surrounding text or markdown formatting.`
-                }
-              ]
-            };
-
-            const retryResp = await fetch(OPENAI_URL, {
-              method: "POST",
-              headers: {
-                "Authorization": `Bearer ${env.OPENAI_API_KEY}`,
-                "Content-Type": "application/json"
-              },
-              body: JSON.stringify(correctionPayload)
-            });
-
-            if (!retryResp.ok) {
-              const retryErrText = await retryResp.text();
-              throw new Error(`OpenAI retry API error: ${retryResp.status} - ${retryErrText}`);
-            }
-
-            const retryData = await retryResp.json();
-            rawContent = retryData.choices?.[0]?.message?.content || rawContent;
-
-            // keep latest usage (or merge if you prefer)
-            usage = retryData.usage || usage;
-
-            const analysisJson = parseModelJson(rawContent);
-            return { analysisJson, rawContent, usage };
-          }
-        }
-
-        async function callGrokTextOnly() {
-          if (!env.GROK_API_KEY) {
-            throw new Error("Missing GROK_API_KEY for fallback");
-          }
-
-          const textOnlyPayload = {
-            model: "grok-4",
-            messages: [
-              { role: "system", content: systemPrompt },
-              {
-                role: "user",
-                content: `Analisis data broker summary untuk emiten ${normalizedSymbol}. Screenshot labels tersedia: ${labelList}. (fallback text-only) Kembalikan JSON valid sesuai schema.`
-              }
-            ],
-            max_tokens: 4096
+          const result = {
+            ok: true,
+            symbol,
+            model: "gpt-4.1",
+            analysis,
+            screenshots: image_keys.map(ik => ({
+              label: ik.label,
+              url: `https://api-saham.mkemalw.workers.dev/ai/screenshot?key=${encodeURIComponent(ik.key)}`
+            })),
+            usage: {
+              prompt_tokens: usage.prompt_tokens,
+              completion_tokens: usage.completion_tokens,
+              total_tokens: usage.total_tokens
+            },
+            analyzed_at: new Date().toISOString()
           };
 
-          const resp = await fetch(GROK_URL, {
-            method: "POST",
-            headers: {
-              "Authorization": `Bearer ${env.GROK_API_KEY}`,
-              "Content-Type": "application/json"
-            },
-            body: JSON.stringify(textOnlyPayload)
-          });
-
-          if (!resp.ok) {
-            const errText = await resp.text();
-            throw new Error(`Grok API error: ${resp.status} - ${errText}`);
-          }
-
-          const data = await resp.json();
-          const rawContent = data.choices?.[0]?.message?.content || "";
-          const usage = data.usage || {};
-
-          const analysisJson = parseModelJson(rawContent);
-          return { analysisJson, rawContent, usage };
-        }
-
-        // --- run provider with fallback
-        let provider = "openai";
-        let modelUsed = "gpt-4.1";
-        let analysisJson = null;
-        let rawContent = "";
-        let usage = {};
-
-        try {
-          console.log(`[AI] Calling OpenAI for ${normalizedSymbol} with ${aggregatedKeys.length} images`);
-          const out = await callOpenAIWithJsonRetry();
-          analysisJson = out.analysisJson;
-          rawContent = out.rawContent;
-          usage = out.usage || {};
-        } catch (openaiErr) {
-          console.warn(`[AI] OpenAI failed: ${openaiErr.message}. Falling back to Grok.`);
-          provider = "grok";
-          modelUsed = "grok-4";
-
+          // ── Save to cache (TTL 24h) ──
           try {
-            const out = await callGrokTextOnly();
-            analysisJson = out.analysisJson;
-            rawContent = out.rawContent;
-            usage = out.usage || {};
-          } catch (grokErr) {
-            console.error("[AI] Grok fallback failed:", grokErr.message);
-            return json(
-              { ok: false, error: "Both OpenAI and Grok failed", openai: openaiErr.message, grok: grokErr.message },
-              502
-            );
-          }
+            await env.SSSAHAM_EMITEN.put(cacheKey, JSON.stringify(result), {
+              httpMetadata: { contentType: "application/json" },
+              customMetadata: { symbol, generated_at: new Date().toISOString() }
+            });
+            console.log(`[AI] Cached result: ${cacheKey}`);
+          } catch (_) {}
+
+          return json(result);
+        } catch (aiErr) {
+          console.error(`[AI] Error calling OpenAI:`, aiErr);
+          return json({ ok: false, error: "Failed to call OpenAI", details: aiErr.message }, 500);
         }
-
-        if (!analysisJson || typeof analysisJson !== "object") {
-          return json({ ok: false, error: "Model returned invalid JSON structure", raw_output: rawContent }, 502);
-        }
-
-        // --- normalize meta fields
-        analysisJson.meta = analysisJson.meta && typeof analysisJson.meta === "object" ? analysisJson.meta : {};
-        analysisJson.meta.symbol = analysisJson.meta.symbol || normalizedSymbol;
-        analysisJson.meta.date_range = analysisJson.meta.date_range || analysisJson.meta.range || "unknown";
-        analysisJson.meta.screenshots = Array.from(new Set(aggregatedKeys.map(k => k.label)));
-        if (typeof analysisJson.meta.confidence !== "number" || Number.isNaN(analysisJson.meta.confidence)) {
-          analysisJson.meta.confidence = Number(analysisJson.meta.confidence) || 0;
-        }
-
-        if (analysisJson.recommendation && typeof analysisJson.recommendation === "object") {
-          const rec = analysisJson.recommendation;
-          if (!Array.isArray(rec.rationale)) rec.rationale = [];
-          if (!Array.isArray(rec.risks)) rec.risks = [];
-          if (typeof rec.confidence !== "number" || Number.isNaN(rec.confidence)) {
-            rec.confidence = Number(rec.confidence) || 0;
-          }
-        }
-
-        const screenshotsPayload = aggregatedKeys.map(ik => ({
-          label: ik.label,
-          url: `https://api-saham.mkemalw.workers.dev/ai/screenshot?key=${encodeURIComponent(ik.key)}`
-        }));
-
-        const result = {
-          ok: true,
-          symbol: normalizedSymbol,
-          provider,
-          model: modelUsed,
-          analysis: analysisJson,
-          analysis_raw: rawContent,
-          screenshots: screenshotsPayload,
-          usage: {
-            prompt_tokens: usage.prompt_tokens,
-            completion_tokens: usage.completion_tokens,
-            total_tokens: usage.total_tokens
-          },
-          analyzed_at: new Date().toISOString()
-        };
-
-        try {
-          await env.SSSAHAM_EMITEN.put(cacheKey, JSON.stringify(result), {
-            httpMetadata: { contentType: "application/json" },
-            customMetadata: { symbol: normalizedSymbol, generated_at: new Date().toISOString() }
-          });
-          console.log(`[AI] Cached result: ${cacheKey}`);
-        } catch (cacheErr) {
-          console.error("[AI] Failed to cache result:", cacheErr);
-        }
-
-        return json(result);
       }
-
 
       // 7. Docs/Health
       if (url.pathname === "/health") return json({ ok: true, service: "api-saham" });
@@ -3311,22 +2087,4 @@ export default {
       return json({ error: "Worker Error", details: err.stack || String(err) }, 500);
     }
   }
-}
-// ==============================
-// TEST HOOKS (Vitest)
-// ==============================
-// Safe: tidak mengubah runtime worker, cuma untuk unit test import.
-export const __test__ = {
-  checkDataCompleteness,
-  shouldRepairFootprint,
-  isWeekendUTC,
-  prevTradingDayUTC,
-  countMissingSessionHours,
-  buildFromFallbackTimeline,
-  getTodayOrderflowWindow,
-  buildEmitenQuery,
-  normalizeStatusFilter,
-  normalizeSectorFilter,
-  normalizeSearchQuery,
-  clampLimit
 };
