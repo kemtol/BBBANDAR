@@ -7,6 +7,10 @@ const nettParam = urlParams.get('nett');
 let brokersMap = {};
 let currentBrokerSummary = null;
 
+if (typeof Chart !== 'undefined' && typeof ChartDataLabels !== 'undefined') {
+    Chart.register(ChartDataLabels);
+}
+
 $(document).ready(function () {
     // 1. Fetch Brokers Mapping
     fetch(`${WORKER_BASE_URL}/brokers`)
@@ -96,6 +100,7 @@ async function initIndexMode() {
     $('#detail-view').hide();
     $('.nav-title').text('Dashboard');
     $('#nav-back').addClass('d-none');
+    setupMarketChartCarousel();
     loadScreenerData();
 }
 
@@ -103,6 +108,8 @@ async function initIndexMode() {
 let currentCandidates = [];
 let allCandidates = []; // Unfiltered cache
 let sortState = { key: 'sm2', desc: true };
+const orderflowLiveCache = new Map();
+const orderflowInFlight = new Set();
 const SCREENER_PAGE_SIZE = 100;
 let screenerPage = 1;
 let accumFilter = 'all'; // legacy compat
@@ -162,7 +169,7 @@ async function loadScreenerData() {
         const data = await response.json();
 
         if (!data || !Array.isArray(data.items) || data.items.length === 0) {
-            $('#tbody-index').html('<tr><td colspan="19" class="text-center text-muted">Accum data not yet generated.</td></tr>');
+            $('#tbody-index').html('<tr><td colspan="25" class="text-center text-muted">Accum data not yet generated.</td></tr>');
             return;
         }
 
@@ -203,6 +210,8 @@ async function loadScreenerData() {
             const flow10 = calcFlow(effort10, ngr10);
             const flow20 = calcFlow(effort20, ngr20);
 
+            const orderflow = i.orderflow || null;
+
             return {
                 symbol: i.t,
                 state,
@@ -221,6 +230,13 @@ async function loadScreenerData() {
                 sm5:  i.accum?.["5"]?.sm || 0,
                 sm10: i.accum?.["10"]?.sm || 0,
                 sm20: i.accum?.["20"]?.sm || 0,
+                orderflow,
+                order_delta_pct: (typeof orderflow?.delta_pct === 'number') ? orderflow.delta_pct : null,
+                order_mom_pct: (typeof orderflow?.mom_pct === 'number') ? orderflow.mom_pct : null,
+                order_absorb: (typeof orderflow?.absorb === 'number') ? orderflow.absorb : null,
+                order_cvd: (typeof orderflow?.cvd === 'number') ? orderflow.cvd : null,
+                order_net_value: (typeof orderflow?.net_value === 'number') ? orderflow.net_value : null,
+                order_quadrant: orderflow?.quadrant || null,
                 metrics: {
                     effort2, effort5, effort10, effort20,
                     ngr2, ngr5, ngr10, ngr20,
@@ -244,10 +260,11 @@ async function loadScreenerData() {
 
         applyFilter();
         loadForeignSentiment();
+        loadOpportunityBubbleChart();
 
     } catch (error) {
         console.error('[Brokerflow] loadScreenerData failed:', error);
-        $('#tbody-index').html('<tr><td colspan="19" class="text-center text-danger">Error loading screener data</td></tr>');
+        $('#tbody-index').html('<tr><td colspan="25" class="text-center text-danger">Error loading screener data</td></tr>');
     } finally {
         $('#loading-indicator').hide();
         $('#app').fadeIn();
@@ -342,6 +359,246 @@ function matchesZRelation(mode, z2, z5, z10, z20) {
 // Foreign Sentiment Chart - Cumulative of 10 MVP Stocks
 let foreignSentimentChart = null;
 let currentForeignDays = 7;
+let opportunityBubbleChart = null;
+let foreignWidgetTitleHtml = 'Foreign Flow';
+
+function refreshMarketWidgetHeader() {
+    const activeChart = $('#market-chart-carousel .carousel-item.active').data('chart') || 'foreign';
+    const $title = $('#market-widget-title');
+    const $range = $('#foreign-range-selector');
+
+    if (activeChart === 'bubble') {
+        $title.html('Orderflow Bubble Opportunity <span class="d-block small mt-2 mb-4">Top peluang intraday</span>');
+        $range.addClass('d-none');
+        return;
+    }
+
+    $title.html(foreignWidgetTitleHtml);
+    $range.removeClass('d-none');
+}
+
+function setupMarketChartCarousel() {
+    const $carousel = $('#market-chart-carousel');
+    if (!$carousel.length) return;
+
+    $carousel.off('slid.bs.carousel.market').on('slid.bs.carousel.market', function () {
+        refreshMarketWidgetHeader();
+
+        const activeChart = $('#market-chart-carousel .carousel-item.active').data('chart') || 'foreign';
+        if (activeChart === 'bubble' && opportunityBubbleChart) {
+            opportunityBubbleChart.resize();
+            opportunityBubbleChart.update('none');
+        } else if (activeChart === 'foreign' && foreignSentimentChart) {
+            foreignSentimentChart.resize();
+            foreignSentimentChart.update('none');
+        }
+    });
+
+    refreshMarketWidgetHeader();
+}
+
+async function loadOpportunityBubbleChart() {
+    try {
+        $('#bubble-chart-loading').show().html(`
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+            <p class="small text-muted mt-2 mb-0">Memuat bubble chart orderflow...</p>
+        `);
+        $('#bubble-chart-container').hide();
+
+        const response = await fetch(`${WORKER_BASE_URL}/footprint/summary?_ts=${Date.now()}`);
+        const data = await response.json();
+        const rawItems = Array.isArray(data?.items) ? data.items : [];
+
+        const allPoints = rawItems
+            .filter(item => item && item.t && String(item.t).length <= 4)
+            .map(item => {
+                const vol = Number(item.v || 0);
+                const deltaPctRaw = Number(item.d);
+                const power = Number.isFinite(deltaPctRaw) ? deltaPctRaw : 0;
+                const absorb = Number(item.div || 0);
+                const netVolRaw = Number(item.nv);
+                const sizeRef = Math.abs(Number.isFinite(netVolRaw) ? netVolRaw : ((power * vol) / 100)) || vol;
+                return {
+                    kode: String(item.t || '').toUpperCase(),
+                    emiten: String(item.t || '').toUpperCase(),
+                    label: String(item.t || '').toUpperCase(),
+                    x: Number.isFinite(power) ? power : 0,
+                    y: Number.isFinite(absorb) ? absorb : 0,
+                    sizeRef,
+                    r: 10
+                };
+            });
+
+        let points = allPoints
+            .filter(p => p.x > 0.5 || p.y > 5)
+            .sort((a, b) => (b.x + b.y) - (a.x + a.y))
+            .slice(0, 120);
+
+        if (!points.length) {
+            points = allPoints
+                .sort((a, b) => (b.y + b.x) - (a.y + a.x))
+                .slice(0, 120);
+        }
+
+        if (!points.length) {
+            $('#bubble-chart-loading').html('<p class="small text-muted mb-0">Data bubble tidak tersedia</p>');
+            return;
+        }
+
+        const sizeVals = points.map(p => Number(p.sizeRef) || 0).filter(v => Number.isFinite(v) && v > 0);
+        const sizeMin = sizeVals.length ? Math.min(...sizeVals) : 1;
+        const sizeMax = sizeVals.length ? Math.max(...sizeVals) : 1;
+        const logMin = Math.log10(sizeMin + 1);
+        const logMax = Math.log10(sizeMax + 1);
+        const span = Math.max(1e-6, logMax - logMin);
+
+        points = points.map(p => {
+            const v = Math.max(0, Number(p.sizeRef) || 0);
+            const t = (Math.log10(v + 1) - logMin) / span;
+            const radius = 10 + (Math.max(0, Math.min(1, t)) * 24); // 10..34 px
+            return { ...p, r: radius };
+        });
+
+        const xVals = points.map(p => p.x);
+        const yVals = points.map(p => p.y);
+        const maxR = points.reduce((m, p) => Math.max(m, Number(p.r) || 0), 0);
+        const xMin = Math.min(...xVals);
+        const xMax = Math.max(...xVals);
+        const yMin = Math.min(...yVals);
+        const yMax = Math.max(...yVals);
+        const xRange = Math.max(1, xMax - xMin);
+        const yRange = Math.max(1, yMax - yMin);
+        const xPad = Math.max(2, xRange * 0.2);
+        const yPad = Math.max(4, yRange * 0.2);
+        // Overscan so large circles near bounds are not cut off
+        const xOverscan = Math.max(2, (maxR / 34) * xRange * 0.08);
+        const yOverscan = Math.max(3, (maxR / 34) * yRange * 0.12);
+
+        const ctx = document.getElementById('opportunity-bubble-chart').getContext('2d');
+        if (opportunityBubbleChart) {
+            opportunityBubbleChart.destroy();
+        }
+
+        const bubbleTextLabelsPlugin = {
+            id: 'bubbleTextLabels',
+            afterDatasetsDraw(chart) {
+                const dataset = chart?.data?.datasets?.[0];
+                const meta = chart?.getDatasetMeta?.(0);
+                if (!dataset || !meta || !Array.isArray(meta.data)) return;
+
+                const { ctx, chartArea } = chart;
+                ctx.save();
+                ctx.font = '600 11px Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif';
+                ctx.fillStyle = 'rgba(255,255,255,0.95)';
+                ctx.textAlign = 'center';
+
+                meta.data.forEach((el, i) => {
+                    const raw = dataset.data?.[i] || {};
+                    const label = raw.emiten || raw.kode || raw.label || '';
+                    if (!label || !el) return;
+
+                    const p = el.getProps(['x', 'y', 'options'], true);
+                    const r = Number(p?.options?.radius ?? raw.r ?? 0);
+                    const power = Number(raw.x) || 0;
+                    const tx = p.x;
+                    
+                    // Green bubbles (power >= 5): label above
+                    // Blue/Red bubbles (power < 5): label below
+                    let ty;
+                    if (power >= 5) {
+                        ctx.textBaseline = 'bottom';
+                        ty = p.y - r - 4;
+                    } else {
+                        ctx.textBaseline = 'top';
+                        ty = p.y + r + 4;
+                    }
+
+                    if (tx < chartArea.left - 40 || tx > chartArea.right + 40) return;
+                    if (ty < chartArea.top - 20 || ty > chartArea.bottom + 20) return;
+
+                    ctx.fillText(label, tx, ty);
+                });
+
+                ctx.restore();
+            }
+        };
+
+        opportunityBubbleChart = new Chart(ctx, {
+            type: 'bubble',
+            data: {
+                datasets: [{
+                    label: 'Opportunity',
+                    data: points,
+                    backgroundColor: points.map(p => p.x >= 5 ? 'rgba(34,197,94,0.75)' : 'rgba(59,130,246,0.6)'),
+                    borderColor: points.map(p => p.x >= 5 ? 'rgba(21,128,61,0.9)' : 'rgba(37,99,235,0.9)'),
+                    borderWidth: 1,
+                    clip: false
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    datalabels: { display: false },
+                    tooltip: {
+                        enabled: true,
+                        displayColors: false,
+                        callbacks: {
+                            title: function () { return ''; },
+                            label: function (ctx) {
+                                const p = ctx.raw || {};
+                                const name = p.emiten || p.kode || p.label || '-';
+                                return `${name} | Power ${Number(p.x || 0).toFixed(1)} | Absorb ${Number(p.y || 0).toFixed(1)}`;
+                            }
+                        }
+                    }
+                },
+                interaction: { mode: 'nearest', intersect: false },
+                hover: { mode: 'nearest', intersect: false },
+                scales: {
+                    x: {
+                        title: { display: true, text: 'Power (Net Delta %)', font: { size: 10 } },
+                        min: xMin - xPad - xOverscan,
+                        max: xMax + xPad + xOverscan,
+                        ticks: { font: { size: 9 } },
+                        grid: {
+                            color: (ctx) => Math.abs(Number(ctx?.tick?.value || 0)) < 1e-9
+                                ? 'rgba(148,163,184,0.55)'
+                                : 'rgba(0,0,0,0)',
+                            lineWidth: (ctx) => Math.abs(Number(ctx?.tick?.value || 0)) < 1e-9 ? 1.2 : 0,
+                            drawBorder: false
+                        },
+                        border: { display: false }
+                    },
+                    y: {
+                        title: { display: true, text: 'Absorb', font: { size: 10 } },
+                        min: yMin - yPad - yOverscan,
+                        max: yMax + yPad + yOverscan,
+                        ticks: { font: { size: 9 } },
+                        grid: {
+                            color: (ctx) => Math.abs(Number(ctx?.tick?.value || 0)) < 1e-9
+                                ? 'rgba(148,163,184,0.55)'
+                                : 'rgba(0,0,0,0)',
+                            lineWidth: (ctx) => Math.abs(Number(ctx?.tick?.value || 0)) < 1e-9 ? 1.2 : 0,
+                            drawBorder: false
+                        },
+                        border: { display: false }
+                    }
+                }
+            },
+            plugins: [bubbleTextLabelsPlugin]
+        });
+
+        $('#bubble-chart-loading').hide();
+        $('#bubble-chart-container').show();
+    } catch (e) {
+        console.error('Error loading bubble chart:', e);
+        $('#bubble-chart-loading').html('<p class="small text-danger mb-0">Gagal memuat bubble chart</p>');
+    }
+}
 
 async function loadForeignSentiment(days = 7) {
     try {
@@ -415,6 +672,37 @@ async function loadForeignSentiment(days = 7) {
                                 return `${status}: Rp ${Math.abs(val).toFixed(1)} B`;
                             }
                         }
+                    },
+                    datalabels: {
+                        display: true,
+                        color: 'rgba(255,255,255,0.95)',
+                        clamp: true,
+                        clip: false,
+                        font: {
+                            size: 10,
+                            weight: '600',
+                            family: 'Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif'
+                        },
+                        align: function(ctx) {
+                            const val = ctx.dataset.data[ctx.dataIndex];
+                            const meta = ctx.chart.getDatasetMeta(ctx.datasetIndex);
+                            const el = meta?.data?.[ctx.dataIndex];
+                            const y = Number(el?.y);
+                            const top = Number(ctx.chart?.chartArea?.top ?? 0);
+                            const bottom = Number(ctx.chart?.chartArea?.bottom ?? 0);
+
+                            if (val >= 0) {
+                                if (Number.isFinite(y) && (y - top) < 14) return 'bottom';
+                                return 'top';
+                            }
+                            if (Number.isFinite(y) && (bottom - y) < 14) return 'top';
+                            return 'bottom';
+                        },
+                        anchor: 'center',
+                        offset: 6,
+                        formatter: function(value) {
+                            return value.toFixed(1);
+                        }
                     }
                 },
                 scales: {
@@ -447,7 +735,8 @@ async function loadForeignSentiment(days = 7) {
         const totalNet = netValues.reduce((a, b) => a + b, 0);
         const trend = totalNet >= 0 ? 'text-success' : 'text-danger';
         const arrow = totalNet >= 0 ? '↑' : '↓';
-        $('#foreign-sentiment-widget h6').html(`Foreign Flow 10 Saham Cap Terbesar<span class="d-block mb-3 mt-2 ${trend} fw-bold" style="font-size:2rem"><i style="font-weight:900">${arrow}</i> Rp ${Math.abs(totalNet).toFixed(1)} B</span>`);
+        foreignWidgetTitleHtml = `Foreign Flow 10 Saham Cap Terbesar<span class="d-block mb-3 mt-2 ${trend} fw-bold" style="font-size:2rem"><i style="font-weight:900">${arrow}</i> Rp ${Math.abs(totalNet).toFixed(1)} B</span>`;
+        refreshMarketWidgetHeader();
         
     } catch (e) {
         console.error('Error loading foreign sentiment:', e);
@@ -617,6 +906,16 @@ function sortCandidates(key, desc) {
         else if (key === 'response') { valA = a.metrics.resultZ; valB = b.metrics.resultZ; }
         else if (key === 'quality') { valA = a.metrics.ngr; valB = b.metrics.ngr; }
         else if (key === 'elasticity') { valA = a.metrics.elasticity; valB = b.metrics.elasticity; }
+        else if (key === 'order_delta_pct') { valA = (typeof a.order_delta_pct === 'number') ? a.order_delta_pct : -Infinity; valB = (typeof b.order_delta_pct === 'number') ? b.order_delta_pct : -Infinity; }
+        else if (key === 'order_mom_pct') { valA = (typeof a.order_mom_pct === 'number') ? a.order_mom_pct : -Infinity; valB = (typeof b.order_mom_pct === 'number') ? b.order_mom_pct : -Infinity; }
+        else if (key === 'order_absorb') { valA = (typeof a.order_absorb === 'number') ? a.order_absorb : -Infinity; valB = (typeof b.order_absorb === 'number') ? b.order_absorb : -Infinity; }
+        else if (key === 'order_cvd') { valA = (typeof a.order_cvd === 'number') ? a.order_cvd : -Infinity; valB = (typeof b.order_cvd === 'number') ? b.order_cvd : -Infinity; }
+        else if (key === 'order_net_value') { valA = (typeof a.order_net_value === 'number') ? a.order_net_value : -Infinity; valB = (typeof b.order_net_value === 'number') ? b.order_net_value : -Infinity; }
+        else if (key === 'order_quadrant') {
+            const qRank = (q) => q === 'Q1' ? 4 : q === 'Q2' ? 3 : q === 'Q4' ? 2 : q === 'Q3' ? 1 : -1;
+            valA = qRank(a.order_quadrant);
+            valB = qRank(b.order_quadrant);
+        }
         else { valA = 0; valB = 0; }
 
         if (typeof valA === 'string') {
@@ -776,11 +1075,44 @@ function renderScreenerTable(candidates) {
         return `${indicator}<span class="${color} fw-bold" >${formatted}</span>${streakBadge}`;
     };
 
+    const fmtPct = (v) => {
+        if (typeof v !== 'number' || !Number.isFinite(v)) return '<span class="text-muted">-</span>';
+        const cls = v > 0 ? 'text-success fw-bold' : (v < 0 ? 'text-danger fw-bold' : 'text-secondary');
+        const sign = v > 0 ? '+' : '';
+        return `<span class="${cls}">${sign}${v.toFixed(2)}%</span>`;
+    };
+
+    const fmtAbsorb = (v) => {
+        if (typeof v !== 'number' || !Number.isFinite(v)) return '<span class="text-muted">-</span>';
+        return `<span>${v.toLocaleString('id-ID', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}</span>`;
+    };
+
+    const fmtCvd = (v) => {
+        if (typeof v !== 'number' || !Number.isFinite(v)) return '<span class="text-muted">-</span>';
+        const cls = v >= 0 ? 'text-success' : 'text-danger';
+        return `<span class="${cls}">${v.toLocaleString('id-ID')}</span>`;
+    };
+
+    const fmtValue = (v) => {
+        if (typeof v !== 'number' || !Number.isFinite(v)) return '<span class="text-muted">-</span>';
+        return `<span class="fw-bold">${formatCompactNumber(v)}</span>`;
+    };
+
+    const fmtQuadrant = (q) => {
+        if (!q) return '<span class="text-muted">-</span>';
+        const cls = q === 'Q1' ? 'bg-success text-white'
+            : q === 'Q2' ? 'bg-info text-dark'
+                : q === 'Q3' ? 'bg-danger text-white'
+                    : q === 'Q4' ? 'bg-warning text-dark'
+                        : 'bg-secondary text-white';
+        return `<span class="badge ${cls}" style="font-size:0.7rem; min-width: 30px;">${q}</span>`;
+    };
+
     candidates.forEach((item, idx) => {
         const m = item.metrics;
         const logoUrl = `https://api-saham.mkemalw.workers.dev/logo?symbol=${item.symbol}`;
         const row = `
-            <tr onclick="window.location.href='?kode=${item.symbol}'" style="cursor:pointer;">
+            <tr data-symbol="${item.symbol}" onclick="window.location.href='?kode=${item.symbol}'" style="cursor:pointer;">
                 <td class="text-center text-muted small">${idx + 1}</td>
                 <td class="fw-bold">
                     <img src="${logoUrl}" alt="" style="height: 20px; width: auto; margin-right: 6px; vertical-align: middle; border-radius: 3px;" onerror="this.style.display='none'">
@@ -803,12 +1135,124 @@ function renderScreenerTable(candidates) {
                 <td class="text-center hide-mobile col-h10">${getBadge(m.effort10, 'effort')}</td>
                 <td class="text-center hide-mobile col-h20">${getBadge(m.effort20, 'effort')}</td>
                 <td class="text-center">${getStateText(item.state)}</td>
+                <td class="text-center of-delta">${fmtPct(item.order_delta_pct)}</td>
+                <td class="text-center of-mom">${fmtPct(item.order_mom_pct)}</td>
+                <td class="text-center of-absorb">${fmtAbsorb(item.order_absorb)}</td>
+                <td class="text-center of-cvd">${fmtCvd(item.order_cvd)}</td>
+                <td class="text-center of-value">${fmtValue(item.order_net_value)}</td>
+                <td class="text-center of-q">${fmtQuadrant(item.order_quadrant)}</td>
             </tr>
         `;
         tbody.append(row);
     });
 
     applyColumnVisibility();
+    hydrateOrderflowForVisibleRows(candidates);
+}
+
+async function fetchOrderflowSnapshotForSymbol(symbol) {
+    if (!symbol) return null;
+    const key = String(symbol).toUpperCase();
+    if (orderflowLiveCache.has(key)) return orderflowLiveCache.get(key);
+    if (orderflowInFlight.has(key)) return null;
+
+    orderflowInFlight.add(key);
+    try {
+        const today = new Date().toISOString().split('T')[0];
+        const url = `${WORKER_BASE_URL}/cache-summary?symbol=${encodeURIComponent(key)}&from=${today}&to=${today}&cache=default`;
+        const resp = await fetch(url);
+        if (!resp.ok) {
+            orderflowLiveCache.set(key, null);
+            return null;
+        }
+        const data = await resp.json();
+        const snapshot = data?.orderflow || null;
+        orderflowLiveCache.set(key, snapshot);
+        return snapshot;
+    } catch (e) {
+        console.warn('[orderflow-hydrate] failed:', key, e);
+        orderflowLiveCache.set(key, null);
+        return null;
+    } finally {
+        orderflowInFlight.delete(key);
+    }
+}
+
+function applyOrderflowSnapshotToCandidate(item, snapshot) {
+    if (!item || !snapshot) return;
+    item.orderflow = snapshot;
+    item.order_delta_pct = typeof snapshot.delta_pct === 'number' ? snapshot.delta_pct : null;
+    item.order_mom_pct = typeof snapshot.mom_pct === 'number' ? snapshot.mom_pct : null;
+    item.order_absorb = typeof snapshot.absorb === 'number' ? snapshot.absorb : null;
+    item.order_cvd = typeof snapshot.cvd === 'number' ? snapshot.cvd : null;
+    item.order_net_value = typeof snapshot.net_value === 'number' ? snapshot.net_value : null;
+    item.order_quadrant = snapshot.quadrant || null;
+}
+
+function updateOrderflowCells(symbol, item) {
+    const $row = $(`#tbody-index tr[data-symbol="${symbol}"]`);
+    if (!$row.length) return;
+
+    const pct = (v) => {
+        if (typeof v !== 'number' || !Number.isFinite(v)) return '<span class="text-muted">-</span>';
+        const cls = v > 0 ? 'text-success fw-bold' : (v < 0 ? 'text-danger fw-bold' : 'text-secondary');
+        const sign = v > 0 ? '+' : '';
+        return `<span class="${cls}">${sign}${v.toFixed(2)}%</span>`;
+    };
+    const absorb = (v) => (typeof v === 'number' && Number.isFinite(v))
+        ? `<span>${v.toLocaleString('id-ID', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}</span>`
+        : '<span class="text-muted">-</span>';
+    const cvd = (v) => {
+        if (typeof v !== 'number' || !Number.isFinite(v)) return '<span class="text-muted">-</span>';
+        const cls = v >= 0 ? 'text-success' : 'text-danger';
+        return `<span class="${cls}">${v.toLocaleString('id-ID')}</span>`;
+    };
+    const value = (v) => (typeof v === 'number' && Number.isFinite(v))
+        ? `<span class="fw-bold">${formatCompactNumber(v)}</span>`
+        : '<span class="text-muted">-</span>';
+    const quadrant = (q) => {
+        if (!q) return '<span class="text-muted">-</span>';
+        const cls = q === 'Q1' ? 'bg-success text-white'
+            : q === 'Q2' ? 'bg-info text-dark'
+                : q === 'Q3' ? 'bg-danger text-white'
+                    : q === 'Q4' ? 'bg-warning text-dark'
+                        : 'bg-secondary text-white';
+        return `<span class="badge ${cls}" style="font-size:0.7rem; min-width: 30px;">${q}</span>`;
+    };
+
+    $row.find('.of-delta').html(pct(item.order_delta_pct));
+    $row.find('.of-mom').html(pct(item.order_mom_pct));
+    $row.find('.of-absorb').html(absorb(item.order_absorb));
+    $row.find('.of-cvd').html(cvd(item.order_cvd));
+    $row.find('.of-value').html(value(item.order_net_value));
+    $row.find('.of-q').html(quadrant(item.order_quadrant));
+}
+
+async function hydrateOrderflowForVisibleRows(candidates) {
+    if (!Array.isArray(candidates) || !candidates.length) return;
+
+    const targets = candidates.filter(c => c && c.symbol && c.orderflow == null);
+    if (!targets.length) return;
+
+    const concurrency = 6;
+    let cursor = 0;
+
+    const worker = async () => {
+        while (cursor < targets.length) {
+            const i = cursor++;
+            const item = targets[i];
+            const symbol = String(item.symbol || '').toUpperCase();
+            if (!symbol) continue;
+
+            const snapshot = await fetchOrderflowSnapshotForSymbol(symbol);
+            if (!snapshot) continue;
+
+            applyOrderflowSnapshotToCandidate(item, snapshot);
+            updateOrderflowCells(symbol, item);
+        }
+    };
+
+    await Promise.all(Array.from({ length: Math.min(concurrency, targets.length) }, () => worker()));
 }
 
 function applyColumnVisibility() {
@@ -1160,17 +1604,61 @@ async function loadDetailData(symbol, start, end, reload = false, retryCount = 0
 
         // Conditions: 
         // A. Explicit backfill flag from backend
-        // B. Empty data
-        // C. Partial data (< 70% complete)
+        // B. Empty data with no active backfill → IPO / new ticker (show static message, no retry)
+        // C. Backfill active → show spinner + retry loop
         const isBackfillActive = result.backfill_active === true;
-        const hasMinimalData = !result.history || result.history.length === 0 || completeness < 0.7;
+        const isEmptyData = !result.history || result.history.length === 0;
+        const hasMinimalData = isEmptyData || completeness < 0.7;
 
         console.log(`[DATA COMPLETENESS] Expected: ${expectedDays}, Actual: ${actualDays}, Completeness: ${(completeness * 100).toFixed(1)}%`);
-        console.log(`[BACKFILL CHECK] hasMinimalData: ${hasMinimalData}, isBackfillActive: ${isBackfillActive}`);
+        console.log(`[BACKFILL CHECK] isEmptyData: ${isEmptyData}, hasMinimalData: ${hasMinimalData}, isBackfillActive: ${isBackfillActive}`);
 
-        if (isBackfillActive || hasMinimalData) {
+        // CASE: Empty data + backfill NOT active → IPO or new ticker with no history yet
+        if (isEmptyData && !isBackfillActive) {
+            console.log(`[NO DATA] ${symbol} has no history and backfill is not active. Treating as IPO/new ticker.`);
+            $('#loading-indicator').hide();
+            $('#app').fadeIn();
+            $('.chart-container-responsive').hide();
+            $('#broker-table-container').html(`
+                <div class="alert alert-secondary text-center py-4">
+                    <i class="fa-solid fa-circle-info fa-2x mb-2 text-secondary"></i>
+                    <div class="fw-bold mt-1">Belum Ada Data Broker</div>
+                    <div class="small text-muted mt-2">
+                        Data broker summary untuk <strong>${symbol}</strong> belum tersedia.<br>
+                        Emiten ini kemungkinan baru IPO atau belum pernah diperdagangkan.
+                    </div>
+                </div>
+            `);
+            return;
+        }
 
-            // CHECK RETRY LIMIT
+        // CASE: Backfill is actively running → show spinner + retry loop
+        if (isBackfillActive) {
+            // STALE BACKFILL: backend says active but zero progress after N retries →
+            // treat as IPO/no-data to prevent infinite loop
+            const MAX_EMPTY_RETRIES = 6; // ~30 seconds with no progress
+            if (isEmptyData && retryCount >= MAX_EMPTY_RETRIES) {
+                console.warn(`[BACKFILL] Stale backfill detected for ${symbol} after ${retryCount} retries with 0 days. Treating as no-data.`);
+                $('#loading-indicator').hide();
+                $('#app').fadeIn();
+                $('.chart-container-responsive').hide();
+                $('#broker-table-container').html(`
+                    <div class="alert text-center py-4">
+                        <i class="fa-solid fa-circle-info fa-2x mb-2 text-secondary"></i>
+                        <div class="fw-bold mt-1">Belum Ada Data Broker</div>
+                        <div class="small text-muted mt-2">
+                            Data broker summary untuk <strong>${symbol}</strong> belum tersedia.<br>
+                            Emiten ini kemungkinan baru IPO atau data sedang dalam antrian proses.
+                        </div>
+                        <button class="btn btn-sm btn-outline-secondary mt-3" onclick="location.reload()">
+                            <i class="fa-solid fa-rotate-right me-1"></i> Coba Lagi Nanti
+                        </button>
+                    </div>
+                `);
+                return;
+            }
+
+            // CHECK RETRY LIMIT (for partial data that never completes)
             if (retryCount >= MAX_RETRIES) {
                 console.error(`[BACKFILL] Max retries (${MAX_RETRIES}) reached for ${symbol}`);
                 $('#broker-table-container').html(`
@@ -1228,7 +1716,7 @@ async function loadDetailData(symbol, start, end, reload = false, retryCount = 0
             return;
         }
 
-        // If we reach here, data is considered sufficient or backfill is not active.
+        // If we reach here: data exists and backfill is not active → render normally (even if partial).
         $('#loading-indicator').hide();
         $('#app').fadeIn();
         $('.chart-container-responsive').show(); // Show chart again
@@ -1735,6 +2223,7 @@ function renderChart(history) {
             maintainAspectRatio: false,
             plugins: {
                 legend: { display: false },
+                datalabels: { display: false },
             },
             interaction: { mode: 'index', intersect: false },
             scales: {
@@ -1863,7 +2352,6 @@ async function runAIAnalysis(forceRefresh = false) {
 
     const btn = document.getElementById('btn-ai-analyze');
     const modal = bootstrap.Modal.getOrCreateInstance(document.getElementById('aiResultModal'));
-    const thumbsContainer = document.getElementById('ai-thumbnails');
     const analysisContent = document.getElementById('ai-analysis-content');
     const tokenInfo = document.getElementById('ai-token-info');
     const refreshBtn = document.getElementById('btn-ai-refresh');
@@ -1874,8 +2362,6 @@ async function runAIAnalysis(forceRefresh = false) {
     // Reset UI
     btn.classList.add('analyzing');
     btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin me-1"></i> Capturing...';
-    thumbsContainer.style.display = 'none';
-    thumbsContainer.innerHTML = '';
     refreshBtn.style.display = 'none';
     tokenInfo.textContent = '';
     analysisContent.innerHTML = `
@@ -1887,11 +2373,23 @@ async function runAIAnalysis(forceRefresh = false) {
     modal.show();
 
     try {
-        // ── Step 1: Capture current summary pane ──
-        console.log('[AI] Step 1: Capturing current summary pane...');
+        // ── Step 1: Capture screenshots from DOM ──
+        console.log('[AI] Step 1: Capturing screenshots...');
         const summaryPane = document.getElementById('summary-pane');
-        const currentBlob = await captureElement(summaryPane);
-        console.log(`[AI] Current view captured: ${(currentBlob.size / 1024).toFixed(0)} KB`);
+
+        // Determine label based on current date range
+        const fromDate = $('#date-from').val();
+        const toDate = $('#date-to').val();
+        const daysDiff = Math.round((new Date(toDate) - new Date(fromDate)) / (1000*60*60*24));
+        const rangeLabel = `brokerflow-${daysDiff}d`;
+
+        // Capture both brokerflow (range chart) and intraday (current full pane) from DOM
+        // intraday = same element, just labelled differently so Claude gets both contexts
+        const [brokerflowBlob, intradayBlob] = await Promise.all([
+            captureElement(summaryPane),
+            captureElement(summaryPane)
+        ]);
+        console.log(`[AI] Captured brokerflow: ${(brokerflowBlob.size/1024).toFixed(0)}KB, intraday: ${(intradayBlob.size/1024).toFixed(0)}KB`);
 
         // ── Step 2: Upload screenshots ──
         analysisContent.innerHTML = `
@@ -1902,24 +2400,11 @@ async function runAIAnalysis(forceRefresh = false) {
         `;
         btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin me-1"></i> Uploading...';
 
-        // Determine label based on current date range
-        const fromDate = $('#date-from').val();
-        const toDate = $('#date-to').val();
-        const daysDiff = Math.round((new Date(toDate) - new Date(fromDate)) / (1000*60*60*24));
-        const rangeLabel = `brokerflow-${daysDiff}d`;
-
-        const uploaded = await uploadScreenshot(currentBlob, symbol, rangeLabel);
-        console.log(`[AI] Uploaded: ${uploaded.key} (${uploaded.size_kb} KB)`);
-
-        // Show thumbnail
-        thumbsContainer.style.display = '';
-        thumbsContainer.classList.add('d-flex');
-        thumbsContainer.innerHTML = `
-            <div class="text-center">
-                <img src="${uploaded.url}" alt="${uploaded.label}" title="${uploaded.label}" loading="lazy">
-                <div class="thumb-label">${uploaded.label}</div>
-            </div>
-        `;
+        const [uploaded, uploadedIntraday] = await Promise.all([
+            uploadScreenshot(brokerflowBlob, symbol, rangeLabel),
+            uploadScreenshot(intradayBlob, symbol, 'intraday')
+        ]);
+        console.log(`[AI] Uploaded: ${uploaded.key} (${uploaded.size_kb}KB), ${uploadedIntraday.key} (${uploadedIntraday.size_kb}KB)`);
 
         // ── Step 3: Call AI analysis ──
         analysisContent.innerHTML = `
@@ -1930,13 +2415,22 @@ async function runAIAnalysis(forceRefresh = false) {
         `;
         btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin me-1"></i> Analyzing...';
 
+        // Check ?ai=rebuild in URL to force cache rebuild
+        const aiRebuild = new URLSearchParams(window.location.search).get('ai') === 'rebuild';
+        const forceAI = forceRefresh || aiRebuild;
+
         const response = await fetch(`${WORKER_BASE_URL}/ai/analyze-broksum`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 symbol,
-                image_keys: [{ key: uploaded.key, label: uploaded.label }],
-                force: forceRefresh
+                image_keys: [
+                    { key: uploaded.key, label: uploaded.label },
+                    { key: uploadedIntraday.key, label: uploadedIntraday.label }
+                ],
+                from: fromDate,
+                to: toDate,
+                force: forceAI
             })
         });
 
@@ -1944,43 +2438,33 @@ async function runAIAnalysis(forceRefresh = false) {
 
         if (!result.ok) {
             const errorMessage = result.error || 'AI analysis failed';
+            const providerErrors = [result.openai, result.grok, result.claude].filter(Boolean);
+            const providerDetail = providerErrors.length
+                ? `<div class="small text-muted mt-1">${providerErrors.map(e => escapeHTML(e)).join(' → ')}</div>`
+                : '';
             const parseHint = result.parse_error ? `<div class="small text-muted mt-1">${escapeHTML(result.parse_error)}</div>` : '';
-            const rawOutput = result.raw_output ? `<details class="mt-3"><summary class="small text-muted">Output mentah</summary><pre class="bg-body-secondary small p-3 rounded">${escapeHTML(result.raw_output)}</pre></details>` : '';
+            const rawOutput = result.raw_output ? `<details class="mt-3"><summary class="small text-muted">Output mentah</summary><pre class="small p-3 rounded">${escapeHTML(result.raw_output)}</pre></details>` : '';
             analysisContent.innerHTML = `
                 <div class="alert alert-danger">
                     <i class="fa-solid fa-circle-exclamation me-1"></i>
                     <strong>Gagal menganalisis:</strong> ${escapeHTML(errorMessage)}
+                    ${providerDetail}
                     ${parseHint}
                 </div>
                 ${rawOutput}
             `;
-            if (Array.isArray(result.screenshots) && result.screenshots.length) {
-                thumbsContainer.style.display = '';
-                thumbsContainer.classList.add('d-flex');
-                thumbsContainer.innerHTML = result.screenshots.map(s => `
-                    <div class="text-center">
-                        <img src="${escapeHTML(s.url)}" alt="${escapeHTML(s.label)}" title="${escapeHTML(s.label)}" loading="lazy">
-                        <div class="thumb-label">${escapeHTML(s.label)}</div>
-                    </div>
-                `).join('');
-            }
             tokenInfo.textContent = '';
             refreshBtn.style.display = '';
             return;
         }
 
-        console.log(`[AI] Analysis complete. Tokens: ${result.usage?.total_tokens || 'N/A'}, Cached: ${result.cached || false}`);
+console.log(`[AI] Analysis complete. Tokens: ${result.usage?.total_tokens || 'N/A'}, Cached: ${result.cached || false}, Provider: ${result.provider || 'OpenAI'}`);
 
-        if (Array.isArray(result.screenshots) && result.screenshots.length) {
-            thumbsContainer.style.display = '';
-            thumbsContainer.classList.add('d-flex');
-                            thumbsContainer.innerHTML = result.screenshots.map(s => `
-                    <div class="text-center">
-                        <img src="${escapeHTML(s.url)}" alt="${escapeHTML(s.label)}" title="${escapeHTML(s.label)}" loading="lazy">
-                        <div class="thumb-label">${escapeHTML(s.label)}</div>
-                    </div>
-                `).join('');
-
+        // Update UI with provider
+        const aiProviderBadge = document.getElementById('aiProvider');
+        if (aiProviderBadge) {
+            aiProviderBadge.textContent = result.provider === 'grok' ? 'Grok (fallback)' : 'ChatGPT';
+            aiProviderBadge.classList.toggle('bg-warning', result.provider === 'grok');
         }
 
         let analysisData = result.analysis;
@@ -1992,8 +2476,11 @@ async function runAIAnalysis(forceRefresh = false) {
             }
         }
 
+        console.log('[AI] analysisData keys:', analysisData ? Object.keys(analysisData) : 'null');
+        console.log('[AI] analysisData sample:', JSON.stringify(analysisData).slice(0, 400));
+
         if (analysisData && typeof analysisData === 'object') {
-            analysisContent.innerHTML = renderAnalysisJSON(analysisData);
+            analysisContent.innerHTML = renderAnalysisJSON(analysisData, result.screenshots);
         } else {
             const rawOutput = result.analysis_raw || '';
             analysisContent.innerHTML = `
@@ -2001,16 +2488,27 @@ async function runAIAnalysis(forceRefresh = false) {
                     <i class="fa-solid fa-triangle-exclamation me-1"></i>
                     <strong>Analisis belum tersedia.</strong> Model tidak mengembalikan JSON valid.
                 </div>
-                ${rawOutput ? `<details class="mt-3"><summary class="small text-muted">Output mentah</summary><pre class="bg-body-secondary small p-3 rounded">${escapeHTML(rawOutput)}</pre></details>` : ''}
+                ${rawOutput ? `<details class="mt-3"><summary class="small text-muted">Output mentah</summary><pre class="small p-3 rounded">${escapeHTML(rawOutput)}</pre></details>` : ''}
             `;
         }
 
         if (result.usage) {
-            const cachedTag = result.cached ? ' | ♻️ CACHED' : '';
-            const metaConfidence = analysisData && analysisData.meta && typeof analysisData.meta.confidence === 'number'
-                ? ` | Confidence: ${(analysisData.meta.confidence * 100).toFixed(0)}%`
-                : '';
-            tokenInfo.textContent = `Model: ${result.model} | Tokens: ${result.usage.total_tokens?.toLocaleString() || 'N/A'}${cachedTag}${metaConfidence}`;
+            const cachedTag = result.cached ? '' : '';
+            // Cari confidence dari recommendation (EN atau ID) atau meta
+            const _recData = analysisData?.recommendation || analysisData?.kesimpulan_rekomendasi || {};
+            const rawC = _recData.confidence ?? _recData.tingkat_keyakinan ?? analysisData?.meta?.confidence ?? null;
+            let confStr = '';
+            if (rawC != null) {
+                if (typeof rawC === 'number' && !isNaN(rawC) && rawC > 0) {
+                    confStr = ` | Confidence: ${(rawC > 1 ? rawC : rawC * 100).toFixed(0)}%`;
+                } else if (typeof rawC === 'string') {
+                    const pct = parseFloat(rawC.replace('%', ''));
+                    confStr = !isNaN(pct) && pct > 0
+                        ? ` | Confidence: ${(pct > 1 ? pct : pct * 100).toFixed(0)}%`
+                        : rawC ? ` | Confidence: ${rawC}` : '';
+                }
+            }
+            tokenInfo.textContent = `Model: ${result.model} | Tokens: ${result.usage.total_tokens?.toLocaleString() || 'N/A'}${cachedTag}${confStr}`;
         }
 
         refreshBtn.style.display = '';
@@ -2052,8 +2550,8 @@ function renderListSection(title, items) {
 
     return `
         <div class="mb-3">
-            <div class="text-uppercase small text-muted fw-semibold mb-1">${escapeHTML(title)}</div>
-            <ul class="mb-0 ps-3">${listMarkup}</ul>
+            <div class="text-uppercase text-muted fw-semibold mb-2">${escapeHTML(title)}</div>
+            <ul class="mb-2 ps-3">${listMarkup}</ul>
         </div>
     `;
 }
@@ -2101,6 +2599,8 @@ function renderFundFlowSection(section) {
     if (section.retail_trend && section.retail_trend !== 'unknown') items.push(`Retail: ${section.retail_trend}`);
     if (section.dominant_side && section.dominant_side !== 'unknown') items.push(`Dominan: ${section.dominant_side}`);
     if (section.divergence && section.divergence !== 'unknown') items.push(`Divergensi: ${section.divergence}`);
+    // Fallback: _summaryText injected from Indonesian field
+    if (!items.length && section._summaryText) items.push(section._summaryText);
     if (Array.isArray(section.notes)) {
         section.notes.filter(Boolean).forEach(note => items.push(note));
     }
@@ -2125,23 +2625,44 @@ function renderSmartMoneySection(section) {
 
 function renderBrokerSection(section) {
     if (!section || typeof section !== 'object') return '';
-    const buyers = Array.isArray(section.top_net_buyers) ? section.top_net_buyers.slice(0, 5) : [];
+    const buyers  = Array.isArray(section.top_net_buyers)  ? section.top_net_buyers.slice(0, 5)  : [];
     const sellers = Array.isArray(section.top_net_sellers) ? section.top_net_sellers.slice(0, 5) : [];
+
+    // Normalize item: supports both object {code,type,value,comment} and plain string "CODE: desc"
+    const normalizeItem = (item) => {
+        if (typeof item === 'string') {
+            const colonIdx = item.indexOf(':');
+            if (colonIdx > 0) {
+                return { code: item.slice(0, colonIdx).trim(), desc: item.slice(colonIdx + 1).trim() };
+            }
+            return { code: item.trim(), desc: '' };
+        }
+        // object shape
+        const code = item.code || item.nama || item.broker || '-';
+        const parts = [
+            item.type  && item.type  !== 'unknown' ? item.type  : null,
+            item.value && item.value !== 'unknown' ? item.value : null,
+            item.comment || null,
+        ].filter(Boolean);
+        return { code, desc: parts.join(' · ') };
+    };
+
+    const renderItems = (items) => items
+        .map(normalizeItem)
+        .map(({ code, desc }) =>
+            `<li><strong>${escapeHTML(code)}</strong>${desc ? ` — <span class="">${escapeHTML(desc)}</span>` : ''}</li>`
+        ).join('');
 
     const buyerMarkup = buyers.length ? `
         <div class="mb-2">
             <div class="small text-muted">Top Net Buyers</div>
-            <ul class="mb-0 ps-3">
-                ${buyers.map(b => `<li><strong>${escapeHTML(b.code || '-')}</strong> (${escapeHTML((b.type || 'unknown').toString())}) — ${escapeHTML(b.value || 'unknown')}${b.comment ? ` · ${escapeHTML(b.comment)}` : ''}</li>`).join('')}
-            </ul>
+            <ul class="mb-2 ps-3">${renderItems(buyers)}</ul>
         </div>` : '';
 
     const sellerMarkup = sellers.length ? `
         <div class="mb-2">
             <div class="small text-muted">Top Net Sellers</div>
-            <ul class="mb-0 ps-3">
-                ${sellers.map(s => `<li><strong>${escapeHTML(s.code || '-')}</strong> (${escapeHTML((s.type || 'unknown').toString())}) — ${escapeHTML(s.value || 'unknown')}${s.comment ? ` · ${escapeHTML(s.comment)}` : ''}</li>`).join('')}
-            </ul>
+            <ul class="mb-2 ps-3">${renderItems(sellers)}</ul>
         </div>` : '';
 
     const patternsMarkup = renderListSection('Pola Broker', Array.isArray(section.patterns) ? section.patterns : []);
@@ -2149,7 +2670,7 @@ function renderBrokerSection(section) {
     if (!buyerMarkup && !sellerMarkup && !patternsMarkup) return '';
     return `
         <div class="mb-3">
-            <div class="text-uppercase small text-muted fw-semibold mb-1">Broker Kunci</div>
+            <div class="text-uppercase text-muted fw-semibold mb-2">Broker Kunci</div>
             ${buyerMarkup}
             ${sellerMarkup}
             ${patternsMarkup}
@@ -2159,14 +2680,46 @@ function renderBrokerSection(section) {
 
 function renderTechnicalSection(section) {
     if (!section || typeof section !== 'object') return '';
-    const items = [];
-    if (Array.isArray(section.supports) && section.supports.length) items.push(`Support: ${section.supports.join(', ')}`);
-    if (Array.isArray(section.resistances) && section.resistances.length) items.push(`Resistance: ${section.resistances.join(', ')}`);
-    if (Array.isArray(section.accumulation_zones) && section.accumulation_zones.length) items.push(`Zona akumulasi: ${section.accumulation_zones.join(', ')}`);
-    if (Array.isArray(section.intraday_notes)) {
-        section.intraday_notes.filter(Boolean).forEach(note => items.push(note));
-    }
-    return renderListSection('Level Teknikal', items);
+
+    // Parse level entries: string "1,425: Level dimana..." → show as "1,425 — Level dimana..."
+    // Or string "1,410-1,415: Zona" → "1,410-1,415 — Zona"
+    const parseLevelItem = (s) => {
+        if (typeof s !== 'string') return escapeHTML(String(s));
+        const m = s.match(/^([\d,.\-\s]+)(?::(.*))?$/);
+        if (m) {
+            const price = m[1].trim();
+            const desc  = m[2] ? m[2].trim() : '';
+            return desc
+                ? `<strong>${escapeHTML(price)}</strong> <span class="text-muted">— ${escapeHTML(desc)}</span>`
+                : `<strong>${escapeHTML(price)}</strong>`;
+        }
+        return escapeHTML(s);
+    };
+
+    const renderLevels = (label, arr) => {
+        if (!Array.isArray(arr) || !arr.length) return '';
+        const items = arr.map(s => `<li>${parseLevelItem(s)}</li>`).join('');
+        return `
+            <div class="mb-2">
+                <div class="small text-muted">${escapeHTML(label)}</div>
+                <ul class="mb-1 ps-3">${items}</ul>
+            </div>`;
+    };
+
+    const html = [
+        renderLevels('Support', section.supports),
+        renderLevels('Resistance', section.resistances),
+        renderLevels('Zona Akumulasi', section.accumulation_zones),
+        renderListSection('Catatan Intraday', Array.isArray(section.intraday_notes) ? section.intraday_notes.filter(Boolean) : []),
+    ].filter(Boolean).join('');
+
+    if (!html) return '';
+    return `
+        <div class="mb-3">
+            <div class="text-uppercase text-muted fw-semibold mb-2">Level Teknikal</div>
+            ${html}
+        </div>
+    `;
 }
 
 function renderRecommendationSection(section) {
@@ -2178,17 +2731,37 @@ function renderRecommendationSection(section) {
     if (section.rating) {
         rows.push(`<div><div class="text-muted small">Rating</div><div class="fw-bold">${escapeHTML(section.rating)}</div></div>`);
     }
-    const confidence = typeof section.confidence === 'number' && !Number.isNaN(section.confidence)
-        ? `${(section.confidence * 100).toFixed(0)}%`
-        : 'n/a';
-    rows.push(`<div><div class="text-muted small">Confidence</div><div class="fw-bold">${confidence}</div></div>`);
+    const rawConf = section.confidence ?? section.tingkat_keyakinan ?? null;
+    let confidence = null;
+    if (rawConf != null && rawConf !== 0) {
+        if (typeof rawConf === 'number' && !isNaN(rawConf)) {
+            confidence = `${(rawConf > 1 ? rawConf : rawConf * 100).toFixed(0)}%`;
+        } else if (typeof rawConf === 'string') {
+            const pct = parseFloat(rawConf.replace('%', ''));
+            confidence = !isNaN(pct) && pct > 0 ? `${(pct > 1 ? pct : pct * 100).toFixed(0)}%` : rawConf;
+        }
+    }
+    if (!confidence && section.rating) {
+        const u = (section.rating || '').toUpperCase();
+        const alasanArr = Array.isArray(section.alasan_rating) ? section.alasan_rating
+            : Array.isArray(section.rationale) ? section.rationale
+            : Array.isArray(section.alasan) ? section.alasan : [];
+        let base = 50;
+        if (/STRONG BUY|STRONG SELL/.test(u)) base = 85;
+        else if (/BUY|SELL|AKUMULASI|DISTRIBUSI|MARKDOWN/.test(u)) base = 75;
+        else if (/HOLD|NETRAL|WAIT/.test(u)) base = 60;
+        confidence = `${Math.min(95, base + alasanArr.length * 3)}%`;
+    }
+    if (confidence) {
+        rows.push(`<div><div class="text-muted small">Confidence</div><div class="fw-bold">${escapeHTML(confidence)}</div></div>`);
+    }
 
     const rationale = renderListSection('Alasan', Array.isArray(section.rationale) ? section.rationale : []);
     const risks = renderListSection('Risiko', Array.isArray(section.risks) ? section.risks : []);
 
     return `
         <div class="mb-3">
-            <div class="text-uppercase small text-muted fw-semibold mb-1">Kesimpulan & Rekomendasi</div>
+            <div class="text-uppercase text-muted fw-semibold mb-2">Kesimpulan & Rekomendasi</div>
             <div class="d-flex flex-wrap gap-4 mb-2">
                 ${rows.join('')}
             </div>
@@ -2198,22 +2771,237 @@ function renderRecommendationSection(section) {
     `;
 }
 
-function renderAnalysisJSON(data) {
+function renderSummaryTable(data) {
+    // Smart text extractor: string → as-is, array → join first items, object → first string leaf values
+    function pickText(v, maxLen) {
+        maxLen = maxLen || 200;
+        if (!v && v !== 0) return null;
+        if (typeof v === 'string') return v.trim().slice(0, maxLen) || null;
+        if (typeof v === 'number') return String(v);
+        if (Array.isArray(v)) {
+            return v
+                .map(x => typeof x === 'string' ? x.trim()
+                        : typeof x === 'object'  ? pickText(x, 80)
+                        : String(x))
+                .filter(Boolean).slice(0, 3).join(' · ').slice(0, maxLen) || null;
+        }
+        if (typeof v === 'object') {
+            return Object.values(v).map(x => pickText(x, 100)).filter(Boolean).slice(0, 2).join(' · ').slice(0, maxLen) || null;
+        }
+        return null;
+    }
+
+    // Normalize: support both English and Indonesian field names
+    const execSum  = data.executive_summary       || data.ringkasan_eksekutif      || null;
+    const rec      = data.recommendation          || data.kesimpulan_rekomendasi   || {};
+    const ff       = data.fund_flow               || data.analisis_fund_flow       || {};
+    const sm       = data.smart_money             || data.analisis_smart_money     || {};
+    const tl       = data.technical_levels        || data.level_teknikal           || {};
+    const kb       = data.key_brokers             || data.identifikasi_broker_kunci || {};
+
+    const rows = [];
+
+    // 1. Ringkasan eksekutif (string or array)
+    const execText = pickText(execSum, 280);
+    if (execText) rows.push(['Ringkasan', execText]);
+
+    // 2. Fase & Rating dari rekomendasi
+    const phase  = rec.phase  || rec.fase_saham   || rec.fase  || null;
+    const rating = rec.rating || rec.rekomendasi  || null;
+
+    // Derive confidence: cek semua kemungkinan field, lalu hitung otomatis dari rating+alasan
+    let conf = null;
+    const rawConf = rec.confidence ?? rec.tingkat_keyakinan ?? null;
+    if (rawConf != null && rawConf !== 0) {
+        if (typeof rawConf === 'number') {
+            conf = `${(rawConf > 1 ? rawConf : rawConf * 100).toFixed(0)}%`;
+        } else if (typeof rawConf === 'string') {
+            const pct = parseFloat(rawConf.replace('%', ''));
+            conf = !isNaN(pct) && pct > 0 ? `${(pct > 1 ? pct : pct * 100).toFixed(0)}%` : rawConf;
+        }
+    }
+    if (!conf && rating) {
+        // Auto-derive dari kekuatan rating + jumlah alasan
+        const u = rating.toUpperCase();
+        const alasanArr = Array.isArray(rec.alasan_rating) ? rec.alasan_rating
+            : Array.isArray(rec.rationale) ? rec.rationale
+            : Array.isArray(rec.alasan) ? rec.alasan : [];
+        let base = 50;
+        if (/STRONG BUY|STRONG SELL/.test(u)) base = 85;
+        else if (/BUY|SELL|AKUMULASI|DISTRIBUSI|MARKDOWN/.test(u)) base = 75;
+        else if (/HOLD|NETRAL|WAIT/.test(u)) base = 60;
+        conf = `${Math.min(95, base + alasanArr.length * 3)}%`;
+    }
+
+    if (phase)  rows.push(['Fase Pasar', phase]);
+    if (rating) rows.push(['Rating',    rating]);
+    if (conf)   rows.push(['Confidence', conf]);
+
+    // 3. Fund Flow — coba field spesifik dulu, fallback ke text pertama dari objek
+    const ffParts = [
+        ff.foreign_trend  || ff.tren_asing    || null,
+        ff.local_trend    || ff.tren_lokal    || null,
+        ff.dominant_side  || ff.sisi_dominan  || null,
+        ff.divergence     || ff.divergensi    || null,
+    ].filter(x => x && x !== 'unknown');
+    const ffText = ffParts.length ? ffParts.join(' · ') : pickText(ff, 200);
+    if (ffText) rows.push(['Fund Flow', ffText]);
+
+    // 4. Smart Money
+    const smState = sm.state || sm.kondisi || sm.status || null;
+    const smText  = sm.assessment || sm.kualitas_akumulasi || sm.penilaian
+        || (!smState ? pickText(sm, 180) : null);
+    if (smState && smState !== 'UNKNOWN') rows.push(['Smart Money', smState]);
+    if (smText)  rows.push([(smState ? 'Penilaian' : 'Smart Money'), smText]);
+
+    // 5. Technical — extract angka saja (sebelum titik dua)
+    const cleanLvl = s => typeof s === 'string' ? s.split(':')[0].trim() : String(s);
+    const sup = (Array.isArray(tl.supports)         ? tl.supports
+              :  Array.isArray(tl.support_levels)   ? tl.support_levels : []).slice(0, 4);
+    const res = (Array.isArray(tl.resistances)      ? tl.resistances
+              :  Array.isArray(tl.resistance_levels) ? tl.resistance_levels : []).slice(0, 4);
+    if (sup.length) rows.push(['Support',    sup.map(cleanLvl).join(', ')]);
+    if (res.length) rows.push(['Resistance', res.map(cleanLvl).join(', ')]);
+
+    // 6. Broker — extract kode (sebelum titik dua / tanda hubung)
+    const extractCode = x => {
+        if (typeof x === 'string') return x.split(':')[0].split(' - ')[0].trim();
+        return x.code || x.nama || '';
+    };
+    const buyers  = (Array.isArray(kb.top_net_buyers)   ? kb.top_net_buyers
+                   : Array.isArray(kb.broker_utama_beli) ? kb.broker_utama_beli : []).slice(0, 5).map(extractCode).filter(Boolean);
+    const sellers = (Array.isArray(kb.top_net_sellers)  ? kb.top_net_sellers
+                   : Array.isArray(kb.broker_utama_jual) ? kb.broker_utama_jual : []).slice(0, 5).map(extractCode).filter(Boolean);
+    if (buyers.length)  rows.push(['Top Buyers',  buyers.join(', ')]);
+    if (sellers.length) rows.push(['Top Sellers', sellers.join(', ')]);
+
+    // 7. Alasan & Risiko
+    const rationale = Array.isArray(rec.rationale) ? rec.rationale : Array.isArray(rec.alasan) ? rec.alasan : [];
+    const risks     = Array.isArray(rec.risks)     ? rec.risks     : Array.isArray(rec.risiko)  ? rec.risiko  : [];
+    rationale.filter(Boolean).slice(0, 2).forEach((s, i) => rows.push([i === 0 ? 'Alasan' : '', String(s)]));
+    risks.filter(Boolean).slice(0, 2).forEach((s, i)     => rows.push([i === 0 ? 'Risiko' : '', String(s)]));
+
+    if (!rows.length) return '';
+
+    const ratingClass = (v) => {
+        const u = (v || '').toUpperCase();
+        if (/BUY|AKUMULASI|STRONG BUY/.test(u))             return 'text-success fw-bold';
+        if (/SELL|DISTRIBUSI|AVOID|JUAL|MARKDOWN/.test(u))  return 'text-danger fw-bold';
+        if (/HOLD|NETRAL|WAIT/.test(u))                     return 'text-warning fw-bold';
+        return 'fw-bold';
+    };
+
+    const tableRows = rows.map(([k, v]) => {
+        if (!v) return '';
+        const isHighlight = k === 'Rating' || k === 'Fase Pasar';
+        const valClass = isHighlight ? ratingClass(v) : '';
+        const keyHtml = k
+            ? `<td class="text-muted text-nowrap pe-3" style="width:28%;vertical-align:top">${escapeHTML(k)}</td>`
+            : `<td class="pe-3" style="width:28%"></td>`;
+        return `<tr>${keyHtml}<td class="${valClass}">${escapeHTML(String(v))}</td></tr>`;
+    }).filter(Boolean).join('');
+
+    if (!tableRows) return '';
+
+    return `
+        <div class="mb-3 p-2" style="background:var(--bs-body-bg,#fff);border:0px solid var(--bs-border-color,#dee2e6)">
+            <table class="table table-sm table-borderless mb-0">
+                <tbody>${tableRows}</tbody>
+            </table>
+        </div>
+    `;
+}
+
+function renderAnalysisJSON(data, screenshots) {
     if (!data || typeof data !== 'object') {
         return '<p class="text-muted">Analisis tidak tersedia.</p>';
     }
 
-    const sections = [];
-    sections.push(renderMetaSection(data.meta || {}));
-    sections.push(renderListSection('Ringkasan Eksekutif', Array.isArray(data.executive_summary) ? data.executive_summary : []));
-    sections.push(renderFundFlowSection(data.fund_flow));
-    sections.push(renderSmartMoneySection(data.smart_money));
-    sections.push(renderBrokerSection(data.key_brokers));
-    sections.push(renderTechnicalSection(data.technical_levels));
-    sections.push(renderRecommendationSection(data.recommendation));
+    // ── Normalize field names (support both English and Indonesian from Claude) ──
+    const _execSum = data.executive_summary     || data.ringkasan_eksekutif       || null;
+    const _ff      = data.fund_flow             || data.analisis_fund_flow        || {};
+    const _sm      = data.smart_money           || data.analisis_smart_money      || {};
+    const _kb      = data.key_brokers           || data.identifikasi_broker_kunci || {};
+    const _tl      = data.technical_levels      || data.level_teknikal            || {};
+    const _rec     = data.recommendation        || data.kesimpulan_rekomendasi    || {};
 
+    // Normalize Indonesian-keyed subfields into English shape for section renderers
+    if (!_ff.foreign_trend && _ff.tren_akumulasi)  _ff._summaryText = _ff.tren_akumulasi;
+    if (!_sm.state         && _sm.kondisi)         _sm.state        = _sm.kondisi;
+    if (!_sm.assessment    && _sm.kualitas_akumulasi) _sm.assessment = _sm.kualitas_akumulasi;
+    // Technical levels — support both EN and ID field names
+    if (!_tl.supports     && _tl.support_levels)   _tl.supports     = _tl.support_levels;
+    if (!_tl.resistances  && _tl.resistance_levels) _tl.resistances = _tl.resistance_levels;
+    // Also handle object format: { support_levels: {"*1,425": "desc", ...} } → array of "price: desc"
+    for (const key of ['supports', 'resistances']) {
+        if (_tl[key] && !Array.isArray(_tl[key]) && typeof _tl[key] === 'object') {
+            _tl[key] = Object.entries(_tl[key]).map(([k, v]) => v ? `${k.replace(/^\*/, '')}: ${v}` : k.replace(/^\*/, ''));
+        }
+    }
+    if (!_rec.phase    && _rec.fase_saham)  _rec.phase    = _rec.fase_saham;
+    if (!_rec.rating   && _rec.rekomendasi) _rec.rating   = _rec.rekomendasi;
+    if (!_rec.rationale && _rec.alasan)     _rec.rationale = _rec.alasan;
+    if (!_rec.risks    && _rec.risiko)      _rec.risks     = _rec.risiko;
+    // Normalize confidence: tingkat_keyakinan bisa berupa 0.85, 85, "85%", "HIGH"
+    if (_rec.confidence == null && _rec.tingkat_keyakinan != null) {
+        const raw = _rec.tingkat_keyakinan;
+        if (typeof raw === 'number') {
+            _rec.confidence = raw > 1 ? raw / 100 : raw; // 85 → 0.85, 0.85 → 0.85
+        } else if (typeof raw === 'string') {
+            const pct = parseFloat(raw.replace('%', ''));
+            _rec.confidence = !isNaN(pct) ? (pct > 1 ? pct / 100 : pct) : raw; // keep string "HIGH"
+        }
+    }
+    // Broker: pass strings as-is — renderBrokerSection.normalizeItem handles "CODE: desc" strings
+    if (!_kb.top_net_buyers  && _kb.broker_utama_beli)  _kb.top_net_buyers  = _kb.broker_utama_beli;
+    if (!_kb.top_net_sellers && _kb.broker_utama_jual)  _kb.top_net_sellers = _kb.broker_utama_jual;
+
+    // ── Narasi utama (always open) ──
+    const summaryTable = renderSummaryTable(data);
+    const execSumArr = Array.isArray(_execSum) ? _execSum : (_execSum ? [_execSum] : []);
+    const naratif = [
+        renderListSection('Ringkasan Eksekutif', execSumArr),
+        renderFundFlowSection(_ff),
+        renderSmartMoneySection(_sm),
+        renderBrokerSection(_kb),
+        renderTechnicalSection(_tl),
+        renderRecommendationSection(_rec),
+    ].filter(Boolean).join('');
+
+    // ── Thumbnails ──
+    let thumbsHtml = '';
+    if (Array.isArray(screenshots) && screenshots.length) {
+        const thumbs = screenshots.map(s => `
+            <div class="text-center">
+                <img src="${escapeHTML(s.url)}" alt="${escapeHTML(s.label)}" title="${escapeHTML(s.label)}" loading="lazy"
+                    style="max-width:120px;max-height:90px;border-radius:4px;border:1px solid #ccc;object-fit:cover;cursor:pointer"
+                    onclick="this.closest('details').querySelector('.img-fullview') && this.closest('details').querySelector('.img-fullview').remove(); const f=document.createElement('img'); f.src=this.src; f.className='img-fullview'; f.style='width:100%;margin-top:8px;border-radius:4px'; this.closest('details').appendChild(f)">
+                <div class="thumb-label small text-muted mt-1">${escapeHTML(s.label)}</div>
+            </div>`).join('');
+        thumbsHtml = `<div class="d-flex gap-2 flex-wrap mb-2">${thumbs}</div>`;
+    }
+
+    // ── Metadata ──
+    const metaHtml = renderMetaSection(data.meta || {});
+
+    // ── JSON mentah ──
     const jsonDump = escapeHTML(JSON.stringify(data, null, 2));
-    sections.push(`<details class="mt-3"><summary class="small text-muted">Lihat JSON mentah</summary><pre class="bg-body-secondary small p-3 rounded">${jsonDump}</pre></details>`);
+    const jsonHtml = `<pre class="small p-2 rounded" style="background:#1a1a1a;color:#ccc;max-height:300px;overflow:auto">${jsonDump}</pre>`;
 
-    return sections.filter(Boolean).join('');
+    return `
+        ${summaryTable}
+        ${naratif}
+        <details class="mt-3">
+            <summary class="small text-muted" style="cursor:pointer">Lihat Screenshot</summary>
+            <div class="mt-2">${thumbsHtml || '<span class="small text-muted">Tidak ada screenshot.</span>'}</div>
+        </details>
+        <details class="mt-2">
+            <summary class="small text-muted" style="cursor:pointer">Lihat Metadata</summary>
+            <div class="mt-2">${metaHtml}</div>
+        </details>
+        <details class="mt-2">
+            <summary class="small text-muted" style="cursor:pointer">Lihat JSON Mentah</summary>
+            ${jsonHtml}
+        </details>
+    `;
 }

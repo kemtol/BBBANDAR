@@ -1,0 +1,18 @@
+{
+  "name": "idx-handler",
+  "main": "src/index.js",
+  "compatibility_date": "2025-01-01",
+  "observability": {
+    "enabled": true
+  },
+  "d1_databases": [
+    {
+      "binding": "SSSAHAM_DB",
+      "database_name": "sssaham-db",
+      "database_id": "98cd91eb-5666-4284-8845-8e8b6d7a1b8f"
+    }
+  ],
+  "triggers": {
+    "crons": ["5 11 * * *"]
+  }
+}

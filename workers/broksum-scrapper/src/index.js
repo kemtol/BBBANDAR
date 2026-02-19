@@ -1298,17 +1298,14 @@ export default {
         // If filtering by symbol
         if (targetSymbol) {
             const s = targetSymbol.toUpperCase();
-            if (watchlist.includes(s)) {
-                // Replace watchlist with just this one symbol
-                // We restart the array, but it's fine since we loop it
-                watchlist.length = 0;
-                watchlist.push(s);
-            } else {
-                return new Response(JSON.stringify({ ok: false, error: `${s} not in watchlist` }), {
-                    status: 400,
-                    headers: withCors({ "Content-Type": "application/json" })
-                });
+            // Always allow on-demand single-symbol backfill, even for new/IPO tickers not yet in watchlist.
+            // Rejecting here causes a silent failure: api-saham fires-and-forgets this call and returns
+            // backfill_active:true to frontend indefinitely if we return a 400.
+            if (!watchlist.includes(s)) {
+                console.log(`[AUTO-BACKFILL] ${s} not in watchlist — allowing on-demand backfill (may be new/IPO ticker)`);
             }
+            watchlist.length = 0;
+            watchlist.push(s);
         }
 
         const details = [];

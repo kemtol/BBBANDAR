@@ -43,6 +43,8 @@
 
     <style>
         :root {
+            --card-divider: rgba(148, 163, 184, 0.35);
+            --card-radius: 12px;
             --table-header-text: var(--muted);
             --table-hover-bg: #f1f5f9;
         }
@@ -138,6 +140,153 @@
                 font-size: 1rem;
             }
         }
+
+        /* === AI Analysis === */
+        #ai-result-body {
+            font-size: 0.9rem;
+            line-height: 1.6;
+        }
+
+        #ai-result-body ul {
+            padding-left: 1.2rem;
+        }
+
+        #ai-result-body strong {
+            color: var(--ai-strong, inherit);
+        }
+
+        #btn-ai-analyze.analyzing {
+            pointer-events: none;
+            opacity: 0.7;
+        }
+
+        #ai-analysis-content details img {
+            height: 80px;
+            border-radius: 4px;
+            border: 1px solid var(--thumb-border, #ccc);
+            cursor: pointer;
+            transition: transform 0.15s, box-shadow 0.15s;
+            object-fit: cover;
+        }
+
+        #ai-analysis-content details img:hover {
+            transform: scale(1.5);
+            z-index: 10;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+        }
+
+        #ai-analysis-content .thumb-label {
+            font-size: 0.6rem;
+            text-align: center;
+            color: var(--muted, #6b7280);
+        }
+
+        #ai-analysis-content details>summary {
+            user-select: none;
+        }
+
+        /* === Date Navigator Bar === */
+        #date-nav-bar {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            flex-wrap: wrap;
+            border-radius: var(--card-radius);
+            border: 1px solid var(--card-divider);
+            background: transparent;
+            border-bottom:0px;
+            border-radius: 12px 12px 0 0;
+        }
+
+        #date-nav-bar .dnav-chip {
+            font-size: 0.75rem;
+            padding: 3px 10px;
+            border-radius: 999px;
+            border: 1px solid var(--card-divider);
+            background: transparent;
+            color: var(--text);
+            cursor: pointer;
+            white-space: nowrap;
+            transition: background 0.15s, border-color 0.15s;
+        }
+
+        #date-nav-bar .dnav-chip:hover {
+            border-color: #6366f1;
+            color: #6366f1;
+        }
+
+        #date-nav-bar .dnav-chip.active {
+            background: #6366f1;
+            border-color: #6366f1;
+            color: #fff;
+            font-weight: 600;
+        }
+
+        #date-nav-bar .dnav-sep {
+            width: 1px;
+            height: 20px;
+            background: var(--card-divider);
+            flex-shrink: 0;
+        }
+
+        .dnav-date-input {
+            border: 1px solid var(--card-divider);
+            border-radius: 8px;
+            background: transparent;
+            color: var(--text);
+            font-size: 0.8rem;
+            padding: 3px 8px;
+            cursor: pointer;
+            outline: none;
+        }
+
+        .dnav-date-input:focus {
+            border-color: #6366f1;
+        }
+
+        #dnav-apply {
+            font-size: 0.75rem;
+            padding: 3px 12px;
+            border-radius: 8px;
+            border: none;
+            background: #6366f1;
+            color: #fff;
+            cursor: pointer;
+            font-weight: 600;
+            transition: background 0.15s;
+        }
+
+        #dnav-apply:hover {
+            background: #4f46e5;
+        }
+
+        #date-nav-bar .dnav-arrow {
+            font-size: 0.7rem;
+            padding: 3px 8px;
+            border-radius: 6px;
+            border: 1px solid var(--card-divider);
+            background: transparent;
+            color: var(--text);
+            cursor: pointer;
+        }
+
+        #date-nav-bar .dnav-arrow:hover {
+            border-color: #6366f1;
+            color: #6366f1;
+        }
+
+        #date-nav-label {
+            font-size: 0.72rem;
+            color: var(--muted);
+            margin-left: auto;
+            white-space: nowrap;
+        }
+
+        #date-nav-loading {
+            font-size: 0.72rem;
+            color: #6366f1;
+            display: none;
+        }
     </style>
 </head>
 
@@ -180,9 +329,14 @@
                 </div>
             </div>
         </div>
-
+        <!-- AI Analytics Button -->
+        <div id="ai-analytics-bar" class="d-flex justify-content-center mb-4" style="display:none!important">
+            <button id="btn-ai-analyze" class="btn btn-sm btn-outline-primary" onclick="runAIAnalysisIntraday()">
+                <i class="fa-solid fa-wand-magic-sparkles me-1"></i> AI Analysis
+            </button>
+        </div>
         <!-- SNAPSHOT STATS -->
-        <div class="row g-3 mb-1 text-center">
+        <div class="row g-3 mb-4 text-center">
             <div class="col-6 col-md-3">
                 <div class="stat-label">Close</div>
                 <div class="stat-value" id="stat-close">-</div>
@@ -200,7 +354,6 @@
                 <div class="stat-value" id="stat-haka-mom">/</div>
             </div>
         </div>
-
         <!-- FALLBACK ALERT -->
         <div id="fallback-alert" class="d-none alert alert-light border-warning shadow-sm py-2 px-3 mb-3"
             style="font-size: 0.85rem;">
@@ -228,10 +381,26 @@
         </div>
 
         <!-- FOOTPRINT CHART -->
-        <div id="chart-container" class="card card-swing mb-4">
-            <div class="card-body" style="height:55vh;">
+        <div id="chart-container" class="card card-swing mb-4 border-0">
+            <div class="card-body p-0" style="height:55vh;">
                 <canvas id="footprintChart"></canvas>
             </div>
+        </div>
+
+        <!-- DATE NAVIGATOR -->
+        <div id="date-nav-bar" class="p-4">
+            <button class="dnav-arrow" id="dnav-prev" title="Hari sebelumnya"><i class="fa-solid fa-chevron-left"></i></button>
+            <button class="dnav-chip" data-offset="0">Hari ini</button>
+            <button class="dnav-chip" data-offset="-1">Kemarin</button>
+            <button class="dnav-chip" data-offset="-2" id="dnav-d2">-2</button>
+            <button class="dnav-chip" data-offset="-3" id="dnav-d3">-3</button>
+            <div class="dnav-sep"></div>
+            <input type="date" id="date-picker-from" class="dnav-date-input" title="Dari tanggal" />
+            <input type="date" id="date-picker-to" class="dnav-date-input" title="Sampai tanggal" />
+            <button id="dnav-apply">Apply</button>
+            <button class="dnav-arrow" id="dnav-next" title="Hari berikutnya"><i class="fa-solid fa-chevron-right"></i></button>
+            <span id="date-nav-label"></span>
+            <span id="date-nav-loading"><i class="fa-solid fa-spinner fa-spin me-1"></i>Memuat...</span>
         </div>
 
         <!-- RAW DETAIL (OPTIONAL) -->
@@ -244,7 +413,7 @@
             </div>
         </div>
         <!-- TIME SERIES TABLE -->
-        <div id="table-container" class="card card-swing mb-4">
+        <div id="table-container" class="card card-swing mb-4" style="border-radius: 0;">
             <div class="table-responsive">
                 <table class="table table-hover mb-0 table-orderflow align-middle" id="timeseries-table">
                     <thead>
@@ -263,6 +432,36 @@
                 </table>
             </div>
         </div>
+
+
+    </div>
+
+    <!-- AI Result Modal -->
+    <div class="modal fade" id="aiResultModal" tabindex="-1">
+        <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header py-2" style="border-bottom:0">
+                    <h6 class="modal-title">AI Intraday Analysis — <span id="ai-modal-symbol"></span></h6>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body" id="ai-result-body">
+                    <div id="ai-analysis-content">
+                        <div class="text-center py-5">
+                            <div class="spinner-border text-warning"></div>
+                            <p class="small text-muted mt-2">Menganalisis screenshot dengan AI...</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer py-1 d-none">
+                    <small class="text-muted me-auto" id="ai-token-info"></small>
+                    <button id="btn-ai-refresh" class="btn btn-sm btn-outline-secondary" style="display:none"
+                        onclick="runAIAnalysisIntraday(true)">
+                        <i class="fa-solid fa-rotate-right me-1"></i> Refresh
+                    </button>
+                    <button class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Tutup</button>
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- SCRIPTS -->
@@ -276,7 +475,9 @@
         src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon@1.3.1/dist/chartjs-adapter-luxon.umd.min.js"></script>
     <script
         src="https://cdn.jsdelivr.net/npm/chartjs-chart-financial@0.2.0/dist/chartjs-chart-financial.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
     <script src="component.js"></script>
+    <script src="ai-analysis.js"></script>
 
     <script>
         Chart.register(ChartDataLabels);
@@ -285,6 +486,9 @@
         const API_BASE = isLocal
             ? "http://127.0.0.1:8787"
             : "https://api-saham.mkemalw.workers.dev";
+
+        // Alias for ai-analysis.js which uses WORKER_BASE_URL
+        const WORKER_BASE_URL = API_BASE;
 
         let footprintChart = null;
 
@@ -621,7 +825,7 @@
                 responsive: true,
                 maintainAspectRatio: false,
                 layout: {
-                    padding: { left: 10, right: 10, top: 20, bottom: 20 }
+                    padding: { left: 0, right: 0, top: 20, bottom: 20 }
                 },
                 plugins: {
                     legend: { display: false },
@@ -639,7 +843,8 @@
                             },
                         },
                     },
-                    datalabels: { display: false }
+                    datalabels: { display: false },
+                    axisTopLabels: {}
                 },
                 scales: {
                     x: {
@@ -673,7 +878,7 @@
                         position: 'left',
                         min: minY - yPadding,
                         max: maxY + yPadding,
-                        title: { display: true, text: "Harga" },
+                        title: { display: false },
                         grid: {
                             display: !isDark,
                             color: isDark ? 'transparent' : 'rgba(241,245,249,1)'
@@ -688,21 +893,54 @@
                     },
                     y1: {
                         position: 'right',
-                        title: { display: true, text: "CVD", color: '#fbbf24' },
+                        title: { display: false },
                         grid: { display: false },
                         border: {
                             display: !isDark,
                             color: isDark ? 'transparent' : 'rgba(226,232,240,1)'
                         },
-                        ticks: { color: '#fbbf24' }
+                        ticks: {
+                            color: '#fbbf24',
+                            callback: (v) => {
+                                const abs = Math.abs(v);
+                                if (abs >= 1_000_000) return (v / 1_000_000).toFixed(abs >= 10_000_000 ? 0 : 1).replace(/\.0$/, '') + 'M';
+                                if (abs >= 1_000) return (v / 1_000).toFixed(abs >= 10_000 ? 0 : 1).replace(/\.0$/, '') + 'k';
+                                return v;
+                            }
+                        }
                     }
                 },
+            };
+
+            const axisTopLabelsPlugin = {
+                id: 'axisTopLabels',
+                afterDraw(chart) {
+                    const ctx = chart.ctx;
+                    const yAxis = chart.scales['y'];
+                    const y1Axis = chart.scales['y1'];
+                    const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+                    ctx.save();
+                    ctx.font = 'bold 11px sans-serif';
+                    ctx.textAlign = 'center';
+                    // Harga label (above left axis)
+                    if (yAxis) {
+                        ctx.fillStyle = isDark ? '#94a3b8' : '#475569';
+                        ctx.fillText('Harga', yAxis.left + yAxis.width / 2, yAxis.top - 20);
+                    }
+                    // CVD label (above right axis)
+                    if (y1Axis) {
+                        ctx.fillStyle = '#fbbf24';
+                        ctx.fillText('CVD', y1Axis.left + y1Axis.width / 2, y1Axis.top - 20);
+                    }
+                    ctx.restore();
+                }
             };
 
             if (footprintChart) footprintChart.destroy();
             footprintChart = new Chart(canvas, {
                 data,
-                options
+                options,
+                plugins: [axisTopLabelsPlugin]
             });
         }
 
@@ -731,8 +969,20 @@
                 : snapshot.close || 0;
 
             const sorted = [...history].sort((a, b) => {
-                if (!a.t || !b.t) return 0;
-                return a.t.localeCompare(b.t);
+                const ax = Number(a?.x || 0);
+                const bx = Number(b?.x || 0);
+
+                // Prefer full timestamp when available (keeps each date block intact, then time inside date)
+                if (ax && bx) return ax - bx;
+
+                // Fallback: sort by date text first, then time text
+                const ad = a?.date || '';
+                const bd = b?.date || '';
+                if (ad !== bd) return ad.localeCompare(bd);
+
+                const at = a?.t || '';
+                const bt = b?.t || '';
+                return at.localeCompare(bt);
             });
 
             let prevPrice = null;
@@ -788,7 +1038,12 @@
                     // else keep Today
                 }
 
-                const dateStr = snapshot.date || dateObj.toLocaleDateString('id-ID', {
+                const dateFromRow = (h && h.x)
+                    ? new Date(h.x).toLocaleDateString('id-ID', {
+                        day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'Asia/Jakarta'
+                    })
+                    : null;
+                const dateStr = dateFromRow || snapshot.date || dateObj.toLocaleDateString('id-ID', {
                     day: '2-digit', month: '2-digit', year: 'numeric'
                 });
                 tdDate.textContent = dateStr;
@@ -904,9 +1159,300 @@
             }, 3000);
         }
 
+        // ============================================================
+        // DATE NAVIGATOR STATE
+        // ============================================================
+        let _currentKode = null;
+        let _activeDate = null; // YYYY-MM-DD (single date mode)
+        let _enrichedSnapshotCache = null;
+
+        // Indonesian public holidays 2026 (add as needed)
+        const INDONESIA_HOLIDAYS_2026 = [
+            '2026-01-01', // New Year
+            '2026-02-16', // Imlek
+            '2026-02-17', // Isra Mi'raj
+            '2026-03-11', // Nyepi
+            '2026-03-31', // Idul Fitri Eve
+            '2026-04-01', // Idul Fitri
+            '2026-04-02', // Idul Fitri
+            '2026-04-03', // Idul Fitri (Cuti Bersama)
+            '2026-04-10', // Good Friday
+            '2026-05-01', // Labor Day
+            '2026-05-21', // Ascension Day
+            '2026-06-01', // Pancasila Day
+            '2026-06-08', // Idul Adha
+            '2026-06-29', // Islamic New Year
+            '2026-08-17', // Independence Day
+            '2026-09-08', // Prophet's Birthday
+            '2026-12-25', // Christmas
+            '2026-12-26'  // Boxing Day / Cuti Bersama
+        ];
+
+        function isWeekend(dateStr) {
+            const d = new Date(dateStr + 'T00:00:00');
+            const day = d.getDay();
+            return day === 0 || day === 6; // Sunday or Saturday
+        }
+
+        function isHoliday(dateStr) {
+            return INDONESIA_HOLIDAYS_2026.includes(dateStr);
+        }
+
+        function isTradingDay(dateStr) {
+            return !isWeekend(dateStr) && !isHoliday(dateStr);
+        }
+
+        // Get next/previous trading day (skip weekends & holidays)
+        function getNextTradingDay(dateStr, direction = 1) {
+            let d = new Date(dateStr + 'T00:00:00');
+            let attempts = 0;
+            while (attempts < 30) { // Safety limit
+                d.setDate(d.getDate() + direction);
+                const candidate = d.toISOString().split('T')[0];
+                if (isTradingDay(candidate)) return candidate;
+                attempts++;
+            }
+            return dateStr; // Fallback
+        }
+
+        function getOffsetDate(offset) {
+            const d = new Date();
+            d.setDate(d.getDate() + offset);
+            return d.toISOString().split('T')[0];
+        }
+
+        // Get Nth trading day before today (skip weekends & holidays)
+        function getNthTradingDay(n) {
+            if (n === 0) return getOffsetDate(0); // Today
+            let d = new Date();
+            let count = 0;
+            let attempts = 0;
+            while (count < Math.abs(n) && attempts < 100) {
+                d.setDate(d.getDate() - 1);
+                const candidate = d.toISOString().split('T')[0];
+                if (isTradingDay(candidate)) count++;
+                attempts++;
+            }
+            return d.toISOString().split('T')[0];
+        }
+
+        function formatDateLabel(dateStr) {
+            if (!dateStr) return '';
+            const d = new Date(dateStr + 'T00:00:00');
+            const days = ['Min', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab'];
+            const months = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+            return `${days[d.getDay()]}, ${d.getDate()} ${months[d.getMonth()]} ${d.getFullYear()}`;
+        }
+
+        function refreshChipLabels() {
+            document.querySelectorAll('#date-nav-bar .dnav-chip[data-offset]').forEach(btn => {
+                const offset = parseInt(btn.dataset.offset, 10);
+                let targetDate;
+                if (offset === 0) {
+                    targetDate = getOffsetDate(0);
+                    btn.textContent = 'Hari ini';
+                } else if (offset === -1) {
+                    targetDate = getNthTradingDay(1); // 1 trading day ago
+                    btn.textContent = 'Kemarin';
+                } else if (offset === -2) {
+                    targetDate = getNthTradingDay(2);
+                    const d = new Date(targetDate + 'T00:00:00');
+                    const days = ['Min', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab'];
+                    btn.textContent = `${days[d.getDay()]} ${d.getDate()}/${d.getMonth() + 1}`;
+                } else if (offset === -3) {
+                    targetDate = getNthTradingDay(3);
+                    const d = new Date(targetDate + 'T00:00:00');
+                    const days = ['Min', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab'];
+                    btn.textContent = `${days[d.getDay()]} ${d.getDate()}/${d.getMonth() + 1}`;
+                }
+                // Store computed date in data attribute for click handler
+                btn.dataset.targetDate = targetDate;
+            });
+        }
+
+        function syncNavUI(dateStr) {
+            _activeDate = dateStr;
+            const pickerFrom = document.getElementById('date-picker-from');
+            const pickerTo = document.getElementById('date-picker-to');
+            
+            // Set both pickers to the same date (single-day mode)
+            if (pickerFrom) pickerFrom.value = dateStr;
+            if (pickerTo) pickerTo.value = dateStr;
+
+            // Highlight matching chip (check if dateStr matches a chip's target date)
+            document.querySelectorAll('#date-nav-bar .dnav-chip').forEach(btn => {
+                const target = btn.dataset.targetDate;
+                btn.classList.toggle('active', target === dateStr);
+            });
+
+            const label = document.getElementById('date-nav-label');
+            if (label) label.textContent = formatDateLabel(dateStr);
+        }
+
+        function syncRangeUI(fromDate, toDate) {
+            const pickerFrom = document.getElementById('date-picker-from');
+            const pickerTo = document.getElementById('date-picker-to');
+            if (pickerFrom) pickerFrom.value = fromDate;
+            if (pickerTo) pickerTo.value = toDate;
+            _activeDate = toDate;
+
+            document.querySelectorAll('#date-nav-bar .dnav-chip').forEach(btn => {
+                const target = btn.dataset.targetDate;
+                btn.classList.toggle('active', target === toDate && fromDate === toDate);
+            });
+
+            const label = document.getElementById('date-nav-label');
+            if (label) {
+                label.textContent = fromDate === toDate
+                    ? formatDateLabel(toDate)
+                    : `${formatDateLabel(fromDate)} → ${formatDateLabel(toDate)}`;
+            }
+        }
+
+        function listTradingDatesInRange(fromDate, toDate) {
+            const out = [];
+            let d = new Date(fromDate + 'T00:00:00');
+            const end = new Date(toDate + 'T00:00:00');
+            while (d <= end) {
+                const s = d.toISOString().split('T')[0];
+                if (isTradingDay(s)) out.push(s);
+                d.setDate(d.getDate() + 1);
+            }
+            return out;
+        }
+
+        function fetchHistForDate(kode, dateStr) {
+            return new Promise((resolve, reject) => {
+                $.getJSON(`${API_BASE}/footprint-raw-hist?kode=${kode}&date=${dateStr}`)
+                    .done(resp => resolve({ dateStr, resp }))
+                    .fail(reject);
+            });
+        }
+
+        function loadDataForDate(kode, dateStr, snapshotBase) {
+            const loadingEl = document.getElementById('date-nav-loading');
+            if (loadingEl) loadingEl.style.display = '';
+
+            syncNavUI(dateStr);
+
+            try {
+                const url = new URL(window.location.href);
+                url.searchParams.set('date', dateStr);
+                history.replaceState(null, '', url.toString());
+            } catch (_) {}
+
+            $.getJSON(`${API_BASE}/footprint-raw-hist?kode=${kode}&date=${dateStr}`, function (histResp) {
+                const fullHistory = histResp.buckets || [];
+                const fullCandles = histResp.candles || [];
+                const tableData = histResp.tableData || fullHistory;
+                const snapshotForDate = { ...(snapshotBase || {}), date: dateStr, candles: fullCandles };
+
+                const dataRowCount = tableData.length || fullHistory.length;
+                if (histResp.is_repairing && dataRowCount < 42) {
+                    $("#fallback-alert").removeClass("d-none")
+                        .html('<i class="fa-solid fa-sync-alt text-warning me-2 fa-spin"></i><span class="text-dark">Repair data sedang berjalan di background. Chart mungkin belum lengkap.</span>');
+                }
+
+                renderFootprintTrailFromHistory(kode, snapshotForDate, fullHistory, tableData);
+                renderTimeSeriesTable(snapshotForDate, tableData);
+
+                // Debug logging
+                const isDebugMode = new URLSearchParams(window.location.search).get('debug') === 'true';
+                if (isDebugMode) {
+                    const now = new Date();
+                    const todayStr = now.toISOString().split("T")[0];
+                    console.log(`[DATE-NAV] Loaded date: ${dateStr} | candles: ${fullCandles.length} | rows: ${tableData.length} | bubbles: ${fullHistory.length}`);
+                    console.log(`[DATE-NAV] is_fallback: ${histResp.is_fallback} | is_repairing: ${histResp.is_repairing}`);
+                }
+            }).fail(function () {
+                console.warn("History fetch failed for date:", dateStr);
+                renderFootprintTrailFromHistory(kode, { date: dateStr }, [], []);
+                renderTimeSeriesTable({ date: dateStr }, []);
+            }).always(function () {
+                if (loadingEl) loadingEl.style.display = 'none';
+            });
+        }
+
+        async function loadDataForRange(kode, fromDate, toDate, snapshotBase) {
+            const loadingEl = document.getElementById('date-nav-loading');
+            if (loadingEl) loadingEl.style.display = '';
+
+            let start = fromDate;
+            let end = toDate;
+            if (start > end) {
+                const tmp = start;
+                start = end;
+                end = tmp;
+            }
+
+            syncRangeUI(start, end);
+
+            try {
+                const url = new URL(window.location.href);
+                url.searchParams.set('from', start);
+                url.searchParams.set('to', end);
+                url.searchParams.delete('date');
+                history.replaceState(null, '', url.toString());
+            } catch (_) {}
+
+            const tradingDates = listTradingDatesInRange(start, end);
+            if (!tradingDates.length) {
+                renderFootprintTrailFromHistory(kode, { date: end }, [], []);
+                renderTimeSeriesTable({ date: end }, []);
+                if (loadingEl) loadingEl.style.display = 'none';
+                return;
+            }
+
+            try {
+                const results = await Promise.all(tradingDates.map(d => fetchHistForDate(kode, d)));
+
+                const mergedHistory = [];
+                const mergedCandles = [];
+                const mergedTableData = [];
+                let hasRepairing = false;
+
+                results.forEach(({ resp }) => {
+                    const fullHistory = resp?.buckets || [];
+                    const fullCandles = resp?.candles || [];
+                    const tableData = resp?.tableData || fullHistory;
+                    mergedHistory.push(...fullHistory);
+                    mergedCandles.push(...fullCandles);
+                    mergedTableData.push(...tableData);
+                    hasRepairing = hasRepairing || resp?.is_repairing === true;
+                });
+
+                mergedHistory.sort((a, b) => (a.x || 0) - (b.x || 0));
+                mergedCandles.sort((a, b) => (a.x || 0) - (b.x || 0));
+                mergedTableData.sort((a, b) => (a.x || 0) - (b.x || 0));
+
+                const snapshotForRange = {
+                    ...(snapshotBase || {}),
+                    date: end,
+                    fromDate: start,
+                    toDate: end,
+                    candles: mergedCandles,
+                };
+
+                if (hasRepairing && mergedTableData.length < 42) {
+                    $("#fallback-alert").removeClass("d-none")
+                        .html('<i class="fa-solid fa-sync-alt text-warning me-2 fa-spin"></i><span class="text-dark">Repair data sedang berjalan di background. Chart mungkin belum lengkap.</span>');
+                }
+
+                renderFootprintTrailFromHistory(kode, snapshotForRange, mergedHistory, mergedTableData);
+                renderTimeSeriesTable(snapshotForRange, mergedTableData);
+            } catch (error) {
+                console.warn("History fetch failed for range:", start, end, error);
+                renderFootprintTrailFromHistory(kode, { date: end }, [], []);
+                renderTimeSeriesTable({ date: end }, []);
+            } finally {
+                if (loadingEl) loadingEl.style.display = 'none';
+            }
+        }
+
         function loadSnapshotAndHistory() {
             const kode = getKodeFromURL();
             const mode = getModeFromURL();
+            _currentKode = kode;
 
             $('#fundflow-link').attr('href', `broker-summary.html?kode=${kode}`);
             $('#audit-link').attr('href', `broker-summary.html?kode=${kode}#audit`);
@@ -918,15 +1464,11 @@
                 const isRepairing = resp.is_repairing === true;
                 const isFallback = resp.is_fallback === true;
 
-                // Toggle Fallback Alert
                 if (isFallback) {
                     $("#fallback-alert").removeClass("d-none");
                 } else {
                     $("#fallback-alert").addClass("d-none");
                 }
-
-                // Store repair flag for later check (after data is loaded, we can verify if data is sufficient)
-                const repairFlagForLater = isRepairing;
 
                 // Enrich snapshot
                 let haka = snapshot.haka_pct;
@@ -942,116 +1484,42 @@
                 if (fluk === undefined || fluk === null || Number.isNaN(fluk)) fluk = 0;
 
                 const enrichedSnapshot = { ...snapshot, haka_pct: haka, fluktuasi: fluk };
+                _enrichedSnapshotCache = enrichedSnapshot;
 
                 // Render Header immediately
                 renderSnapshot(kode, mode, enrichedSnapshot, state);
 
-                // 2. Load Full History (Heavier Data)
-                const dateStr = snapshot.date || new Date().toISOString().split("T")[0];
-                $.getJSON(`${API_BASE}/footprint-raw-hist?kode=${kode}&date=${dateStr}`, function (histResp) {
-                    const fullHistory = histResp.buckets || [];
-                    const fullCandles = histResp.candles || [];
-                    const tableData = histResp.tableData || fullHistory;
+                // Show AI button once we have a symbol
+                const aiBar = document.getElementById('ai-analytics-bar');
+                if (aiBar) { aiBar.style.cssText = ''; aiBar.classList.add('d-flex'); }
 
+                if (isRepairing) {
+                    $("#fallback-alert").removeClass("d-none")
+                        .html('<i class="fa-solid fa-sync-alt text-warning me-2 fa-spin"></i><span class="text-dark">Repair data sedang berjalan di background. Chart mungkin belum lengkap.</span>');
+                }
 
-                    // ========================================
-                    // THOUGHT PROCESS LOGGING (Browser Console)
-                    // Only shows when ?debug=true is in the URL
-                    // ========================================
-                    const urlParams = new URLSearchParams(window.location.search);
-                    const isDebugMode = urlParams.get('debug') === 'true';
+                // Determine initial date/range from URL, fallback to snapshot date
+                const urlDate = new URLSearchParams(window.location.search).get('date');
+                const urlFrom = new URLSearchParams(window.location.search).get('from');
+                const urlTo = new URLSearchParams(window.location.search).get('to');
+                const initialDate = urlDate || snapshot.date || new Date().toISOString().split("T")[0];
 
-                    if (isDebugMode) {
-                        const now = new Date();
-                        const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-                        const dayOfWeek = now.getDay();
-                        const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
-                        const todayStr = now.toISOString().split("T")[0];
-                        const isToday = dateStr === todayStr;
-                        const nowUTC = now.toISOString().slice(11, 16);
-                        const nowWIBHour = now.getHours();
-                        const nowWIBMin = now.getMinutes();
-                        const nowWIB = `${String(nowWIBHour).padStart(2, '0')}:${String(nowWIBMin).padStart(2, '0')}`;
-                        const marketOpenHour = 9;
-                        const marketCloseHour = 16;
-                        const isMarketOpen = !isWeekend && nowWIBHour >= marketOpenHour && nowWIBHour < marketCloseHour;
+                // Initialize date pickers with default range
+                const pickerFrom = document.getElementById('date-picker-from');
+                const pickerTo = document.getElementById('date-picker-to');
+                const initialFrom = urlFrom || initialDate;
+                const initialTo = urlTo || initialDate;
+                if (pickerFrom && !pickerFrom.value) pickerFrom.value = initialFrom;
+                if (pickerTo && !pickerTo.value) pickerTo.value = initialTo;
+                
+                console.log('[DATE-NAV] Initial date pickers set:', { from: pickerFrom?.value, to: pickerTo?.value, initialDate });
 
-                        // Calculate expected candles
-                        let expectedCandleCount = 0;
-                        let expectedDescription = '';
-                        if (isToday && !isWeekend && nowWIBHour >= marketOpenHour) {
-                            const elapsedMins = (Math.min(nowWIBHour, marketCloseHour) - marketOpenHour) * 60 + (nowWIBHour < marketCloseHour ? nowWIBMin : 0);
-                            expectedCandleCount = Math.floor(elapsedMins / 5);
-                            expectedDescription = `~${expectedCandleCount} candles (09:00-${nowWIB} WIB = ${elapsedMins} mins ÷ 5)`;
-                        } else if (!isToday) {
-                            expectedCandleCount = 84;
-                            expectedDescription = '~84 candles (09:00-16:00 WIB = 420 mins ÷ 5)';
-                        } else {
-                            expectedDescription = isWeekend ? 'Weekend - no trading' : 'Market not open yet';
-                        }
-
-                        console.log(`\n%c========== [THOUGHT PROCESS] ${kode} @ ${dateStr} ==========`, 'color: #00bcd4; font-weight: bold');
-                        console.log(`%c[🕐 NOW]%c Today is ${todayStr} (${dayNames[dayOfWeek]})`, 'color: #8bc34a', 'color: inherit');
-                        console.log(`%c[🕐 NOW]%c Current Time: ${nowWIB} WIB (${nowUTC} UTC)`, 'color: #8bc34a', 'color: inherit');
-                        console.log(`%c[📅 CONTEXT]%c Today is ${isWeekend ? 'WEEKEND 🏖️' : 'WEEKDAY 💼'}${isMarketOpen ? ' - MARKET OPEN 📈' : ''}`, 'color: #ff9800', 'color: inherit');
-                        console.log(`%c[📊 REQUEST]%c User requested data for: ${dateStr} (${isToday ? 'TODAY' : 'PAST TRADING DAY'})`, 'color: #2196f3', 'color: inherit');
-                        console.log(`%c[📁 API FETCH]%c Received ${fullCandles.length} candles, ${tableData.length} table rows, ${fullHistory.length} bubbles`, 'color: #9c27b0', 'color: inherit');
-
-                        // Last candle analysis
-                        if (fullCandles.length > 0) {
-                            const lastCandle = fullCandles[fullCandles.length - 1];
-                            const lastCandleDate = new Date(lastCandle.x);
-                            const lastH = lastCandleDate.getHours();
-                            const lastM = lastCandleDate.getMinutes();
-                            const lastUTC = lastCandleDate.toISOString().slice(11, 16);
-                            const lastWIB = `${String(lastH).padStart(2, '0')}:${String(lastM).padStart(2, '0')}`;
-
-                            console.log(`%c[📈 CHART]%c Last candle at ${lastWIB} WIB (${lastUTC} UTC)`, 'color: #e91e63', 'color: inherit');
-                            if (!isToday) {
-                                const reachesClose = lastH >= 15 && lastM >= 50;
-                                console.log(`%c[📈 CHART]%c For past trading day, market close is 15:50 WIB. Last candle ${reachesClose ? 'REACHES ✅' : 'DOES NOT REACH ❌'} market close`, 'color: #e91e63', reachesClose ? 'color: green' : 'color: red');
-                            } else {
-                                console.log(`%c[📈 CHART]%c For today, expecting data up to ~${nowWIB} WIB (${nowUTC} UTC)`, 'color: #e91e63', 'color: inherit');
-                            }
-                        }
-
-                        // Table/Candle quality assessment
-                        const actualCount = tableData.length;
-                        const isSufficient = expectedCandleCount > 0
-                            ? actualCount >= (expectedCandleCount * 0.5)
-                            : actualCount >= 3;
-
-                        console.log(`%c[📊 TABLE]%c Expected: ${expectedDescription}`, 'color: #795548', 'color: inherit');
-                        console.log(`%c[📊 TABLE]%c Actual: ${actualCount} rows`, 'color: #795548', 'color: inherit');
-                        console.log(`%c[📊 TABLE]%c Status: ${isSufficient ? 'SUFFICIENT ✅' : 'SPARSE ⚠️'} (threshold: ${expectedCandleCount > 0 ? Math.floor(expectedCandleCount * 0.5) : 3})`, 'color: #795548', isSufficient ? 'color: green' : 'color: orange');
-
-                        // Fallback & Repair status from API
-                        const isFallback = histResp.is_fallback === true;
-                        const isRepairing = histResp.is_repairing === true;
-                        console.log(`%c[🔄 FALLBACK]%c Using fallback data: ${isFallback ? 'YES ✅' : 'NO'}`, 'color: #ff5722', isFallback ? 'color: green' : 'color: inherit');
-                        console.log(`%c[🔧 REPAIR]%c Background repair in progress: ${isRepairing ? 'YES 🔧' : 'NO'}`, 'color: #607d8b', isRepairing ? 'color: orange' : 'color: inherit');
-                        console.log(`%c========== [END THOUGHT PROCESS] ==========\n`, 'color: #00bcd4; font-weight: bold');
-                    }
-
-                    // Update snapshot with full data for the renderers
-                    enrichedSnapshot.candles = fullCandles;
-
-                    // Smart repair warning: only show if repair flag is true AND data is insufficient
-                    const dataRowCount = tableData.length || fullHistory.length;
-                    const isSufficientData = dataRowCount >= 42; // Minimum threshold for full day (50% of 84)
-
-                    if (repairFlagForLater && !isSufficientData) {
-                        $("#fallback-alert").removeClass("d-none")
-                            .html('<i class="fa-solid fa-sync-alt text-warning me-2 fa-spin"></i><span class="text-dark">Repair data sedang berjalan di background. Chart mungkin belum lengkap.</span>');
-                    }
-
-                    renderFootprintTrailFromHistory(kode, enrichedSnapshot, fullHistory, tableData);
-                    renderTimeSeriesTable(enrichedSnapshot, tableData);
-                }).fail(function () {
-                    console.warn("Full history fetch failed, using fallback from /symbol");
-                    renderFootprintTrailFromHistory(kode, enrichedSnapshot, snapshot.history || [], snapshot.history || []);
-                    renderTimeSeriesTable(enrichedSnapshot, snapshot.history || []);
-                });
+                // 2. Load history for the initial date/range via date navigator
+                if (initialFrom && initialTo && initialFrom !== initialTo) {
+                    loadDataForRange(kode, initialFrom, initialTo, enrichedSnapshot);
+                } else {
+                    loadDataForDate(kode, initialTo, enrichedSnapshot);
+                }
 
             }).fail(function (xhr) {
                 console.error("Failed load /symbol:", xhr.status, xhr.responseText);
@@ -1060,10 +1528,222 @@
             });
         }
 
+        // ============================================================
+        // DATE NAVIGATOR EVENT WIRING
+        // ============================================================
+        function initDateNav() {
+            console.log('[DATE-NAV] Initializing date navigator');
+            refreshChipLabels();
+
+            document.querySelectorAll('#date-nav-bar .dnav-chip').forEach(btn => {
+                btn.addEventListener('click', function () {
+                    const targetDate = this.dataset.targetDate;
+                    console.log('[DATE-NAV] Chip clicked:', targetDate);
+                    if (targetDate && _currentKode) loadDataForDate(_currentKode, targetDate, _enrichedSnapshotCache);
+                });
+            });
+
+            // Apply button for date range
+            const applyBtn = document.getElementById('dnav-apply');
+            console.log('[DATE-NAV] Apply button:', applyBtn);
+            
+            if (applyBtn) {
+                applyBtn.addEventListener('click', function () {
+                    const fromInput = document.getElementById('date-picker-from');
+                    const toInput = document.getElementById('date-picker-to');
+                    const from = fromInput?.value;
+                    const to = toInput?.value;
+                    
+                    console.log('[DATE-NAV] Apply clicked:', { from, to, kode: _currentKode });
+                    
+                    if (!_currentKode) {
+                        console.warn('[DATE-NAV] No kode loaded yet');
+                        return;
+                    }
+                    
+                    const fromDate = from || to || getOffsetDate(0);
+                    const toDate = to || from || getOffsetDate(0);
+                    console.log('[DATE-NAV] Loading range:', fromDate, toDate);
+
+                    if (fromDate === toDate) {
+                        loadDataForDate(_currentKode, toDate, _enrichedSnapshotCache);
+                    } else {
+                        loadDataForRange(_currentKode, fromDate, toDate, _enrichedSnapshotCache);
+                    }
+                });
+            }
+
+            // Prev / Next arrows (skip weekends & holidays)
+            document.getElementById('dnav-prev')?.addEventListener('click', function () {
+                if (!_activeDate) return;
+                const prevDate = getNextTradingDay(_activeDate, -1);
+                console.log('[DATE-NAV] Prev clicked:', prevDate);
+                if (_currentKode) loadDataForDate(_currentKode, prevDate, _enrichedSnapshotCache);
+            });
+
+            document.getElementById('dnav-next')?.addEventListener('click', function () {
+                if (!_activeDate) return;
+                const today = getOffsetDate(0);
+                if (_activeDate >= today) return; // Can't go to future
+                const nextDate = getNextTradingDay(_activeDate, 1);
+                if (nextDate > today) return; // Don't exceed today
+                console.log('[DATE-NAV] Next clicked:', nextDate);
+                if (_currentKode) loadDataForDate(_currentKode, nextDate, _enrichedSnapshotCache);
+            });
+        }
+
         $(function () {
+            initDateNav();
             loadSnapshotAndHistory();
         });
         Chart.register(ChartDataLabels);
+
+        /* ── AI Analysis for Intraday page ── */
+        async function runAIAnalysisIntraday(forceRefresh = false) {
+            const symbol = getKodeFromURL();
+            if (!symbol) return alert('Tidak ada emiten yang dipilih.');
+
+            const btn = document.getElementById('btn-ai-analyze');
+            const modal = bootstrap.Modal.getOrCreateInstance(document.getElementById('aiResultModal'));
+            const analysisContent = document.getElementById('ai-analysis-content');
+            const tokenInfo = document.getElementById('ai-token-info');
+            const refreshBtn = document.getElementById('btn-ai-refresh');
+
+            document.getElementById('ai-modal-symbol').textContent = symbol;
+
+            btn.classList.add('analyzing');
+            btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin me-1"></i> Capturing...';
+            refreshBtn.style.display = 'none';
+            tokenInfo.textContent = '';
+            analysisContent.innerHTML = `
+                <div class="text-center py-4">
+                    <div class="spinner-border text-warning" role="status"></div>
+                    <p class="small text-muted mt-2">Mengambil screenshot halaman...</p>
+                </div>
+            `;
+            modal.show();
+
+            try {
+                // Capture chart + table containers
+                const chartEl = document.getElementById('chart-container');
+                const tableEl = document.getElementById('table-container');
+                const captureEl = (chartEl && tableEl) ? document.getElementById('app') : (chartEl || tableEl);
+
+                console.log('[AI] Capturing intraday view...');
+                const blob = await captureElement(captureEl);
+                console.log(`[AI] Captured intraday: ${(blob.size / 1024).toFixed(0)}KB`);
+
+                analysisContent.innerHTML = `
+                    <div class="text-center py-4">
+                        <div class="spinner-border text-warning" role="status"></div>
+                        <p class="small text-muted mt-2">Mengunggah screenshot...</p>
+                    </div>
+                `;
+                btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin me-1"></i> Uploading...';
+
+                const uploaded = await uploadScreenshot(blob, symbol, 'intraday');
+                console.log(`[AI] Uploaded: ${uploaded.key} (${uploaded.size_kb}KB)`);
+
+                analysisContent.innerHTML = `
+                    <div class="text-center py-4">
+                        <div class="spinner-border text-warning" role="status"></div>
+                        <p class="small text-muted mt-2">AI sedang menganalisis...<br>Bisa memakan waktu 15-30 detik.</p>
+                    </div>
+                `;
+                btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin me-1"></i> Analyzing...';
+
+                const aiRebuild = new URLSearchParams(window.location.search).get('ai') === 'rebuild';
+                const forceAI = forceRefresh || aiRebuild;
+
+                const response = await fetch(`${WORKER_BASE_URL}/ai/analyze-broksum`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        symbol,
+                        image_keys: [{ key: uploaded.key, label: uploaded.label }],
+                        from: null,
+                        to: null,
+                        force: forceAI
+                    })
+                });
+
+                const result = await response.json();
+
+                if (!result.ok) {
+                    const errorMessage = result.error || 'AI analysis failed';
+                    const providerErrors = [result.openai, result.grok, result.claude].filter(Boolean);
+                    const providerDetail = providerErrors.length
+                        ? `<div class="small text-muted mt-1">${providerErrors.map(e => escapeHTML(e)).join(' → ')}</div>`
+                        : '';
+                    const rawOutput = result.raw_output
+                        ? `<details class="mt-3"><summary class="small text-muted">Output mentah</summary><pre class="small p-3 rounded">${escapeHTML(result.raw_output)}</pre></details>`
+                        : '';
+                    analysisContent.innerHTML = `
+                        <div class="alert alert-danger">
+                            <i class="fa-solid fa-circle-exclamation me-1"></i>
+                            <strong>Gagal menganalisis:</strong> ${escapeHTML(errorMessage)}
+                            ${providerDetail}
+                        </div>
+                        ${rawOutput}
+                    `;
+                    tokenInfo.textContent = '';
+                    refreshBtn.style.display = '';
+                    return;
+                }
+
+                let analysisData = result.analysis;
+                if (analysisData && typeof analysisData === 'string') {
+                    try { analysisData = JSON.parse(analysisData); } catch (_) { analysisData = null; }
+                }
+
+                if (analysisData && typeof analysisData === 'object') {
+                    analysisContent.innerHTML = renderAnalysisJSON(analysisData, result.screenshots);
+                } else {
+                    const rawOutput = result.analysis_raw || '';
+                    analysisContent.innerHTML = `
+                        <div class="alert alert-warning">
+                            <i class="fa-solid fa-triangle-exclamation me-1"></i>
+                            <strong>Analisis belum tersedia.</strong> Model tidak mengembalikan JSON valid.
+                        </div>
+                        ${rawOutput ? `<details class="mt-3"><summary class="small text-muted">Output mentah</summary><pre class="small p-3 rounded">${escapeHTML(rawOutput)}</pre></details>` : ''}
+                    `;
+                }
+
+                if (result.usage) {
+                    const _recData = analysisData?.recommendation || analysisData?.kesimpulan_rekomendasi || {};
+                    const rawC = _recData.confidence ?? _recData.tingkat_keyakinan ?? analysisData?.meta?.confidence ?? null;
+                    let confStr = '';
+                    if (rawC != null) {
+                        if (typeof rawC === 'number' && !isNaN(rawC) && rawC > 0) {
+                            confStr = ` | Confidence: ${(rawC > 1 ? rawC : rawC * 100).toFixed(0)}%`;
+                        } else if (typeof rawC === 'string') {
+                            const pct = parseFloat(rawC.replace('%', ''));
+                            confStr = !isNaN(pct) && pct > 0
+                                ? ` | Confidence: ${(pct > 1 ? pct : pct * 100).toFixed(0)}%`
+                                : rawC ? ` | Confidence: ${rawC}` : '';
+                        }
+                    }
+                    tokenInfo.textContent = `Model: ${result.model} | Tokens: ${result.usage.total_tokens?.toLocaleString() || 'N/A'}${confStr}`;
+                }
+
+                // Show footer
+                document.querySelector('#aiResultModal .modal-footer').classList.remove('d-none');
+                refreshBtn.style.display = '';
+
+            } catch (error) {
+                console.error('[AI] Error:', error);
+                analysisContent.innerHTML = `
+                    <div class="alert alert-danger">
+                        <i class="fa-solid fa-circle-exclamation me-1"></i>
+                        <strong>Gagal menganalisis:</strong> ${error.message}
+                    </div>
+                    <p class="text-muted small">Pastikan koneksi internet stabil dan coba lagi.</p>
+                `;
+            } finally {
+                btn.classList.remove('analyzing');
+                btn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles me-1"></i> AI Analysis';
+            }
+        }
 
 
     </script>
