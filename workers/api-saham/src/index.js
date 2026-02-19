@@ -120,8 +120,8 @@
  * Body: { symbol: "BBRI", image_keys: [{key,label}, ...], force?: true }
  * - Ensures "intraday" screenshot exists (may trigger capture and poll for availability)
  * - Calls OpenAI vision (gpt-4.1) to produce JSON analysis, retries once if JSON invalid
- * - Fallback: Grok text-only if OpenAI fails (requires GROK_API_KEY)
- * - Caches result daily: ai-cache/{symbol}/{today}.json (SSSAHAM_EMITEN)
+ * - Fallback chain: OpenAI → Grok (text-only) → Claude (vision) on failure/quota
+ * - Caches result per range: ai-cache/{symbol}/{from}_{to}.json, TTL 24h (SSSAHAM_EMITEN)
  *
  * ------------------------------------------------------------
  * INTERNAL / OPS ENDPOINTS
@@ -3012,16 +3012,25 @@ export default {
           return json({ ok: false, error: "Missing required fields: symbol, image_keys[]" }, 400);
         }
 
+        // Cache key unique per symbol + date range so BBRI/14d and BBRI/30d are separate
         const today = new Date().toISOString().split("T")[0];
-        const cacheKey = `ai-cache/${normalizedSymbol}/${today}.json`;
+        const fromDate = (body.from || today).toString().trim();
+        const toDate   = (body.to   || today).toString().trim();
+        const cacheKey = `ai-cache/${normalizedSymbol}/${fromDate}_${toDate}.json`;
 
         if (!forceRefresh) {
           try {
             const cached = await env.SSSAHAM_EMITEN.get(cacheKey);
             if (cached) {
               const cachedData = await cached.json();
-              console.log(`[AI] Cache HIT for ${normalizedSymbol} (${today})`);
-              return json({ ...cachedData, cached: true });
+              // Honour 24-hour TTL — check cached_at timestamp
+              const cachedAt = cachedData.cached_at ? new Date(cachedData.cached_at).getTime() : 0;
+              const ageMs = Date.now() - cachedAt;
+              if (ageMs < 24 * 60 * 60 * 1000) {
+                console.log(`[AI] Cache HIT for ${normalizedSymbol} (${fromDate}→${toDate}), age ${Math.round(ageMs/60000)}min`);
+                return json({ ...cachedData, cached: true });
+              }
+              console.log(`[AI] Cache STALE for ${normalizedSymbol} — age ${Math.round(ageMs/3600000)}h, rebuilding`);
             }
           } catch (_) { }
         }
@@ -3036,16 +3045,12 @@ export default {
           aggregatedMap.set(key, { key, label: labelRaw || "screenshot", normalizedLabel });
         });
 
-        const INTRADAY_LABEL = "intraday"; // keep same constant as your file
+        // Frontend now uploads both brokerflow + intraday screenshots directly from DOM.
+        // We no longer call ensureScreenshotAvailability (which used a dummy mock service).
         const labelPresence = new Set(Array.from(aggregatedMap.values()).map(x => x.normalizedLabel));
-        if (!labelPresence.has(INTRADAY_LABEL)) {
-          const intradayKey = await ensureScreenshotAvailability(env, ctx, normalizedSymbol, today, INTRADAY_LABEL, { forceRefresh });
-          if (intradayKey) {
-            aggregatedMap.set(intradayKey, { key: intradayKey, label: "intraday", normalizedLabel: INTRADAY_LABEL });
-            labelPresence.add(INTRADAY_LABEL);
-          } else {
-            console.warn(`[AI] Intraday screenshot unavailable for ${normalizedSymbol}`);
-          }
+        console.log(`[AI] Screenshots received from client: ${Array.from(labelPresence).join(', ')}`);
+        if (!labelPresence.has("intraday")) {
+          console.warn(`[AI] No intraday screenshot provided by client for ${normalizedSymbol}`);
         }
 
         const aggregatedKeys = Array.from(aggregatedMap.values());
@@ -3207,7 +3212,151 @@ export default {
           return { analysisJson, rawContent, usage };
         }
 
-        // --- run provider with fallback
+        async function callClaudeWithImages() {
+          if (!env.ANTHROPIC_API_KEY) {
+            throw new Error("Missing ANTHROPIC_API_KEY for fallback");
+          }
+
+          const CLAUDE_URL = "https://api.anthropic.com/v1/messages";
+
+          // Claude only accepts these media types
+          const VALID_CLAUDE_TYPES = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"]);
+          // Min size to skip placeholder/stub images (10x10 pixel dumps = ~122 bytes)
+          const MIN_IMAGE_BYTES = 5000;
+
+          // Fetch images directly from R2 and encode as base64
+          // (Claude cannot fetch from our worker URL — Anthropic servers cannot reach it)
+          const imageBlocks = (await Promise.all(aggregatedKeys.map(async ik => {
+            const obj = await env.SSSAHAM_EMITEN.get(ik.key);
+            if (!obj) {
+              console.warn(`[Claude] Screenshot missing in R2: ${ik.key}, skipping`);
+              return null;
+            }
+
+            const arrayBuffer = await obj.arrayBuffer();
+            const bytes = new Uint8Array(arrayBuffer);
+
+            // Skip placeholder/stub images (e.g. 10x10 fallback PNG saved when screenshot fails)
+            if (bytes.length < MIN_IMAGE_BYTES) {
+              console.warn(`[Claude] Image ${ik.label} is too small (${bytes.length} bytes) — likely a placeholder, skipping`);
+              return null;
+            }
+
+            // Chunked base64 encoding — avoids stack overflow on large images
+            const chunkSize = 8192;
+            let binary = '';
+            for (let i = 0; i < bytes.length; i += chunkSize) {
+              binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
+            }
+            const base64Data = btoa(binary);
+
+            // Normalize media type — Claude rejects "image/jpg" or unknown types
+            let mediaType = (obj.httpMetadata?.contentType || "image/jpeg").toLowerCase().split(";")[0].trim();
+            if (mediaType === "image/jpg") mediaType = "image/jpeg";
+            if (!VALID_CLAUDE_TYPES.has(mediaType)) mediaType = "image/jpeg";
+
+            console.log(`[Claude] Image ${ik.label}: ${bytes.length} bytes, type: ${mediaType}`);
+
+            return {
+              type: "image",
+              source: { type: "base64", media_type: mediaType, data: base64Data }
+            };
+          }))).filter(Boolean); // remove nulls (skipped images)
+
+          // If no valid images, fall back to text-only analysis
+          const hasImages = imageBlocks.length > 0;
+          console.log(`[Claude] ${hasImages ? imageBlocks.length + ' valid images' : 'no valid images — text-only mode'}`);
+
+          const userContent = hasImages
+            ? [
+                ...imageBlocks,
+                { type: "text", text: `Analisis screenshot halaman Broker Summary untuk emiten ${normalizedSymbol}. Screenshot yang tersedia: ${labelList}. Gabungkan analisis dari semua screenshot dan kembalikan JSON valid sesuai schema.` }
+              ]
+            : [
+                { type: "text", text: `Analisis data broker summary untuk emiten ${normalizedSymbol}. Screenshot labels tersedia: ${labelList}. (fallback text-only) Kembalikan JSON valid sesuai schema.` }
+              ];
+
+          // Explicit JSON instruction appended for Claude — Claude ignores vague "return JSON" prompts
+          const claudeSystemPrompt = systemPrompt +
+            "\n\nPENTING: Respons kamu HARUS berupa JSON object yang valid saja. " +
+            "Jangan tambahkan teks pengantar, penjelasan, atau markdown code block (``` json). " +
+            "Mulai langsung dengan karakter '{' dan akhiri dengan '}'.";
+
+          const claudePayload = {
+            model: "claude-sonnet-4-5",
+            max_tokens: 4096,
+            system: claudeSystemPrompt,
+            messages: [
+              {
+                role: "user",
+                content: userContent
+              }
+            ]
+          };
+
+          const resp = await fetch(CLAUDE_URL, {
+            method: "POST",
+            headers: {
+              "x-api-key": env.ANTHROPIC_API_KEY,
+              "anthropic-version": "2023-06-01",
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify(claudePayload)
+          });
+
+          if (!resp.ok) {
+            const errText = await resp.text();
+            throw new Error(`Claude API error: ${resp.status} - ${errText}`);
+          }
+
+          const data = await resp.json();
+          let rawContent = data.content?.[0]?.text || "";
+          const claudeUsage = {
+            prompt_tokens: data.usage?.input_tokens,
+            completion_tokens: data.usage?.output_tokens,
+            total_tokens: (data.usage?.input_tokens || 0) + (data.usage?.output_tokens || 0)
+          };
+
+          // First parse attempt
+          try {
+            const analysisJson = parseModelJson(rawContent);
+            return { analysisJson, rawContent, usage: claudeUsage };
+          } catch (parseErr) {
+            console.warn(`[Claude] First parse failed: ${parseErr.message}. Sending correction turn.`);
+
+            // Send a correction turn asking Claude to fix its own output
+            const correctionResp = await fetch(CLAUDE_URL, {
+              method: "POST",
+              headers: {
+                "x-api-key": env.ANTHROPIC_API_KEY,
+                "anthropic-version": "2023-06-01",
+                "Content-Type": "application/json"
+              },
+              body: JSON.stringify({
+                model: "claude-sonnet-4-5",
+                max_tokens: 4096,
+                system: claudeSystemPrompt,
+                messages: [
+                  { role: "user", content: userContent },
+                  { role: "assistant", content: rawContent },
+                  { role: "user", content: `Output sebelumnya bukan JSON valid. Error: ${parseErr.message}. Tolong perbaiki dan kembalikan HANYA JSON object yang valid, mulai dari '{' langsung tanpa teks lain.` }
+                ]
+              })
+            });
+
+            if (!correctionResp.ok) {
+              const errText = await correctionResp.text();
+              throw new Error(`Claude correction error: ${correctionResp.status} - ${errText}`);
+            }
+
+            const correctionData = await correctionResp.json();
+            rawContent = correctionData.content?.[0]?.text || rawContent;
+            const analysisJson = parseModelJson(rawContent);
+            return { analysisJson, rawContent, usage: claudeUsage };
+          }
+        } // end callClaudeWithImages
+
+        // --- run provider with fallback chain: OpenAI → Grok → Claude
         let provider = "openai";
         let modelUsed = "gpt-4.1";
         let analysisJson = null;
@@ -3231,11 +3380,28 @@ export default {
             rawContent = out.rawContent;
             usage = out.usage || {};
           } catch (grokErr) {
-            console.error("[AI] Grok fallback failed:", grokErr.message);
-            return json(
-              { ok: false, error: "Both OpenAI and Grok failed", openai: openaiErr.message, grok: grokErr.message },
-              502
-            );
+            console.warn(`[AI] Grok fallback failed: ${grokErr.message}. Falling back to Claude.`);
+            provider = "claude";
+            modelUsed = "claude-sonnet-4-5";
+
+            try {
+              const out = await callClaudeWithImages();
+              analysisJson = out.analysisJson;
+              rawContent = out.rawContent;
+              usage = out.usage || {};
+            } catch (claudeErr) {
+              console.error("[AI] Claude fallback failed:", claudeErr.message);
+              return json(
+                {
+                  ok: false,
+                  error: "All AI providers failed",
+                  openai: openaiErr.message,
+                  grok: grokErr.message,
+                  claude: claudeErr.message
+                },
+                502
+              );
+            }
           }
         }
 
@@ -3261,6 +3427,36 @@ export default {
           }
         }
 
+        // Also normalize Indonesian-keyed recommendation block
+        const recID = analysisJson.kesimpulan_rekomendasi;
+        if (recID && typeof recID === "object") {
+          // Derive confidence from tingkat_keyakinan if present
+          if (recID.tingkat_keyakinan != null && recID.confidence == null) {
+            const raw = recID.tingkat_keyakinan;
+            if (typeof raw === "number") {
+              recID.confidence = raw > 1 ? raw / 100 : raw;
+            } else if (typeof raw === "string") {
+              const pct = parseFloat(raw.replace("%", ""));
+              recID.confidence = !isNaN(pct) ? (pct > 1 ? pct / 100 : pct) : null;
+            }
+          }
+          // Auto-derive confidence from strength of signals if still missing
+          if (recID.confidence == null || recID.confidence === 0) {
+            const rating = (recID.rating || recID.rekomendasi || "").toUpperCase();
+            const alasanCount = Array.isArray(recID.alasan_rating) ? recID.alasan_rating.length : 0;
+            let baseConf = 0.5;
+            if (/STRONG BUY|STRONG SELL/.test(rating)) baseConf = 0.85;
+            else if (/BUY|SELL|AKUMULASI|DISTRIBUSI/.test(rating)) baseConf = 0.75;
+            else if (/HOLD|NETRAL|WAIT/.test(rating)) baseConf = 0.6;
+            // More rationale = higher confidence
+            recID.confidence = Math.min(0.95, baseConf + alasanCount * 0.03);
+          }
+          // Mirror to meta for backwards compat
+          if (analysisJson.meta) {
+            analysisJson.meta.confidence = recID.confidence;
+          }
+        }
+
         const screenshotsPayload = aggregatedKeys.map(ik => ({
           label: ik.label,
           url: `https://api-saham.mkemalw.workers.dev/ai/screenshot?key=${encodeURIComponent(ik.key)}`
@@ -3279,7 +3475,9 @@ export default {
             completion_tokens: usage.completion_tokens,
             total_tokens: usage.total_tokens
           },
-          analyzed_at: new Date().toISOString()
+          analyzed_at: new Date().toISOString(),
+          cached_at: new Date().toISOString(),
+          date_range: { from: fromDate, to: toDate }
         };
 
         try {
