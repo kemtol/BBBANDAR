@@ -1146,6 +1146,131 @@ async function getOrderflowSnapshot(env, symbol) {
   }
 }
 
+async function getOrderflowSnapshotMap(env) {
+  if (!env?.SSSAHAM_DB) return {};
+
+  const { dateStr, startTs, endTs } = getTodayOrderflowWindow();
+
+  try {
+    const { results: rows = [] } = await env.SSSAHAM_DB.prepare(`
+      SELECT ticker, time_key, open, close, vol, delta, high, low
+      FROM temp_footprint_consolidate
+      WHERE time_key >= ? AND time_key <= ?
+      ORDER BY ticker ASC, time_key ASC
+    `).bind(startTs, endTs).all();
+
+    if (!rows.length) return {};
+
+    const aggMap = new Map();
+    for (const row of rows) {
+      const ticker = String(row?.ticker || "").toUpperCase();
+      if (!ticker) continue;
+
+      const vol = Number(row?.vol || 0);
+      const delta = Number(row?.delta || 0);
+      const open = Number(row?.open || 0);
+      const close = Number(row?.close || 0);
+      const high = Number(row?.high || close || open || 0);
+      const low = Number(row?.low || close || open || 0);
+      const ts = Number(row?.time_key || 0);
+
+      if (!aggMap.has(ticker)) {
+        aggMap.set(ticker, {
+          ticker,
+          open,
+          close,
+          total_vol: 0,
+          total_delta: 0,
+          high,
+          low,
+          first_ts: ts,
+          last_ts: ts
+        });
+      }
+
+      const agg = aggMap.get(ticker);
+      if (!agg.open && open) agg.open = open;
+      if (close) agg.close = close;
+      agg.total_vol += vol;
+      agg.total_delta += delta;
+      agg.high = Math.max(agg.high || high, high);
+      agg.low = Math.min(agg.low || low, low);
+      if (ts && (!agg.first_ts || ts < agg.first_ts)) agg.first_ts = ts;
+      if (ts && (!agg.last_ts || ts > agg.last_ts)) agg.last_ts = ts;
+    }
+
+    const ctxMap = new Map();
+    try {
+      const { results: ctxRows = [] } = await env.SSSAHAM_DB.prepare(`
+        SELECT d.ticker, d.state as hist_state, d.z_ngr as hist_z_ngr
+        FROM daily_features d
+        INNER JOIN (
+          SELECT ticker, MAX(date) as max_date
+          FROM daily_features
+          WHERE date < ?
+          GROUP BY ticker
+        ) m
+          ON d.ticker = m.ticker AND d.date = m.max_date
+      `).bind(dateStr).all();
+
+      for (const c of ctxRows) {
+        const t = String(c?.ticker || "").toUpperCase();
+        if (!t) continue;
+        ctxMap.set(t, {
+          hist_state: c?.hist_state,
+          hist_z_ngr: c?.hist_z_ngr
+        });
+      }
+    } catch (e) {
+      console.error("[orderflow-map] context query failed:", e);
+    }
+
+    const out = {};
+    for (const [ticker, agg] of aggMap.entries()) {
+      if (!agg.total_vol || agg.total_vol <= 0 || !agg.open || !agg.close) continue;
+
+      const hybrid = calculateHybridItem({
+        ticker,
+        open: agg.open,
+        close: agg.close,
+        total_vol: agg.total_vol,
+        total_delta: agg.total_delta,
+        high: agg.high,
+        low: agg.low
+      }, ctxMap.get(ticker) || {});
+
+      if (!hybrid) continue;
+
+      const netValue = hybrid.v && agg.close ? hybrid.v * agg.close : null;
+      out[ticker] = {
+        ticker,
+        price: agg.close,
+        delta_pct: hybrid.d,
+        price_pct: hybrid.p,
+        mom_pct: hybrid.p,
+        absorb: hybrid.div,
+        cvd: Number(agg.total_delta || 0),
+        net_value: netValue,
+        volume: hybrid.v,
+        range: hybrid.r,
+        score: hybrid.sc,
+        signal: hybrid.sig,
+        quadrant: mapQuadrant(hybrid.d, hybrid.p),
+        context_state: hybrid.ctx_st,
+        context_z: hybrid.ctx_net,
+        snapshot_at: agg.last_ts ? new Date(agg.last_ts).toISOString() : new Date().toISOString(),
+        generated_at: new Date().toISOString(),
+        source: "d1"
+      };
+    }
+
+    return out;
+  } catch (err) {
+    console.error("[orderflow-map] snapshot map failed:", err);
+    return {};
+  }
+}
+
 // ==============================
 // Worker Entry
 // ==============================
@@ -2189,6 +2314,14 @@ export default {
             console.error("[screener-accum] Failed to load z-score data:", e);
           }
 
+          // Optional: attach live orderflow snapshot map (today)
+          let orderflowMap = {};
+          try {
+            orderflowMap = await getOrderflowSnapshotMap(env);
+          } catch (e) {
+            console.error("[screener-accum] Failed to load orderflow map:", e);
+          }
+
           // Build enriched items: ALL windows per ticker + z-score data
           const items = [];
           for (const row of (accumData.items || [])) {
@@ -2203,7 +2336,9 @@ export default {
               // Z-score data (if available)
               s: screenerItem?.s || null,
               sc: screenerItem?.sc || null,
-              z: screenerItem?.z || null
+              z: screenerItem?.z || null,
+              // Live orderflow snapshot for scanner/list integration
+              orderflow: orderflowMap[row.t] || null
             });
           }
 
