@@ -20,6 +20,11 @@
                 root.style.colorScheme = 'dark';
             }
         })();
+
+        (function () {
+            const target = `broker-summary.html${window.location.search || ''}${window.location.hash || ''}`;
+            window.location.replace(target);
+        })();
     </script>
 
     <title>SSSAHAM - Orderflow Scanner</title>
@@ -281,10 +286,7 @@
                 <a class="nav-link" href="../index.html">Feed</a>
             </li>
             <li class="nav-item" role="presentation">
-                <span class="nav-link active">Orderflow</span>
-            </li>
-            <li class="nav-item" role="presentation">
-                <a class="nav-link" href="broker-summary.html">Brokerflow</a>
+                <span class="nav-link active">Brokerflow</span>
             </li>
         </ul>
 

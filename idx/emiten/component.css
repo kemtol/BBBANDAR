@@ -121,7 +121,6 @@ body {
     #search-panel {
         width: 350px;
         right: -350px;
-        border-left: 1px solid var(--border-muted);
     }
 }
 

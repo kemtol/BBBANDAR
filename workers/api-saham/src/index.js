@@ -754,6 +754,32 @@ function calculateHybridItem(footprint, context) {
   };
 }
 
+async function fetchLiveBrokerSnapshot(env, symbol, dateStr) {
+  if (!env?.BROKSUM_SERVICE) return null;
+  try {
+    const u = `http://internal/ipot/scrape?symbol=${encodeURIComponent(symbol)}&from=${encodeURIComponent(dateStr)}&to=${encodeURIComponent(dateStr)}&save=false&debug=false`;
+    const r = await env.BROKSUM_SERVICE.fetch(u);
+    if (!r || !r.ok) return null;
+    const j = await r.json();
+    const data = j?.data || null;
+    if (!data) return null;
+    return {
+      broker_summary: data.broker_summary || null,
+      bandar_detector: data.bandar_detector || null
+    };
+  } catch (e) {
+    console.error(`[LIVE REPAIR] fetch failed ${symbol} ${dateStr}:`, e?.message || e);
+    return null;
+  }
+}
+
+function hasBrokerRows(bs) {
+  if (!bs) return false;
+  const buy = Array.isArray(bs.brokers_buy) ? bs.brokers_buy.length : 0;
+  const sell = Array.isArray(bs.brokers_sell) ? bs.brokers_sell.length : 0;
+  return buy > 0 || sell > 0;
+}
+
 async function calculateRangeData(env, ctx, symbol, startDate, endDate) {
   const results = [];
   const accBrokers = {};
@@ -786,8 +812,17 @@ async function calculateRangeData(env, ctx, symbol, startDate, endDate) {
       if (object) {
         const fullOuter = await object.json();
         if (fullOuter && fullOuter.data) {
-          const bd = fullOuter.data.bandar_detector;
-          const bs = fullOuter.data.broker_summary;
+          let bd = fullOuter.data.bandar_detector;
+          let bs = fullOuter.data.broker_summary;
+
+          // Live repair: if RAW exists but broker rows are empty, pull single-day snapshot from scraper.
+          if (!hasBrokerRows(bs)) {
+            const repaired = await fetchLiveBrokerSnapshot(env, symbol, dateStr);
+            if (hasBrokerRows(repaired?.broker_summary)) {
+              bs = repaired.broker_summary;
+              if (repaired.bandar_detector) bd = repaired.bandar_detector;
+            }
+          }
 
           // 1. Calculate Daily Flow
           let foreignBuy = 0, foreignSell = 0;
@@ -838,6 +873,69 @@ async function calculateRangeData(env, ctx, symbol, startDate, endDate) {
             process(bs.brokers_buy, 'buy');
             process(bs.brokers_sell, 'sell');
           }
+
+          const summary = {
+            detector: bd,
+            price: bs?.stock_summary?.average_price ? parseInt(bs.stock_summary.average_price) : 0,
+            foreign: { buy_val: foreignBuy, sell_val: foreignSell, net_val: foreignBuy - foreignSell },
+            retail: { buy_val: retailBuy, sell_val: retailSell, net_val: retailBuy - retailSell },
+            local: { buy_val: localBuy, sell_val: localSell, net_val: localBuy - localSell }
+          };
+          results.push({ date: dateStr, data: summary });
+        }
+      } else {
+        // RAW missing for this trading day: try live scrape to avoid undercounted range totals.
+        const repaired = await fetchLiveBrokerSnapshot(env, symbol, dateStr);
+        if (repaired && hasBrokerRows(repaired.broker_summary)) {
+          const bd = repaired.bandar_detector;
+          const bs = repaired.broker_summary;
+
+          let foreignBuy = 0, foreignSell = 0;
+          let retailBuy = 0, retailSell = 0;
+          let localBuy = 0, localSell = 0;
+
+          const isRetail = (code) => {
+            const b = brokersMap[code];
+            if (!b) return false;
+            const cat = (b.category || '').toLowerCase();
+            return cat.includes('retail');
+          };
+
+          const process = (list, type) => {
+            if (list && Array.isArray(list)) {
+              list.forEach(b => {
+                if (!b) return;
+                const val = parseFloat(type === 'buy' ? b.bval : b.sval) || 0;
+                const vol = parseFloat(type === 'buy' ? b.blotv || b.blot * 100 : b.slotv || b.slot * 100) || 0;
+                const code = b.netbs_broker_code;
+
+                if (type === 'buy') {
+                  if (isRetail(code)) retailBuy += val;
+                  else if (b.type === "Asing") foreignBuy += val;
+                  else localBuy += val;
+
+                  if (code) {
+                    if (!accBrokers[code]) accBrokers[code] = { bval: 0, sval: 0, bvol: 0, svol: 0, type: b.type };
+                    accBrokers[code].bval += val;
+                    accBrokers[code].bvol += vol;
+                  }
+                } else {
+                  if (isRetail(code)) retailSell += val;
+                  else if (b.type === "Asing") foreignSell += val;
+                  else localSell += val;
+
+                  if (code) {
+                    if (!accBrokers[code]) accBrokers[code] = { bval: 0, sval: 0, bvol: 0, svol: 0, type: b.type };
+                    accBrokers[code].sval += val;
+                    accBrokers[code].svol += vol;
+                  }
+                }
+              });
+            }
+          };
+
+          process(bs.brokers_buy, 'buy');
+          process(bs.brokers_sell, 'sell');
 
           const summary = {
             detector: bd,
@@ -2359,17 +2457,18 @@ export default {
       // Cached in R2 with 1 hour TTL
       if (url.pathname === "/foreign-sentiment" && req.method === "GET") {
         try {
-          const CACHE_VERSION = 'v1'; // Bump this when logic changes
+          const CACHE_VERSION = 'v2'; // Bump this when logic changes
           const CACHE_TTL_SECONDS = 3600; // 1 hour
           const MVP_TICKERS = ['BREN', 'BBCA', 'DSSA', 'BBRI', 'TPIA', 'AMMN', 'BYAN', 'DCII', 'BMRI', 'TLKM'];
           const FOREIGN_CODES = new Set(['ZP', 'YU', 'KZ', 'RX', 'BK', 'AK', 'CS', 'CG', 'DB', 'ML', 'CC', 'DX', 'FS', 'LG', 'NI', 'OD']);
           const days = Math.min(parseInt(url.searchParams.get('days') || '7'), 90); // Max 90 days
+          const fresh = ['1', 'true', 'yes'].includes(String(url.searchParams.get('fresh') || '').toLowerCase());
 
           // Check cache first
           const cacheKey = `cache/foreign-sentiment-${days}d-${CACHE_VERSION}.json`;
           const cachedObj = await env.SSSAHAM_EMITEN.get(cacheKey);
 
-          if (cachedObj) {
+          if (cachedObj && !fresh) {
             const cached = await cachedObj.json();
             const cacheAge = (Date.now() - (cached.timestamp || 0)) / 1000;
 
@@ -2397,6 +2496,8 @@ export default {
           }
 
           const result = {};
+          const incompleteByDate = {};
+          const repairTickers = new Set();
 
           // Fetch data for each ticker
           for (const ticker of MVP_TICKERS) {
@@ -2412,11 +2513,32 @@ export default {
                 const bs = fileData?.data?.broker_summary;
                 if (!bs) continue;
 
+                const brokerBuyRows = Array.isArray(bs.brokers_buy) ? bs.brokers_buy : [];
+                const brokerSellRows = Array.isArray(bs.brokers_sell) ? bs.brokers_sell : [];
+                const hasBrokerRows = brokerBuyRows.length > 0 || brokerSellRows.length > 0;
+                const grossValue = parseFloat(bs?.stock_summary?.total_value) || 0;
+
+                // Guardrail: active market day with empty broker rows is incomplete,
+                // not a valid 0 foreign-flow day.
+                if (!hasBrokerRows && grossValue > 0) {
+                  tickerData.push({
+                    date: dateStr,
+                    buy: null,
+                    sell: null,
+                    net: null,
+                    incomplete: true
+                  });
+                  if (!incompleteByDate[dateStr]) incompleteByDate[dateStr] = [];
+                  incompleteByDate[dateStr].push(ticker);
+                  repairTickers.add(ticker);
+                  continue;
+                }
+
                 let foreignBuy = 0, foreignSell = 0;
 
                 // Process buyers
-                if (bs.brokers_buy && Array.isArray(bs.brokers_buy)) {
-                  bs.brokers_buy.forEach(b => {
+                if (brokerBuyRows.length) {
+                  brokerBuyRows.forEach(b => {
                     if (b && (b.type === 'Asing' || FOREIGN_CODES.has(b.netbs_broker_code))) {
                       foreignBuy += parseFloat(b.bval) || 0;
                     }
@@ -2424,8 +2546,8 @@ export default {
                 }
 
                 // Process sellers
-                if (bs.brokers_sell && Array.isArray(bs.brokers_sell)) {
-                  bs.brokers_sell.forEach(b => {
+                if (brokerSellRows.length) {
+                  brokerSellRows.forEach(b => {
                     if (b && (b.type === 'Asing' || FOREIGN_CODES.has(b.netbs_broker_code))) {
                       foreignSell += parseFloat(b.sval) || 0;
                     }
@@ -2452,27 +2574,46 @@ export default {
           const sortedDates = dates.sort();
           const cumulative = sortedDates.map(dateStr => {
             let totalBuy = 0, totalSell = 0;
+            let hasAnyValue = false;
+            let incompleteTickers = 0;
             for (const ticker of MVP_TICKERS) {
               const tickerData = result[ticker] || [];
               const day = tickerData.find(d => d.date === dateStr);
               if (day) {
-                totalBuy += day.buy;
-                totalSell += day.sell;
+                if (typeof day.buy === 'number' && typeof day.sell === 'number') {
+                  totalBuy += day.buy;
+                  totalSell += day.sell;
+                  hasAnyValue = true;
+                } else if (day.incomplete) {
+                  incompleteTickers += 1;
+                }
               }
             }
             return {
               date: dateStr,
-              buy: totalBuy,
-              sell: totalSell,
-              net: totalBuy - totalSell
+              buy: hasAnyValue ? totalBuy : null,
+              sell: hasAnyValue ? totalSell : null,
+              net: hasAnyValue ? (totalBuy - totalSell) : null,
+              incomplete_tickers: incompleteTickers
             };
           });
+
+          // Trigger async repair for incomplete symbols (best effort).
+          if (repairTickers.size > 0 && env.BROKSUM_SERVICE) {
+            const jobs = Array.from(repairTickers).map(symbol =>
+              env.BROKSUM_SERVICE.fetch(
+                `http://internal/auto-backfill?symbol=${encodeURIComponent(symbol)}&days=5&force=true`
+              ).catch(() => null)
+            );
+            ctx.waitUntil(Promise.allSettled(jobs));
+          }
 
           const responseData = {
             tickers: MVP_TICKERS,
             data: result,
             cumulative: cumulative,
-            dates: sortedDates
+            dates: sortedDates,
+            incomplete_dates: incompleteByDate
           };
 
           // Store in cache (await to ensure it completes)
@@ -2697,7 +2838,7 @@ export default {
 
         if (!symbol || !from || !to) return json({ error: "Missing params (symbol, from, to)" }, 400);
 
-        const key = `broker/summary/v4/${symbol}/${from}_${to}.json`;
+        const key = `broker/summary/v5/${symbol}/${from}_${to}.json`;
 
         // 1. READ CACHE (Only if mode is default)
         if (cacheMode === "default") {

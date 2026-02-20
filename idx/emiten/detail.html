@@ -287,6 +287,29 @@
             color: #6366f1;
             display: none;
         }
+
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 999px;
+            display: inline-block;
+            box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.12);
+        }
+
+        .status-dot-ok {
+            background: #22c55e;
+        }
+
+        .status-dot-warn {
+            background: #f59e0b;
+            animation: status-pulse 1.2s ease-in-out infinite;
+        }
+
+        @keyframes status-pulse {
+            0% { transform: scale(1); opacity: 0.75; }
+            50% { transform: scale(1.18); opacity: 1; }
+            100% { transform: scale(1); opacity: 0.75; }
+        }
     </style>
 </head>
 
@@ -294,14 +317,15 @@
     <!-- NAVBAR -->
     <nav class="navbar sticky-top border-bottom py-3">
         <div class="container d-flex align-items-center" style="max-width: 1440px;">
-            <a href="index.html" class="d-flex align-items-center text-decoration-none me-2">
+            <a href="broker-summary.html" id="nav-back-link" class="d-flex align-items-center text-decoration-none me-2">
                 <i class="fa-solid fa-chevron-left"></i>
                 <span class="small d-none">Kembali</span>
             </a>
             <div class="flex-grow-1 text-center">
                 <span class="nav-title" id="nav-kode">Detail Emiten</span>
             </div>
-            <div style="width:72px;" class="text-end">
+            <div style="width:72px;" class="text-end d-flex justify-content-end align-items-center gap-2">
+                <span id="repair-status-dot" class="status-dot status-dot-ok" title="Data status: normal"></span>
                 <i class="fa-solid fa-magnifying-glass" onclick="toggleSearch()"></i>
             </div>
         </div>
@@ -1165,6 +1189,25 @@
         let _currentKode = null;
         let _activeDate = null; // YYYY-MM-DD (single date mode)
         let _enrichedSnapshotCache = null;
+        let _repairFlagFromSnapshot = false;
+        let _fallbackFlagFromSnapshot = false;
+
+        function updateRepairStatusDot({ isRepairing = false, isFallback = false, dataRowCount = 0 } = {}) {
+            const dot = document.getElementById('repair-status-dot');
+            if (!dot) return;
+
+            const sparseThreshold = 42;
+            const hasPotentialIssue = (isRepairing || isFallback) && Number(dataRowCount || 0) < sparseThreshold;
+
+            dot.classList.remove('status-dot-ok', 'status-dot-warn');
+            if (hasPotentialIssue) {
+                dot.classList.add('status-dot-warn');
+                dot.title = 'Data status: background repair/fallback terdeteksi';
+            } else {
+                dot.classList.add('status-dot-ok');
+                dot.title = 'Data status: normal';
+            }
+        }
 
         // Indonesian public holidays 2026 (add as needed)
         const INDONESIA_HOLIDAYS_2026 = [
@@ -1348,10 +1391,9 @@
                 const snapshotForDate = { ...(snapshotBase || {}), date: dateStr, candles: fullCandles };
 
                 const dataRowCount = tableData.length || fullHistory.length;
-                if (histResp.is_repairing && dataRowCount < 42) {
-                    $("#fallback-alert").removeClass("d-none")
-                        .html('<i class="fa-solid fa-sync-alt text-warning me-2 fa-spin"></i><span class="text-dark">Repair data sedang berjalan di background. Chart mungkin belum lengkap.</span>');
-                }
+                const isRepairing = histResp.is_repairing === true || _repairFlagFromSnapshot;
+                const isFallback = histResp.is_fallback === true || _fallbackFlagFromSnapshot;
+                updateRepairStatusDot({ isRepairing, isFallback, dataRowCount });
 
                 renderFootprintTrailFromHistory(kode, snapshotForDate, fullHistory, tableData);
                 renderTimeSeriesTable(snapshotForDate, tableData);
@@ -1410,6 +1452,7 @@
                 const mergedCandles = [];
                 const mergedTableData = [];
                 let hasRepairing = false;
+                let hasFallback = false;
 
                 results.forEach(({ resp }) => {
                     const fullHistory = resp?.buckets || [];
@@ -1419,6 +1462,7 @@
                     mergedCandles.push(...fullCandles);
                     mergedTableData.push(...tableData);
                     hasRepairing = hasRepairing || resp?.is_repairing === true;
+                    hasFallback = hasFallback || resp?.is_fallback === true;
                 });
 
                 mergedHistory.sort((a, b) => (a.x || 0) - (b.x || 0));
@@ -1433,10 +1477,11 @@
                     candles: mergedCandles,
                 };
 
-                if (hasRepairing && mergedTableData.length < 42) {
-                    $("#fallback-alert").removeClass("d-none")
-                        .html('<i class="fa-solid fa-sync-alt text-warning me-2 fa-spin"></i><span class="text-dark">Repair data sedang berjalan di background. Chart mungkin belum lengkap.</span>');
-                }
+                updateRepairStatusDot({
+                    isRepairing: hasRepairing || _repairFlagFromSnapshot,
+                    isFallback: hasFallback || _fallbackFlagFromSnapshot,
+                    dataRowCount: mergedTableData.length
+                });
 
                 renderFootprintTrailFromHistory(kode, snapshotForRange, mergedHistory, mergedTableData);
                 renderTimeSeriesTable(snapshotForRange, mergedTableData);
@@ -1453,6 +1498,7 @@
             const kode = getKodeFromURL();
             const mode = getModeFromURL();
             _currentKode = kode;
+            $('#nav-back-link').attr('href', `broker-summary.html?kode=${kode}`);
 
             $('#fundflow-link').attr('href', `broker-summary.html?kode=${kode}`);
             $('#audit-link').attr('href', `broker-summary.html?kode=${kode}#audit`);
@@ -1463,12 +1509,12 @@
                 const state = resp.state || null;
                 const isRepairing = resp.is_repairing === true;
                 const isFallback = resp.is_fallback === true;
+                _repairFlagFromSnapshot = isRepairing;
+                _fallbackFlagFromSnapshot = isFallback;
 
-                if (isFallback) {
-                    $("#fallback-alert").removeClass("d-none");
-                } else {
-                    $("#fallback-alert").addClass("d-none");
-                }
+                // Keep UX non-blocking: we only expose repair/fallback as a top-right status dot.
+                $("#fallback-alert").addClass("d-none");
+                updateRepairStatusDot({ isRepairing, isFallback, dataRowCount: Number.MAX_SAFE_INTEGER });
 
                 // Enrich snapshot
                 let haka = snapshot.haka_pct;
@@ -1493,10 +1539,7 @@
                 const aiBar = document.getElementById('ai-analytics-bar');
                 if (aiBar) { aiBar.style.cssText = ''; aiBar.classList.add('d-flex'); }
 
-                if (isRepairing) {
-                    $("#fallback-alert").removeClass("d-none")
-                        .html('<i class="fa-solid fa-sync-alt text-warning me-2 fa-spin"></i><span class="text-dark">Repair data sedang berjalan di background. Chart mungkin belum lengkap.</span>');
-                }
+                // no blocking alert here; the status dot will be validated against actual row count after hist load
 
                 // Determine initial date/range from URL, fallback to snapshot date
                 const urlDate = new URLSearchParams(window.location.search).get('date');

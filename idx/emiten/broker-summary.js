@@ -102,6 +102,17 @@ async function initIndexMode() {
     $('#nav-back').addClass('d-none');
     setupMarketChartCarousel();
     loadScreenerData();
+
+    if (intradayRefreshTimer) clearInterval(intradayRefreshTimer);
+    intradayRefreshTimer = setInterval(() => {
+        const totalRows = currentCandidates.length;
+        if (!totalRows) return;
+        const startIdx = (screenerPage - 1) * SCREENER_PAGE_SIZE;
+        const endIdx = Math.min(startIdx + SCREENER_PAGE_SIZE, totalRows);
+        const pageRows = currentCandidates.slice(startIdx, endIdx);
+        prefillIntradayFromFootprintSummary(pageRows, { updateDom: true });
+        hydrateOrderflowForVisibleRows(pageRows);
+    }, 60 * 1000);
 }
 
 // Global state for sorting and pagination
@@ -110,9 +121,16 @@ let allCandidates = []; // Unfiltered cache
 let sortState = { key: 'sm2', desc: true };
 const orderflowLiveCache = new Map();
 const orderflowInFlight = new Set();
+let probRefreshTimer = null;
+let intradayRefreshTimer = null;
 const SCREENER_PAGE_SIZE = 100;
+const ORDERFLOW_CACHE_TTL_MS = 45 * 1000;
+const TOM2_ORDERFLOW_MAX_AGE_MS = 15 * 60 * 1000;
+const SWG_SCREENER_MAX_AGE_MS = 72 * 60 * 60 * 1000;
+const PROB_MISSING_SORT_VALUE = -1;
 let screenerPage = 1;
 let accumFilter = 'all'; // legacy compat
+let lastScreenerGeneratedAtMs = 0;
 // Active filter state
 const activeFilters = {
     foreign: 'any',   // any | allPos | dominant
@@ -162,14 +180,17 @@ async function loadScreenerData() {
         $('#loading-indicator').show();
         $('#tbody-index').html('');
 
-        const response = await fetch(`${WORKER_BASE_URL}/screener-accum`);
+        const response = await fetch(`${WORKER_BASE_URL}/screener-accum?_ts=${Date.now()}`);
         if (!response.ok) {
             throw new Error(`screener-accum HTTP ${response.status}`);
         }
         const data = await response.json();
+        const generatedAtRaw = data?.generated_at || data?.updated_at || data?.ts || null;
+        const generatedAtMs = Date.parse(generatedAtRaw || '');
+        lastScreenerGeneratedAtMs = Number.isFinite(generatedAtMs) ? generatedAtMs : Date.now();
 
         if (!data || !Array.isArray(data.items) || data.items.length === 0) {
-            $('#tbody-index').html('<tr><td colspan="25" class="text-center text-muted">Accum data not yet generated.</td></tr>');
+            $('#tbody-index').html('<tr><td colspan="27" class="text-center text-muted">Accum data not yet generated.</td></tr>');
             return;
         }
 
@@ -258,17 +279,274 @@ async function loadScreenerData() {
             };
         }).filter(Boolean);
 
+        // Fast path: prefill intraday columns from bulk footprint summary.
+        // This helps Δ%, Mom%, Absorb appear quickly before per-symbol hydration completes.
+        await prefillIntradayFromFootprintSummary(allCandidates, { updateDom: false });
+
         applyFilter();
         loadForeignSentiment();
-        loadOpportunityBubbleChart();
 
     } catch (error) {
         console.error('[Brokerflow] loadScreenerData failed:', error);
-        $('#tbody-index').html('<tr><td colspan="25" class="text-center text-danger">Error loading screener data</td></tr>');
+        $('#tbody-index').html('<tr><td colspan="27" class="text-center text-danger">Error loading screener data</td></tr>');
     } finally {
         $('#loading-indicator').hide();
         $('#app').fadeIn();
     }
+}
+
+// =========================================
+// Probabilities (TOM2% / SWG5%)
+// =========================================
+function isNum(x) {
+    return typeof x === 'number' && Number.isFinite(x);
+}
+
+function buildPercentileMap(cands, getVal) {
+    const arr = [];
+    for (const c of cands) {
+        const v = getVal(c);
+        if (isNum(v)) arr.push({ s: c.symbol, v });
+    }
+    if (arr.length <= 1) {
+        const only = arr[0]?.s;
+        return only ? { [only]: 0.5 } : {};
+    }
+    arr.sort((a, b) => a.v - b.v);
+    const out = {};
+    const n = arr.length;
+    let i = 0;
+    while (i < n) {
+        let j = i;
+        while (j + 1 < n && arr[j + 1].v === arr[i].v) j++;
+        const avgRank = (i + j) / 2;
+        const p = avgRank / (n - 1);
+        for (let k = i; k <= j; k++) out[arr[k].s] = p;
+        i = j + 1;
+    }
+    return out;
+}
+
+function centeredPct(p) {
+    const cp = (p * 2) - 1;
+    return Math.max(-1, Math.min(1, cp));
+}
+
+function signGate(raw, cp) {
+    if (!isNum(raw)) return 0;
+    if (raw <= 0) return Math.min(0, cp);
+    return cp;
+}
+
+function smoothLiq(p) {
+    if (!isNum(p)) return 0.2;
+    const x = (p - 0.10) / 0.40;
+    return Math.max(0, Math.min(1, x));
+}
+
+function clampVal(min, max, x) {
+    return Math.max(min, Math.min(max, x));
+}
+
+function buildPercentiles(cands) {
+    return {
+        sm2: buildPercentileMap(cands, c => c.sm2),
+        sm5: buildPercentileMap(cands, c => c.sm5),
+        sm10: buildPercentileMap(cands, c => c.sm10),
+        sm20: buildPercentileMap(cands, c => c.sm20),
+
+        eff2: buildPercentileMap(cands, c => c.metrics?.effort2),
+        eff5: buildPercentileMap(cands, c => c.metrics?.effort5),
+        eff10: buildPercentileMap(cands, c => c.metrics?.effort10),
+
+        flow5: buildPercentileMap(cands, c => c.flow5),
+        flow10: buildPercentileMap(cands, c => c.flow10),
+
+        vwap5: buildPercentileMap(cands, c => c.metrics?.vwap5),
+        vwap10: buildPercentileMap(cands, c => c.metrics?.vwap10),
+
+        mom: buildPercentileMap(cands, c => c.order_mom_pct),
+        delta: buildPercentileMap(cands, c => c.order_delta_pct),
+        absorb: buildPercentileMap(cands, c => c.order_absorb),
+        cvd: buildPercentileMap(cands, c => c.order_cvd),
+        netv: buildPercentileMap(cands, c => c.order_net_value),
+    };
+}
+
+function getP(P, key, symbol, fallback = 0.35) {
+    const m = P[key] || {};
+    const p = m[symbol];
+    return isNum(p) ? p : fallback;
+}
+
+function getOrderflowAgeMs(item) {
+    if (!item) return Infinity;
+    const snapAt = Date.parse(item?.orderflow?.snapshot_at || '');
+    const fetchedAt = Number(item?._orderflowFetchedAt || 0);
+    const tsCandidates = [];
+    if (Number.isFinite(snapAt) && snapAt > 0) tsCandidates.push(snapAt);
+    if (Number.isFinite(fetchedAt) && fetchedAt > 0) tsCandidates.push(fetchedAt);
+    const ts = tsCandidates.length ? Math.max(...tsCandidates) : NaN;
+    if (!Number.isFinite(ts)) return Infinity;
+    return Date.now() - ts;
+}
+
+function hasFreshOrderflowForTom2(item) {
+    if (!item) return false;
+    const ageMs = getOrderflowAgeMs(item);
+    if (!Number.isFinite(ageMs) || ageMs < 0 || ageMs > TOM2_ORDERFLOW_MAX_AGE_MS) return false;
+    const hasCore = isNum(item.order_mom_pct) && isNum(item.order_delta_pct);
+    const hasAnyDepth = isNum(item.order_absorb) || isNum(item.order_cvd) || isNum(item.order_net_value);
+    return hasCore && hasAnyDepth;
+}
+
+function hasFreshScreenerForSwing(item) {
+    const ageMs = Date.now() - Number(lastScreenerGeneratedAtMs || 0);
+    if (!Number.isFinite(ageMs) || ageMs < 0 || ageMs > SWG_SCREENER_MAX_AGE_MS) return false;
+    if (!item) return false;
+    return isNum(item.sm5)
+        && isNum(item.sm10)
+        && isNum(item.sm20)
+        && isNum(item.metrics?.effort5)
+        && isNum(item.metrics?.effort10)
+        && isNum(item.metrics?.vwap5)
+        && isNum(item.metrics?.vwap10);
+}
+
+function stateBonusProb(state) {
+    if (state === 'READY_MARKUP') return 0.10;
+    if (state === 'ACCUMULATION') return 0.06;
+    if (state === 'TRANSITION') return 0.02;
+    return 0;
+}
+
+function calcTOM2(item, P) {
+    if (!hasFreshOrderflowForTom2(item)) {
+        return { prob: null, raw: null, label: 'NA' };
+    }
+    if (item.state === 'DISTRIBUTION') {
+        return { prob: 5, raw: 0, label: 'DISQ' };
+    }
+
+    const s = item.symbol;
+    const liq = smoothLiq(getP(P, 'netv', s, 0.2));
+
+    const cpSm2 = signGate(item.sm2, centeredPct(getP(P, 'sm2', s, 0.35)));
+    const cpSm5 = signGate(item.sm5, centeredPct(getP(P, 'sm5', s, 0.35)));
+    const cpSm10 = signGate(item.sm10, centeredPct(getP(P, 'sm10', s, 0.35)));
+    const SM = (0.7 * cpSm2) + (0.2 * cpSm5) + (0.1 * cpSm10);
+
+    const cpEff2 = centeredPct(getP(P, 'eff2', s, 0.35));
+    const cpEff5 = centeredPct(getP(P, 'eff5', s, 0.35));
+    const EFF = (0.7 * cpEff2) + (0.3 * cpEff5);
+
+    const cpMom = signGate(item.order_mom_pct, centeredPct(getP(P, 'mom', s, 0.25)));
+    const cpDelta = signGate(item.order_delta_pct, centeredPct(getP(P, 'delta', s, 0.25)));
+    const cpCvd = signGate(item.order_cvd, centeredPct(getP(P, 'cvd', s, 0.25)));
+    const cpAbs = centeredPct(getP(P, 'absorb', s, 0.25));
+    const OF = (cpMom + cpDelta + cpAbs + cpCvd) / 4;
+
+    const raw = liq * (0.45 * SM + 0.35 * OF + 0.20 * EFF + stateBonusProb(item.state));
+    const prob = clampVal(5, 90, Math.round(5 + 85 * Math.max(0, raw)));
+
+    const label = prob >= 70 ? 'HIGH'
+        : prob >= 50 ? 'MED'
+            : prob >= 35 ? 'LOW'
+                : 'VLOW';
+    return { prob, raw, label };
+}
+
+function calcSWG5(item, P) {
+    if (!hasFreshScreenerForSwing(item)) {
+        return { prob: null, raw: null, label: 'NA' };
+    }
+    if (item.state === 'DISTRIBUTION') {
+        return { prob: 5, raw: 0, label: 'DISQ' };
+    }
+
+    const s = item.symbol;
+    const liq = smoothLiq(getP(P, 'netv', s, 0.2));
+
+    const cpSm5 = signGate(item.sm5, centeredPct(getP(P, 'sm5', s, 0.35)));
+    const cpSm10 = signGate(item.sm10, centeredPct(getP(P, 'sm10', s, 0.35)));
+    const cpSm20 = signGate(item.sm20, centeredPct(getP(P, 'sm20', s, 0.35)));
+    const SM = (0.5 * cpSm5) + (0.3 * cpSm10) + (0.2 * cpSm20);
+
+    const cpFlow5 = centeredPct(getP(P, 'flow5', s, 0.30));
+    const cpFlow10 = centeredPct(getP(P, 'flow10', s, 0.30));
+    const FLOW = (0.6 * cpFlow5) + (0.4 * cpFlow10);
+
+    const cpEff5 = centeredPct(getP(P, 'eff5', s, 0.35));
+    const cpEff10 = centeredPct(getP(P, 'eff10', s, 0.35));
+    const EFF = (0.6 * cpEff5) + (0.4 * cpEff10);
+
+    const cpVwap5 = centeredPct(getP(P, 'vwap5', s, 0.35));
+    const cpVwap10 = centeredPct(getP(P, 'vwap10', s, 0.35));
+    const VWAP = (0.7 * cpVwap5) + (0.3 * cpVwap10);
+
+    const trendBonus = item.trend?.vwapUp ? 0.05 : 0;
+    const raw = liq * (0.35 * SM + 0.25 * FLOW + 0.20 * EFF + 0.15 * VWAP + trendBonus + stateBonusProb(item.state));
+    const prob = clampVal(5, 90, Math.round(5 + 85 * Math.max(0, raw)));
+
+    const label = prob >= 70 ? 'HIGH'
+        : prob >= 50 ? 'MED'
+            : prob >= 35 ? 'LOW'
+                : 'VLOW';
+    return { prob, raw, label };
+}
+
+function recomputeProbColumns(cands) {
+    if (!Array.isArray(cands) || !cands.length) return;
+    const P = buildPercentiles(cands);
+    for (const item of cands) {
+        item.tom2 = calcTOM2(item, P);
+        item.swg5 = calcSWG5(item, P);
+        item.tom2_prob = isNum(item.tom2?.prob) ? item.tom2.prob : PROB_MISSING_SORT_VALUE;
+        item.swg5_prob = isNum(item.swg5?.prob) ? item.swg5.prob : PROB_MISSING_SORT_VALUE;
+    }
+}
+
+function fmtProbCell(x) {
+    const p = x?.prob;
+    if (!isNum(p)) return '<span class="text-muted">-</span>';
+    const cls = p >= 70 ? 'text-success fw-bold'
+        : p >= 50 ? 'text-primary fw-bold'
+            : p >= 35 ? 'text-warning'
+                : 'text-muted';
+    return `<span class="${cls}">${p}%</span>`;
+}
+
+function updateProbCells(symbol, item) {
+    const $row = $(`#tbody-index tr[data-symbol="${symbol}"]`);
+    if (!$row.length) return;
+    $row.find('.tom2-cell').html(fmtProbCell(item.tom2));
+    $row.find('.swg5-cell').html(fmtProbCell(item.swg5));
+}
+
+function updateVisibleProbCells() {
+    const symbolToItem = new Map(currentCandidates.map(c => [String(c.symbol || '').toUpperCase(), c]));
+    $('#tbody-index tr[data-symbol]').each(function () {
+        const symbol = String($(this).data('symbol') || '').toUpperCase();
+        const item = symbolToItem.get(symbol);
+        if (!item) return;
+        $(this).find('.tom2-cell').html(fmtProbCell(item.tom2));
+        $(this).find('.swg5-cell').html(fmtProbCell(item.swg5));
+    });
+}
+
+function scheduleProbRefreshAfterOrderflow() {
+    if (probRefreshTimer) clearTimeout(probRefreshTimer);
+    probRefreshTimer = setTimeout(() => {
+        probRefreshTimer = null;
+        if (!Array.isArray(currentCandidates) || !currentCandidates.length) return;
+        recomputeProbColumns(currentCandidates);
+        if (sortState.key === 'tom2_prob' || sortState.key === 'swg5_prob') {
+            sortCandidates(sortState.key, sortState.desc);
+            return;
+        }
+        updateVisibleProbCells();
+        loadOpportunityBubbleChart(currentCandidates);
+    }, 180);
 }
 
 /**
@@ -339,7 +617,9 @@ function applyFilter() {
 
     $('#screener-count').text(`${currentCandidates.length} emiten`);
     renderFilterPills();
+    recomputeProbColumns(currentCandidates);
     sortCandidates(sortState.key, sortState.desc);
+    loadOpportunityBubbleChart(currentCandidates);
 }
 
 function matchesZRelation(mode, z2, z5, z10, z20) {
@@ -397,7 +677,43 @@ function setupMarketChartCarousel() {
     refreshMarketWidgetHeader();
 }
 
-async function loadOpportunityBubbleChart() {
+function getQuadrantBubbleColor(q) {
+    if (q === 'Q1') return { bg: 'rgba(34,197,94,0.75)', bd: 'rgba(21,128,61,0.9)' };
+    if (q === 'Q2') return { bg: 'rgba(59,130,246,0.70)', bd: 'rgba(37,99,235,0.9)' };
+    if (q === 'Q3') return { bg: 'rgba(239,68,68,0.72)', bd: 'rgba(185,28,28,0.9)' };
+    if (q === 'Q4') return { bg: 'rgba(245,158,11,0.72)', bd: 'rgba(217,119,6,0.9)' };
+    return { bg: 'rgba(148,163,184,0.60)', bd: 'rgba(100,116,139,0.9)' };
+}
+
+function buildBubblePointsFromCandidates(candidates, maxRows = 100) {
+    if (!Array.isArray(candidates) || !candidates.length) return [];
+    const scoped = candidates.slice(0, maxRows);
+
+    return scoped.map(item => {
+        const x = Number(item?.order_delta_pct);
+        const y = Number(item?.order_mom_pct);
+        if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+
+        const q = item?.order_quadrant || inferOrderQuadrant(x, y);
+        const sizeRef = Math.abs(Number(item?.order_net_value))
+            || Math.abs(Number(item?.order_cvd))
+            || Math.abs(Number(item?.sm2 || 0))
+            || 1;
+
+        return {
+            kode: String(item?.symbol || '').toUpperCase(),
+            emiten: String(item?.symbol || '').toUpperCase(),
+            label: String(item?.symbol || '').toUpperCase(),
+            x,
+            y,
+            q,
+            sizeRef,
+            r: 10
+        };
+    }).filter(Boolean);
+}
+
+function loadOpportunityBubbleChart(candidates = currentCandidates) {
     try {
         $('#bubble-chart-loading').show().html(`
             <div class="spinner-border text-primary" role="status">
@@ -407,43 +723,10 @@ async function loadOpportunityBubbleChart() {
         `);
         $('#bubble-chart-container').hide();
 
-        const response = await fetch(`${WORKER_BASE_URL}/footprint/summary?_ts=${Date.now()}`);
-        const data = await response.json();
-        const rawItems = Array.isArray(data?.items) ? data.items : [];
-
-        const allPoints = rawItems
-            .filter(item => item && item.t && String(item.t).length <= 4)
-            .map(item => {
-                const vol = Number(item.v || 0);
-                const deltaPctRaw = Number(item.d);
-                const power = Number.isFinite(deltaPctRaw) ? deltaPctRaw : 0;
-                const absorb = Number(item.div || 0);
-                const netVolRaw = Number(item.nv);
-                const sizeRef = Math.abs(Number.isFinite(netVolRaw) ? netVolRaw : ((power * vol) / 100)) || vol;
-                return {
-                    kode: String(item.t || '').toUpperCase(),
-                    emiten: String(item.t || '').toUpperCase(),
-                    label: String(item.t || '').toUpperCase(),
-                    x: Number.isFinite(power) ? power : 0,
-                    y: Number.isFinite(absorb) ? absorb : 0,
-                    sizeRef,
-                    r: 10
-                };
-            });
-
-        let points = allPoints
-            .filter(p => p.x > 0.5 || p.y > 5)
-            .sort((a, b) => (b.x + b.y) - (a.x + a.y))
-            .slice(0, 120);
+        let points = buildBubblePointsFromCandidates(candidates, 100);
 
         if (!points.length) {
-            points = allPoints
-                .sort((a, b) => (b.y + b.x) - (a.y + a.x))
-                .slice(0, 120);
-        }
-
-        if (!points.length) {
-            $('#bubble-chart-loading').html('<p class="small text-muted mb-0">Data bubble tidak tersedia</p>');
+            $('#bubble-chart-loading').html('<p class="small text-muted mb-0">Data bubble tidak tersedia untuk filter aktif</p>');
             return;
         }
 
@@ -504,10 +787,8 @@ async function loadOpportunityBubbleChart() {
                     const power = Number(raw.x) || 0;
                     const tx = p.x;
                     
-                    // Green bubbles (power >= 5): label above
-                    // Blue/Red bubbles (power < 5): label below
                     let ty;
-                    if (power >= 5) {
+                    if (power >= 0) {
                         ctx.textBaseline = 'bottom';
                         ty = p.y - r - 4;
                     } else {
@@ -531,15 +812,37 @@ async function loadOpportunityBubbleChart() {
                 datasets: [{
                     label: 'Opportunity',
                     data: points,
-                    backgroundColor: points.map(p => p.x >= 5 ? 'rgba(34,197,94,0.75)' : 'rgba(59,130,246,0.6)'),
-                    borderColor: points.map(p => p.x >= 5 ? 'rgba(21,128,61,0.9)' : 'rgba(37,99,235,0.9)'),
+                    backgroundColor: points.map(p => getQuadrantBubbleColor(p.q).bg),
+                    borderColor: points.map(p => getQuadrantBubbleColor(p.q).bd),
                     borderWidth: 1,
+                    hoverRadius: (ctx) => {
+                        const base = Number(ctx?.raw?.r || 8);
+                        return base + 1.5;
+                    },
+                    hoverBorderWidth: 1.2,
                     clip: false
                 }]
             },
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
+                animations: {
+                    x: { duration: 0 },
+                    y: { duration: 0 },
+                    radius: {
+                        from: 0,
+                        duration: 320,
+                        easing: 'easeOutBack'
+                    }
+                },
+                transitions: {
+                    active: {
+                        animation: {
+                            duration: 60,
+                            easing: 'linear'
+                        }
+                    }
+                },
                 plugins: {
                     legend: { display: false },
                     datalabels: { display: false },
@@ -551,7 +854,8 @@ async function loadOpportunityBubbleChart() {
                             label: function (ctx) {
                                 const p = ctx.raw || {};
                                 const name = p.emiten || p.kode || p.label || '-';
-                                return `${name} | Power ${Number(p.x || 0).toFixed(1)} | Absorb ${Number(p.y || 0).toFixed(1)}`;
+                                const q = p.q || '-';
+                                return `${name} | ${q} | Δ ${Number(p.x || 0).toFixed(2)}% | Mom ${Number(p.y || 0).toFixed(2)}%`;
                             }
                         }
                     }
@@ -560,7 +864,7 @@ async function loadOpportunityBubbleChart() {
                 hover: { mode: 'nearest', intersect: false },
                 scales: {
                     x: {
-                        title: { display: true, text: 'Power (Net Delta %)', font: { size: 10 } },
+                        title: { display: true, text: 'Delta %', font: { size: 10 } },
                         min: xMin - xPad - xOverscan,
                         max: xMax + xPad + xOverscan,
                         ticks: { font: { size: 9 } },
@@ -574,7 +878,7 @@ async function loadOpportunityBubbleChart() {
                         border: { display: false }
                     },
                     y: {
-                        title: { display: true, text: 'Absorb', font: { size: 10 } },
+                        title: { display: true, text: 'Momentum %', font: { size: 10 } },
                         min: yMin - yPad - yOverscan,
                         max: yMax + yPad + yOverscan,
                         ticks: { font: { size: 9 } },
@@ -613,10 +917,10 @@ async function loadForeignSentiment(days = 7) {
         `);
         $('#foreign-chart-container').hide();
         
-        const response = await fetch(`${WORKER_BASE_URL}/foreign-sentiment?days=${days}`);
+        const response = await fetch(`${WORKER_BASE_URL}/foreign-sentiment?days=${days}&fresh=1`);
         const data = await response.json();
         
-        if (!data || !data.cumulative || !data.dates) {
+        if (!data || !data.data || typeof data.data !== 'object') {
             $('#foreign-chart-loading').html('<p class="small text-muted mb-0">Data tidak tersedia</p>');
             return;
         }
@@ -625,11 +929,46 @@ async function loadForeignSentiment(days = 7) {
         $('#foreign-chart-loading').hide();
         $('#foreign-chart-container').show();
         
-        const dates = data.dates;
-        const cumulative = data.cumulative;
-        
-        // Prepare cumulative net values (in Billion)
-        const netValues = cumulative.map(d => d.net / 1e9);
+        // Rebuild cross-ticker daily series from raw endpoint payload.
+        // We intentionally skip dates where all tickers have buy=sell=0 (incomplete/stale ingest),
+        // because those should not be rendered as valid 0-flow trading days.
+        const dailyByDate = new Map();
+        Object.values(data.data).forEach(rows => {
+            if (!Array.isArray(rows)) return;
+            rows.forEach(r => {
+                const dt = r?.date;
+                if (!dt) return;
+                const buyRaw = r?.buy;
+                const sellRaw = r?.sell;
+                const netRaw = r?.net;
+                const buy = (typeof buyRaw === 'number' && Number.isFinite(buyRaw)) ? buyRaw : null;
+                const sell = (typeof sellRaw === 'number' && Number.isFinite(sellRaw)) ? sellRaw : null;
+                const net = (typeof netRaw === 'number' && Number.isFinite(netRaw)) ? netRaw : null;
+                const cur = dailyByDate.get(dt) || { buy: 0, sell: 0, net: 0 };
+                if (buy !== null) cur.buy += buy;
+                if (sell !== null) cur.sell += sell;
+                if (net !== null) cur.net += net;
+                dailyByDate.set(dt, cur);
+            });
+        });
+
+        const validDaily = Array.from(dailyByDate.entries())
+            .map(([date, v]) => ({ date, buy: v.buy, sell: v.sell, net: v.net }))
+            .filter(d => (Math.abs(d.buy) + Math.abs(d.sell)) > 0)
+            .sort((a, b) => new Date(a.date) - new Date(b.date));
+
+        if (!validDaily.length) {
+            $('#foreign-chart-loading').html('<p class="small text-muted mb-0">Data tidak tersedia</p>');
+            return;
+        }
+
+        const dates = validDaily.map(d => d.date);
+        const netValues = [];
+        let acc = 0;
+        validDaily.forEach(d => {
+            acc += d.net;
+            netValues.push(acc / 1e9);
+        });
         
         const ctx = document.getElementById('foreign-sentiment-chart').getContext('2d');
         
@@ -668,14 +1007,14 @@ async function loadForeignSentiment(days = 7) {
                         callbacks: {
                             label: function(ctx) {
                                 const val = ctx.parsed.y;
-                                const status = val >= 0 ? '📈 Inflow' : '📉 Outflow';
+                                const status = val >= 0 ? 'Inflow' : 'Outflow';
                                 return `${status}: Rp ${Math.abs(val).toFixed(1)} B`;
                             }
                         }
                     },
                     datalabels: {
                         display: true,
-                        color: 'rgba(255,255,255,0.95)',
+                        color: 'rgba(255, 255, 255, 0.75)',
                         clamp: true,
                         clip: false,
                         font: {
@@ -732,7 +1071,7 @@ async function loadForeignSentiment(days = 7) {
         });
         
         // Update widget title with total
-        const totalNet = netValues.reduce((a, b) => a + b, 0);
+        const totalNet = netValues[netValues.length - 1] || 0;
         const trend = totalNet >= 0 ? 'text-success' : 'text-danger';
         const arrow = totalNet >= 0 ? '↑' : '↓';
         foreignWidgetTitleHtml = `Foreign Flow 10 Saham Cap Terbesar<span class="d-block mb-3 mt-2 ${trend} fw-bold" style="font-size:2rem"><i style="font-weight:900">${arrow}</i> Rp ${Math.abs(totalNet).toFixed(1)} B</span>`;
@@ -911,6 +1250,14 @@ function sortCandidates(key, desc) {
         else if (key === 'order_absorb') { valA = (typeof a.order_absorb === 'number') ? a.order_absorb : -Infinity; valB = (typeof b.order_absorb === 'number') ? b.order_absorb : -Infinity; }
         else if (key === 'order_cvd') { valA = (typeof a.order_cvd === 'number') ? a.order_cvd : -Infinity; valB = (typeof b.order_cvd === 'number') ? b.order_cvd : -Infinity; }
         else if (key === 'order_net_value') { valA = (typeof a.order_net_value === 'number') ? a.order_net_value : -Infinity; valB = (typeof b.order_net_value === 'number') ? b.order_net_value : -Infinity; }
+        else if (key === 'tom2_prob') {
+            valA = isNum(a.tom2_prob) ? a.tom2_prob : PROB_MISSING_SORT_VALUE;
+            valB = isNum(b.tom2_prob) ? b.tom2_prob : PROB_MISSING_SORT_VALUE;
+        }
+        else if (key === 'swg5_prob') {
+            valA = isNum(a.swg5_prob) ? a.swg5_prob : PROB_MISSING_SORT_VALUE;
+            valB = isNum(b.swg5_prob) ? b.swg5_prob : PROB_MISSING_SORT_VALUE;
+        }
         else if (key === 'order_quadrant') {
             const qRank = (q) => q === 'Q1' ? 4 : q === 'Q2' ? 3 : q === 'Q4' ? 2 : q === 'Q3' ? 1 : -1;
             valA = qRank(a.order_quadrant);
@@ -1113,11 +1460,17 @@ function renderScreenerTable(candidates) {
         const logoUrl = `https://api-saham.mkemalw.workers.dev/logo?symbol=${item.symbol}`;
         const row = `
             <tr data-symbol="${item.symbol}" onclick="window.location.href='?kode=${item.symbol}'" style="cursor:pointer;">
-                <td class="text-center text-muted small">${idx + 1}</td>
-                <td class="fw-bold">
+                <td class="text-center text-muted small sticky-col sticky-col-no">${idx + 1}</td>
+                <td class="fw-bold sticky-col sticky-col-symbol">
                     <img src="${logoUrl}" alt="" style="height: 20px; width: auto; margin-right: 6px; vertical-align: middle; border-radius: 3px;" onerror="this.style.display='none'">
                     <a href="?kode=${item.symbol}" style="text-decoration:none;">${item.symbol}</a>
                 </td>
+                <td class="text-center tom2-cell">${fmtProbCell(item.tom2)}</td>
+                <td class="text-center swg5-cell">${fmtProbCell(item.swg5)}</td>
+                <td class="text-center of-delta">${fmtPct(item.order_delta_pct)}</td>
+                <td class="text-center of-mom">${fmtPct(item.order_mom_pct)}</td>
+                <td class="text-center of-absorb">${fmtAbsorb(item.order_absorb)}</td>
+                <td class="text-center of-cvd">${fmtCvd(item.order_cvd)}</td>
                 <td class="text-center col-h2">${fmtSm(item.w2)}</td>
                 <td class="text-center col-h5">${fmtSm(item.w5)}</td>
                 <td class="text-center hide-mobile col-h10">${fmtSm(item.w10)}</td>
@@ -1135,10 +1488,6 @@ function renderScreenerTable(candidates) {
                 <td class="text-center hide-mobile col-h10">${getBadge(m.effort10, 'effort')}</td>
                 <td class="text-center hide-mobile col-h20">${getBadge(m.effort20, 'effort')}</td>
                 <td class="text-center">${getStateText(item.state)}</td>
-                <td class="text-center of-delta">${fmtPct(item.order_delta_pct)}</td>
-                <td class="text-center of-mom">${fmtPct(item.order_mom_pct)}</td>
-                <td class="text-center of-absorb">${fmtAbsorb(item.order_absorb)}</td>
-                <td class="text-center of-cvd">${fmtCvd(item.order_cvd)}</td>
                 <td class="text-center of-value">${fmtValue(item.order_net_value)}</td>
                 <td class="text-center of-q">${fmtQuadrant(item.order_quadrant)}</td>
             </tr>
@@ -1153,25 +1502,31 @@ function renderScreenerTable(candidates) {
 async function fetchOrderflowSnapshotForSymbol(symbol) {
     if (!symbol) return null;
     const key = String(symbol).toUpperCase();
-    if (orderflowLiveCache.has(key)) return orderflowLiveCache.get(key);
+    if (orderflowLiveCache.has(key)) {
+        const cached = orderflowLiveCache.get(key);
+        const ageMs = Date.now() - (cached?.ts || 0);
+        if (ageMs >= 0 && ageMs < ORDERFLOW_CACHE_TTL_MS) {
+            return cached?.snapshot ?? null;
+        }
+    }
     if (orderflowInFlight.has(key)) return null;
 
     orderflowInFlight.add(key);
     try {
         const today = new Date().toISOString().split('T')[0];
-        const url = `${WORKER_BASE_URL}/cache-summary?symbol=${encodeURIComponent(key)}&from=${today}&to=${today}&cache=default`;
+        const url = `${WORKER_BASE_URL}/cache-summary?symbol=${encodeURIComponent(key)}&from=${today}&to=${today}&cache=default&_ts=${Date.now()}`;
         const resp = await fetch(url);
         if (!resp.ok) {
-            orderflowLiveCache.set(key, null);
+            orderflowLiveCache.set(key, { snapshot: null, ts: Date.now() });
             return null;
         }
         const data = await resp.json();
         const snapshot = data?.orderflow || null;
-        orderflowLiveCache.set(key, snapshot);
+        orderflowLiveCache.set(key, { snapshot, ts: Date.now() });
         return snapshot;
     } catch (e) {
         console.warn('[orderflow-hydrate] failed:', key, e);
-        orderflowLiveCache.set(key, null);
+        orderflowLiveCache.set(key, { snapshot: null, ts: Date.now() });
         return null;
     } finally {
         orderflowInFlight.delete(key);
@@ -1181,12 +1536,85 @@ async function fetchOrderflowSnapshotForSymbol(symbol) {
 function applyOrderflowSnapshotToCandidate(item, snapshot) {
     if (!item || !snapshot) return;
     item.orderflow = snapshot;
+    item._orderflowFetchedAt = Date.now();
     item.order_delta_pct = typeof snapshot.delta_pct === 'number' ? snapshot.delta_pct : null;
     item.order_mom_pct = typeof snapshot.mom_pct === 'number' ? snapshot.mom_pct : null;
     item.order_absorb = typeof snapshot.absorb === 'number' ? snapshot.absorb : null;
     item.order_cvd = typeof snapshot.cvd === 'number' ? snapshot.cvd : null;
     item.order_net_value = typeof snapshot.net_value === 'number' ? snapshot.net_value : null;
     item.order_quadrant = snapshot.quadrant || null;
+    scheduleProbRefreshAfterOrderflow();
+}
+
+function inferOrderQuadrant(deltaPct, momPct) {
+    const d = Number(deltaPct);
+    const m = Number(momPct);
+    if (!Number.isFinite(d) || !Number.isFinite(m)) return null;
+    if (d >= 0 && m >= 0) return 'Q1';
+    if (d < 0 && m >= 0) return 'Q2';
+    if (d < 0 && m < 0) return 'Q3';
+    return 'Q4';
+}
+
+function applyFootprintRowToCandidate(item, row) {
+    if (!item || !row) return false;
+
+    const d = Number(row.d);
+    const p = Number(row.p);
+    const div = Number(row.div);
+    const cvd = Number(row.cvd);
+    const nv = Number(row.nv);
+
+    let touched = false;
+    if (Number.isFinite(d)) { item.order_delta_pct = d; touched = true; }
+    if (Number.isFinite(p)) { item.order_mom_pct = p; touched = true; }
+    if (Number.isFinite(div)) { item.order_absorb = div; touched = true; }
+    if (Number.isFinite(cvd)) { item.order_cvd = cvd; touched = true; }
+    if (Number.isFinite(nv)) { item.order_net_value = nv; touched = true; }
+
+    const q = inferOrderQuadrant(item.order_delta_pct, item.order_mom_pct);
+    if (q) {
+        item.order_quadrant = q;
+        touched = true;
+    }
+
+    if (touched) {
+        item.orderflow = item.orderflow || {};
+        item._orderflowFetchedAt = Date.now();
+    }
+
+    return touched;
+}
+
+async function prefillIntradayFromFootprintSummary(candidates, options = {}) {
+    if (!Array.isArray(candidates) || !candidates.length) return;
+
+    try {
+        const resp = await fetch(`${WORKER_BASE_URL}/footprint/summary?_ts=${Date.now()}`);
+        if (!resp.ok) return;
+        const payload = await resp.json();
+        const items = Array.isArray(payload?.items) ? payload.items : [];
+        if (!items.length) return;
+
+        const map = new Map(items.map(it => [String(it?.t || '').toUpperCase(), it]));
+        let changed = 0;
+        for (const item of candidates) {
+            const symbol = String(item?.symbol || '').toUpperCase();
+            if (!symbol) continue;
+            const row = map.get(symbol);
+            if (!row) continue;
+            if (applyFootprintRowToCandidate(item, row)) {
+                changed += 1;
+                if (options.updateDom) updateOrderflowCells(symbol, item);
+            }
+        }
+
+        if (changed > 0) {
+            scheduleProbRefreshAfterOrderflow();
+        }
+    } catch (e) {
+        console.warn('[orderflow-prefill] failed:', e);
+    }
 }
 
 function updateOrderflowCells(symbol, item) {
@@ -1226,12 +1654,19 @@ function updateOrderflowCells(symbol, item) {
     $row.find('.of-cvd').html(cvd(item.order_cvd));
     $row.find('.of-value').html(value(item.order_net_value));
     $row.find('.of-q').html(quadrant(item.order_quadrant));
+    updateProbCells(symbol, item);
 }
 
 async function hydrateOrderflowForVisibleRows(candidates) {
     if (!Array.isArray(candidates) || !candidates.length) return;
 
-    const targets = candidates.filter(c => c && c.symbol && c.orderflow == null);
+    const now = Date.now();
+    const targets = candidates.filter(c => {
+        if (!c || !c.symbol) return false;
+        if (c.orderflow == null) return true;
+        const fetchedAt = Number(c._orderflowFetchedAt || 0);
+        return !fetchedAt || (now - fetchedAt) > ORDERFLOW_CACHE_TTL_MS;
+    });
     if (!targets.length) return;
 
     const concurrency = 6;
