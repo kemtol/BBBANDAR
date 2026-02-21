@@ -38,6 +38,8 @@
         :root {
             --table-header-text: var(--muted);
             --table-hover-bg: #f1f5f9;
+            --sticky-col-bg: #ffffff;
+            --sticky-col-hover-bg: #eef2f7;
             --card-divider: rgba(148, 163, 184, 0.35);
             --card-radius: 12px;
             --legend-foreign: var(--accent-positive);
@@ -55,6 +57,8 @@
 
         :root[data-theme="dark"] {
             --table-hover-bg: rgba(255, 255, 255, 0.05);
+            --sticky-col-bg: #171c24;
+            --sticky-col-hover-bg: #202734;
             --card-divider: rgba(82, 94, 106, 0.55);
             --legend-institution: rgba(78, 203, 113, 0.48);
             --legend-retail-fill: rgba(255, 82, 82, 0.35);
@@ -144,7 +148,14 @@
 
         #screener-table .sticky-col {
             position: sticky;
-            background: var(--surface);
+            background: var(--sticky-col-bg);
+            background-clip: padding-box;
+            overflow: hidden;
+        }
+
+        #screener-table {
+            border-collapse: separate;
+            border-spacing: 0;
         }
 
         #screener-table thead .sticky-col {
@@ -168,7 +179,7 @@
         }
 
         #screener-table tbody tr:hover .sticky-col {
-            background: var(--table-hover-bg);
+            background: var(--sticky-col-hover-bg) !important;
         }
 
         .sort-icon {
@@ -866,13 +877,13 @@
                                     <i class="fa-solid fa-sort small text-muted"></i>
                                 </th>
                                 <th class="text-center hide-mobile col-h2" data-sort="vwap2" style="cursor:pointer">
-                                    V-WAP 2D <i class="fa-solid fa-sort small text-muted"></i></th>
+                                    V-WP 2D <i class="fa-solid fa-sort small text-muted"></i></th>
                                 <th class="text-center hide-mobile col-h5" data-sort="vwap5" style="cursor:pointer">
-                                    V-WAP 5D <i class="fa-solid fa-sort small text-muted"></i></th>
+                                    V-WP 5D <i class="fa-solid fa-sort small text-muted"></i></th>
                                 <th class="text-center hide-mobile col-h10" data-sort="vwap10" style="cursor:pointer">
-                                    V-WAP 10D <i class="fa-solid fa-sort small text-muted"></i></th>
+                                    V-WP 10D <i class="fa-solid fa-sort small text-muted"></i></th>
                                 <th class="text-center hide-mobile col-h20" data-sort="vwap20" style="cursor:pointer">
-                                    V-WAP 20D <i class="fa-solid fa-sort small text-muted"></i></th>
+                                    V-WP 20D <i class="fa-solid fa-sort small text-muted"></i></th>
                                 <th class="text-center col-h2" data-sort="flow2" style="cursor:pointer">Flow 2D <i
                                         class="fa-solid fa-sort small text-muted"></i></th>
                                 <th class="text-center col-h5" data-sort="flow5" style="cursor:pointer">Flow 5D <i

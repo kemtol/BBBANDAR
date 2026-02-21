@@ -640,6 +640,7 @@ function matchesZRelation(mode, z2, z5, z10, z20) {
 let foreignSentimentChart = null;
 let currentForeignDays = 7;
 let opportunityBubbleChart = null;
+let bubbleChartAnimatedOnInitialLoad = false;
 let foreignWidgetTitleHtml = 'Foreign Flow';
 
 function refreshMarketWidgetHeader() {
@@ -715,17 +716,25 @@ function buildBubblePointsFromCandidates(candidates, maxRows = 100) {
 
 function loadOpportunityBubbleChart(candidates = currentCandidates) {
     try {
-        $('#bubble-chart-loading').show().html(`
-            <div class="spinner-border text-primary" role="status">
-                <span class="visually-hidden">Loading...</span>
-            </div>
-            <p class="small text-muted mt-2 mb-0">Memuat bubble chart orderflow...</p>
-        `);
-        $('#bubble-chart-container').hide();
+        const isInitialRender = !opportunityBubbleChart;
+        if (isInitialRender) {
+            $('#bubble-chart-loading').show().html(`
+                <div class="spinner-border text-primary" role="status">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+                <p class="small text-muted mt-2 mb-0">Memuat bubble chart orderflow...</p>
+            `);
+            $('#bubble-chart-container').hide();
+        }
 
         let points = buildBubblePointsFromCandidates(candidates, 100);
 
         if (!points.length) {
+            if (opportunityBubbleChart) {
+                opportunityBubbleChart.destroy();
+                opportunityBubbleChart = null;
+            }
+            $('#bubble-chart-container').hide();
             $('#bubble-chart-loading').html('<p class="small text-muted mb-0">Data bubble tidak tersedia untuk filter aktif</p>');
             return;
         }
@@ -760,9 +769,6 @@ function loadOpportunityBubbleChart(candidates = currentCandidates) {
         const yOverscan = Math.max(3, (maxR / 34) * yRange * 0.12);
 
         const ctx = document.getElementById('opportunity-bubble-chart').getContext('2d');
-        if (opportunityBubbleChart) {
-            opportunityBubbleChart.destroy();
-        }
 
         const bubbleTextLabelsPlugin = {
             id: 'bubbleTextLabels',
@@ -806,95 +812,118 @@ function loadOpportunityBubbleChart(candidates = currentCandidates) {
             }
         };
 
-        opportunityBubbleChart = new Chart(ctx, {
-            type: 'bubble',
-            data: {
-                datasets: [{
-                    label: 'Opportunity',
-                    data: points,
-                    backgroundColor: points.map(p => getQuadrantBubbleColor(p.q).bg),
-                    borderColor: points.map(p => getQuadrantBubbleColor(p.q).bd),
-                    borderWidth: 1,
-                    hoverRadius: (ctx) => {
-                        const base = Number(ctx?.raw?.r || 8);
-                        return base + 1.5;
-                    },
-                    hoverBorderWidth: 1.2,
-                    clip: false
-                }]
+        const shouldAnimateInitial = isInitialRender && !bubbleChartAnimatedOnInitialLoad;
+        const baseDataset = {
+            label: 'Opportunity',
+            data: points,
+            backgroundColor: points.map(p => getQuadrantBubbleColor(p.q).bg),
+            borderColor: points.map(p => getQuadrantBubbleColor(p.q).bd),
+            borderWidth: 1,
+            hoverRadius: (ctx) => {
+                const base = Number(ctx?.raw?.r || 8);
+                return base + 1.5;
             },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                animations: {
-                    x: { duration: 0 },
-                    y: { duration: 0 },
-                    radius: {
-                        from: 0,
-                        duration: 320,
-                        easing: 'easeOutBack'
-                    }
+            hoverBorderWidth: 1.2,
+            clip: false
+        };
+
+        if (isInitialRender) {
+            opportunityBubbleChart = new Chart(ctx, {
+                type: 'bubble',
+                data: {
+                    datasets: [baseDataset]
                 },
-                transitions: {
-                    active: {
-                        animation: {
-                            duration: 60,
-                            easing: 'linear'
-                        }
-                    }
-                },
-                plugins: {
-                    legend: { display: false },
-                    datalabels: { display: false },
-                    tooltip: {
-                        enabled: true,
-                        displayColors: false,
-                        callbacks: {
-                            title: function () { return ''; },
-                            label: function (ctx) {
-                                const p = ctx.raw || {};
-                                const name = p.emiten || p.kode || p.label || '-';
-                                const q = p.q || '-';
-                                return `${name} | ${q} | Δ ${Number(p.x || 0).toFixed(2)}% | Mom ${Number(p.y || 0).toFixed(2)}%`;
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    animations: shouldAnimateInitial
+                        ? {
+                            x: { duration: 0 },
+                            y: { duration: 0 },
+                            radius: {
+                                from: 0,
+                                duration: 320,
+                                easing: 'easeOutBack'
                             }
                         }
+                        : {
+                            x: { duration: 0 },
+                            y: { duration: 0 },
+                            radius: { duration: 0 }
+                        },
+                    transitions: {
+                        active: {
+                            animation: {
+                                duration: 0
+                            }
+                        }
+                    },
+                    plugins: {
+                        legend: { display: false },
+                        datalabels: { display: false },
+                        tooltip: {
+                            enabled: true,
+                            displayColors: false,
+                            callbacks: {
+                                title: function () { return ''; },
+                                label: function (ctx) {
+                                    const p = ctx.raw || {};
+                                    const name = p.emiten || p.kode || p.label || '-';
+                                    const q = p.q || '-';
+                                    return `${name} | ${q} | Δ ${Number(p.x || 0).toFixed(2)}% | Mom ${Number(p.y || 0).toFixed(2)}%`;
+                                }
+                            }
+                        }
+                    },
+                    interaction: { mode: 'nearest', intersect: false },
+                    hover: { mode: 'nearest', intersect: false },
+                    scales: {
+                        x: {
+                            title: { display: true, text: 'Delta %', font: { size: 10 } },
+                            min: xMin - xPad - xOverscan,
+                            max: xMax + xPad + xOverscan,
+                            ticks: { font: { size: 9 } },
+                            grid: {
+                                color: (ctx) => Math.abs(Number(ctx?.tick?.value || 0)) < 1e-9
+                                    ? 'rgba(148,163,184,0.55)'
+                                    : 'rgba(0,0,0,0)',
+                                lineWidth: (ctx) => Math.abs(Number(ctx?.tick?.value || 0)) < 1e-9 ? 1.2 : 0,
+                                drawBorder: false
+                            },
+                            border: { display: false }
+                        },
+                        y: {
+                            title: { display: true, text: 'Momentum %', font: { size: 10 } },
+                            min: yMin - yPad - yOverscan,
+                            max: yMax + yPad + yOverscan,
+                            ticks: { font: { size: 9 } },
+                            grid: {
+                                color: (ctx) => Math.abs(Number(ctx?.tick?.value || 0)) < 1e-9
+                                    ? 'rgba(148,163,184,0.55)'
+                                    : 'rgba(0,0,0,0)',
+                                lineWidth: (ctx) => Math.abs(Number(ctx?.tick?.value || 0)) < 1e-9 ? 1.2 : 0,
+                                drawBorder: false
+                            },
+                            border: { display: false }
+                        }
                     }
                 },
-                interaction: { mode: 'nearest', intersect: false },
-                hover: { mode: 'nearest', intersect: false },
-                scales: {
-                    x: {
-                        title: { display: true, text: 'Delta %', font: { size: 10 } },
-                        min: xMin - xPad - xOverscan,
-                        max: xMax + xPad + xOverscan,
-                        ticks: { font: { size: 9 } },
-                        grid: {
-                            color: (ctx) => Math.abs(Number(ctx?.tick?.value || 0)) < 1e-9
-                                ? 'rgba(148,163,184,0.55)'
-                                : 'rgba(0,0,0,0)',
-                            lineWidth: (ctx) => Math.abs(Number(ctx?.tick?.value || 0)) < 1e-9 ? 1.2 : 0,
-                            drawBorder: false
-                        },
-                        border: { display: false }
-                    },
-                    y: {
-                        title: { display: true, text: 'Momentum %', font: { size: 10 } },
-                        min: yMin - yPad - yOverscan,
-                        max: yMax + yPad + yOverscan,
-                        ticks: { font: { size: 9 } },
-                        grid: {
-                            color: (ctx) => Math.abs(Number(ctx?.tick?.value || 0)) < 1e-9
-                                ? 'rgba(148,163,184,0.55)'
-                                : 'rgba(0,0,0,0)',
-                            lineWidth: (ctx) => Math.abs(Number(ctx?.tick?.value || 0)) < 1e-9 ? 1.2 : 0,
-                            drawBorder: false
-                        },
-                        border: { display: false }
-                    }
-                }
-            },
-            plugins: [bubbleTextLabelsPlugin]
-        });
+                plugins: [bubbleTextLabelsPlugin]
+            });
+            bubbleChartAnimatedOnInitialLoad = true;
+        } else {
+            const ds = opportunityBubbleChart.data.datasets[0];
+            ds.data = points;
+            ds.backgroundColor = points.map(p => getQuadrantBubbleColor(p.q).bg);
+            ds.borderColor = points.map(p => getQuadrantBubbleColor(p.q).bd);
+
+            opportunityBubbleChart.options.scales.x.min = xMin - xPad - xOverscan;
+            opportunityBubbleChart.options.scales.x.max = xMax + xPad + xOverscan;
+            opportunityBubbleChart.options.scales.y.min = yMin - yPad - yOverscan;
+            opportunityBubbleChart.options.scales.y.max = yMax + yPad + yOverscan;
+
+            opportunityBubbleChart.update('none');
+        }
 
         $('#bubble-chart-loading').hide();
         $('#bubble-chart-container').show();

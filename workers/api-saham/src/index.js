@@ -284,6 +284,136 @@ function json(data, status = 200, extraHeaders = {}) {
   );
 }
 
+async function ensureDashboardTables(env) {
+  const ddl = [
+    `CREATE TABLE IF NOT EXISTS feed_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      event_type TEXT NOT NULL,
+      symbol TEXT,
+      title TEXT NOT NULL,
+      body TEXT,
+      meta_json TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_feed_events_created_at ON feed_events(created_at DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_feed_events_type_created_at ON feed_events(event_type, created_at DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_feed_events_symbol_created_at ON feed_events(symbol, created_at DESC)`,
+
+    `CREATE TABLE IF NOT EXISTS pubex (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      periode TEXT NOT NULL,
+      kode_emiten TEXT NOT NULL,
+      nama_perusahaan TEXT,
+      tanggal TEXT NOT NULL,
+      pukul_wib TEXT,
+      lokasi TEXT,
+      agenda TEXT,
+      sumber TEXT,
+      ingest_batch_id TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_pubex_event_time ON pubex(tanggal, pukul_wib)`,
+    `CREATE INDEX IF NOT EXISTS idx_pubex_periode ON pubex(periode)`,
+    `CREATE INDEX IF NOT EXISTS idx_pubex_symbol_date ON pubex(kode_emiten, tanggal)`,
+
+    `CREATE TABLE IF NOT EXISTS ipo_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      company_code TEXT,
+      company_name TEXT,
+      event_name TEXT,
+      event_date TEXT NOT NULL,
+      event_time_wib TEXT,
+      location TEXT,
+      source TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_ipo_events_time ON ipo_events(event_date, event_time_wib)`
+  ];
+
+  for (const sql of ddl) {
+    await env.SSSAHAM_DB.prepare(sql).run();
+  }
+}
+
+function normalizeIsoDate(raw) {
+  if (typeof raw !== "string") return null;
+  const v = raw.trim();
+  if (!v) return null;
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
+
+  const dmy = v.match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/);
+  if (dmy) {
+    const dd = dmy[1].padStart(2, "0");
+    const mm = dmy[2].padStart(2, "0");
+    const yyyy = dmy[3];
+    return `${yyyy}-${mm}-${dd}`;
+  }
+
+  const parsed = Date.parse(v);
+  if (!Number.isNaN(parsed)) return new Date(parsed).toISOString().slice(0, 10);
+  return null;
+}
+
+function normalizeWibTime(raw) {
+  if (typeof raw !== "string") return null;
+  const m = raw.match(/(\d{1,2}):(\d{2})/);
+  if (!m) return null;
+  const hh = String(Math.max(0, Math.min(23, Number(m[1])))).padStart(2, "0");
+  const mm = String(Math.max(0, Math.min(59, Number(m[2])))).padStart(2, "0");
+  return `${hh}:${mm}`;
+}
+
+function parseJsonFromModel(raw) {
+  if (typeof raw !== "string") throw new Error("Model response invalid");
+  let txt = raw.trim();
+  if (txt.startsWith("```")) {
+    txt = txt.replace(/^```(?:json)?/i, "").replace(/```$/i, "").trim();
+  }
+  const first = txt.indexOf("{");
+  const last = txt.lastIndexOf("}");
+  if (first >= 0 && last > first) txt = txt.slice(first, last + 1);
+  return JSON.parse(txt);
+}
+
+function toEventTimestamp(dateIso, timeHHmm) {
+  const d = normalizeIsoDate(dateIso);
+  const t = normalizeWibTime(timeHHmm || "00:00") || "00:00";
+  if (!d) return Number.MAX_SAFE_INTEGER;
+  return new Date(`${d}T${t}:00+07:00`).getTime();
+}
+
+function buildFeedEventFromAnalysis(symbol, analysisJson, provider, modelUsed, fromDate, toDate, cacheKey) {
+  const recID = analysisJson?.kesimpulan_rekomendasi || {};
+  const recEN = analysisJson?.recommendation || {};
+  const titleCore = recID?.rating || recID?.rekomendasi || recEN?.position || "AI Update";
+  const confidence = Number(recID?.confidence ?? recEN?.confidence ?? analysisJson?.meta?.confidence ?? 0) || 0;
+
+  let body = "Analisis terbaru tersedia.";
+  if (Array.isArray(recID?.alasan_rating) && recID.alasan_rating.length > 0) {
+    body = String(recID.alasan_rating[0]);
+  } else if (typeof recEN?.rationale === "string" && recEN.rationale.trim()) {
+    body = recEN.rationale.trim();
+  } else if (typeof analysisJson?.summary === "string" && analysisJson.summary.trim()) {
+    body = analysisJson.summary.trim();
+  }
+
+  return {
+    event_type: "ai_analysis",
+    symbol,
+    title: `${symbol} • ${titleCore}`,
+    body,
+    meta_json: JSON.stringify({
+      provider,
+      model: modelUsed,
+      confidence,
+      from: fromDate,
+      to: toDate,
+      cache_key: cacheKey
+    })
+  };
+}
+
 function buildEmitenQuery(filters = {}) {
   const clauses = [];
   const params = [];
@@ -3766,7 +3896,369 @@ export default {
           console.error("[AI] Failed to cache result:", cacheErr);
         }
 
+        try {
+          await ensureDashboardTables(env);
+          const feedEvent = buildFeedEventFromAnalysis(
+            normalizedSymbol,
+            analysisJson,
+            provider,
+            modelUsed,
+            fromDate,
+            toDate,
+            cacheKey
+          );
+          await env.SSSAHAM_DB.prepare(
+            `INSERT INTO feed_events (event_type, symbol, title, body, meta_json, created_at)
+             VALUES (?, ?, ?, ?, ?, ?)`
+          )
+            .bind(
+              feedEvent.event_type,
+              feedEvent.symbol,
+              feedEvent.title,
+              feedEvent.body,
+              feedEvent.meta_json,
+              new Date().toISOString()
+            )
+            .run();
+        } catch (feedErr) {
+          console.error("[AI] Failed to append feed event:", feedErr);
+        }
+
         return json(result);
+      }
+
+      // 7.1 GET /dashboard/feed
+      if (url.pathname === "/dashboard/feed" && req.method === "GET") {
+        await ensureDashboardTables(env);
+        const limit = Math.min(Math.max(Number(url.searchParams.get("limit") || 30), 1), 200);
+        const { results } = await env.SSSAHAM_DB.prepare(
+          `SELECT id, event_type, symbol, title, body, meta_json, created_at
+           FROM feed_events
+           ORDER BY created_at DESC, id DESC
+           LIMIT ?`
+        ).bind(limit).all();
+
+        const dbItems = (results || []).map((r) => {
+          let meta = null;
+          try { meta = r.meta_json ? JSON.parse(r.meta_json) : null; } catch (_) { meta = null; }
+          return {
+            id: r.id,
+            event_type: r.event_type,
+            symbol: r.symbol,
+            title: r.title,
+            body: r.body,
+            meta,
+            created_at: r.created_at
+          };
+        });
+
+        const existingCacheKeys = new Set(
+          dbItems
+            .map((it) => it?.meta?.cache_key)
+            .filter((v) => typeof v === "string" && v.length > 0)
+        );
+
+        const cacheItems = [];
+        try {
+          const listed = await env.SSSAHAM_EMITEN.list({ prefix: "ai-cache/", limit: 80 });
+          const objects = Array.isArray(listed?.objects) ? listed.objects : [];
+          objects.sort((a, b) => {
+            const ta = Date.parse(String(a?.uploaded || 0)) || 0;
+            const tb = Date.parse(String(b?.uploaded || 0)) || 0;
+            return tb - ta;
+          });
+
+          for (const obj of objects) {
+            if (!obj?.key || existingCacheKeys.has(obj.key)) continue;
+            const cacheObj = await env.SSSAHAM_EMITEN.get(obj.key);
+            if (!cacheObj) continue;
+            let payload = null;
+            try {
+              payload = await cacheObj.json();
+            } catch (_) {
+              continue;
+            }
+
+            const symbolFromKey = String(obj.key).split("/")[1] || "";
+            const symbol = String(payload?.symbol || symbolFromKey || "").toUpperCase();
+            if (!symbol) continue;
+
+            const analysis = payload?.analysis || {};
+            const fromDate = payload?.date_range?.from || "unknown";
+            const toDate = payload?.date_range?.to || "unknown";
+            const event = buildFeedEventFromAnalysis(
+              symbol,
+              analysis,
+              payload?.provider || "cache",
+              payload?.model || "unknown",
+              fromDate,
+              toDate,
+              obj.key
+            );
+
+            cacheItems.push({
+              id: `cache-${obj.key}`,
+              event_type: event.event_type,
+              symbol: event.symbol,
+              title: event.title,
+              body: event.body,
+              meta: JSON.parse(event.meta_json),
+              created_at: payload?.cached_at || payload?.analyzed_at || new Date(obj.uploaded || Date.now()).toISOString()
+            });
+
+            if (cacheItems.length >= limit) break;
+          }
+        } catch (e) {
+          console.error("[/dashboard/feed] ai-cache fallback failed:", e);
+        }
+
+        const items = [...dbItems, ...cacheItems]
+          .sort((a, b) => (Date.parse(String(b?.created_at || 0)) || 0) - (Date.parse(String(a?.created_at || 0)) || 0))
+          .slice(0, limit);
+
+        return json({ ok: true, items, total: items.length, from_ai_cache: cacheItems.length });
+      }
+
+      // 7.2 POST /dashboard/pubex/refresh?periode=YYYY-MM
+      if (url.pathname === "/dashboard/pubex/refresh" && req.method === "POST") {
+        await ensureDashboardTables(env);
+        if (!env.OPENAI_API_KEY && !env.GROK_API_KEY && !env.ANTHROPIC_API_KEY) {
+          return json({ ok: false, error: "Missing OPENAI_API_KEY, GROK_API_KEY, and ANTHROPIC_API_KEY" }, 500);
+        }
+
+        const periode = (url.searchParams.get("periode") || new Date().toISOString().slice(0, 7)).trim();
+        if (!/^\d{4}-\d{2}$/.test(periode)) {
+          return json({ ok: false, error: "Invalid periode, expected YYYY-MM" }, 400);
+        }
+        const [yStr, mStr] = periode.split("-");
+        const year = Number(yStr);
+        const monthNum = Number(mStr);
+        const monthNames = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
+        const bulanLabel = monthNames[Math.max(0, Math.min(11, monthNum - 1))];
+
+        const userPrompt = `Kamu adalah asisten riset pasar modal Indonesia. Tugasmu adalah mencari jadwal Public Expose emiten yang terdaftar di Bursa Efek Indonesia (BEI) untuk bulan dan tahun ini, lalu mengembalikan hasilnya dalam format JSON.\n\nLangkah-langkah:\n\nCari informasi jadwal Public Expose dari sumber terpercaya seperti idx.co.id, ipotnews.com, indopremier.com, atau kontan.co.id.\nFokus HANYA pada event \"Public Expose\" — bukan RUPS, bukan RUPSLB.\nKembalikan hasil dalam format JSON berikut:\n{\n  \"periode\": \"YYYY-MM\",\n  \"sumber\": [\"nama sumber 1\", \"nama sumber 2\"],\n  \"data\": [\n    {\n      \"kode_emiten\": \"XXXX\",\n      \"nama_perusahaan\": \"Nama PT Tbk\",\n      \"tanggal\": \"DD-MM-YYYY\",\n      \"pukul\": \"HH:MM WIB\",\n      \"lokasi\": \"Nama tempat atau virtual\",\n      \"agenda\": \"Deskripsi singkat agenda public expose\"\n    }\n  ],\n  \"total\": 0,\n  \"catatan\": \"Informasi tambahan jika ada\"\n}\nCari jadwal Public Expose untuk: ${bulanLabel} ${year}`;
+
+        let raw = "";
+        let providerUsed = "openai";
+        let upstreamErr = null;
+
+        if (env.OPENAI_API_KEY) {
+          const aiResp = await fetch("https://api.openai.com/v1/chat/completions", {
+            method: "POST",
+            headers: {
+              "Authorization": `Bearer ${env.OPENAI_API_KEY}`,
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+              model: "gpt-4.1-mini",
+              messages: [
+                { role: "system", content: "Kembalikan HANYA JSON valid tanpa markdown." },
+                { role: "user", content: userPrompt }
+              ],
+              max_tokens: 3000
+            })
+          });
+
+          if (aiResp.ok) {
+            const aiData = await aiResp.json();
+            raw = aiData?.choices?.[0]?.message?.content || "";
+          } else {
+            upstreamErr = `OpenAI error ${aiResp.status}: ${await aiResp.text()}`;
+          }
+        }
+
+        if (!raw && env.GROK_API_KEY) {
+          providerUsed = "grok";
+          const grResp = await fetch("https://api.x.ai/v1/chat/completions", {
+            method: "POST",
+            headers: {
+              "Authorization": `Bearer ${env.GROK_API_KEY}`,
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+              model: "grok-4",
+              messages: [
+                { role: "system", content: "Kembalikan HANYA JSON valid tanpa markdown." },
+                { role: "user", content: userPrompt }
+              ],
+              max_tokens: 3000
+            })
+          });
+
+          if (grResp.ok) {
+            const grData = await grResp.json();
+            raw = grData?.choices?.[0]?.message?.content || "";
+          } else {
+            const grokErr = `Grok error ${grResp.status}: ${await grResp.text()}`;
+            upstreamErr = upstreamErr ? `${upstreamErr} | ${grokErr}` : grokErr;
+          }
+        }
+
+        if (!raw && env.ANTHROPIC_API_KEY) {
+          providerUsed = "claude";
+          const clResp = await fetch("https://api.anthropic.com/v1/messages", {
+            method: "POST",
+            headers: {
+              "x-api-key": env.ANTHROPIC_API_KEY,
+              "anthropic-version": "2023-06-01",
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+              model: "claude-sonnet-4-5",
+              max_tokens: 3000,
+              system: "Kembalikan HANYA JSON valid tanpa markdown.",
+              messages: [{ role: "user", content: userPrompt }]
+            })
+          });
+
+          if (clResp.ok) {
+            const clData = await clResp.json();
+            raw = clData?.content?.[0]?.text || "";
+          } else {
+            const claudeErr = `Claude error ${clResp.status}: ${await clResp.text()}`;
+            upstreamErr = upstreamErr ? `${upstreamErr} | ${claudeErr}` : claudeErr;
+          }
+        }
+
+        if (!raw) {
+          return json({ ok: false, error: "Pubex model call failed", details: upstreamErr || "Unknown upstream error" }, 502);
+        }
+
+        let parsed = null;
+        try {
+          parsed = parseJsonFromModel(raw);
+        } catch (e) {
+          return json({ ok: false, error: "Model JSON parse failed", provider: providerUsed, details: e.message, raw_output: raw }, 502);
+        }
+
+        const sources = Array.isArray(parsed?.sumber) ? parsed.sumber : [];
+        const rows = Array.isArray(parsed?.data) ? parsed.data : [];
+        const batchId = crypto.randomUUID();
+        let inserted = 0;
+        for (const row of rows) {
+          const kode = String(row?.kode_emiten || "").trim().toUpperCase();
+          const nama = String(row?.nama_perusahaan || "").trim();
+          const tanggal = normalizeIsoDate(String(row?.tanggal || ""));
+          const pukul = normalizeWibTime(String(row?.pukul || ""));
+          const lokasi = String(row?.lokasi || "").trim();
+          const agenda = String(row?.agenda || "").trim();
+          if (!kode || !tanggal) continue;
+
+          await env.SSSAHAM_DB.prepare(
+            `INSERT INTO pubex (periode, kode_emiten, nama_perusahaan, tanggal, pukul_wib, lokasi, agenda, sumber, ingest_batch_id, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          )
+            .bind(
+              periode,
+              kode,
+              nama || null,
+              tanggal,
+              pukul || null,
+              lokasi || null,
+              agenda || null,
+              JSON.stringify(sources),
+              batchId,
+              new Date().toISOString()
+            )
+            .run();
+          inserted++;
+        }
+
+        return json({
+          ok: true,
+          provider: providerUsed,
+          periode,
+          batch_id: batchId,
+          inserted,
+          total_model_rows: rows.length,
+          sources,
+          note: parsed?.catatan || null
+        });
+      }
+
+      // 7.3 POST /dashboard/ipo/upsert (manual MVP source)
+      if (url.pathname === "/dashboard/ipo/upsert" && req.method === "POST") {
+        await ensureDashboardTables(env);
+        const body = await req.json().catch(() => ({}));
+        const entries = Array.isArray(body?.entries) ? body.entries : [];
+        if (entries.length === 0) return json({ ok: false, error: "entries[] is required" }, 400);
+
+        let inserted = 0;
+        for (const e of entries) {
+          const eventDate = normalizeIsoDate(String(e?.event_date || e?.tanggal || ""));
+          if (!eventDate) continue;
+          const eventTime = normalizeWibTime(String(e?.event_time_wib || e?.pukul || ""));
+          const code = String(e?.company_code || e?.kode_emiten || "").trim().toUpperCase() || null;
+          const name = String(e?.company_name || e?.nama_perusahaan || "").trim() || null;
+          const eventName = String(e?.event_name || "IPO Event").trim() || "IPO Event";
+          const location = String(e?.location || e?.lokasi || "").trim() || null;
+          const source = String(e?.source || "manual").trim() || "manual";
+
+          await env.SSSAHAM_DB.prepare(
+            `INSERT INTO ipo_events (company_code, company_name, event_name, event_date, event_time_wib, location, source, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+          ).bind(code, name, eventName, eventDate, eventTime, location, source, new Date().toISOString()).run();
+          inserted++;
+        }
+        return json({ ok: true, inserted, total_input: entries.length });
+      }
+
+      // 7.4 GET /dashboard/catalyst
+      if (url.pathname === "/dashboard/catalyst" && req.method === "GET") {
+        await ensureDashboardTables(env);
+        const limit = Math.min(Math.max(Number(url.searchParams.get("limit") || 50), 1), 300);
+
+        const { results: pubexRows } = await env.SSSAHAM_DB.prepare(
+          `SELECT id, kode_emiten, nama_perusahaan, tanggal, pukul_wib, lokasi, agenda, sumber, created_at
+           FROM pubex
+           ORDER BY tanggal ASC, COALESCE(pukul_wib, '23:59') ASC, id DESC
+           LIMIT ?`
+        ).bind(limit).all();
+
+        const { results: ipoRows } = await env.SSSAHAM_DB.prepare(
+          `SELECT id, company_code, company_name, event_name, event_date, event_time_wib, location, source, created_at
+           FROM ipo_events
+            WHERE COALESCE(source, '') != 'manual-mvp' AND COALESCE(company_code, '') != 'TEST'
+           ORDER BY event_date ASC, COALESCE(event_time_wib, '23:59') ASC, id DESC
+           LIMIT ?`
+        ).bind(limit).all();
+
+        const pubexItems = (pubexRows || []).map((r) => ({
+          type: "pubex",
+          id: `pubex-${r.id}`,
+          symbol: r.kode_emiten,
+          title: `Public Expose ${r.kode_emiten}`,
+          subtitle: r.nama_perusahaan || null,
+          description: r.agenda || "Public Expose Emiten",
+          location: r.lokasi || null,
+          source: r.sumber || null,
+          event_date: r.tanggal,
+          event_time_wib: r.pukul_wib || null,
+          event_ts: toEventTimestamp(r.tanggal, r.pukul_wib),
+          created_at: r.created_at
+        }));
+
+        const ipoItems = (ipoRows || []).map((r) => ({
+          type: "ipo",
+          id: `ipo-${r.id}`,
+          symbol: r.company_code || null,
+          title: r.event_name || "IPO Event",
+          subtitle: r.company_name || null,
+          description: r.company_code ? `Jadwal IPO ${r.company_code}` : "Jadwal IPO",
+          location: r.location || null,
+          source: r.source || null,
+          event_date: r.event_date,
+          event_time_wib: r.event_time_wib || null,
+          event_ts: toEventTimestamp(r.event_date, r.event_time_wib),
+          created_at: r.created_at
+        }));
+
+        const items = [...pubexItems, ...ipoItems]
+          .sort((a, b) => (a.event_ts - b.event_ts) || (String(a.created_at).localeCompare(String(b.created_at))))
+          .slice(0, limit)
+          .map(({ event_ts, ...rest }) => rest);
+
+        return json({ ok: true, items, total: items.length });
       }
 
 

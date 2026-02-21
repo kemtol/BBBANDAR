@@ -239,9 +239,6 @@
                     <a class="nav-link active" href="#">Feed</a>
                 </li>
                 <li class="nav-item" role="presentation">
-                    <a class="nav-link" href="emiten/index.html">Orderflow</a>
-                </li>
-                <li class="nav-item" role="presentation">
                     <a class="nav-link" href="emiten/broker-summary.html">Brokerflow</a>
                 </li>
             </ul>
@@ -273,124 +270,16 @@
                     <!-- Feed Section (Left) -->
                     <div class="col-md-6 mb-4">
                         <strong class="section-heading mb-3 d-block text-center">Feed</strong>
-                        <div class="timeline timeline-right">
+                        <div class="timeline timeline-right" id="feed-timeline">
                             <div class="timeline-line"></div>
-
-                            <!-- Latest Item (Top) -->
-                            <div class="timeline-item">
-                                <div class="timeline-dot primary"></div>
-                                <div class="timeline-time">2 minutes ago</div>
-                                <div class="timeline-card">
-                                    <div class="timeline-title primary">QQQUANTA AI</div>
-                                    <p class="timeline-text">
-                                        🚀 <strong>ES Futures</strong> showing bullish divergence on footprint. High
-                                        volume
-                                        at 5250
-                                        support level. Watch for breakout above 5265.
-                                    </p>
-                                    <div class="timeline-tags">
-                                        <span>#Futures</span>
-                                        <span class="tag-hot">#Hot</span>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div class="timeline-item">
-                                <div class="timeline-dot warning"></div>
-                                <div class="timeline-time">15 minutes ago</div>
-                                <div class="timeline-card">
-                                    <div class="timeline-title warning">Crypto Alert</div>
-                                    <p class="timeline-text">
-                                        📊 <strong>BTC/USDT</strong> large buy imbalance detected at $42,500. Delta
-                                        positive
-                                        on 15m
-                                        timeframe. Potential long opportunity.
-                                    </p>
-                                    <div class="timeline-tags">
-                                        <span>#Crypto</span>
-                                        <span class="tag-bullish">#Bullish</span>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div class="timeline-item">
-                                <div class="timeline-dot success"></div>
-                                <div class="timeline-time">1 hour ago</div>
-                                <div class="timeline-card">
-                                    <div class="timeline-title success">AI Sentiment</div>
-                                    <p class="timeline-text">
-                                        🤖 Daily sentiment analysis complete. <strong>NQ</strong> sentiment: 72%
-                                        bullish.
-                                        <strong>CL</strong> sentiment: 58% bearish. Full report available in AI
-                                        Analytics.
-                                    </p>
-                                    <div class="timeline-tags">
-                                        <span>#AI</span>
-                                        <span>#Daily</span>
-                                    </div>
-                                </div>
-                            </div>
                         </div>
                     </div>
 
                     <!-- Catalyst Section (Right) -->
                     <div class="col-md-6 mb-4">
                         <strong class="section-heading mb-3 text-center d-block">Catalyst</strong>
-                        <div class="timeline">
+                        <div class="timeline" id="catalyst-timeline">
                             <div class="timeline-line"></div>
-
-                            <!-- Nearest Upcoming (Top) -->
-                            <div class="timeline-item">
-                                <div class="timeline-dot variant-blue"></div>
-                                <div class="timeline-time">In 30 minutes</div>
-                                <div class="timeline-card variant-blue">
-                                    <div class="timeline-title variant-blue">FOMC Member Speaks</div>
-                                    <p class="timeline-text">
-                                        🗣️ <strong>Bowman</strong> speaking at 10:00 AM EST. Watch for comments on
-                                        interest
-                                        rate path.
-                                    </p>
-                                    <div class="timeline-tags">
-                                        <span class="tag-info">#Macro</span>
-                                        <span class="tag-info">#USD</span>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div class="timeline-item upcoming">
-                                <div class="timeline-dot variant-red"></div>
-                                <div class="timeline-time">In 4 hours</div>
-                                <div class="timeline-card variant-red">
-                                    <div class="timeline-title variant-red">CPI Data Release</div>
-                                    <p class="timeline-text">
-                                        🇺🇸 <strong>US CPI</strong> YoY Forecast: 3.1%. Previous: 3.2%. High impact on
-                                        USD
-                                        pairs and Gold.
-                                    </p>
-                                    <div class="timeline-tags">
-                                        <span>#Forex</span>
-                                        <span class="tag-critical">#HighImpact</span>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <!-- Furthest Future (Bottom) -->
-                            <div class="timeline-item upcoming">
-                                <div class="timeline-dot variant-purple"></div>
-                                <div class="timeline-time">Tomorrow, 08:30 AM</div>
-                                <div class="timeline-card variant-purple">
-                                    <div class="timeline-title variant-purple">Unlock: Token XYZ</div>
-                                    <p class="timeline-text">
-                                        🔓 <strong>XYZ</strong> token unlock of 50M tokens (approx. $10M) occurring
-                                        tomorrow.
-                                        Expect potential volatility.
-                                    </p>
-                                    <div class="timeline-tags">
-                                        <span>#Crypto</span>
-                                        <span>#Unlock</span>
-                                    </div>
-                                </div>
-                            </div>
                         </div>
                     </div>
                 </div>
@@ -412,6 +301,161 @@
     </script>
 
     <script>
+        const WORKER_BASE_URL = "https://api-saham.mkemalw.workers.dev";
+
+        function escapeHtml(value) {
+            return String(value || '')
+                .replaceAll('&', '&amp;')
+                .replaceAll('<', '&lt;')
+                .replaceAll('>', '&gt;')
+                .replaceAll('"', '&quot;')
+                .replaceAll("'", '&#39;');
+        }
+
+        function relativeTimeFrom(dateStr) {
+            const ts = Date.parse(dateStr || '');
+            if (!Number.isFinite(ts)) return '-';
+            const delta = Date.now() - ts;
+            const mins = Math.round(delta / 60000);
+            if (mins < 1) return 'baru saja';
+            if (mins < 60) return `${mins} menit lalu`;
+            const hours = Math.round(mins / 60);
+            if (hours < 24) return `${hours} jam lalu`;
+            const days = Math.round(hours / 24);
+            return `${days} hari lalu`;
+        }
+
+        function upcomingLabel(dateStr, timeStr) {
+            const iso = `${dateStr || ''}T${(timeStr || '00:00')}:00+07:00`;
+            const ts = Date.parse(iso);
+            if (!Number.isFinite(ts)) return '-';
+            const delta = ts - Date.now();
+            if (delta <= 0) return 'sudah lewat';
+            const mins = Math.round(delta / 60000);
+            if (mins < 60) return `dalam ${mins} menit`;
+            const hrs = Math.round(mins / 60);
+            if (hrs < 24) return `dalam ${hrs} jam`;
+            const days = Math.round(hrs / 24);
+            return `dalam ${days} hari`;
+        }
+
+        function timelineDotHtml(dotClass, symbol) {
+            const s = String(symbol || '').trim().toUpperCase();
+            if (!s) return `<div class="timeline-dot ${dotClass}"></div>`;
+            const logo = `${WORKER_BASE_URL}/logo?symbol=${encodeURIComponent(s)}`;
+            return `<div class="timeline-dot logo-dot ${dotClass}"><img src="${logo}" alt="${escapeHtml(s)}" onerror="this.parentElement.classList.remove('logo-dot'); this.parentElement.innerHTML='';"></div>`;
+        }
+
+        function slugifyText(v) {
+            return String(v || '')
+                .toLowerCase()
+                .replace(/[^a-z0-9]+/g, '-')
+                .replace(/^-+|-+$/g, '')
+                .replace(/-{2,}/g, '-');
+        }
+
+        function buildFeedDetailSlug(item) {
+            const created = new Date(item?.created_at || Date.now());
+            const y = created.getFullYear();
+            const m = String(created.getMonth() + 1).padStart(2, '0');
+            const d = String(created.getDate()).padStart(2, '0');
+            const symbol = String(item?.symbol || '').toUpperCase() || 'EMITEN';
+            const title = String(item?.title || 'update');
+            const titleWithoutSymbol = title
+                .replace(new RegExp(`^${symbol}\\s*`, 'i'), '')
+                .replace(/[•|:]/g, ' ')
+                .trim();
+            const reco = slugifyText(titleWithoutSymbol || 'update') || 'update';
+            return `${y}-${m}-${d}-${symbol}-${reco}`;
+        }
+
+        function openFeedDetail(item) {
+            const slug = buildFeedDetailSlug(item);
+            const url = `${window.location.pathname}?feed=${encodeURIComponent(slug)}`;
+            window.location.href = url;
+        }
+
+        function renderFeed(items) {
+            const root = document.getElementById('feed-timeline');
+            if (!root) return;
+            const line = '<div class="timeline-line"></div>';
+
+            if (!Array.isArray(items) || items.length === 0) {
+                root.innerHTML = `${line}<div class="timeline-item"><div class="timeline-dot"></div><div class="timeline-time">-</div><div class="timeline-card"><div class="timeline-title">Feed</div><p class="timeline-text">Belum ada feed terbaru.</p></div></div>`;
+                return;
+            }
+
+            const html = items.map((it, i) => {
+                const dotClass = i === 0 ? 'primary' : 'success';
+                const title = escapeHtml(it?.title || 'AI Analysis');
+                const body = escapeHtml(it?.body || 'Analisis terbaru tersedia.');
+                const symbol = escapeHtml(it?.symbol || '');
+                const payload = encodeURIComponent(JSON.stringify(it || {}));
+                return `<div class="timeline-item">
+                    ${timelineDotHtml(dotClass, symbol)}
+                    <div class="timeline-time">${relativeTimeFrom(it?.created_at)}</div>
+                    <div class="timeline-card feed-clickable" data-feed-item="${payload}" onclick="openFeedDetail(JSON.parse(decodeURIComponent(this.dataset.feedItem)))">
+                        <div class="timeline-title ${dotClass}">${title}</div>
+                        <p class="timeline-text">${body}</p>
+                        <div class="timeline-tags">${symbol ? `<span>#${symbol}</span>` : ''}<span>#AI</span></div>
+                    </div>
+                </div>`;
+            }).join('');
+
+            root.innerHTML = line + html;
+        }
+
+        function renderCatalyst(items) {
+            const root = document.getElementById('catalyst-timeline');
+            if (!root) return;
+            const line = '<div class="timeline-line"></div>';
+
+            if (!Array.isArray(items) || items.length === 0) {
+                root.innerHTML = `${line}<div class="timeline-item"><div class="timeline-dot"></div><div class="timeline-time">-</div><div class="timeline-card"><div class="timeline-title">Catalyst</div><p class="timeline-text">Belum ada catalyst event.</p></div></div>`;
+                return;
+            }
+
+            const html = items.map((it, i) => {
+                const variant = it?.type === 'pubex' ? 'variant-purple' : 'variant-red';
+                const title = escapeHtml(it?.title || 'Event');
+                const subtitle = escapeHtml(it?.subtitle || '');
+                const desc = escapeHtml(it?.description || '-');
+                const when = upcomingLabel(it?.event_date, it?.event_time_wib);
+                const source = escapeHtml(it?.source || 'source');
+                const symbol = escapeHtml(it?.symbol || '');
+                return `<div class="timeline-item ${i > 0 ? 'upcoming' : ''}">
+                    ${timelineDotHtml(variant, symbol)}
+                    <div class="timeline-time">${when}</div>
+                    <div class="timeline-card ${variant}">
+                        <div class="timeline-title ${variant}">${title}</div>
+                        <p class="timeline-text">${subtitle ? `<strong>${subtitle}</strong> — ` : ''}${desc}</p>
+                        <div class="timeline-tags"><span>#${escapeHtml(it?.type || 'event')}</span><span>#${source}</span></div>
+                    </div>
+                </div>`;
+            }).join('');
+
+            root.innerHTML = line + html;
+        }
+
+        async function loadDashboardData() {
+            try {
+                const [feedResp, catalystResp] = await Promise.all([
+                    fetch(`${WORKER_BASE_URL}/dashboard/feed?limit=30`),
+                    fetch(`${WORKER_BASE_URL}/dashboard/catalyst?limit=30`)
+                ]);
+
+                const feedJson = await feedResp.json().catch(() => ({ items: [] }));
+                const catJson = await catalystResp.json().catch(() => ({ items: [] }));
+
+                renderFeed(feedJson?.items || []);
+                renderCatalyst(catJson?.items || []);
+            } catch (e) {
+                console.error('[dashboard] load failed', e);
+                renderFeed([]);
+                renderCatalyst([]);
+            }
+        }
+
         // Page specific logic updates
         const userStr = localStorage.getItem("qqquanta_user");
         if (userStr) {
@@ -493,20 +537,25 @@
                 const { hours, minutes, timeStr } = getTimeInTimezone(session.tz);
 
                 // Update time display
-                document.getElementById(`${city}-time`).textContent = timeStr;
+                const timeEl = document.getElementById(`${city}-time`);
+                if (timeEl) timeEl.textContent = timeStr;
 
                 // Update clock hands
                 const hourDeg = (hours % 12) * 30 + minutes * 0.5;
                 const minuteDeg = minutes * 6;
 
-                document.getElementById(`${city}-hour`).style.transform = `rotate(${hourDeg}deg)`;
-                document.getElementById(`${city}-minute`).style.transform = `rotate(${minuteDeg}deg)`;
+                const hourEl = document.getElementById(`${city}-hour`);
+                const minuteEl = document.getElementById(`${city}-minute`);
+                if (hourEl) hourEl.style.transform = `rotate(${hourDeg}deg)`;
+                if (minuteEl) minuteEl.style.transform = `rotate(${minuteDeg}deg)`;
 
                 // Update market status
                 const statusEl = document.getElementById(`${city}-status`);
                 const isOpen = isMarketOpen(session, hours);
-                statusEl.textContent = isOpen ? 'OPEN' : 'CLOSED';
-                statusEl.className = `clock-status ${isOpen ? 'open' : 'closed'}`;
+                if (statusEl) {
+                    statusEl.textContent = isOpen ? 'OPEN' : 'CLOSED';
+                    statusEl.className = `clock-status ${isOpen ? 'open' : 'closed'}`;
+                }
 
                 // Update Wrapper Opacity
                 const wrapper = document.getElementById(`clock-wrapper-${city}`);
@@ -519,6 +568,10 @@
         // Initial update and set interval
         updateClocks();
         setInterval(updateClocks, 1000);
+
+        document.addEventListener('DOMContentLoaded', () => {
+            loadDashboardData();
+        });
     </script>
 
     <!-- SCRIPTS -->
