@@ -285,6 +285,19 @@
                 </div>
             </div>
         </section>
+
+        <section id="feed-detail-section" class="content-section mt-0 pt-0 d-none">
+            <div class="container ps-0">
+                <div class="d-flex align-items-center justify-content-between mb-3">
+                    <button class="btn btn-sm btn-outline-secondary" onclick="backToFeedList()">
+                        <i class="fa-solid fa-arrow-left me-1"></i>Kembali ke Feed
+                    </button>
+                </div>
+                <div id="feed-detail-card" class="timeline-card">
+                    <p class="timeline-text mb-0">Memuat detail...</p>
+                </div>
+            </div>
+        </section>
     </div>
 
     <!-- Init Script to Simulate Loading -->
@@ -339,6 +352,38 @@
             return `dalam ${days} hari`;
         }
 
+        let timelineLogoSyncTimer = null;
+
+        function syncTimelineLogoDots() {
+            const items = document.querySelectorAll('.timeline .timeline-item');
+            items.forEach((item) => {
+                const dot = item.querySelector('.timeline-dot.logo-dot');
+                const card = item.querySelector('.timeline-card');
+                if (!dot || !card) return;
+
+                const cardHeight = card.offsetHeight || 0;
+                if (!cardHeight) return;
+
+                const size = 36;
+                const timeEl = item.querySelector('.timeline-time');
+                const timeStyle = timeEl ? window.getComputedStyle(timeEl) : null;
+                const timeMarginBottom = timeStyle ? parseFloat(timeStyle.marginBottom || '0') : 0;
+                const timeBlockHeight = timeEl ? (timeEl.offsetHeight + (Number.isFinite(timeMarginBottom) ? timeMarginBottom : 0)) : 0;
+                const top = Math.max(0, timeBlockHeight + ((cardHeight - size) / 2));
+
+                item.style.setProperty('--logo-dot-size', `${size}px`);
+                item.style.setProperty('--logo-dot-top', `${top}px`);
+            });
+        }
+
+        function scheduleTimelineLogoDotSync() {
+            if (timelineLogoSyncTimer) window.clearTimeout(timelineLogoSyncTimer);
+            timelineLogoSyncTimer = window.setTimeout(() => {
+                timelineLogoSyncTimer = null;
+                syncTimelineLogoDots();
+            }, 0);
+        }
+
         function timelineDotHtml(dotClass, symbol) {
             const s = String(symbol || '').trim().toUpperCase();
             if (!s) return `<div class="timeline-dot ${dotClass}"></div>`;
@@ -370,9 +415,102 @@
         }
 
         function openFeedDetail(item) {
-            const slug = buildFeedDetailSlug(item);
+            const slug = String(item?.slug || '').trim() || buildFeedDetailSlug(item);
             const url = `${window.location.pathname}?feed=${encodeURIComponent(slug)}`;
             window.location.href = url;
+        }
+
+        function backToFeedList() {
+            window.location.href = window.location.pathname;
+        }
+
+        function setFeedDetailMode(isDetail) {
+            const listSection = document.getElementById('content');
+            const detailSection = document.getElementById('feed-detail-section');
+            if (listSection) listSection.classList.toggle('d-none', !!isDetail);
+            if (detailSection) detailSection.classList.toggle('d-none', !isDetail);
+        }
+
+        function formatLocalDateTime(v) {
+            const ts = Date.parse(String(v || ''));
+            if (!Number.isFinite(ts)) return '-';
+            return new Date(ts).toLocaleString('id-ID', {
+                year: 'numeric', month: 'short', day: '2-digit',
+                hour: '2-digit', minute: '2-digit'
+            });
+        }
+
+        function renderFeedDetail(payload, slug) {
+            const root = document.getElementById('feed-detail-card');
+            if (!root) return;
+
+            if (!payload?.ok || !payload?.item) {
+                root.innerHTML = `<div class="timeline-title variant-red">Detail tidak ditemukan</div><p class="timeline-text mb-0">Feed dengan slug <strong>${escapeHtml(slug || '-')}</strong> tidak tersedia.</p>`;
+                return;
+            }
+
+            const item = payload.item || {};
+            const detail = payload.detail || {};
+            const analysis = detail.analysis || {};
+            const recID = analysis?.kesimpulan_rekomendasi || {};
+            const recEN = analysis?.recommendation || {};
+            const confidence = Number(item?.meta?.confidence ?? recID?.confidence ?? recEN?.confidence ?? 0) || 0;
+
+            const reasons = Array.isArray(recID?.alasan_rating)
+                ? recID.alasan_rating
+                : (typeof recEN?.rationale === 'string' && recEN.rationale.trim() ? [recEN.rationale.trim()] : []);
+
+            const screenshots = Array.isArray(detail?.screenshots) ? detail.screenshots : [];
+            const screenshotsHtml = screenshots.length
+                ? `<div class="timeline-tags mb-2">${screenshots.map((s, idx) => `<a href="${escapeHtml(s?.url || '#')}" target="_blank" rel="noopener noreferrer">Screenshot ${idx + 1}</a>`).join('')}</div>`
+                : '<p class="timeline-text mb-2">Tidak ada screenshot terkait.</p>';
+
+            const raw = typeof detail?.analysis_raw === 'string' ? detail.analysis_raw.trim() : '';
+            const rawHtml = raw
+                ? `<details class="mt-2"><summary class="timeline-time">Lihat output mentah AI</summary><pre class="small mt-2 mb-0" style="white-space: pre-wrap; color: var(--text-secondary);">${escapeHtml(raw)}</pre></details>`
+                : '';
+
+            root.innerHTML = `
+                <div class="d-flex align-items-center justify-content-between mb-2">
+                    <div class="primary mb-0">${escapeHtml(item?.title || 'AI Analysis')}</div>
+                    <div class="">${escapeHtml(formatLocalDateTime(item?.created_at))}</div>
+                </div>
+                <p class="mb-2">${escapeHtml(item?.body || '-')}</p>
+                <div class="timeline-tags mb-3">
+                    <span>#${escapeHtml(item?.symbol || '-')}</span>
+                    <span>#confidence-${Math.round(confidence)}%</span>
+                    <span>#${escapeHtml(detail?.provider || item?.meta?.provider || 'provider')}</span>
+                </div>
+                <div class="timeline-card variant-blue mb-3">
+                    <div class="variant-blue">Ringkasan Rekomendasi</div>
+                    <p class="timeline-text mb-1"><strong>Rating:</strong> ${escapeHtml(recID?.rating || recID?.rekomendasi || recEN?.position || '-')}</p>
+                    <p class="timeline-text mb-0"><strong>Rentang Data:</strong> ${escapeHtml(detail?.date_range?.from || item?.meta?.from || '-')} → ${escapeHtml(detail?.date_range?.to || item?.meta?.to || '-')}</p>
+                </div>
+                <div class="timeline-card variant-purple mb-3">
+                    <div class="variant-purple">Alasan Utama</div>
+                    ${reasons.length ? `<ul class="mb-0">${reasons.map((r) => `<li class="timeline-text mb-1">${escapeHtml(r)}</li>`).join('')}</ul>` : '<p class="timeline-text mb-0">Tidak ada alasan detail tersimpan.</p>'}
+                </div>
+                <div class="timeline-card mb-2">
+                    <div class="">Lampiran</div>
+                    ${screenshotsHtml}
+                    ${rawHtml}
+                </div>
+            `;
+        }
+
+        async function loadFeedDetail(slug) {
+            setFeedDetailMode(true);
+            const root = document.getElementById('feed-detail-card');
+            if (root) root.innerHTML = '<p class="timeline-text mb-0">Memuat detail...</p>';
+
+            try {
+                const resp = await fetch(`${WORKER_BASE_URL}/dashboard/feed/detail?slug=${encodeURIComponent(slug)}`);
+                const data = await resp.json().catch(() => ({ ok: false }));
+                renderFeedDetail(data, slug);
+            } catch (error) {
+                console.error('[dashboard] feed detail failed', error);
+                renderFeedDetail({ ok: false }, slug);
+            }
         }
 
         function renderFeed(items) {
@@ -390,11 +528,11 @@
                 const title = escapeHtml(it?.title || 'AI Analysis');
                 const body = escapeHtml(it?.body || 'Analisis terbaru tersedia.');
                 const symbol = escapeHtml(it?.symbol || '');
-                const payload = encodeURIComponent(JSON.stringify(it || {}));
+                const slug = encodeURIComponent(String(it?.slug || buildFeedDetailSlug(it)));
                 return `<div class="timeline-item">
                     ${timelineDotHtml(dotClass, symbol)}
                     <div class="timeline-time">${relativeTimeFrom(it?.created_at)}</div>
-                    <div class="timeline-card feed-clickable" data-feed-item="${payload}" onclick="openFeedDetail(JSON.parse(decodeURIComponent(this.dataset.feedItem)))">
+                    <div class="timeline-card feed-clickable" data-feed-slug="${slug}" onclick="openFeedDetail({ slug: decodeURIComponent(this.dataset.feedSlug) })">
                         <div class="timeline-title ${dotClass}">${title}</div>
                         <p class="timeline-text">${body}</p>
                         <div class="timeline-tags">${symbol ? `<span>#${symbol}</span>` : ''}<span>#AI</span></div>
@@ -403,6 +541,7 @@
             }).join('');
 
             root.innerHTML = line + html;
+            scheduleTimelineLogoDotSync();
         }
 
         function renderCatalyst(items) {
@@ -435,9 +574,11 @@
             }).join('');
 
             root.innerHTML = line + html;
+            scheduleTimelineLogoDotSync();
         }
 
         async function loadDashboardData() {
+            setFeedDetailMode(false);
             try {
                 const [feedResp, catalystResp] = await Promise.all([
                     fetch(`${WORKER_BASE_URL}/dashboard/feed?limit=30`),
@@ -569,9 +710,22 @@
         updateClocks();
         setInterval(updateClocks, 1000);
 
+        async function initializeDashboardRoute() {
+            const params = new URLSearchParams(window.location.search);
+            const feedSlug = String(params.get('feed') || '').trim();
+            if (feedSlug) {
+                await loadFeedDetail(feedSlug);
+                return;
+            }
+            await loadDashboardData();
+        }
+
         document.addEventListener('DOMContentLoaded', () => {
-            loadDashboardData();
+            initializeDashboardRoute();
+            scheduleTimelineLogoDotSync();
         });
+
+        window.addEventListener('resize', scheduleTimelineLogoDotSync);
     </script>
 
     <!-- SCRIPTS -->

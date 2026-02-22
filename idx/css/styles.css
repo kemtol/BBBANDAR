@@ -267,18 +267,20 @@ body {
 }
 
 .timeline-dot.logo-dot {
-    width: 1.25rem;
-    height: 1.25rem;
-    left: -1.625rem;
-    top: 0.08rem;
+    width: var(--logo-dot-size, 36px);
+    height: var(--logo-dot-size, 36px);
+    left: calc(-1.3125rem - ((var(--logo-dot-size, 36px) - 0.625rem) / 2));
+    top: var(--logo-dot-top, 0.08rem);
     background: var(--surface-alt);
     border: 1px solid var(--border);
     overflow: hidden;
+    z-index: 3;
 }
 
 .timeline-right .timeline-dot.logo-dot {
-    right: -1.625rem;
+    right: calc(-1.3125rem - ((var(--logo-dot-size, 36px) - 0.625rem) / 2));
     left: auto;
+    border: 0px;
 }
 
 .timeline-dot.logo-dot img {
@@ -312,6 +314,8 @@ body {
 .timeline-item {
     position: relative;
     margin-bottom: 1.5rem;
+    --logo-dot-size: 36px;
+    --logo-dot-top: 0.08rem;
 }
 
 .timeline-dot.primary { background: var(--primary); }
@@ -332,9 +336,11 @@ body {
     background: var(--surface);
     border-radius: 0.75rem;
     padding: 1rem;
-    border: 1px solid var(--border);
+    border: 0px;
     box-shadow: none;
     color: var(--text);
+    position: relative;
+    z-index: 1;
 }
 
 .timeline-card.feed-clickable {

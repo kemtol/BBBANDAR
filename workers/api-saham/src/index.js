@@ -414,6 +414,37 @@ function buildFeedEventFromAnalysis(symbol, analysisJson, provider, modelUsed, f
   };
 }
 
+function slugifyFeedText(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .replace(/-{2,}/g, "-");
+}
+
+function buildFeedDetailSlug(item) {
+  const created = new Date(item?.created_at || Date.now());
+  const y = created.getFullYear();
+  const m = String(created.getMonth() + 1).padStart(2, "0");
+  const d = String(created.getDate()).padStart(2, "0");
+  const symbol = String(item?.symbol || "").toUpperCase() || "EMITEN";
+  const title = String(item?.title || "update");
+  const titleWithoutSymbol = title
+    .replace(new RegExp(`^${symbol}\\s*`, "i"), "")
+    .replace(/[•|:]/g, " ")
+    .trim();
+  const reco = slugifyFeedText(titleWithoutSymbol || "update") || "update";
+  return `${y}-${m}-${d}-${symbol}-${reco}`;
+}
+
+function parseFeedMeta(metaJson) {
+  try {
+    return metaJson ? JSON.parse(metaJson) : null;
+  } catch (_) {
+    return null;
+  }
+}
+
 function buildEmitenQuery(filters = {}) {
   const clauses = [];
   const params = [];
@@ -3927,7 +3958,135 @@ export default {
         return json(result);
       }
 
-      // 7.1 GET /dashboard/feed
+      // 7.1 GET /dashboard/feed/detail?slug=YYYY-MM-DD-SYMBOL-title
+      if (url.pathname === "/dashboard/feed/detail" && req.method === "GET") {
+        await ensureDashboardTables(env);
+        const slug = String(url.searchParams.get("slug") || url.searchParams.get("feed") || "").trim();
+        if (!slug) {
+          return json({ ok: false, error: "Missing slug" }, 400);
+        }
+
+        let resolvedItem = null;
+        let resolvedPayload = null;
+
+        const { results } = await env.SSSAHAM_DB.prepare(
+          `SELECT id, event_type, symbol, title, body, meta_json, created_at
+           FROM feed_events
+           ORDER BY created_at DESC, id DESC
+           LIMIT 500`
+        ).all();
+
+        for (const row of (results || [])) {
+          const candidate = {
+            id: row.id,
+            event_type: row.event_type,
+            symbol: row.symbol,
+            title: row.title,
+            body: row.body,
+            meta: parseFeedMeta(row.meta_json),
+            created_at: row.created_at
+          };
+          candidate.slug = buildFeedDetailSlug(candidate);
+          if (candidate.slug !== slug) continue;
+
+          resolvedItem = candidate;
+          const cacheKey = candidate?.meta?.cache_key;
+          if (cacheKey) {
+            const obj = await env.SSSAHAM_EMITEN.get(cacheKey);
+            if (obj) {
+              try {
+                resolvedPayload = await obj.json();
+              } catch (_) {
+                resolvedPayload = null;
+              }
+            }
+          }
+          break;
+        }
+
+        if (!resolvedItem) {
+          const slugMatch = slug.match(/^\d{4}-\d{2}-\d{2}-([A-Z0-9]+)-/i);
+          const symbolGuess = String(slugMatch?.[1] || "").toUpperCase();
+          const prefix = symbolGuess ? `ai-cache/${symbolGuess}/` : "ai-cache/";
+          const listed = await env.SSSAHAM_EMITEN.list({ prefix, limit: 120 });
+          const objects = Array.isArray(listed?.objects) ? listed.objects : [];
+          objects.sort((a, b) => {
+            const ta = Date.parse(String(a?.uploaded || 0)) || 0;
+            const tb = Date.parse(String(b?.uploaded || 0)) || 0;
+            return tb - ta;
+          });
+
+          for (const obj of objects) {
+            if (!obj?.key) continue;
+            const cacheObj = await env.SSSAHAM_EMITEN.get(obj.key);
+            if (!cacheObj) continue;
+            let payload = null;
+            try {
+              payload = await cacheObj.json();
+            } catch (_) {
+              continue;
+            }
+
+            const symbolFromKey = String(obj.key).split("/")[1] || "";
+            const symbol = String(payload?.symbol || symbolFromKey || "").toUpperCase();
+            if (!symbol) continue;
+
+            const analysis = payload?.analysis || {};
+            const fromDate = payload?.date_range?.from || "unknown";
+            const toDate = payload?.date_range?.to || "unknown";
+            const event = buildFeedEventFromAnalysis(
+              symbol,
+              analysis,
+              payload?.provider || "cache",
+              payload?.model || "unknown",
+              fromDate,
+              toDate,
+              obj.key
+            );
+
+            const candidate = {
+              id: `cache-${obj.key}`,
+              event_type: event.event_type,
+              symbol: event.symbol,
+              title: event.title,
+              body: event.body,
+              meta: parseFeedMeta(event.meta_json),
+              created_at: payload?.cached_at || payload?.analyzed_at || new Date(obj.uploaded || Date.now()).toISOString()
+            };
+            candidate.slug = buildFeedDetailSlug(candidate);
+            if (candidate.slug !== slug) continue;
+
+            resolvedItem = candidate;
+            resolvedPayload = payload;
+            break;
+          }
+        }
+
+        if (!resolvedItem) {
+          return json({ ok: false, error: "Feed detail not found", slug }, 404);
+        }
+
+        return json({
+          ok: true,
+          item: resolvedItem,
+          detail: resolvedPayload
+            ? {
+                provider: resolvedPayload?.provider || resolvedItem?.meta?.provider || null,
+                model: resolvedPayload?.model || resolvedItem?.meta?.model || null,
+                analyzed_at: resolvedPayload?.analyzed_at || resolvedItem.created_at,
+                date_range: resolvedPayload?.date_range || {
+                  from: resolvedItem?.meta?.from || null,
+                  to: resolvedItem?.meta?.to || null
+                },
+                analysis: resolvedPayload?.analysis || null,
+                analysis_raw: resolvedPayload?.analysis_raw || null,
+                screenshots: Array.isArray(resolvedPayload?.screenshots) ? resolvedPayload.screenshots : []
+              }
+            : null
+        });
+      }
+
+      // 7.2 GET /dashboard/feed
       if (url.pathname === "/dashboard/feed" && req.method === "GET") {
         await ensureDashboardTables(env);
         const limit = Math.min(Math.max(Number(url.searchParams.get("limit") || 30), 1), 200);
@@ -3939,17 +4098,17 @@ export default {
         ).bind(limit).all();
 
         const dbItems = (results || []).map((r) => {
-          let meta = null;
-          try { meta = r.meta_json ? JSON.parse(r.meta_json) : null; } catch (_) { meta = null; }
-          return {
+          const item = {
             id: r.id,
             event_type: r.event_type,
             symbol: r.symbol,
             title: r.title,
             body: r.body,
-            meta,
+            meta: parseFeedMeta(r.meta_json),
             created_at: r.created_at
           };
+          item.slug = buildFeedDetailSlug(item);
+          return item;
         });
 
         const existingCacheKeys = new Set(
@@ -4002,9 +4161,11 @@ export default {
               symbol: event.symbol,
               title: event.title,
               body: event.body,
-              meta: JSON.parse(event.meta_json),
+              meta: parseFeedMeta(event.meta_json),
               created_at: payload?.cached_at || payload?.analyzed_at || new Date(obj.uploaded || Date.now()).toISOString()
             });
+
+            cacheItems[cacheItems.length - 1].slug = buildFeedDetailSlug(cacheItems[cacheItems.length - 1]);
 
             if (cacheItems.length >= limit) break;
           }
@@ -4019,7 +4180,7 @@ export default {
         return json({ ok: true, items, total: items.length, from_ai_cache: cacheItems.length });
       }
 
-      // 7.2 POST /dashboard/pubex/refresh?periode=YYYY-MM
+      // 7.3 POST /dashboard/pubex/refresh?periode=YYYY-MM
       if (url.pathname === "/dashboard/pubex/refresh" && req.method === "POST") {
         await ensureDashboardTables(env);
         if (!env.OPENAI_API_KEY && !env.GROK_API_KEY && !env.ANTHROPIC_API_KEY) {
