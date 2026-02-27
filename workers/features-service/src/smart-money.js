@@ -204,14 +204,26 @@ export class SmartMoney {
         const ngrZ = primaryZ.ngr;
 
         // Determine if effort is declining (Trend) - using effective effortZ (D-1)
-        // Actually, if effortZ is D-1, then "Declining" means "D-1 Effort < D-2 Effort"?
-        // Or "D-1 Effort < Average".
-        // Let's stick to using effortZ as the proxy for "Current Relevant Effort".
+        // effortDeclining: D-1 effort was below its own window average → low buying pressure entering today
+        // elasMean20: mean elasticity over the 20-day window (price sensitivity proxy)
+        const elas20Slice = fullSeries.slice(Math.max(0, n - 20), n);
+        const elasMean20 = elas20Slice.length > 0
+            ? elas20Slice.reduce((s, d) => s + (d.metrics.elas || 0), 0) / elas20Slice.length
+            : 0;
 
+        // effortDeclining = D-1 effortZ negative (effort below its window mean) AND D-2 was higher
         let effortDeclining = false;
-        // Logic simplification: Effort Declining if current relevant Effort Z is negative?
-        // Or strictly declining trend.
-        // For D-1 logic, we just check if the Effective Effort is high or low.
+        if (effortZ < -0.3 && lastEntry) {
+            const prevPrevEntry = existingHistory.length >= 2 ? existingHistory[existingHistory.length - 2] : null;
+            if (prevPrevEntry) {
+                const prevPrevZ20 = prevPrevEntry.real_z_scores ? prevPrevEntry.real_z_scores["20"] : null;
+                if (prevPrevZ20 && typeof prevPrevZ20.effort === 'number') {
+                    effortDeclining = prevPrevZ20.effort > 0.3; // D-2 had high effort, D-1 dropped
+                }
+            } else {
+                effortDeclining = true; // Only have D-1, assume declining
+            }
+        }
 
         let state = 'NEUTRAL';
         const isEffortHigh = effortZ > 0.5;

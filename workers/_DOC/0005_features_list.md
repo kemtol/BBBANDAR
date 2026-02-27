@@ -1,8 +1,8 @@
 # Features Registry — Complete Reference
 
-> **Document Version**: 1.0  
+> **Document Version**: 1.1  
 > **Created**: 2026-02-12  
-> **Last Updated**: 2026-02-12  
+> **Last Updated**: 2026-02-26  
 > **Author**: Copilot + mkemalw
 
 ---
@@ -53,6 +53,20 @@ Setiap feature didokumentasikan dengan format berikut:
 - [CF-02: Divergence Factor](#cf-02-divergence-factor)
 - [CF-03: Hybrid Divergence Score](#cf-03-hybrid-divergence-score)
 - [CF-04: Signal Classification](#cf-04-signal-classification)
+
+### Appendix
+- [A. Storage Map](#a-storage-map)
+- [B. Schedule Summary](#b-schedule-summary)
+- [C. Feature Dependency Graph](#c-feature-dependency-graph)
+- [D. Data Freshness](#d-data-freshness)
+- [E. Cron Pipeline Timeline](#e-cron-pipeline-timeline)
+  - [E1. Registry Lengkap Semua Cron](#e1-registry-lengkap-semua-cron)
+  - [E2. Visual Timeline Hari Perdagangan](#e2-visual-timeline-hari-perdagangan-wib)
+  - [E3. Bootstrap Pagi — Urutan "Data Hidup"](#e3-bootstrap-pagi--urutan-data-hidup)
+  - [E4. EOD Pipeline — Urutan Setelah Market Close](#e4-eod-pipeline--urutan-setelah-market-close)
+  - [E5. Dependency Graph Cron (Downstream Impact)](#e5-dependency-graph-cron-downstream-impact)
+  - [E6. Manual Trigger & Recovery Endpoints](#e6-manual-trigger--recovery-endpoints)
+  - [E7. Kolom Dashboard → Sumber Cron](#e7-kolom-dashboard--sumber-cron)
 
 ---
 
@@ -1489,3 +1503,251 @@ Priority cascade (first match wins):
 | BF-01..06, BF-10 | **~EOD** | Cron 18:30 WIB (after market close) |
 | BF-07 | **On-demand** | Computed per HTTP request |
 | BF-08..10 | **~EOD** | Cron 18:45 WIB |
+
+---
+
+## E. Cron Pipeline Timeline
+
+### E1. Registry Lengkap Semua Cron
+
+| Worker | Cron Expression | Waktu WIB | Hari | Fungsi | Features |
+|--------|----------------|-----------|------|--------|----------|
+| `livetrade-durable-object` | DO Alarm `~2000ms` | Sepanjang hari | Setiap hari | Flush raw footprint candles ke R2 | OF-01, OF-04 |
+| `features-service` | `*/5 * * * *` | Tiap 5 menit | Setiap hari | `aggregateFootprint` → merge D1+R2, hitung hybrid | OF-03, CF-01..04 |
+| `orderbook-taping-agregator` | `*/5 * * * *` | Tiap 5 menit | Setiap hari | Aggregasi orderbook snapshot ⚠️ scheduled handler belum lengkap | OF-07 (partial) |
+| `sector-scrapper` | `*/30 * * * 1-5` | Tiap 30 menit | Sen–Jum | IPOT WebSocket → capture FREQ + GROWTH per sektor, top-100 per sektor | FREQ (`order_freq_tx`), GROWTH (`order_growth_pct`) |
+| `livetrade-taping-agregator` | `0 * * * *` | Tiap jam (WIB) | Setiap hari | `runDailyCron` → agregasi footprint hourly, queue chain backfill | OF-02, OF-05..11 |
+| `broksum-scrapper` | `0 */3 * * *` | 07:00, 10:00, 13:00, 16:00, 19:00, 22:00 WIB | Setiap hari | Periodic scrape broker summary | Raw broksum data |
+| `idx-handler` | `5 11 * * *` | 18:05 WIB | Setiap hari | IDX index data handler | IDX data |
+| `broksum-scrapper` | `0 11 * * *` | 18:00 WIB | Setiap hari | **Daily rewrite** — overwrite data hari ini ke R2 | BF-01..10 raw input |
+| `features-service` | `30 11 * * 1-5` | 18:30 WIB | Sen–Jum | **Dispatch jobs** — kalkulasi Z-Score per ticker (queue) | BF-01..06, BF-10 |
+| `features-service` | `45 11 * * 1-5` | 18:45 WIB | Sen–Jum | **Screener aggregation** — `aggregateDaily` → publish `screener-accum` | BF-08..10 |
+| `broksum-scrapper` | `0 12 * * 1-5` | 19:00 WIB | Sen–Jum | **Health check** — validasi data H-1 | Audit |
+| `rpa-auth` | `0 12 * * *` | 19:00 WIB | Setiap hari | Refresh auth token IPOT | Session token |
+| `broksum-scrapper` | `15 12 * * 1-5` | 19:15 WIB | Sen–Jum | **Accum preprocessor** — bangun `screener-accum` artifact | BF-08 input |
+| `cron-housekeeping` | `0 18 * * *` | 01:00 WIB (+1) | Setiap hari | Housekeeping R2 / cleanup | Maintenance |
+
+---
+
+### E2. Visual Timeline Hari Perdagangan (WIB)
+
+```
+TRADING DAY — Senin s/d Jumat WIB
+
+  08:00   09:00   10:00   11:00   12:00   13:00   14:00   15:00   16:00   17:00   18:00   19:00   20:00
+    |       |       |       |       |       |       |       |       |       |       |       |       |
+    |  PRE  |←──────────── JAM BURSA IDX (09:00–15:50 WIB) ─────────────────────→|  POST |       |
+    |       |       |       |       |       |       |       |       |       |       |       |       |
+
+[livetrade-durable-object] DO Alarm ~2s
+    ·       ●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●●  ·       ·
+            RAW FOOTPRINT CANDLES (OF-01, OF-04) — realtime flush ke R2
+
+[features-service] */5 min
+    ●·····●·····●·····●·····●·····●·····●·····●·····●·····●·····●·····●·····●·····●
+            aggregateFootprint → OF-03, CF-01..04
+            ⚠️  Data tipis sampai ~10:00 WIB (D1 belum terisi cukup)
+            ✅  Mulai solid setelah hourly aggregate ke-2 (~11:00 WIB)
+
+[orderbook-taping-agregator] */5 min
+    ●·····●·····●·····●·····●·····●·····●·····●·····●·····●·····●·····●·····●·····●
+            Orderbook snapshot aggregation (OF-07 partial)
+
+[sector-scrapper] */30 min (Mon–Fri)
+    ·       ●     ·     ●     ·     ●     ·     ●     ·     ●     ·     ●     ·
+            IPOT WebSocket → FREQ + GROWTH per sektor top-100
+            ⚠️  Run 09:30 WIB pertama: pchg=0 banyak saham → coverage rendah
+            ✅  Coverage naik setelah jam 10:00+ saat harga mulai bergerak
+
+[livetrade-taping-agregator] hourly (0 * * * *)
+    ·       ●       ●       ●       ●       ●       ●       ●       ●       ●
+    ·    09:00   10:00   11:00   12:00   13:00   14:00   15:00   16:00   17:00
+            runDailyCron → agregasi footprint ke D1 (OF-02, OF-05..11)
+            ✅  Setelah 10:00 WIB hourly pertama: ABSORB, CVD, MOMP mulai terisi
+
+[broksum-scrapper] */3 jam
+    ·       ●       ·       ●       ·       ●       ·       ●       ·
+    ·    07:00   10:00   13:00   16:00   19:00 WIB
+            Periodic scrape broker summary (raw input BF series)
+
+──────────── MARKET CLOSE (15:50 WIB) ────────────
+
+[broksum-scrapper]  18:00 WIB  →  Daily Rewrite (BF raw data final)
+[idx-handler]       18:05 WIB  →  IDX index data
+[features-service]  18:30 WIB  →  Dispatch Z-Score jobs (BF-01..06, BF-10)
+[features-service]  18:45 WIB  →  Screener aggregation → screener-accum.json
+[broksum-scrapper]  19:00 WIB  →  Health Check
+[rpa-auth]          19:00 WIB  →  Refresh IPOT session token
+[broksum-scrapper]  19:15 WIB  →  Accum Preprocessor → screener-accum artifact
+[cron-housekeeping] 01:00 WIB  →  Cleanup / housekeeping R2
+
+──────────── DATA READY FOR NEXT DAY ────────────
+```
+
+---
+
+### E3. Bootstrap Pagi — Urutan "Data Hidup"
+
+Penjelasan kenapa data di dashboard terasa "kosong" di pagi hari dan kapan mulai terisi:
+
+```
+09:00 WIB — Market buka
+│
+├── livetrade-durable-object mulai DO alarm ~2s
+│   → Raw candles masuk R2 (OF-01)
+│   → Tapi D1 masih kosong untuk hari ini
+│
+├── sector-scrapper run pertama 09:30 WIB
+│   → TopStock sorted pchg DESC — banyak pchg=0 di awal
+│   → Hanya saham yang sudah bergerak masuk top-100
+│   → FREQ rendah, GROWTH=0 untuk mayoritas
+│
+├── features-service */5 menit berjalan TAPI:
+│   → D1 temp_footprint_consolidate belum punya data cukup
+│   → aggregateFootprint returns sedikit/kosong
+│   → ABSORB, CVD, MOMP di dashboard = null / stale dari kemarin
+│
+10:00 WIB — Hourly aggregate pertama (livetrade-taping-agregator)
+│
+├── Backfill 09:00–10:00 selesai ke D1
+│   → temp_footprint_consolidate terisi ~1 jam data
+│
+├── features-service */5 menit berikutnya:
+│   → Mulai ada data → OF-03, CF-01..04 mulai produce values
+│   → ABSORB, CVD, MOMP mulai terisi untuk saham aktif
+│
+├── sector-scrapper 10:00 WIB run:
+│   → Lebih banyak saham bergerak → coverage naik
+│   → GROWTH mulai non-zero, FREQ lebih representatif
+│
+11:00 WIB — Hourly aggregate kedua + broksum periodic run (10:00 WIB)
+│
+├── D1 terisi 2 jam data → features lebih akurat
+├── screener-accum dari kemarin masih dipakai sebagai Z-Score baseline
+│   → Kolom 2-EFFORT, 2-NGR, Z-VWAP, SD = data KEMARIN (bukan hari ini)
+│   → Ini NORMAL — BF series hanya update setelah market close
+│
+✅ Jam 11:00+ — Dashboard mulai "hidup" penuh:
+   GROWTH%, FREQ (sector-scrapper, realtime tiap 30 mnt)
+   ABSORB, CVD, MOMP (features-service, tiap 5 mnt, data D1 cukup)
+   2-EFFORT, 2-NGR, Z-VWAP (kemarin — tidak berubah sampai 18:45 WIB)
+```
+
+---
+
+### E4. EOD Pipeline — Urutan Setelah Market Close
+
+```
+15:50 WIB — Market close (sesi reguler)
+│
+16:00 WIB — livetrade-taping-agregator hourly terakhir
+│   → Finalize footprint D1 untuk hari ini
+│
+18:00 WIB — broksum-scrapper Daily Rewrite
+│   → Tulis data broker summary hari ini ke R2
+│   → Input untuk seluruh BF series besok pagi
+│
+18:05 WIB — idx-handler
+│   → Update IDX index data
+│
+18:30 WIB — features-service Dispatch Jobs
+│   → Queue per-ticker job: hitung Effort, Result, NGR, Elasticity, VWAP Z
+│   → State classification (ACCUMULATION / DISTRIBUTION / etc.)
+│   → Tulis ke R2 features/z_score/{TICKER}.json + D1 smart_money_features
+│   ⚠️  Durasi: tergantung queue throughput, bisa 10–20 menit untuk 858 tickers
+│
+18:45 WIB — features-service Screener Aggregation
+│   → aggregateDaily → baca semua z_scores dari D1
+│   → Bangun screener-accum.json → publish ke KV
+│   → Ini yang dibaca dashboard esok pagi sebagai baseline
+│
+19:00 WIB — broksum-scrapper Health Check + rpa-auth token refresh
+│   → Validasi data H-1, flag anomali
+│   → Refresh IPOT AppSession token untuk sector-scrapper besok
+│
+19:15 WIB — broksum-scrapper Accum Preprocessor
+│   → Bangun rolling window accum (2D/5D/10D/20D)
+│   → Update screener-accum artifact (BF-08)
+│
+✅ ~19:30 WIB — Data lengkap untuk trading hari berikutnya
+   screener-accum.json = Z-Scores hari ini, siap dipakai esok pagi
+```
+
+---
+
+### E5. Dependency Graph Cron (Downstream Impact)
+
+```
+Jika cron X gagal, kolom Y di dashboard terpengaruh:
+
+livetrade-durable-object (DO alarm)
+  └─→ R2 footprint/{TICKER}/1m/... kosong
+      └─→ livetrade-taping-agregator hourly TIDAK ADA input
+          └─→ D1 temp_footprint_consolidate kosong
+              └─→ features-service */5 TIDAK ADA data
+                  └─→ [TERDAMPAK] ABSORB, CVD, MOMP, Delta%, Hybrid Score = null
+
+livetrade-taping-agregator (hourly)
+  └─→ D1 tidak terupdate
+      └─→ features-service */5 pakai data stale
+          └─→ [TERDAMPAK] ABSORB, CVD, MOMP terlambat ~1 jam
+
+sector-scrapper (*/30 Mon-Fri)
+  └─→ sectorDigestCache tidak update
+      └─→ prefillSectorDigest fallback ke kemarin
+          └─→ [TERDAMPAK] FREQ, GROWTH% = nilai kemarin (bukan intraday)
+
+broksum-scrapper (18:00 WIB Daily Rewrite)
+  └─→ Raw broker data hari ini tidak tersedia
+      └─→ features-service 18:30 tidak ada input
+          └─→ Z-Scores tidak update
+              └─→ [TERDAMPAK] 2-EFFORT, 2-NGR, Z-VWAP, SD, 2ND, State = kemarin lusa
+
+features-service (18:30 WIB Dispatch)
+  └─→ Z-Scores tidak dihitung
+      └─→ screener-accum.json tidak update
+          └─→ [TERDAMPAK] Semua kolom BF (Effort, NGR, VWAP, State, Score) = stale
+
+features-service (18:45 WIB Screener Agg)
+  └─→ screener-accum.json tidak update
+      └─→ [TERDAMPAK] Seluruh index view dashboard = data lama
+```
+
+---
+
+### E6. Manual Trigger & Recovery Endpoints
+
+Jika cron gagal atau data stale, endpoint ini dapat dipanggil manual:
+
+| Kondisi | Endpoint | Method | Notes |
+|---------|----------|--------|-------|
+| FREQ/GROWTH stale | `https://sector-scrapper.mkemalw.workers.dev/sector-tape/run?sectors=ALL&top_n=100&include_levels=true` | GET | Trigger semua sektor sekaligus |
+| FREQ/GROWTH satu sektor | `…/sector-tape/run?sectors=IDXFINANCE&top_n=100` | GET | Ganti sektor sesuai kebutuhan |
+| Cek digest per simbol | `…/sector/digest?sector=IDXFINANCE&symbol=BMRI` | GET | Default date = hari ini WIB |
+| Cek batch satu sektor | `…/sector/digest/batch?sector=IDXFINANCE&date=2026-02-26` | GET | |
+| ABSORB/CVD/MOMP stale | `https://features-service.mkemalw.workers.dev/aggregate?date=2026-02-26` | GET | Re-run aggregateFootprint |
+| Z-Scores stale (EOD) | `https://features-service.mkemalw.workers.dev/dispatch?date=2026-02-26` | GET | Re-dispatch Z-Score jobs |
+| Screener-accum stale | `https://features-service.mkemalw.workers.dev/aggregate-daily?date=2026-02-26` | GET | Re-build screener-accum.json |
+| Hourly backfill gagal | `https://livetrade-taping-agregator.mkemalw.workers.dev/run?force=true` | POST | Re-run runDailyCron dengan force |
+| Auth token expired | `https://rpa-auth.mkemalw.workers.dev/refresh` | POST | Refresh IPOT session |
+
+---
+
+### E7. Kolom Dashboard → Sumber Cron
+
+Mapping langsung dari nama kolom yang terlihat di dashboard ke cron yang bertanggung jawab:
+
+| Kolom Dashboard | Field Internal | Sumber Data | Cron Penanggung Jawab | Frekuensi Update |
+|-----------------|---------------|-------------|----------------------|-----------------|
+| GROWTH% | `order_growth_pct` | sector-scrapper R2 | `sector-scrapper */30 Mon-Fri` | Tiap 30 menit |
+| FREQ | `order_freq_tx` | sector-scrapper R2 | `sector-scrapper */30 Mon-Fri` | Tiap 30 menit |
+| ABSORB | `order_absorb` | `intraday/{T}.json` → `absorption` | `features-service */5` ← `livetrade-taping-agregator hourly` | Tiap 5 menit (data baru tiap jam) |
+| CVD | `order_cvd` | `intraday/{T}.json` → `net` | `features-service */5` ← `livetrade-taping-agregator hourly` | Tiap 5 menit (data baru tiap jam) |
+| MOMP% | `order_mom_pct` | `intraday/{T}.json` → `deltaPct` | `features-service */5` | Tiap 5 menit |
+| 2-EFFORT | `i.z["2"].e` | `screener-accum.json` | `features-service 18:30 + 18:45 WIB` | **EOD — tidak berubah seharian** |
+| 2-NGR | `i.z["2"].n` | `screener-accum.json` | `features-service 18:30 + 18:45 WIB` | **EOD — tidak berubah seharian** |
+| Z-VWAP | `i.z["20"].v` | `screener-accum.json` | `features-service 18:30 + 18:45 WIB` | **EOD — tidak berubah seharian** |
+| SD / State | `i.s` | `screener-accum.json` | `features-service 18:30 WIB` | **EOD — tidak berubah seharian** |
+| 2ND | `i.z["2"]` → `accum.fn` | `screener-accum.json` | `broksum-scrapper 19:15 WIB` | **EOD — tidak berubah seharian** |
+| V-WP 2D/1BD/20 | `i.accum["2"].sm` | `screener-accum.json` | `features-service 18:45 WIB` | **EOD — tidak berubah seharian** |
+| Score / Flow | Computed client-side | `screener-accum.json` | `features-service 18:45 WIB` | **EOD** |

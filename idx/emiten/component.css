@@ -50,7 +50,8 @@ body {
 
 /* Unified Tab Styling */
 .nav-tabs {
-    border-bottom: 2px solid var(--border);
+    /*border-bottom: 2px solid var(--border);*/
+    border-bottom: 0px;
 }
 
 .nav-tabs .nav-link {

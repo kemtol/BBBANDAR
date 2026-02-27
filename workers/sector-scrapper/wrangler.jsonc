@@ -1,0 +1,70 @@
+{
+    "$schema": "node_modules/wrangler/config-schema.json",
+    "name": "sector-scrapper",
+    "main": "src/index.js",
+    "compatibility_date": "2025-01-01",
+    "observability": {
+        "enabled": true
+    },
+    "kv_namespaces": [
+        {
+            // Shared KV with broksum-scrapper — stores IPOT_APPSESSION cache
+            "binding": "SSSAHAM_WATCHLIST",
+            "id": "701c5c47230142e49d7c899f6bdcc029",
+            "preview_id": "9df14ffa735441bdbf5931fa19c4ce09"
+        }
+    ],
+    "vars": {
+        "IPOT_APPSESSION_URL": "https://indopremier.com/ipc/appsession.js",
+        "IPOT_WS_HTTP_BASE": "https://ipotapp.ipot.id/socketcluster/",
+        "IPOT_ORIGIN": "https://indopremier.com",
+        // Default sector list override (comma-separated). Leave empty for all 11 sectors.
+        "SECTOR_LIST": "",
+        // Default top-N symbols per sector (1–200)
+        "TOP_N_PER_SECTOR": "150",
+        // Whether to capture TradedSummary price levels
+        "SECTOR_TAPE_INCLUDE_LEVELS": "true",
+        "SECTOR_TAPE_LEVEL_LIMIT": "20",
+        // Timing tunables (ms)
+        "SECTOR_TAPE_IDLE_MS": "1200",
+        "SECTOR_TAPE_MAX_MS": "7000",
+        "SECTOR_TAPE_LEVEL_IDLE_MS": "700",
+        "SECTOR_TAPE_LEVEL_MAX_MS": "2200"
+    },
+    "r2_buckets": [
+        {
+            "binding": "FOOTPRINT_BUCKET",
+            "bucket_name": "tape-data-saham"
+        }
+    ],
+    "queues": {
+        "producers": [
+            {
+                // Producer binding used to enqueue per-sector jobs
+                "queue": "sector-tape-queue",
+                "binding": "SECTOR_TAPE_QUEUE"
+            }
+        ],
+        "consumers": [
+            {
+                "queue": "sector-tape-queue",
+                // Each message = one sector. Run up to 3 at a time.
+                "max_batch_size": 3,
+                "max_batch_timeout": 30,
+                "max_retries": 2,
+                "dead_letter_queue": "sector-tape-dlq"
+            }
+        ]
+    },
+    "triggers": {
+        // Single broad cron: every minute UTC 01-10 (WIB 08:00-17:59), Mon-Fri.
+        // Exact WIB schedule enforced by runtime guard in scheduled() handler:
+        //   08:30-11:00 WIB → every 1 min
+        //   11:00-12:00 WIB → every 5 min
+        //   12:00-13:00 WIB → OFF (lunch)
+        //   13:00-17:00 WIB → every 5 min
+        "crons": [
+            "* 1,2,3,4,5,6,7,8,9,10 * * 1-5"
+        ]
+    }
+}

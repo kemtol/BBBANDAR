@@ -516,7 +516,6 @@ export default {
                 return await this.scrapeIpotBroksum(env, { symbol, from, to, flag5, save, debug });
             }
 
-
             // ROUTE TEST: E2E single symbol + date range (enqueue only)
             if (path === "/test-range") {
                 const symbol = (url.searchParams.get("symbol") || "BBCA").toUpperCase();
@@ -1175,7 +1174,6 @@ export default {
         }
         return out;
     },
-
     // Helper: enqueue 1 symbol for range dates (end-to-end via queue consumer)
     async enqueueSymbolRange(env, { symbol, from, to, overwrite }) {
         const dates = this.dateRangeTradingDays(from, to);

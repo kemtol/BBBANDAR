@@ -58,7 +58,8 @@ body {
 
 /* Unified Tab Styling */
 .nav-tabs {
-    border-bottom: 1px solid var(--border);
+    /*border-bottom: 1px solid var(--border);*/
+    border-bottom: 0px;
 }
 
 .nav-tabs .nav-link {
@@ -272,7 +273,7 @@ body {
     left: calc(-1.3125rem - ((var(--logo-dot-size, 36px) - 0.625rem) / 2));
     top: var(--logo-dot-top, 0.08rem);
     background: var(--surface-alt);
-    border: 1px solid var(--border);
+    border: 0px;
     overflow: hidden;
     z-index: 3;
 }
@@ -385,7 +386,6 @@ html[data-theme="dark"] .timeline-card.variant-purple {
 
 .timeline-title {
     font-weight: 600;
-    font-size: 0.875rem;
     margin-bottom: 0.5rem;
     color: var(--text);
 }
@@ -398,14 +398,14 @@ html[data-theme="dark"] .timeline-card.variant-purple {
 .timeline-title.variant-purple { color: #8b5cf6; }
 
 .timeline-text {
-    font-size: 0.875rem;
     color: var(--text-secondary);
     margin-bottom: 0.75rem;
     line-height: 1.5;
+    font-size: 0.9rem;
 }
 
 .timeline-item.upcoming {
-    opacity: 0.5;
+    opacity: 1;
 }
 
 .timeline-tags {
