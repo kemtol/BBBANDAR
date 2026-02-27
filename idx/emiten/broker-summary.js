@@ -1,4 +1,12 @@
 const WORKER_BASE_URL = "https://api-saham.mkemalw.workers.dev";
+const SECTOR_SCRAPPER_BASE_URL = "https://sector-scrapper.mkemalw.workers.dev";
+
+// Cache: symbol (uppercase) → digest { freq_tx, growth_pct, price_open, price_last, ... }
+// Populated by prefillSectorDigest() on page load and refreshed every SECTOR_DIGEST_TTL_MS.
+const sectorDigestCache = new Map();
+let sectorDigestLoadedAt = 0;
+const SECTOR_DIGEST_TTL_MS = 10 * 60 * 1000; // refresh every 10 min
+
 const urlParams = new URLSearchParams(window.location.search);
 const kodeParam = urlParams.get('kode');
 const startParam = urlParams.get('start');
@@ -131,48 +139,224 @@ const PROB_MISSING_SORT_VALUE = -1;
 let screenerPage = 1;
 let accumFilter = 'all'; // legacy compat
 let lastScreenerGeneratedAtMs = 0;
+let searchQuery = ''; // Emiten symbol search text
 // Active filter state
 const activeFilters = {
     foreign: 'any',   // any | allPos | dominant
     smart:   'any',   // any | allPos | positive
+    local:   'any',   // any | positive
     streak:  'any',   // any | s3 | trend5up | trend10up | trend20up
     zeffort: 'any',   // any | 2gt5 | 2gt10 | 2gt20 | 5gt10 | 5gt20 | 10gt20 | ladderUp
     zngr:    'any',   // any | 2gt5 | 2gt10 | 2gt20 | 5gt10 | 5gt20 | 10gt20 | ladderUp
     zvwap:   'any',   // any | 2gt5 | 2gt10 | 2gt20 | 5gt10 | 5gt20 | 10gt20 | ladderUp
     effort:  'any',   // any | high | positive
     state:   'any',   // any | accum | markup
-    horizon:  'any'    // any | 2 | 5 | 10 | 20
+    horizon:  'any',   // any | 2 | 5 | 10 | 20
+    quadrant: 'any'   // any | Q1 | Q2 | Q3 | Q4
+};
+// Numeric threshold filters (≥ value). NaN = inactive.
+const numericFilters = {
+    growth_min:  NaN,
+    freq_min:    NaN,
+    tom2_min:    NaN,
+    swg5_min:    NaN,
+    delta_min:   NaN,
+    mom_min:     NaN,
+    absorb_min:  NaN,
+    cvd_min:     NaN,
+    rvol_min:    NaN,
+    value_min:   NaN
 };
 let activePreset = 'all';
 const visibleHorizonCols = { "2": true, "5": true, "10": true, "20": true };
+const columnGroupVisibility = { fflw: true, lflw: true, smny: true, cvdm: true, rvol: true, flow: true, eff: true, vwp: true };
+
+// ===== URL STATE MANAGEMENT =====
+// Persist filters/sort/page in URL for back/forward navigation
+let _urlPushTimer = null;
+let _suppressUrlPush = false; // Guard: prevent pushing URL during popstate restore
+const URL_STATE_DEFAULTS = {
+    activeFilters: { foreign:'any', smart:'any', local:'any', streak:'any', zeffort:'any', zngr:'any', zvwap:'any', effort:'any', state:'any', horizon:'any', quadrant:'any' },
+    sortKey: 'sm2', sortDesc: true, page: 1
+};
+
+function pushUrlState(replace = false) {
+    if (_suppressUrlPush) return;
+    // Debounce to avoid flooding history on rapid changes
+    clearTimeout(_urlPushTimer);
+    _urlPushTimer = setTimeout(() => {
+        const p = new URLSearchParams();
+        // Preserve existing non-screener params (kode, start, end, etc.)
+        const keep = ['kode', 'start', 'end', 'nett', 'ai'];
+        const cur = new URLSearchParams(window.location.search);
+        keep.forEach(k => { if (cur.has(k)) p.set(k, cur.get(k)); });
+
+        // Only write non-default active filters
+        Object.keys(activeFilters).forEach(k => {
+            if (activeFilters[k] !== 'any') p.set(`f_${k}`, activeFilters[k]);
+        });
+        // Numeric filters
+        Object.keys(numericFilters).forEach(k => {
+            if (Number.isFinite(numericFilters[k])) p.set(`n_${k}`, numericFilters[k]);
+        });
+        // Sort
+        if (sortState.key !== URL_STATE_DEFAULTS.sortKey || sortState.desc !== URL_STATE_DEFAULTS.sortDesc) {
+            p.set('sort', sortState.key);
+            p.set('dir', sortState.desc ? 'd' : 'a');
+        }
+        // Page
+        if (screenerPage > 1) p.set('pg', screenerPage);
+        // Search query
+        if (searchQuery) p.set('q', searchQuery);
+        // View columns (only if changed from default all-visible)
+        const hiddenCols = Object.entries(visibleHorizonCols).filter(([, v]) => !v).map(([h]) => h);
+        if (hiddenCols.length > 0) p.set('hide', hiddenCols.join(','));
+        const hiddenGroups = Object.entries(columnGroupVisibility).filter(([, v]) => !v).map(([g]) => g);
+        if (hiddenGroups.length > 0) p.set('ghide', hiddenGroups.join(','));
+
+        const qs = p.toString();
+        const url = qs ? `${window.location.pathname}?${qs}` : window.location.pathname;
+        if (replace) {
+            history.replaceState({ screenerState: true }, '', url);
+        } else {
+            history.pushState({ screenerState: true }, '', url);
+        }
+        // Persist filters to localStorage as fallback (for returning from detail page)
+        try {
+            localStorage.setItem('screener_filters', JSON.stringify({
+                af: { ...activeFilters }, nf: { ...numericFilters },
+                sk: sortState.key, sd: sortState.desc, q: searchQuery || ''
+            }));
+        } catch (e) { /* quota exceeded */ }
+    }, replace ? 0 : 80);
+}
+
+function restoreFromUrl() {
+    const p = new URLSearchParams(window.location.search);
+    const hasScreenerParams = [...p.keys()].some(k => k.startsWith('f_') || k.startsWith('n_') || k === 'sort' || k === 'dir' || k === 'pg' || k === 'q');
+
+    if (hasScreenerParams) {
+        // Restore from URL
+        Object.keys(activeFilters).forEach(k => {
+            const v = p.get(`f_${k}`);
+            activeFilters[k] = v || 'any';
+        });
+        Object.keys(numericFilters).forEach(k => {
+            const v = p.get(`n_${k}`);
+            numericFilters[k] = (v !== null && v !== '') ? parseFloat(v) : NaN;
+        });
+        sortState.key = p.get('sort') || URL_STATE_DEFAULTS.sortKey;
+        sortState.desc = p.has('dir') ? p.get('dir') === 'd' : URL_STATE_DEFAULTS.sortDesc;
+        const pg = parseInt(p.get('pg'), 10);
+        screenerPage = (Number.isFinite(pg) && pg > 0) ? pg : 1;
+        searchQuery = p.get('q') || '';
+    } else {
+        // Fallback: restore last filters from localStorage
+        try {
+            const saved = JSON.parse(localStorage.getItem('screener_filters'));
+            if (saved) {
+                if (saved.af) Object.keys(activeFilters).forEach(k => { activeFilters[k] = saved.af[k] || 'any'; });
+                if (saved.nf) Object.keys(numericFilters).forEach(k => { numericFilters[k] = Number.isFinite(saved.nf[k]) ? saved.nf[k] : NaN; });
+                sortState.key = saved.sk || URL_STATE_DEFAULTS.sortKey;
+                sortState.desc = saved.sd ?? URL_STATE_DEFAULTS.sortDesc;
+                searchQuery = saved.q || '';
+            }
+        } catch (e) { /* ignore */ }
+    }
+
+    // View columns: URL overrides, else localStorage fallback
+    const hide = p.get('hide');
+    const ghide = p.get('ghide');
+    if (hide || ghide) {
+        ['2', '5', '10', '20'].forEach(h => visibleHorizonCols[h] = true);
+        if (hide) hide.split(',').forEach(h => { if (visibleHorizonCols.hasOwnProperty(h)) visibleHorizonCols[h] = false; });
+        Object.keys(columnGroupVisibility).forEach(g => columnGroupVisibility[g] = true);
+        if (ghide) ghide.split(',').forEach(g => { if (columnGroupVisibility.hasOwnProperty(g)) columnGroupVisibility[g] = false; });
+    } else {
+        try {
+            const sv = JSON.parse(localStorage.getItem('screener_view'));
+            if (sv) {
+                if (sv.h) Object.keys(visibleHorizonCols).forEach(k => { visibleHorizonCols[k] = sv.h[k] !== false; });
+                if (sv.g) Object.keys(columnGroupVisibility).forEach(k => { columnGroupVisibility[k] = sv.g[k] !== false; });
+            }
+        } catch (e) { /* ignore */ }
+    }
+
+    // Sync numeric inputs
+    Object.keys(numericFilters).forEach(k => {
+        const $inp = $(`.num-filter-input[data-nf="${k}"]`);
+        if ($inp.length) $inp.val(Number.isFinite(numericFilters[k]) ? numericFilters[k] : '');
+    });
+}
+
+// Handle browser back/forward
+window.addEventListener('popstate', () => {
+    if (!allCandidates.length) return; // data not loaded yet
+    _suppressUrlPush = true;
+    restoreFromUrl();
+    syncFilterDropdowns();
+    syncNumericDropdowns();
+    detectMatchingPreset();
+    applyColumnVisibility();
+    syncViewCheckboxes();
+    $('#emiten-search').val(searchQuery);
+    applyFilter();
+    _suppressUrlPush = false;
+});
+
+function syncViewCheckboxes() {
+    ['2', '5', '10', '20'].forEach(h => {
+        $(`[data-view-horizon="${h}"]`).prop('checked', visibleHorizonCols[h] !== false);
+    });
+    Object.keys(columnGroupVisibility).forEach(g => {
+        $(`[data-view-group="${g}"]`).prop('checked', columnGroupVisibility[g] !== false);
+    });
+    updateViewButtonLabel();
+}
+
+function updateViewButtonLabel() {
+    const hHidden = Object.values(visibleHorizonCols).filter(v => !v).length;
+    const gHidden = Object.values(columnGroupVisibility).filter(v => !v).length;
+    const totalHidden = hHidden + gHidden;
+    const label = totalHidden === 0 ? 'All' : `${totalHidden} hidden`;
+    $('#dd-view').html(`<i class="fa-solid fa-eye me-1"></i>View: ${label}`);
+}
 
 // Preset recipes
 const PRESETS = {
-    strict: { foreign:'allPos', smart:'allPos', streak:'any', zeffort:'any', zngr:'any', zvwap:'any', effort:'any', state:'any', horizon:'any' },
-    smart:  { foreign:'any',    smart:'allPos', streak:'any', zeffort:'any', zngr:'any', zvwap:'any', effort:'any', state:'any', horizon:'any' },
-    all:    { foreign:'any',    smart:'any',    streak:'any', zeffort:'any', zngr:'any', zvwap:'any', effort:'any', state:'any', horizon:'any' }
+    strict:  { foreign:'allPos', smart:'allPos', local:'any', streak:'any', zeffort:'any', zngr:'any', zvwap:'any', effort:'any', state:'any', horizon:'any', quadrant:'any' },
+    smart:   { foreign:'any',    smart:'allPos', local:'any', streak:'any', zeffort:'any', zngr:'any', zvwap:'any', effort:'any', state:'any', horizon:'any', quadrant:'any' },
+    ara:     { foreign:'any',    smart:'any',    local:'any', streak:'any', zeffort:'any', zngr:'any', zvwap:'any', effort:'positive', state:'any', horizon:'any', quadrant:'any' },
+    all:     { foreign:'any',    smart:'any',    local:'any', streak:'any', zeffort:'any', zngr:'any', zvwap:'any', effort:'any', state:'any', horizon:'any', quadrant:'any' }
+};
+
+const PRESET_NUMERIC = {
+    ara: { growth_min: NaN, freq_min: NaN, tom2_min: NaN, swg5_min: NaN, delta_min: 3, mom_min: 1, absorb_min: NaN, cvd_min: NaN, rvol_min: 1.2, value_min: NaN }
 };
 
 const PRESET_DESC = {
     strict: 'Foreign & Smart Money positif tiap hari',
     smart:  'Smart Money positif tiap hari',
+    ara:    'Effort positif + Δ%≥3 + Mom≥1 + RVOL≥1.2',
     all:    'Tanpa filter'
 };
 
 const FILTER_LABELS = {
     foreign: { any:'Any', allPos:'Positif tiap hari', dominant:'Kumulatif > 0' },
     smart:   { any:'Any', allPos:'Positif tiap hari', positive:'Kumulatif > 0' },
+    local:   { any:'Any', positive:'Kumulatif > 0' },
     streak:  { any:'Any', s3:'Streak ≥ 3 hari', trend5up:'Trend 5D Up', trend10up:'Trend 10D Up', trend20up:'Trend 20D Up' },
     zeffort: { any:'Any', '2gt5':'2D > 5D', '2gt10':'2D > 10D', '2gt20':'2D > 20D', '5gt10':'5D > 10D', '5gt20':'5D > 20D', '10gt20':'10D > 20D', ladderUp:'2D ≥ 5D ≥ 10D ≥ 20D' },
     zngr:    { any:'Any', '2gt5':'2D > 5D', '2gt10':'2D > 10D', '2gt20':'2D > 20D', '5gt10':'5D > 10D', '5gt20':'5D > 20D', '10gt20':'10D > 20D', ladderUp:'2D ≥ 5D ≥ 10D ≥ 20D' },
     zvwap:   { any:'Any', '2gt5':'2D > 5D', '2gt10':'2D > 10D', '2gt20':'2D > 20D', '5gt10':'5D > 10D', '5gt20':'5D > 20D', '10gt20':'10D > 20D', ladderUp:'2D ≥ 5D ≥ 10D ≥ 20D' },
     effort:  { any:'Any', high:'High (z > 1)', positive:'Positif (z > 0)' },
     state:   { any:'Any', accum:'Accumulation', markup:'Accum / Ready Markup' },
-    horizon:  { any:'Any horizon', '2':'2D only', '5':'5D only', '10':'10D only', '20':'20D only' }
+    horizon:  { any:'Any horizon', '2':'2D only', '5':'5D only', '10':'10D only', '20':'20D only' },
+    quadrant: { any:'Any', Q1:'Q1 (Strong)', Q2:'Q2 (Caution)', Q3:'Q3 (Weak)', Q4:'Q4 (Recover)' }
 };
 
 const PILL_COLORS = {
-    foreign:'success', smart:'primary', streak:'warning', zeffort:'dark', zngr:'dark', zvwap:'dark', effort:'info', state:'danger', horizon:'secondary'
+    foreign:'success', smart:'primary', local:'success', streak:'warning', zeffort:'dark', zngr:'dark', zvwap:'dark', effort:'info', state:'danger', horizon:'secondary', quadrant:'info'
 };
 
 async function loadScreenerData() {
@@ -190,7 +374,7 @@ async function loadScreenerData() {
         lastScreenerGeneratedAtMs = Number.isFinite(generatedAtMs) ? generatedAtMs : Date.now();
 
         if (!data || !Array.isArray(data.items) || data.items.length === 0) {
-            $('#tbody-index').html('<tr><td colspan="27" class="text-center text-muted">Accum data not yet generated.</td></tr>');
+            $('#tbody-index').html('<tr><td colspan="41" class="text-center text-muted">Accum data not yet generated.</td></tr>');
             return;
         }
 
@@ -251,7 +435,26 @@ async function loadScreenerData() {
                 sm5:  i.accum?.["5"]?.sm || 0,
                 sm10: i.accum?.["10"]?.sm || 0,
                 sm20: i.accum?.["20"]?.sm || 0,
+                fn2:  i.accum?.["2"]?.fn || 0,
+                fn5:  i.accum?.["5"]?.fn || 0,
+                fn10: i.accum?.["10"]?.fn || 0,
+                fn20: i.accum?.["20"]?.fn || 0,
+                ln2:  i.accum?.["2"]?.ln || 0,
+                ln5:  i.accum?.["5"]?.ln || 0,
+                ln10: i.accum?.["10"]?.ln || 0,
+                ln20: i.accum?.["20"]?.ln || 0,
                 orderflow,
+                order_open_price: (typeof orderflow?.open_price === 'number') ? orderflow.open_price : null,
+                order_recent_price: (typeof orderflow?.recent_price === 'number')
+                    ? orderflow.recent_price
+                    : ((typeof orderflow?.price === 'number') ? orderflow.price : null),
+                order_growth_pct: (typeof orderflow?.growth_pct === 'number')
+                    ? orderflow.growth_pct
+                    : ((typeof orderflow?.open_price === 'number' && typeof orderflow?.recent_price === 'number' && orderflow.open_price > 0)
+                        ? (((orderflow.recent_price - orderflow.open_price) / orderflow.open_price) * 100)
+                        : null),
+                // Keep freq blank until per-symbol hydration to avoid source-mismatch flipping.
+                order_freq_tx: null,
                 order_delta_pct: (typeof orderflow?.delta_pct === 'number') ? orderflow.delta_pct : null,
                 order_mom_pct: (typeof orderflow?.mom_pct === 'number') ? orderflow.mom_pct : null,
                 order_absorb: (typeof orderflow?.absorb === 'number') ? orderflow.absorb : null,
@@ -282,13 +485,26 @@ async function loadScreenerData() {
         // Fast path: prefill intraday columns from bulk footprint summary.
         // This helps Δ%, Mom%, Absorb appear quickly before per-symbol hydration completes.
         await prefillIntradayFromFootprintSummary(allCandidates, { updateDom: false });
+        // NOTE: sector-scrapper is write-only (R2). freq_tx + growth_pct are now
+        // served by features-service via /footprint/summary (included in footprint-summary.json).
+
+        // Restore filter/sort/page from URL (or localStorage fallback)
+        restoreFromUrl();
+        syncFilterDropdowns();
+        syncNumericDropdowns();
+        detectMatchingPreset();
+        applyColumnVisibility();
+        syncViewCheckboxes();
+        $('#emiten-search').val(searchQuery);
 
         applyFilter();
+        // Replace (not push) initial state so first load doesn't create duplicate history entry
+        pushUrlState(true);
         loadForeignSentiment();
 
     } catch (error) {
         console.error('[Brokerflow] loadScreenerData failed:', error);
-        $('#tbody-index').html('<tr><td colspan="27" class="text-center text-danger">Error loading screener data</td></tr>');
+        $('#tbody-index').html('<tr><td colspan="41" class="text-center text-danger">Error loading screener data</td></tr>');
     } finally {
         $('#loading-indicator').hide();
         $('#app').fadeIn();
@@ -296,7 +512,7 @@ async function loadScreenerData() {
 }
 
 // =========================================
-// Probabilities (TOM2% / SWG5%)
+// Ranking Scores (TOM2 / SWG5)
 // =========================================
 function isNum(x) {
     return typeof x === 'number' && Number.isFinite(x);
@@ -369,6 +585,10 @@ function buildPercentiles(cands) {
         delta: buildPercentileMap(cands, c => c.order_delta_pct),
         absorb: buildPercentileMap(cands, c => c.order_absorb),
         cvd: buildPercentileMap(cands, c => c.order_cvd),
+        cvd_2d:  buildPercentileMap(cands, c => c.order_cvd_2d),
+        cvd_5d:  buildPercentileMap(cands, c => c.order_cvd_5d),
+        cvd_10d: buildPercentileMap(cands, c => c.order_cvd_10d),
+        cvd_20d: buildPercentileMap(cands, c => c.order_cvd_20d),
         netv: buildPercentileMap(cands, c => c.order_net_value),
     };
 }
@@ -413,7 +633,7 @@ function hasFreshScreenerForSwing(item) {
         && isNum(item.metrics?.vwap10);
 }
 
-function stateBonusProb(state) {
+function stateBonus(state) {
     if (state === 'READY_MARKUP') return 0.10;
     if (state === 'ACCUMULATION') return 0.06;
     if (state === 'TRANSITION') return 0.02;
@@ -422,98 +642,112 @@ function stateBonusProb(state) {
 
 function calcTOM2(item, P) {
     if (!hasFreshOrderflowForTom2(item)) {
-        return { prob: null, raw: null, label: 'NA' };
+        return { score: null, raw: null, label: 'NA' };
     }
     if (item.state === 'DISTRIBUTION') {
-        return { prob: 5, raw: 0, label: 'DISQ' };
+        return { score: 5, raw: 0, label: 'DISQ' };
     }
 
     const s = item.symbol;
-    const liq = smoothLiq(getP(P, 'netv', s, 0.2));
+    const liq = smoothLiq(getP(P, 'netv', s, 0.5));
 
-    const cpSm2 = signGate(item.sm2, centeredPct(getP(P, 'sm2', s, 0.35)));
-    const cpSm5 = signGate(item.sm5, centeredPct(getP(P, 'sm5', s, 0.35)));
-    const cpSm10 = signGate(item.sm10, centeredPct(getP(P, 'sm10', s, 0.35)));
+    const cpSm2 = signGate(item.sm2, centeredPct(getP(P, 'sm2', s, 0.5)));
+    const cpSm5 = signGate(item.sm5, centeredPct(getP(P, 'sm5', s, 0.5)));
+    const cpSm10 = signGate(item.sm10, centeredPct(getP(P, 'sm10', s, 0.5)));
     const SM = (0.7 * cpSm2) + (0.2 * cpSm5) + (0.1 * cpSm10);
 
-    const cpEff2 = centeredPct(getP(P, 'eff2', s, 0.35));
-    const cpEff5 = centeredPct(getP(P, 'eff5', s, 0.35));
+    const cpEff2 = centeredPct(getP(P, 'eff2', s, 0.5));
+    const cpEff5 = centeredPct(getP(P, 'eff5', s, 0.5));
     const EFF = (0.7 * cpEff2) + (0.3 * cpEff5);
 
-    const cpMom = signGate(item.order_mom_pct, centeredPct(getP(P, 'mom', s, 0.25)));
-    const cpDelta = signGate(item.order_delta_pct, centeredPct(getP(P, 'delta', s, 0.25)));
-    const cpCvd = signGate(item.order_cvd, centeredPct(getP(P, 'cvd', s, 0.25)));
-    const cpAbs = centeredPct(getP(P, 'absorb', s, 0.25));
+    const cpMom = signGate(item.order_mom_pct, centeredPct(getP(P, 'mom', s, 0.5)));
+    const cpDelta = signGate(item.order_delta_pct, centeredPct(getP(P, 'delta', s, 0.5)));
+    const cpCvd = signGate(item.order_cvd, centeredPct(getP(P, 'cvd', s, 0.5)));
+    const cpAbs = centeredPct(getP(P, 'absorb', s, 0.5));
     const OF = (cpMom + cpDelta + cpAbs + cpCvd) / 4;
 
-    const raw = liq * (0.45 * SM + 0.35 * OF + 0.20 * EFF + stateBonusProb(item.state));
-    const prob = clampVal(5, 90, Math.round(5 + 85 * Math.max(0, raw)));
+    // Composite: liq * features + stateBonus (additive, not multiplied by liq)
+    const composite = liq * (0.45 * SM + 0.35 * OF + 0.20 * EFF) + stateBonus(item.state);
+    // Sigmoid mapping: steepness 4 for smoother gradation, less sensitive to noise
+    const sigmoid = 1 / (1 + Math.exp(-4 * composite));
+    const score = clampVal(5, 90, Math.round(5 + 85 * sigmoid));
 
-    const label = prob >= 70 ? 'HIGH'
-        : prob >= 50 ? 'MED'
-            : prob >= 35 ? 'LOW'
+    const label = score >= 70 ? 'HIGH'
+        : score >= 50 ? 'MED'
+            : score >= 35 ? 'LOW'
                 : 'VLOW';
-    return { prob, raw, label };
+    return { score, raw: composite, label };
 }
 
 function calcSWG5(item, P) {
     if (!hasFreshScreenerForSwing(item)) {
-        return { prob: null, raw: null, label: 'NA' };
+        return { score: null, raw: null, label: 'NA' };
     }
     if (item.state === 'DISTRIBUTION') {
-        return { prob: 5, raw: 0, label: 'DISQ' };
+        return { score: 5, raw: 0, label: 'DISQ' };
     }
 
     const s = item.symbol;
-    const liq = smoothLiq(getP(P, 'netv', s, 0.2));
+    const liq = smoothLiq(getP(P, 'netv', s, 0.5));
 
-    const cpSm5 = signGate(item.sm5, centeredPct(getP(P, 'sm5', s, 0.35)));
-    const cpSm10 = signGate(item.sm10, centeredPct(getP(P, 'sm10', s, 0.35)));
-    const cpSm20 = signGate(item.sm20, centeredPct(getP(P, 'sm20', s, 0.35)));
+    const cpSm5 = signGate(item.sm5, centeredPct(getP(P, 'sm5', s, 0.5)));
+    const cpSm10 = signGate(item.sm10, centeredPct(getP(P, 'sm10', s, 0.5)));
+    const cpSm20 = signGate(item.sm20, centeredPct(getP(P, 'sm20', s, 0.5)));
     const SM = (0.5 * cpSm5) + (0.3 * cpSm10) + (0.2 * cpSm20);
 
-    const cpFlow5 = centeredPct(getP(P, 'flow5', s, 0.30));
-    const cpFlow10 = centeredPct(getP(P, 'flow10', s, 0.30));
+    const cpFlow5 = centeredPct(getP(P, 'flow5', s, 0.5));
+    const cpFlow10 = centeredPct(getP(P, 'flow10', s, 0.5));
     const FLOW = (0.6 * cpFlow5) + (0.4 * cpFlow10);
 
-    const cpEff5 = centeredPct(getP(P, 'eff5', s, 0.35));
-    const cpEff10 = centeredPct(getP(P, 'eff10', s, 0.35));
+    const cpEff5 = centeredPct(getP(P, 'eff5', s, 0.5));
+    const cpEff10 = centeredPct(getP(P, 'eff10', s, 0.5));
     const EFF = (0.6 * cpEff5) + (0.4 * cpEff10);
 
-    const cpVwap5 = centeredPct(getP(P, 'vwap5', s, 0.35));
-    const cpVwap10 = centeredPct(getP(P, 'vwap10', s, 0.35));
+    const cpVwap5 = centeredPct(getP(P, 'vwap5', s, 0.5));
+    const cpVwap10 = centeredPct(getP(P, 'vwap10', s, 0.5));
     const VWAP = (0.7 * cpVwap5) + (0.3 * cpVwap10);
 
-    const trendBonus = item.trend?.vwapUp ? 0.05 : 0;
-    const raw = liq * (0.35 * SM + 0.25 * FLOW + 0.20 * EFF + 0.15 * VWAP + trendBonus + stateBonusProb(item.state));
-    const prob = clampVal(5, 90, Math.round(5 + 85 * Math.max(0, raw)));
+    // CVD multi-day momentum: confirms volume-delta trend over swing horizon
+    const cpCvd5d = signGate(item.order_cvd_5d, centeredPct(getP(P, 'cvd_5d', s, 0.5)));
+    const cpCvd10d = signGate(item.order_cvd_10d, centeredPct(getP(P, 'cvd_10d', s, 0.5)));
+    const CVD_MOM = (0.6 * cpCvd5d) + (0.4 * cpCvd10d);
 
-    const label = prob >= 70 ? 'HIGH'
-        : prob >= 50 ? 'MED'
-            : prob >= 35 ? 'LOW'
+    const trendBonus = item.trend?.vwapUp ? 0.05 : 0;
+    // Weights normalized to 1.00: SM 0.35 + FLOW 0.20 + EFF 0.15 + VWAP 0.15 + CVD 0.15
+    const composite = liq * (0.35 * SM + 0.20 * FLOW + 0.15 * EFF + 0.15 * VWAP + 0.15 * CVD_MOM)
+        + trendBonus + stateBonus(item.state);
+    // Sigmoid mapping: steepness 4 for smoother gradation, less sensitive to noise
+    const sigmoid = 1 / (1 + Math.exp(-4 * composite));
+    const score = clampVal(5, 90, Math.round(5 + 85 * sigmoid));
+
+    const label = score >= 70 ? 'HIGH'
+        : score >= 50 ? 'MED'
+            : score >= 35 ? 'LOW'
                 : 'VLOW';
-    return { prob, raw, label };
+    return { score, raw: composite, label };
 }
 
 function recomputeProbColumns(cands) {
     if (!Array.isArray(cands) || !cands.length) return;
-    const P = buildPercentiles(cands);
+    // Always build percentiles from full universe to avoid filter-dependent score shifts
+    const universe = (Array.isArray(allCandidates) && allCandidates.length > 0) ? allCandidates : cands;
+    const P = buildPercentiles(universe);
     for (const item of cands) {
         item.tom2 = calcTOM2(item, P);
         item.swg5 = calcSWG5(item, P);
-        item.tom2_prob = isNum(item.tom2?.prob) ? item.tom2.prob : PROB_MISSING_SORT_VALUE;
-        item.swg5_prob = isNum(item.swg5?.prob) ? item.swg5.prob : PROB_MISSING_SORT_VALUE;
+        item.tom2_prob = isNum(item.tom2?.score) ? item.tom2.score : PROB_MISSING_SORT_VALUE;
+        item.swg5_prob = isNum(item.swg5?.score) ? item.swg5.score : PROB_MISSING_SORT_VALUE;
     }
 }
 
 function fmtProbCell(x) {
-    const p = x?.prob;
+    const p = x?.score;
     if (!isNum(p)) return '<span class="text-muted">-</span>';
     const cls = p >= 70 ? 'text-success fw-bold'
         : p >= 50 ? 'text-primary fw-bold'
             : p >= 35 ? 'text-warning'
                 : 'text-muted';
-    return `<span class="${cls}">${p}%</span>`;
+    return `<span class="${cls}">${p}</span>`;
 }
 
 function updateProbCells(symbol, item) {
@@ -538,8 +772,11 @@ function scheduleProbRefreshAfterOrderflow() {
     if (probRefreshTimer) clearTimeout(probRefreshTimer);
     probRefreshTimer = setTimeout(() => {
         probRefreshTimer = null;
+        // Recompute for all candidates so percentiles stay stable, then update visible
+        if (Array.isArray(allCandidates) && allCandidates.length > 0) {
+            recomputeProbColumns(allCandidates);
+        }
         if (!Array.isArray(currentCandidates) || !currentCandidates.length) return;
-        recomputeProbColumns(currentCandidates);
         if (sortState.key === 'tom2_prob' || sortState.key === 'swg5_prob') {
             sortCandidates(sortState.key, sortState.desc);
             return;
@@ -557,7 +794,18 @@ function scheduleProbRefreshAfterOrderflow() {
 function applyFilter() {
     const wKey = activeFilters.horizon;
 
-    currentCandidates = allCandidates.filter(c => {
+    // Text search filter
+    let source = allCandidates;
+    if (searchQuery) {
+        const q = searchQuery.toUpperCase().trim();
+        const terms = q.split(/[,\s]+/).filter(Boolean);
+        source = allCandidates.filter(c => {
+            const sym = (c.symbol || '').toUpperCase();
+            return terms.some(t => sym.includes(t));
+        });
+    }
+
+    currentCandidates = source.filter(c => {
         // Determine which windows to check
         const windowsToCheck = wKey === 'any'
             ? [c.w2, c.w5, c.w10, c.w20].filter(Boolean)
@@ -574,6 +822,9 @@ function applyFilter() {
             // Smart Money filter
             if (activeFilters.smart === 'allPos' && !w.allPos) return false;
             if (activeFilters.smart === 'positive' && (w.sm || 0) <= 0) return false;
+
+            // Local flow filter
+            if (activeFilters.local === 'positive' && (w.ln || 0) <= 0) return false;
 
             // Streak / Trend filter
             if (activeFilters.streak === 's3') {
@@ -614,12 +865,32 @@ function applyFilter() {
             return true;
         });
     }
+    // Quadrant filter
+    if (activeFilters.quadrant !== 'any') {
+        const qf = activeFilters.quadrant;
+        currentCandidates = currentCandidates.filter(c => c.order_quadrant === qf);
+    }
+    // Numeric threshold filters (≥ value)
+    currentCandidates = currentCandidates.filter(c => {
+        if (Number.isFinite(numericFilters.growth_min)  && !((c.order_growth_pct ?? -Infinity) >= numericFilters.growth_min)) return false;
+        if (Number.isFinite(numericFilters.freq_min)    && !((c.order_freq_tx ?? -Infinity) >= numericFilters.freq_min)) return false;
+        if (Number.isFinite(numericFilters.tom2_min)    && !((c.tom2_prob ?? -1) >= numericFilters.tom2_min)) return false;
+        if (Number.isFinite(numericFilters.swg5_min)    && !((c.swg5_prob ?? -1) >= numericFilters.swg5_min)) return false;
+        if (Number.isFinite(numericFilters.delta_min)   && !((c.order_delta_pct ?? -Infinity) >= numericFilters.delta_min)) return false;
+        if (Number.isFinite(numericFilters.mom_min)     && !((c.order_mom_pct ?? -Infinity) >= numericFilters.mom_min)) return false;
+        if (Number.isFinite(numericFilters.absorb_min)  && !((c.order_absorb ?? -Infinity) >= numericFilters.absorb_min)) return false;
+        if (Number.isFinite(numericFilters.cvd_min)     && !((c.order_cvd ?? -Infinity) >= numericFilters.cvd_min)) return false;
+        if (Number.isFinite(numericFilters.rvol_min)    && !((c.rvol_2d ?? c.rvol_5d ?? -Infinity) >= numericFilters.rvol_min)) return false;
+        if (Number.isFinite(numericFilters.value_min)   && !((c.order_net_value ?? -Infinity) >= numericFilters.value_min)) return false;
+        return true;
+    });
 
     $('#screener-count').text(`${currentCandidates.length} emiten`);
     renderFilterPills();
     recomputeProbColumns(currentCandidates);
     sortCandidates(sortState.key, sortState.desc);
     loadOpportunityBubbleChart(currentCandidates);
+    pushUrlState();
 }
 
 function matchesZRelation(mode, z2, z5, z10, z20) {
@@ -649,7 +920,7 @@ function refreshMarketWidgetHeader() {
     const $range = $('#foreign-range-selector');
 
     if (activeChart === 'bubble') {
-        $title.html('Orderflow Bubble Opportunity <span class="d-block small mt-2 mb-4">Top peluang intraday</span>');
+        $title.html('Orderflow Bubble Opportunity <span class="d-block small mt-2 mb-3" style="font-weight:500">Top peluang intraday</span>');
         $range.addClass('d-none');
         return;
     }
@@ -735,7 +1006,14 @@ function loadOpportunityBubbleChart(candidates = currentCandidates) {
                 opportunityBubbleChart = null;
             }
             $('#bubble-chart-container').hide();
-            $('#bubble-chart-loading').html('<p class="small text-muted mb-0">Data bubble tidak tersedia untuk filter aktif</p>');
+            // Check if market is open (09:00-16:30 WIB)
+            const nowWIB = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Jakarta' }));
+            const hWIB = nowWIB.getHours(), mWIB = nowWIB.getMinutes();
+            const isMarketHours = (hWIB > 9 || (hWIB === 9 && mWIB >= 0)) && (hWIB < 16 || (hWIB === 16 && mWIB <= 30));
+            const msg = isMarketHours
+                ? 'Data bubble tidak tersedia untuk filter aktif'
+                : 'Market belum buka — data intraday belum tersedia';
+            $('#bubble-chart-loading').show().html(`<p class="small text-muted mb-0">${msg}</p>`);
             return;
         }
 
@@ -813,17 +1091,18 @@ function loadOpportunityBubbleChart(candidates = currentCandidates) {
         };
 
         const shouldAnimateInitial = isInitialRender && !bubbleChartAnimatedOnInitialLoad;
+        const bgColors = points.map(p => getQuadrantBubbleColor(p.q).bg);
+        const bdColors = points.map(p => getQuadrantBubbleColor(p.q).bd);
         const baseDataset = {
             label: 'Opportunity',
             data: points,
-            backgroundColor: points.map(p => getQuadrantBubbleColor(p.q).bg),
-            borderColor: points.map(p => getQuadrantBubbleColor(p.q).bd),
+            backgroundColor: bgColors,
+            borderColor: bdColors,
             borderWidth: 1,
-            hoverRadius: (ctx) => {
-                const base = Number(ctx?.raw?.r || 8);
-                return base + 1.5;
-            },
-            hoverBorderWidth: 1.2,
+            hoverRadius: 0,
+            hoverBorderWidth: 1,
+            hoverBackgroundColor: bgColors,
+            hoverBorderColor: bdColors,
             clip: false
         };
 
@@ -864,6 +1143,7 @@ function loadOpportunityBubbleChart(candidates = currentCandidates) {
                         tooltip: {
                             enabled: true,
                             displayColors: false,
+                            animation: false,
                             callbacks: {
                                 title: function () { return ''; },
                                 label: function (ctx) {
@@ -875,14 +1155,32 @@ function loadOpportunityBubbleChart(candidates = currentCandidates) {
                             }
                         }
                     },
-                    interaction: { mode: 'nearest', intersect: false },
-                    hover: { mode: 'nearest', intersect: false },
+                    onHover: function(event, elements) {
+                        event.native.target.style.cursor = elements.length ? 'pointer' : 'default';
+                    },
+                    onClick: function(event) {
+                        const els = opportunityBubbleChart.getElementsAtEventForMode(event, 'nearest', { intersect: true }, false);
+                        if (els.length) {
+                            const pt = opportunityBubbleChart.data.datasets[0].data[els[0].index];
+                            if (pt && pt.kode) {
+                                window.location.href = '/idx/emiten/broker-summary.html?kode=' + pt.kode;
+                            }
+                        }
+                    },
+                    elements: {
+                        point: {
+                            hoverRadius: 0,
+                            hoverBorderWidth: 1
+                        }
+                    },
+                    interaction: { mode: 'nearest', intersect: true },
+                    hover: { mode: 'nearest', intersect: true },
                     scales: {
                         x: {
-                            title: { display: true, text: 'Delta %', font: { size: 10 } },
+                            title: { display: false },
                             min: xMin - xPad - xOverscan,
                             max: xMax + xPad + xOverscan,
-                            ticks: { font: { size: 9 } },
+                            ticks: { display: false },
                             grid: {
                                 color: (ctx) => Math.abs(Number(ctx?.tick?.value || 0)) < 1e-9
                                     ? 'rgba(148,163,184,0.55)'
@@ -893,10 +1191,10 @@ function loadOpportunityBubbleChart(candidates = currentCandidates) {
                             border: { display: false }
                         },
                         y: {
-                            title: { display: true, text: 'Momentum %', font: { size: 10 } },
+                            title: { display: false },
                             min: yMin - yPad - yOverscan,
                             max: yMax + yPad + yOverscan,
-                            ticks: { font: { size: 9 } },
+                            ticks: { display: false },
                             grid: {
                                 color: (ctx) => Math.abs(Number(ctx?.tick?.value || 0)) < 1e-9
                                     ? 'rgba(148,163,184,0.55)'
@@ -911,11 +1209,22 @@ function loadOpportunityBubbleChart(candidates = currentCandidates) {
                 plugins: [bubbleTextLabelsPlugin]
             });
             bubbleChartAnimatedOnInitialLoad = true;
+            // Kill ALL animations after initial pop-in so hover never animates
+            if (shouldAnimateInitial) {
+                setTimeout(() => {
+                    if (opportunityBubbleChart) {
+                        opportunityBubbleChart.options.animation = false;
+                        opportunityBubbleChart.options.animations = { radius: { duration: 0 } };
+                    }
+                }, 400);
+            }
         } else {
             const ds = opportunityBubbleChart.data.datasets[0];
             ds.data = points;
-            ds.backgroundColor = points.map(p => getQuadrantBubbleColor(p.q).bg);
-            ds.borderColor = points.map(p => getQuadrantBubbleColor(p.q).bd);
+            ds.backgroundColor = bgColors;
+            ds.borderColor = bdColors;
+            ds.hoverBackgroundColor = bgColors;
+            ds.hoverBorderColor = bdColors;
 
             opportunityBubbleChart.options.scales.x.min = xMin - xPad - xOverscan;
             opportunityBubbleChart.options.scales.x.max = xMax + xPad + xOverscan;
@@ -946,7 +1255,7 @@ async function loadForeignSentiment(days = 7) {
         `);
         $('#foreign-chart-container').hide();
         
-        const response = await fetch(`${WORKER_BASE_URL}/foreign-sentiment?days=${days}&fresh=1`);
+        const response = await fetch(`${WORKER_BASE_URL}/foreign-sentiment?days=${days}`);
         const data = await response.json();
         
         if (!data || !data.data || typeof data.data !== 'object') {
@@ -1075,12 +1384,8 @@ async function loadForeignSentiment(days = 7) {
                 },
                 scales: {
                     y: {
-                        title: {
-                            display: true,
-                            text: 'Net Flow (Rp B)',
-                            font: { size: 10 }
-                        },
-                        ticks: { font: { size: 9 } },
+                        title: { display: false },
+                        ticks: { display: false },
                         grid: {
                             color: function(context) {
                                 if (context.tick.value === 0) return '#6c757d';
@@ -1133,6 +1438,18 @@ function applyPreset(name) {
     if (!recipe) return;
     activePreset = name;
     Object.assign(activeFilters, recipe);
+    // Apply numeric presets if defined, else reset
+    const numRecipe = PRESET_NUMERIC[name];
+    if (numRecipe) {
+        Object.keys(numericFilters).forEach(k => numericFilters[k] = numRecipe[k] ?? NaN);
+    } else {
+        Object.keys(numericFilters).forEach(k => numericFilters[k] = NaN);
+    }
+    // Sync numeric inputs to new values
+    Object.keys(numericFilters).forEach(k => {
+        const $inp = $(`.num-filter-input[data-nf="${k}"]`);
+        if ($inp.length) $inp.val(Number.isFinite(numericFilters[k]) ? numericFilters[k] : '');
+    });
     // Update preset buttons
     $('#preset-selector a').removeClass('active');
     $(`#preset-selector a[data-preset="${name}"]`).addClass('active');
@@ -1160,6 +1477,7 @@ function syncFilterDropdowns() {
         const label = FILTER_LABELS[key][activeFilters[key]] || 'Any';
         const prefix = key === 'foreign' ? 'Foreign'
             : key === 'smart' ? 'Smart'
+            : key === 'local' ? 'Local'
             : key === 'streak' ? 'Trend'
             : key === 'zeffort' ? 'Effort Rel'
             : key === 'zngr' ? 'NGR Rel'
@@ -1167,6 +1485,7 @@ function syncFilterDropdowns() {
             : key === 'effort' ? 'Effort'
             : key === 'state' ? 'State'
             : key === 'horizon' ? 'Horizon'
+            : key === 'quadrant' ? 'Quadrant'
             : '';
         if (key === 'horizon') {
             $(ddId).text(`Horizon: ${label}`);
@@ -1184,14 +1503,27 @@ function syncFilterDropdowns() {
 
 function detectMatchingPreset() {
     for (const [name, recipe] of Object.entries(PRESETS)) {
-        const match = Object.keys(recipe).every(k => activeFilters[k] === recipe[k]);
-        if (match) {
-            activePreset = name;
-            $('#preset-selector a').removeClass('active');
-            $(`#preset-selector a[data-preset="${name}"]`).addClass('active');
-            $('#preset-desc').text(PRESET_DESC[name] || '');
-            return;
+        const filtersMatch = Object.keys(recipe).every(k => activeFilters[k] === recipe[k]);
+        if (!filtersMatch) continue;
+        // Also check numeric filters match the preset's numeric recipe (if any)
+        const numRecipe = PRESET_NUMERIC[name];
+        if (numRecipe) {
+            const numMatch = Object.keys(numericFilters).every(k => {
+                const expected = numRecipe[k] ?? NaN;
+                const actual = numericFilters[k];
+                return (Number.isNaN(expected) && Number.isNaN(actual)) || expected === actual;
+            });
+            if (!numMatch) continue;
+        } else {
+            // Non-numeric presets should have no numeric filters active
+            const hasNumeric = Object.values(numericFilters).some(v => Number.isFinite(v));
+            if (hasNumeric) continue;
         }
+        activePreset = name;
+        $('#preset-selector a').removeClass('active');
+        $(`#preset-selector a[data-preset="${name}"]`).addClass('active');
+        $('#preset-desc').text(PRESET_DESC[name] || '');
+        return;
     }
     // No preset match — custom
     activePreset = 'custom';
@@ -1208,6 +1540,7 @@ function renderFilterPills() {
             const color = PILL_COLORS[key] || 'secondary';
             const prefix = key === 'foreign' ? 'Foreign'
                 : key === 'smart' ? 'Smart'
+                : key === 'local' ? 'Local'
                 : key === 'streak' ? 'Trend'
                 : key === 'zeffort' ? 'Effort Rel'
                 : key === 'zngr' ? 'NGR Rel'
@@ -1215,10 +1548,27 @@ function renderFilterPills() {
                 : key === 'effort' ? 'Effort'
                 : key === 'state' ? 'State'
                 : key === 'horizon' ? 'Horizon'
+                : key === 'quadrant' ? 'Quadrant'
                 : key;
             $pills.append(`
                 <span class="badge bg-${color} bg-opacity-10 text-${color}" style="cursor:pointer;" data-remove-filter="${key}">
                     ${prefix}: ${label} <i class="fa-solid fa-xmark ms-1"></i>
+                </span>
+            `);
+        }
+    });
+    // Numeric filter pills
+    const numLabels = {
+        growth_min: 'Growth', freq_min: 'Freq', tom2_min: 'TOM2', swg5_min: 'SWG5',
+        delta_min: 'Δ%', mom_min: 'Mom%', absorb_min: 'Absorb', cvd_min: 'CVD',
+        rvol_min: 'RVOL', value_min: 'Value'
+    };
+    Object.keys(numericFilters).forEach(nk => {
+        if (Number.isFinite(numericFilters[nk])) {
+            const lbl = numLabels[nk] || nk;
+            $pills.append(`
+                <span class="badge bg-secondary bg-opacity-10 text-secondary" style="cursor:pointer;" data-remove-numeric="${nk}">
+                    ${lbl} ≥ ${numericFilters[nk]} <i class="fa-solid fa-xmark ms-1"></i>
                 </span>
             `);
         }
@@ -1232,6 +1582,91 @@ $(document).on('click', '[data-remove-filter]', function() {
     syncFilterDropdowns();
     detectMatchingPreset();
     applyFilter();
+});
+
+// Click pill X to remove a numeric threshold filter
+$(document).on('click', '[data-remove-numeric]', function() {
+    const nk = $(this).data('remove-numeric');
+    numericFilters[nk] = NaN;
+    $(`.num-filter-input[data-nf="${nk}"]`).val('');
+    syncNumericDropdowns();
+    detectMatchingPreset();
+    applyFilter();
+});
+
+// Numeric threshold input handler (debounced)
+let _numFilterDebounce = null;
+$(document).on('input', '.num-filter-input', function() {
+    const nk = $(this).data('nf');
+    const raw = $(this).val().trim();
+    numericFilters[nk] = raw === '' ? NaN : parseFloat(raw);
+    syncNumericDropdowns();
+    clearTimeout(_numFilterDebounce);
+    _numFilterDebounce = setTimeout(() => {
+        detectMatchingPreset();
+        applyFilter();
+    }, 400);
+});
+
+const NUMERIC_DD_MAP = {
+    growth_min: { id: '#dd-growth', prefix: 'Growth' },
+    freq_min:   { id: '#dd-freq',   prefix: 'Freq' },
+    tom2_min:   { id: '#dd-tom2',   prefix: 'TOM2' },
+    swg5_min:   { id: '#dd-swg5',   prefix: 'SWG5' },
+    delta_min:  { id: '#dd-delta',  prefix: 'Δ%' },
+    mom_min:    { id: '#dd-mom',    prefix: 'Mom%' },
+    absorb_min: { id: '#dd-absorb', prefix: 'Absorb' },
+    cvd_min:    { id: '#dd-cvd',    prefix: 'CVD' },
+    rvol_min:   { id: '#dd-rvol',   prefix: 'RVOL' },
+    value_min:  { id: '#dd-value',  prefix: 'Value' }
+};
+
+function syncNumericDropdowns() {
+    Object.entries(NUMERIC_DD_MAP).forEach(([nk, cfg]) => {
+        const $btn = $(cfg.id);
+        if (!$btn.length) return;
+        const v = numericFilters[nk];
+        if (Number.isFinite(v)) {
+            $btn.text(`${cfg.prefix} ≥ ${v}`);
+            $btn.removeClass('btn-outline-secondary').addClass('btn-secondary text-white');
+        } else {
+            $btn.text(`${cfg.prefix}: Any`);
+            $btn.removeClass('btn-secondary text-white').addClass('btn-outline-secondary');
+        }
+    });
+}
+
+// Reset all filters button
+$(document).on('click', '#btn-reset-filters', function(e) {
+    e.preventDefault();
+    Object.keys(activeFilters).forEach(k => activeFilters[k] = 'any');
+    Object.keys(numericFilters).forEach(k => numericFilters[k] = NaN);
+    $('.num-filter-input').val('');
+    searchQuery = '';
+    $('#emiten-search').val('');
+    activePreset = 'all';
+    syncFilterDropdowns();
+    syncNumericDropdowns();
+    $('#preset-selector a').removeClass('active');
+    $('#preset-selector a[data-preset="all"]').addClass('active');
+    $('#preset-desc').text(PRESET_DESC['all'] || '');
+    applyFilter();
+});
+
+// Emiten symbol search (debounced)
+let _searchDebounce = null;
+$(document).on('input', '#emiten-search', function() {
+    searchQuery = $(this).val().trim();
+    screenerPage = 1;
+    clearTimeout(_searchDebounce);
+    _searchDebounce = setTimeout(() => applyFilter(), 200);
+});
+$(document).on('keydown', '#emiten-search', function(e) {
+    if (e.key === 'Escape') {
+        searchQuery = '';
+        $(this).val('');
+        applyFilter();
+    }
 });
 
 function sortCandidates(key, desc) {
@@ -1250,6 +1685,14 @@ function sortCandidates(key, desc) {
         else if (key === 'sm5')  { valA = a.sm5  || 0; valB = b.sm5  || 0; }
         else if (key === 'sm10') { valA = a.sm10 || 0; valB = b.sm10 || 0; }
         else if (key === 'sm20') { valA = a.sm20 || 0; valB = b.sm20 || 0; }
+        else if (key === 'fn2')  { valA = a.fn2  || 0; valB = b.fn2  || 0; }
+        else if (key === 'fn5')  { valA = a.fn5  || 0; valB = b.fn5  || 0; }
+        else if (key === 'fn10') { valA = a.fn10 || 0; valB = b.fn10 || 0; }
+        else if (key === 'fn20') { valA = a.fn20 || 0; valB = b.fn20 || 0; }
+        else if (key === 'ln2')  { valA = a.ln2  || 0; valB = b.ln2  || 0; }
+        else if (key === 'ln5')  { valA = a.ln5  || 0; valB = b.ln5  || 0; }
+        else if (key === 'ln10') { valA = a.ln10 || 0; valB = b.ln10 || 0; }
+        else if (key === 'ln20') { valA = a.ln20 || 0; valB = b.ln20 || 0; }
         else if (key === 'vwap2') {
             valA = (typeof a.metrics.vwap2 === 'number' && Number.isFinite(a.metrics.vwap2)) ? a.metrics.vwap2 : -Infinity;
             valB = (typeof b.metrics.vwap2 === 'number' && Number.isFinite(b.metrics.vwap2)) ? b.metrics.vwap2 : -Infinity;
@@ -1275,9 +1718,19 @@ function sortCandidates(key, desc) {
         else if (key === 'quality') { valA = a.metrics.ngr; valB = b.metrics.ngr; }
         else if (key === 'elasticity') { valA = a.metrics.elasticity; valB = b.metrics.elasticity; }
         else if (key === 'order_delta_pct') { valA = (typeof a.order_delta_pct === 'number') ? a.order_delta_pct : -Infinity; valB = (typeof b.order_delta_pct === 'number') ? b.order_delta_pct : -Infinity; }
+        else if (key === 'order_growth_pct') { valA = (typeof a.order_growth_pct === 'number') ? a.order_growth_pct : -Infinity; valB = (typeof b.order_growth_pct === 'number') ? b.order_growth_pct : -Infinity; }
+        else if (key === 'order_freq_tx') { valA = (typeof a.order_freq_tx === 'number') ? a.order_freq_tx : -Infinity; valB = (typeof b.order_freq_tx === 'number') ? b.order_freq_tx : -Infinity; }
         else if (key === 'order_mom_pct') { valA = (typeof a.order_mom_pct === 'number') ? a.order_mom_pct : -Infinity; valB = (typeof b.order_mom_pct === 'number') ? b.order_mom_pct : -Infinity; }
         else if (key === 'order_absorb') { valA = (typeof a.order_absorb === 'number') ? a.order_absorb : -Infinity; valB = (typeof b.order_absorb === 'number') ? b.order_absorb : -Infinity; }
         else if (key === 'order_cvd') { valA = (typeof a.order_cvd === 'number') ? a.order_cvd : -Infinity; valB = (typeof b.order_cvd === 'number') ? b.order_cvd : -Infinity; }
+        else if (key === 'order_cvd_2d')  { valA = (typeof a.order_cvd_2d  === 'number') ? a.order_cvd_2d  : -Infinity; valB = (typeof b.order_cvd_2d  === 'number') ? b.order_cvd_2d  : -Infinity; }
+        else if (key === 'order_cvd_5d')  { valA = (typeof a.order_cvd_5d  === 'number') ? a.order_cvd_5d  : -Infinity; valB = (typeof b.order_cvd_5d  === 'number') ? b.order_cvd_5d  : -Infinity; }
+        else if (key === 'order_cvd_10d') { valA = (typeof a.order_cvd_10d === 'number') ? a.order_cvd_10d : -Infinity; valB = (typeof b.order_cvd_10d === 'number') ? b.order_cvd_10d : -Infinity; }
+        else if (key === 'order_cvd_20d') { valA = (typeof a.order_cvd_20d === 'number') ? a.order_cvd_20d : -Infinity; valB = (typeof b.order_cvd_20d === 'number') ? b.order_cvd_20d : -Infinity; }
+        else if (key === 'rvol_2d')  { valA = (typeof a.rvol_2d  === 'number') ? a.rvol_2d  : -Infinity; valB = (typeof b.rvol_2d  === 'number') ? b.rvol_2d  : -Infinity; }
+        else if (key === 'rvol_5d')  { valA = (typeof a.rvol_5d  === 'number') ? a.rvol_5d  : -Infinity; valB = (typeof b.rvol_5d  === 'number') ? b.rvol_5d  : -Infinity; }
+        else if (key === 'rvol_10d') { valA = (typeof a.rvol_10d === 'number') ? a.rvol_10d : -Infinity; valB = (typeof b.rvol_10d === 'number') ? b.rvol_10d : -Infinity; }
+        else if (key === 'rvol_20d') { valA = (typeof a.rvol_20d === 'number') ? a.rvol_20d : -Infinity; valB = (typeof b.rvol_20d === 'number') ? b.rvol_20d : -Infinity; }
         else if (key === 'order_net_value') { valA = (typeof a.order_net_value === 'number') ? a.order_net_value : -Infinity; valB = (typeof b.order_net_value === 'number') ? b.order_net_value : -Infinity; }
         else if (key === 'tom2_prob') {
             valA = isNum(a.tom2_prob) ? a.tom2_prob : PROB_MISSING_SORT_VALUE;
@@ -1333,6 +1786,7 @@ function updateScreenerDisplay() {
 function changeScreenerPage(delta) {
     screenerPage += delta;
     updateScreenerDisplay();
+    pushUrlState();
     $('html, body').animate({ scrollTop: $('#market-breadth-widget').offset().top - 60 }, 200);
 }
 
@@ -1353,16 +1807,20 @@ $(document).on('click', 'th[data-sort]', function () {
         sortState.desc = true; // Default DESC for new column
     }
     sortCandidates(sortState.key, sortState.desc);
+    pushUrlState();
 });
 
 
 function mapState(s) {
+    if (!s) return 'NEUTRAL';
     const map = {
         'RM': 'READY_MARKUP',
-        'TR': 'TRANSITION', // If i used TR shortcode
+        'TR': 'TRANSITION',
         'AC': 'ACCUMULATION',
         'DI': 'DISTRIBUTION',
-        'NE': 'NEUTRAL'
+        'NE': 'NEUTRAL',
+        'OL': 'OFF_THE_LOW',
+        'PT': 'POTENTIAL_TOP'
     };
     if (s.length > 2) return s;
     return map[s] || s;
@@ -1370,9 +1828,9 @@ function mapState(s) {
 
 // Global badge helper function (used by both screener table and detail view)
 function getBadge(val, type, showScore = false) {
+    if (typeof val !== 'number' || !Number.isFinite(val)) return `<span class="text-muted">-</span>`;
     const score = showScore ? ` <small class="text-muted">(${val.toFixed(2)})</small>` : '';
     if (type === 'effort') {
-        if (typeof val !== 'number' || !Number.isFinite(val)) return `<span class="text-muted">-</span>`;
         const cls = val > 0 ? 'text-success' : (val < 0 ? 'text-danger' : 'text-secondary');
         return `<span class="${cls}">${val.toFixed(2)}</span>${score}`;
     }
@@ -1382,17 +1840,18 @@ function getBadge(val, type, showScore = false) {
         return `<span class="text-secondary">Normal</span>${score}`;
     }
     if (type === 'ngr') {
-        if (val < 0.15) return `<span class="text-muted">Noise</span>${score}`;
-        return `<span class="text-success fw-bold">Valid</span>${score}`;
+        // val is a z-score (-3 to +3). Positive z = above-average net quality.
+        if (val > 0.5) return `<span class="text-success fw-bold">Valid</span>${score}`;
+        if (val > -0.5) return `<span class="text-secondary">Normal</span>${score}`;
+        return `<span class="text-muted">Noise</span>${score}`;
     }
     if (type === 'elasticity') {
-        if (val === 0) return `<span class="text-muted">-</span>`;
-        if (val > 1.5) return `<span class="text-success fw-bold">Elastic</span>${score}`;
-        if (val < 0.5) return `<span class="text-danger">Rigid</span>${score}`;
-        return `<span class="text-secondary">Normal</span>${score}`;
+        // val is a z-score (-3 to +3). Positive z = above-average price response per unit flow.
+        if (val > 1.0) return `<span class="text-success fw-bold">Elastic</span>${score}`;
+        if (val > -0.5) return `<span class="text-secondary">Normal</span>${score}`;
+        return `<span class="text-danger">Rigid</span>${score}`;
     }
     if (type === 'vwap') {
-        if (typeof val !== 'number' || !Number.isFinite(val)) return `<span class="text-muted">-</span>`;
         const cls = val > 0 ? 'text-success' : (val < 0 ? 'text-danger' : 'text-secondary');
         return `<span class="${cls}">${val.toFixed(2)}</span>`;
     }
@@ -1405,16 +1864,20 @@ function renderScreenerTable(candidates) {
 
     const getStateText = (state) => {
         const styles = {
+            'OFF_THE_LOW': 'color:#198754;font-weight:bold',
             'READY_MARKUP': 'color:#fd7e14;font-weight:bold',
             'TRANSITION': 'color:#0d6efd',
             'ACCUMULATION': 'color:#198754;font-weight:bold',
+            'POTENTIAL_TOP': 'color:#ffc107;font-weight:bold',
             'DISTRIBUTION': 'color:#dc3545;font-weight:bold',
             'NEUTRAL': 'color:#6c757d'
         };
         const labels = {
+            'OFF_THE_LOW': 'OTL',
             'READY_MARKUP': 'Ready',
             'TRANSITION': 'Trans',
             'ACCUMULATION': 'Accum',
+            'POTENTIAL_TOP': 'PTop',
             'DISTRIBUTION': 'Dist',
             'NEUTRAL': 'Neutral'
         };
@@ -1423,16 +1886,16 @@ function renderScreenerTable(candidates) {
     
     // Flow Score - simple number with color
     const getFlowScore = (score) => {
+        if (score == null || !Number.isFinite(score)) return '<span class="text-muted">-</span>';
         if (score >= 5) return `<span class="text-success fw-bold">${score.toFixed(1)}</span>`;
         if (score >= 3) return `<span class="text-primary fw-bold">${score.toFixed(1)}</span>`;
         if (score >= 1) return `<span style="color:#fd7e14" class="fw-bold">${score.toFixed(1)}</span>`;
         return `<span class="text-muted">${score.toFixed(1)}</span>`;
     };
 
-    // Format smart money value per window cell
-    const fmtSm = (wData) => {
-        if (!wData) return '<span class="text-muted">-</span>';
-        const val = wData.sm || 0;
+    // Generic flow value formatter (M/B/T with color)
+    const fmtFlowVal = (val) => {
+        if (typeof val !== 'number' || !Number.isFinite(val)) return '<span class="text-muted">-</span>';
         const abs = Math.abs(val);
         let formatted;
         if (abs >= 1e12) formatted = (val / 1e12).toFixed(1) + 'T';
@@ -1440,27 +1903,59 @@ function renderScreenerTable(candidates) {
         else if (abs >= 1e6) formatted = (val / 1e6).toFixed(0) + 'M';
         else if (abs === 0) return '<span class="text-muted">0</span>';
         else formatted = (val / 1e6).toFixed(0) + 'M';
-
         const color = val > 0 ? 'text-success' : 'text-danger';
-        // Indicator: ● green if foreignAllPos+allPos, ◐ blue if allPos only
-        let indicator = '';
-        if (wData.foreignAllPos && wData.allPos) indicator = '<span class="text-success" style="font-size:0.55rem;">●</span> ';
-        else if (wData.allPos) indicator = '<span class="text-primary" style="font-size:0.55rem;">◐</span> ';
+        return `<span class="${color} fw-bold">${formatted}</span>`;
+    };
+
+    // FFLW: Foreign Flow only (w.fn)
+    const fmtFflw = (wData) => {
+        if (!wData) return '<span class="text-muted">-</span>';
+        const val = wData.fn || 0;
+        let ind = '';
+        if (wData.foreignAllPos) ind = '<span class="text-success" style="font-size:0.55rem;">●</span> ';
+        return ind + fmtFlowVal(val);
+    };
+
+    // LFLW: Local Fund Flow only (w.ln)
+    const fmtLflw = (wData) => {
+        if (!wData) return '<span class="text-muted">-</span>';
+        return fmtFlowVal(wData.ln || 0);
+    };
+
+    // SMNY: Smart Money = Foreign + Local (w.sm)
+    const fmtSmny = (wData) => {
+        if (!wData) return '<span class="text-muted">-</span>';
+        const val = wData.sm || 0;
+        let ind = '';
+        if (wData.foreignAllPos && wData.allPos) ind = '<span class="text-success" style="font-size:0.55rem;">●</span> ';
+        else if (wData.allPos) ind = '<span class="text-primary" style="font-size:0.55rem;">◐</span> ';
         const streak = wData.streak || 0;
         const streakBadge = streak >= 3 ? `<sup class="text-success" style="font-size:0.55rem;">${streak}🔥</sup>` : '';
-        return `${indicator}<span class="${color} fw-bold" >${formatted}</span>${streakBadge}`;
+        return ind + fmtFlowVal(val) + streakBadge;
     };
+
+    const trunc2 = (x) => Math.trunc(x * 100) / 100;
 
     const fmtPct = (v) => {
         if (typeof v !== 'number' || !Number.isFinite(v)) return '<span class="text-muted">-</span>';
-        const cls = v > 0 ? 'text-success fw-bold' : (v < 0 ? 'text-danger fw-bold' : 'text-secondary');
-        const sign = v > 0 ? '+' : '';
-        return `<span class="${cls}">${sign}${v.toFixed(2)}%</span>`;
+        const vv = trunc2(v);
+        const cls = vv > 0 ? 'text-success fw-bold' : (vv < 0 ? 'text-danger fw-bold' : 'text-secondary');
+        const sign = vv > 0 ? '+' : '';
+        return `<span class="${cls}">${sign}${vv.toFixed(2)}%</span>`;
+    };
+
+    const fmtFreq = (v) => {
+        if (typeof v !== 'number' || !Number.isFinite(v)) return '<span class="text-muted">-</span>';
+        return `<span>${Math.round(v).toLocaleString('id-ID')}</span>`;
     };
 
     const fmtAbsorb = (v) => {
         if (typeof v !== 'number' || !Number.isFinite(v)) return '<span class="text-muted">-</span>';
-        return `<span>${v.toLocaleString('id-ID', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}</span>`;
+        const formatted = v.toLocaleString('id-ID', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+        if (v >= 5) return `<span class="text-success fw-bold">${formatted}</span>`;
+        if (v >= 2) return `<span class="fw-bold" style="color:#fd7e14">${formatted}</span>`;
+        if (v >= 0.5) return `<span>${formatted}</span>`;
+        return `<span class="text-muted">${formatted}</span>`;
     };
 
     const fmtCvd = (v) => {
@@ -1471,7 +1966,8 @@ function renderScreenerTable(candidates) {
 
     const fmtValue = (v) => {
         if (typeof v !== 'number' || !Number.isFinite(v)) return '<span class="text-muted">-</span>';
-        return `<span class="fw-bold">${formatCompactNumber(v)}</span>`;
+        const cls = v > 0 ? 'text-success fw-bold' : v < 0 ? 'text-danger fw-bold' : 'fw-bold';
+        return `<span class="${cls}">${formatCompactNumber(v)}</span>`;
     };
 
     const fmtQuadrant = (q) => {
@@ -1484,6 +1980,16 @@ function renderScreenerTable(candidates) {
         return `<span class="badge ${cls}" style="font-size:0.7rem; min-width: 30px;">${q}</span>`;
     };
 
+    const fmtRvol = (v) => {
+        if (typeof v !== 'number' || !Number.isFinite(v)) return '<span class="text-muted">-</span>';
+        const formatted = v.toFixed(2);
+        if (v >= 2.0) return `<span class="text-success fw-bold">${formatted}x</span>`;
+        if (v >= 1.5) return `<span class="text-success">${formatted}x</span>`;
+        if (v >= 0.8) return `<span>${formatted}x</span>`;
+        if (v >= 0.5) return `<span class="text-muted">${formatted}x</span>`;
+        return `<span class="text-danger">${formatted}x</span>`;
+    };
+
     candidates.forEach((item, idx) => {
         const m = item.metrics;
         const logoUrl = `https://api-saham.mkemalw.workers.dev/logo?symbol=${item.symbol}`;
@@ -1494,28 +2000,46 @@ function renderScreenerTable(candidates) {
                     <img src="${logoUrl}" alt="" style="height: 20px; width: auto; margin-right: 6px; vertical-align: middle; border-radius: 3px;" onerror="this.style.display='none'">
                     <a href="?kode=${item.symbol}" style="text-decoration:none;">${item.symbol}</a>
                 </td>
+                <td class="text-center of-growth">${fmtPct(item.order_growth_pct)}</td>
+                <td class="text-center of-freq">${fmtFreq(item.order_freq_tx)}</td>
                 <td class="text-center tom2-cell">${fmtProbCell(item.tom2)}</td>
                 <td class="text-center swg5-cell">${fmtProbCell(item.swg5)}</td>
                 <td class="text-center of-delta">${fmtPct(item.order_delta_pct)}</td>
                 <td class="text-center of-mom">${fmtPct(item.order_mom_pct)}</td>
                 <td class="text-center of-absorb">${fmtAbsorb(item.order_absorb)}</td>
                 <td class="text-center of-cvd">${fmtCvd(item.order_cvd)}</td>
-                <td class="text-center col-h2">${fmtSm(item.w2)}</td>
-                <td class="text-center col-h5">${fmtSm(item.w5)}</td>
-                <td class="text-center hide-mobile col-h10">${fmtSm(item.w10)}</td>
-                <td class="text-center hide-mobile col-h20">${fmtSm(item.w20)}</td>
-                <td class="text-center hide-mobile col-h2">${getBadge(m.vwap2, 'vwap')}</td>
-                <td class="text-center hide-mobile col-h5">${getBadge(m.vwap5, 'vwap')}</td>
-                <td class="text-center hide-mobile col-h10">${getBadge(m.vwap10, 'vwap')}</td>
-                <td class="text-center hide-mobile col-h20">${getBadge(m.vwap20, 'vwap')}</td>
-                <td class="text-center col-h2">${getFlowScore(item.flow2)}</td>
-                <td class="text-center col-h5">${getFlowScore(item.flow5)}</td>
-                <td class="text-center hide-mobile col-h10">${getFlowScore(item.flow10)}</td>
-                <td class="text-center hide-mobile col-h20">${getFlowScore(item.flow20)}</td>
-                <td class="text-center col-h2">${getBadge(m.effort2, 'effort')}</td>
-                <td class="text-center col-h5">${getBadge(m.effort5, 'effort')}</td>
-                <td class="text-center hide-mobile col-h10">${getBadge(m.effort10, 'effort')}</td>
-                <td class="text-center hide-mobile col-h20">${getBadge(m.effort20, 'effort')}</td>
+                <td class="text-center hide-mobile col-h2 col-cvdm of-cvd-2d">${fmtCvd(item.order_cvd_2d)}</td>
+                <td class="text-center hide-mobile col-h5 col-cvdm of-cvd-5d">${fmtCvd(item.order_cvd_5d)}</td>
+                <td class="text-center hide-mobile col-h10 col-cvdm of-cvd-10d">${fmtCvd(item.order_cvd_10d)}</td>
+                <td class="text-center hide-mobile col-h20 col-cvdm of-cvd-20d">${fmtCvd(item.order_cvd_20d)}</td>
+                <td class="text-center col-h2 col-fflw">${fmtFflw(item.w2)}</td>
+                <td class="text-center col-h5 col-fflw">${fmtFflw(item.w5)}</td>
+                <td class="text-center hide-mobile col-h10 col-fflw">${fmtFflw(item.w10)}</td>
+                <td class="text-center hide-mobile col-h20 col-fflw">${fmtFflw(item.w20)}</td>
+                <td class="text-center col-h2 col-lflw">${fmtLflw(item.w2)}</td>
+                <td class="text-center col-h5 col-lflw">${fmtLflw(item.w5)}</td>
+                <td class="text-center hide-mobile col-h10 col-lflw">${fmtLflw(item.w10)}</td>
+                <td class="text-center hide-mobile col-h20 col-lflw">${fmtLflw(item.w20)}</td>
+                <td class="text-center col-h2 col-smny">${fmtSmny(item.w2)}</td>
+                <td class="text-center col-h5 col-smny">${fmtSmny(item.w5)}</td>
+                <td class="text-center hide-mobile col-h10 col-smny">${fmtSmny(item.w10)}</td>
+                <td class="text-center hide-mobile col-h20 col-smny">${fmtSmny(item.w20)}</td>
+                <td class="text-center hide-mobile col-h2 col-rvol of-rvol-2d">${fmtRvol(item.rvol_2d)}</td>
+                <td class="text-center hide-mobile col-h5 col-rvol of-rvol-5d">${fmtRvol(item.rvol_5d)}</td>
+                <td class="text-center hide-mobile col-h10 col-rvol of-rvol-10d">${fmtRvol(item.rvol_10d)}</td>
+                <td class="text-center hide-mobile col-h20 col-rvol of-rvol-20d">${fmtRvol(item.rvol_20d)}</td>
+                <td class="text-center hide-mobile col-h2 col-vwp">${getBadge(m.vwap2, 'vwap')}</td>
+                <td class="text-center hide-mobile col-h5 col-vwp">${getBadge(m.vwap5, 'vwap')}</td>
+                <td class="text-center hide-mobile col-h10 col-vwp">${getBadge(m.vwap10, 'vwap')}</td>
+                <td class="text-center hide-mobile col-h20 col-vwp">${getBadge(m.vwap20, 'vwap')}</td>
+                <td class="text-center col-h2 col-flow">${getFlowScore(item.flow2)}</td>
+                <td class="text-center col-h5 col-flow">${getFlowScore(item.flow5)}</td>
+                <td class="text-center hide-mobile col-h10 col-flow">${getFlowScore(item.flow10)}</td>
+                <td class="text-center hide-mobile col-h20 col-flow">${getFlowScore(item.flow20)}</td>
+                <td class="text-center col-h2 col-eff">${getBadge(m.effort2, 'effort')}</td>
+                <td class="text-center col-h5 col-eff">${getBadge(m.effort5, 'effort')}</td>
+                <td class="text-center hide-mobile col-h10 col-eff">${getBadge(m.effort10, 'effort')}</td>
+                <td class="text-center hide-mobile col-h20 col-eff">${getBadge(m.effort20, 'effort')}</td>
                 <td class="text-center">${getStateText(item.state)}</td>
                 <td class="text-center of-value">${fmtValue(item.order_net_value)}</td>
                 <td class="text-center of-q">${fmtQuadrant(item.order_quadrant)}</td>
@@ -1566,6 +2090,20 @@ function applyOrderflowSnapshotToCandidate(item, snapshot) {
     if (!item || !snapshot) return;
     item.orderflow = snapshot;
     item._orderflowFetchedAt = Date.now();
+    item.order_open_price = typeof snapshot.open_price === 'number' ? snapshot.open_price : item.order_open_price;
+    item.order_recent_price = typeof snapshot.recent_price === 'number'
+        ? snapshot.recent_price
+        : ((typeof snapshot.price === 'number') ? snapshot.price : item.order_recent_price);
+    item.order_growth_pct = typeof snapshot.growth_pct === 'number'
+        ? snapshot.growth_pct
+        : ((typeof item.order_open_price === 'number' && typeof item.order_recent_price === 'number' && item.order_open_price > 0)
+            ? (((item.order_recent_price - item.order_open_price) / item.order_open_price) * 100)
+            : item.order_growth_pct);
+    const snapshotFreq = (typeof snapshot.freq_tx === 'number' && Number.isFinite(snapshot.freq_tx)) ? snapshot.freq_tx : null;
+    const currentFreq = (typeof item.order_freq_tx === 'number' && Number.isFinite(item.order_freq_tx)) ? item.order_freq_tx : null;
+    if (snapshotFreq !== null) {
+        item.order_freq_tx = currentFreq !== null ? Math.max(currentFreq, snapshotFreq) : snapshotFreq;
+    }
     item.order_delta_pct = typeof snapshot.delta_pct === 'number' ? snapshot.delta_pct : null;
     item.order_mom_pct = typeof snapshot.mom_pct === 'number' ? snapshot.mom_pct : null;
     item.order_absorb = typeof snapshot.absorb === 'number' ? snapshot.absorb : null;
@@ -1585,21 +2123,59 @@ function inferOrderQuadrant(deltaPct, momPct) {
     return 'Q4';
 }
 
-function applyFootprintRowToCandidate(item, row) {
+function applyFootprintRowToCandidate(item, row, opts = {}) {
     if (!item || !row) return false;
 
-    const d = Number(row.d);
-    const p = Number(row.p);
-    const div = Number(row.div);
-    const cvd = Number(row.cvd);
-    const nv = Number(row.nv);
+    const numOrNaN = (v) => {
+        if (v === null || v === undefined || v === '') return NaN;
+        const n = Number(v);
+        return Number.isFinite(n) ? n : NaN;
+    };
+
+    const d = numOrNaN(row.d);
+    const p = numOrNaN(row.p);
+    const div = numOrNaN(row.div);
+    // B1: prefer net_delta (renamed), fallback to cvd (backward compat alias)
+    const net_delta = numOrNaN(row.net_delta ?? row.cvd);
+    // B2: prefer notional_val (renamed), fallback to nv (backward compat alias)
+    const notional_val = numOrNaN(row.notional_val ?? row.nv);
+    const open = numOrNaN(row.open_price ?? row.open);
+    const recent = numOrNaN(row.recent_price ?? row.recent);
+    const growth = numOrNaN(row.growth_pct);
+    const freq = numOrNaN(row.freq_tx);
+    // CVD multi-window
+    const cvd_2d  = numOrNaN(row.cvd_2d);
+    const cvd_5d  = numOrNaN(row.cvd_5d);
+    const cvd_10d = numOrNaN(row.cvd_10d);
+    const cvd_20d = numOrNaN(row.cvd_20d);
 
     let touched = false;
     if (Number.isFinite(d)) { item.order_delta_pct = d; touched = true; }
     if (Number.isFinite(p)) { item.order_mom_pct = p; touched = true; }
     if (Number.isFinite(div)) { item.order_absorb = div; touched = true; }
-    if (Number.isFinite(cvd)) { item.order_cvd = cvd; touched = true; }
-    if (Number.isFinite(nv)) { item.order_net_value = nv; touched = true; }
+    if (Number.isFinite(net_delta)) { item.order_cvd = net_delta; touched = true; }      // order_cvd sourced from net_delta
+    if (Number.isFinite(notional_val)) { item.order_net_value = notional_val; touched = true; }
+    if (Number.isFinite(open)) { item.order_open_price = open; touched = true; }
+    if (Number.isFinite(recent)) { item.order_recent_price = recent; touched = true; }
+    if (Number.isFinite(growth)) { item.order_growth_pct = growth; touched = true; }
+    if (opts.applyFreq === true && Number.isFinite(freq)) { item.order_freq_tx = freq; touched = true; }
+    if (Number.isFinite(cvd_2d))  { item.order_cvd_2d  = cvd_2d;  touched = true; }
+    if (Number.isFinite(cvd_5d))  { item.order_cvd_5d  = cvd_5d;  touched = true; }
+    if (Number.isFinite(cvd_10d)) { item.order_cvd_10d = cvd_10d; touched = true; }
+    if (Number.isFinite(cvd_20d)) { item.order_cvd_20d = cvd_20d; touched = true; }
+    // RVOL windows
+    const rvol_2d  = numOrNaN(row.rvol_2d);
+    const rvol_5d  = numOrNaN(row.rvol_5d);
+    const rvol_10d = numOrNaN(row.rvol_10d);
+    const rvol_20d = numOrNaN(row.rvol_20d);
+    if (Number.isFinite(rvol_2d))  { item.rvol_2d  = rvol_2d;  touched = true; }
+    if (Number.isFinite(rvol_5d))  { item.rvol_5d  = rvol_5d;  touched = true; }
+    if (Number.isFinite(rvol_10d)) { item.rvol_10d = rvol_10d; touched = true; }
+    if (Number.isFinite(rvol_20d)) { item.rvol_20d = rvol_20d; touched = true; }
+    if (!Number.isFinite(growth) && Number.isFinite(item.order_open_price) && Number.isFinite(item.order_recent_price) && item.order_open_price > 0) {
+        item.order_growth_pct = ((item.order_recent_price - item.order_open_price) / item.order_open_price) * 100;
+        touched = true;
+    }
 
     const q = inferOrderQuadrant(item.order_delta_pct, item.order_mom_pct);
     if (q) {
@@ -1613,6 +2189,123 @@ function applyFootprintRowToCandidate(item, row) {
     }
 
     return touched;
+}
+
+/**
+ * Prefill FREQ (from levels_sum) and GROWTH (first vs last snapshot price)
+ * for all candidates using sector-scrapper /sector/digest/batch.
+ *
+ * Strategy:
+ *   1. Fetch /sector/digest/batch for all 11 sectors in parallel.
+ *   2. Merge all symbol→digest results into sectorDigestCache.
+ *   3. Apply freq_tx + growth_pct to every matching candidate.
+ *   4. Update DOM cells immediately.
+ *
+ * Cache TTL = 10 min; subsequent calls within TTL apply from cache only.
+ */
+async function prefillSectorDigest(candidates) {
+    if (!Array.isArray(candidates) || !candidates.length) return;
+
+    const now = Date.now();
+    if ((now - sectorDigestLoadedAt) <= SECTOR_DIGEST_TTL_MS && sectorDigestCache.size > 0) {
+        // Use cached data
+        _applySectorDigestsToCandidates(candidates, { updateDom: true });
+        return;
+    }
+
+    const ALL_SECTORS = [
+        'IDXBASIC','IDXENERGY','IDXINDUST','IDXNONCYC','IDXCYCLIC',
+        'IDXHEALTH','IDXFINANCE','IDXPROPERT','IDXTECHNO','IDXINFRA','IDXTRANS'
+    ];
+
+    // Try today first; if no data yet (pre-market / cron hasn't run), fallback to yesterday.
+    const _fetchDate = async (dateStr) => {
+        const res = await Promise.allSettled(
+            ALL_SECTORS.map(sector =>
+                fetch(`${SECTOR_SCRAPPER_BASE_URL}/sector/digest/batch?sector=${sector}&date=${dateStr}`)
+                    .then(r => r.ok ? r.json() : null)
+                    .catch(() => null)
+            )
+        );
+        let count = 0;
+        const map = new Map();
+        res.forEach(r => {
+            if (r.status !== 'fulfilled' || !r.value?.ok) return;
+            for (const [sym, digest] of Object.entries(r.value.digests || {})) {
+                map.set(sym.toUpperCase(), digest);
+                count++;
+            }
+        });
+        return { count, map };
+    };
+
+    const today = _getWibDateString();
+    let { count: newEntries, map: digestMap } = await _fetchDate(today);
+    let usedDate = today;
+
+    // Fallback to yesterday if today has no data yet (cron hasn't run / pre-market)
+    if (newEntries === 0) {
+        const yesterdayMs = Date.now() - 86400000;
+        const yesterday = _getWibDateString(new Date(yesterdayMs));
+        const fb = await _fetchDate(yesterday);
+        if (fb.count > 0) {
+            digestMap  = fb.map;
+            newEntries = fb.count;
+            usedDate   = yesterday;
+        }
+    }
+
+    for (const [sym, digest] of digestMap.entries()) {
+        sectorDigestCache.set(sym, digest);
+    }
+    sectorDigestLoadedAt = now;
+    console.log(`[sector-digest] loaded ${newEntries} symbol digests for ${usedDate}${usedDate !== today ? ' (yesterday fallback)' : ''}`);
+
+    _applySectorDigestsToCandidates(candidates, { updateDom: true });
+}
+
+function _getWibDateString(d) {
+    const now = d || new Date();
+    const wib = new Date(now.getTime() + 7 * 60 * 60 * 1000);
+    return `${wib.getUTCFullYear()}-${String(wib.getUTCMonth()+1).padStart(2,'0')}-${String(wib.getUTCDate()).padStart(2,'0')}`;
+}
+
+/**
+ * Apply cached sector digests to candidates array.
+ * Overwrites order_freq_tx and order_growth_pct (sector data is authoritative).
+ */
+function _applySectorDigestsToCandidates(candidates, opts = {}) {
+    if (!sectorDigestCache.size) return 0;
+    const applyTs = Date.now();
+    let changed = 0;
+    for (const item of candidates) {
+        const sym = String(item?.symbol || '').toUpperCase();
+        if (!sym) continue;
+        const digest = sectorDigestCache.get(sym);
+        if (!digest) continue;
+
+        // FREQ: levels_sum is the most accurate source — always override
+        if (typeof digest.freq_tx === 'number' && Number.isFinite(digest.freq_tx)) {
+            item.order_freq_tx = digest.freq_tx;
+        }
+        // GROWTH: (price_last_now - price_last_first) / price_last_first × 100
+        if (typeof digest.growth_pct === 'number' && Number.isFinite(digest.growth_pct)) {
+            item.order_growth_pct = digest.growth_pct;
+        }
+        // Propagate open/last prices for downstream TOM2 calculations
+        if (typeof digest.price_open === 'number' && digest.price_open > 0) {
+            item.order_open_price = digest.price_open;
+        }
+        if (typeof digest.price_last === 'number' && digest.price_last > 0) {
+            item.order_recent_price = digest.price_last;
+        }
+
+        item._sectorDigestFetchedAt = applyTs;
+        changed++;
+        if (opts.updateDom) updateOrderflowCells(sym, item);
+    }
+    if (changed > 0) scheduleProbRefreshAfterOrderflow();
+    return changed;
 }
 
 async function prefillIntradayFromFootprintSummary(candidates, options = {}) {
@@ -1632,7 +2325,9 @@ async function prefillIntradayFromFootprintSummary(candidates, options = {}) {
             if (!symbol) continue;
             const row = map.get(symbol);
             if (!row) continue;
-            if (applyFootprintRowToCandidate(item, row)) {
+            if (applyFootprintRowToCandidate(item, row, { applyFreq: true })) {
+                // Prefill is coarse summary data; force immediate live snapshot hydration.
+                item._orderflowFetchedAt = 0;
                 changed += 1;
                 if (options.updateDom) updateOrderflowCells(symbol, item);
             }
@@ -1650,23 +2345,43 @@ function updateOrderflowCells(symbol, item) {
     const $row = $(`#tbody-index tr[data-symbol="${symbol}"]`);
     if (!$row.length) return;
 
+    const trunc2 = (x) => Math.trunc(x * 100) / 100;
+
     const pct = (v) => {
         if (typeof v !== 'number' || !Number.isFinite(v)) return '<span class="text-muted">-</span>';
-        const cls = v > 0 ? 'text-success fw-bold' : (v < 0 ? 'text-danger fw-bold' : 'text-secondary');
-        const sign = v > 0 ? '+' : '';
-        return `<span class="${cls}">${sign}${v.toFixed(2)}%</span>`;
+        const vv = trunc2(v);
+        const cls = vv > 0 ? 'text-success fw-bold' : (vv < 0 ? 'text-danger fw-bold' : 'text-secondary');
+        const sign = vv > 0 ? '+' : '';
+        return `<span class="${cls}">${sign}${vv.toFixed(2)}%</span>`;
     };
-    const absorb = (v) => (typeof v === 'number' && Number.isFinite(v))
-        ? `<span>${v.toLocaleString('id-ID', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}</span>`
+    const absorb = (v) => {
+        if (typeof v !== 'number' || !Number.isFinite(v)) return '<span class="text-muted">-</span>';
+        const formatted = v.toLocaleString('id-ID', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+        if (v >= 5) return `<span class="text-success fw-bold">${formatted}</span>`;
+        if (v >= 2) return `<span class="fw-bold" style="color:#fd7e14">${formatted}</span>`;
+        if (v >= 0.5) return `<span>${formatted}</span>`;
+        return `<span class="text-muted">${formatted}</span>`;
+    };
+    const growth = (v) => {
+        if (typeof v !== 'number' || !Number.isFinite(v)) return '<span class="text-muted">-</span>';
+        const vv = trunc2(v);
+        const cls = vv > 0 ? 'text-success fw-bold' : (vv < 0 ? 'text-danger fw-bold' : 'text-secondary');
+        const sign = vv > 0 ? '+' : '';
+        return `<span class="${cls}">${sign}${vv.toFixed(2)}%</span>`;
+    };
+    const freq = (v) => (typeof v === 'number' && Number.isFinite(v))
+        ? `<span>${Math.round(v).toLocaleString('id-ID')}</span>`
         : '<span class="text-muted">-</span>';
     const cvd = (v) => {
         if (typeof v !== 'number' || !Number.isFinite(v)) return '<span class="text-muted">-</span>';
         const cls = v >= 0 ? 'text-success' : 'text-danger';
         return `<span class="${cls}">${v.toLocaleString('id-ID')}</span>`;
     };
-    const value = (v) => (typeof v === 'number' && Number.isFinite(v))
-        ? `<span class="fw-bold">${formatCompactNumber(v)}</span>`
-        : '<span class="text-muted">-</span>';
+    const value = (v) => {
+        if (typeof v !== 'number' || !Number.isFinite(v)) return '<span class="text-muted">-</span>';
+        const cls = v > 0 ? 'text-success fw-bold' : v < 0 ? 'text-danger fw-bold' : 'fw-bold';
+        return `<span class="${cls}">${formatCompactNumber(v)}</span>`;
+    };
     const quadrant = (q) => {
         if (!q) return '<span class="text-muted">-</span>';
         const cls = q === 'Q1' ? 'bg-success text-white'
@@ -1677,10 +2392,30 @@ function updateOrderflowCells(symbol, item) {
         return `<span class="badge ${cls}" style="font-size:0.7rem; min-width: 30px;">${q}</span>`;
     };
 
+    $row.find('.of-growth').html(growth(item.order_growth_pct));
+    $row.find('.of-freq').html(freq(item.order_freq_tx));
     $row.find('.of-delta').html(pct(item.order_delta_pct));
     $row.find('.of-mom').html(pct(item.order_mom_pct));
     $row.find('.of-absorb').html(absorb(item.order_absorb));
     $row.find('.of-cvd').html(cvd(item.order_cvd));
+    $row.find('.of-cvd-2d').html(cvd(item.order_cvd_2d));
+    $row.find('.of-cvd-5d').html(cvd(item.order_cvd_5d));
+    $row.find('.of-cvd-10d').html(cvd(item.order_cvd_10d));
+    $row.find('.of-cvd-20d').html(cvd(item.order_cvd_20d));
+    // RVOL
+    const rvol = (v) => {
+        if (typeof v !== 'number' || !Number.isFinite(v)) return '<span class="text-muted">-</span>';
+        const formatted = v.toFixed(2);
+        if (v >= 2.0) return `<span class="text-success fw-bold">${formatted}x</span>`;
+        if (v >= 1.5) return `<span class="text-success">${formatted}x</span>`;
+        if (v >= 0.8) return `<span>${formatted}x</span>`;
+        if (v >= 0.5) return `<span class="text-muted">${formatted}x</span>`;
+        return `<span class="text-danger">${formatted}x</span>`;
+    };
+    $row.find('.of-rvol-2d').html(rvol(item.rvol_2d));
+    $row.find('.of-rvol-5d').html(rvol(item.rvol_5d));
+    $row.find('.of-rvol-10d').html(rvol(item.rvol_10d));
+    $row.find('.of-rvol-20d').html(rvol(item.rvol_20d));
     $row.find('.of-value').html(value(item.order_net_value));
     $row.find('.of-q').html(quadrant(item.order_quadrant));
     updateProbCells(symbol, item);
@@ -1720,21 +2455,40 @@ async function hydrateOrderflowForVisibleRows(candidates) {
 }
 
 function applyColumnVisibility() {
+    // Horizon columns
     ['2', '5', '10', '20'].forEach(h => {
-        const show = visibleHorizonCols[h] !== false;
-        $(`.col-h${h}`).toggleClass('d-none', !show);
+        $(`.col-h${h}`).toggleClass('d-none', visibleHorizonCols[h] === false);
     });
+    // Column group visibility (additive hide on top of horizon)
+    Object.entries(columnGroupVisibility).forEach(([g, vis]) => {
+        if (!vis) $(`.col-${g}`).addClass('d-none');
+    });
+}
+
+function saveViewToLocalStorage() {
+    try {
+        localStorage.setItem('screener_view', JSON.stringify({
+            h: { ...visibleHorizonCols }, g: { ...columnGroupVisibility }
+        }));
+    } catch (e) { /* quota */ }
 }
 
 $(document).on('change', '[data-view-horizon]', function() {
     const h = String($(this).data('view-horizon'));
     visibleHorizonCols[h] = $(this).is(':checked');
-
-    const activeCount = Object.values(visibleHorizonCols).filter(Boolean).length;
-    const suffix = activeCount === 4 ? 'All' : `${activeCount}/4`;
-    $('#dd-view').html(`<i class="fa-solid fa-eye me-1"></i>View: ${suffix}`);
-
     applyColumnVisibility();
+    updateViewButtonLabel();
+    saveViewToLocalStorage();
+    pushUrlState();
+});
+
+$(document).on('change', '[data-view-group]', function() {
+    const g = String($(this).data('view-group'));
+    columnGroupVisibility[g] = $(this).is(':checked');
+    applyColumnVisibility();
+    updateViewButtonLabel();
+    saveViewToLocalStorage();
+    pushUrlState();
 });
 
 // =========================================
@@ -1753,11 +2507,11 @@ async function loadZScoreFeatures(symbol) {
                 console.log(`[ZScore] Found in screener`);
                 const z = item.z["20"];
                 const state = mapState(item.s);
-                $('#feat-effort').html(getBadge(z.e || 0, 'effort'));
-                $('#feat-response').html(getBadge(z.r || 0, 'result'));
-                $('#feat-quality').html(getBadge(z.n || 0, 'ngr'));
+                $('#feat-effort').html(getBadge(z.e ?? null, 'effort'));
+                $('#feat-response').html(getBadge(z.r ?? null, 'result'));
+                $('#feat-quality').html(getBadge(z.n ?? null, 'ngr'));
                 $('#feat-vwap').html(getBadge(z.v ?? null, 'vwap'));
-                $('#feat-elasticity').html(getBadge(z.el || 0, 'elasticity'));
+                $('#feat-elasticity').html(getBadge(z.el ?? null, 'elasticity'));
                 $('#feat-state').html(getStateBadgeSimple(state));
                 $('#zscore-features-card').removeClass('d-none');
                 // /screener only contains { t, s, sc, z }.
@@ -1944,10 +2698,16 @@ function calculateFeaturesFromHistory(history) {
     // Normalize to z-score-like range (-3 to +3)
     const normalize = (val, range) => Math.max(-3, Math.min(3, val / (range || 1) * 3));
     
+    // VWAP deviation: compare latest price to volume-weighted average
+    const prices = days.map(d => d.data?.price || 0).filter(p => p > 0);
+    const avgPrice = prices.length > 0 ? prices.reduce((s, p) => s + p, 0) / prices.length : 0;
+    const vwapDev = avgPrice > 0 && lastPrice > 0 ? ((lastPrice - avgPrice) / avgPrice) : 0;
+
     return {
         effort: normalize(avgValue, 5000000000), // 5B as reference
         response: normalize(priceChange, 10), // 10% as max
         quality: normalize(avgFlow, maxFlow),
+        vwap: normalize(vwapDev * 100, 5), // scale % deviation to z-score-like range
         elasticity: normalize(elasticity, 5),
         state: state
     };
@@ -1970,11 +2730,21 @@ function getStateBadgeSimple(state) {
         'OFF_THE_LOW': 'text-success fw-bold',
         'ACCUMULATION': 'text-success fw-bold',
         'READY_MARKUP': 'text-info fw-bold',
+        'TRANSITION': 'text-primary fw-bold',
         'POTENTIAL_TOP': 'text-warning fw-bold',
         'DISTRIBUTION': 'text-danger fw-bold',
         'NEUTRAL': 'text-muted'
     };
-    const label = state ? state.replaceAll('_', ' ') : '-';
+    const labels = {
+        'OFF_THE_LOW': 'OFF THE LOW',
+        'ACCUMULATION': 'ACCUMULATION',
+        'READY_MARKUP': 'READY MARKUP',
+        'TRANSITION': 'TRANSITION',
+        'POTENTIAL_TOP': 'POTENTIAL TOP',
+        'DISTRIBUTION': 'DISTRIBUTION',
+        'NEUTRAL': 'NEUTRAL'
+    };
+    const label = labels[state] || (state ? state.replaceAll('_', ' ') : '-');
     return `<span class="${colors[state] || 'text-muted'}">${label}</span>`;
 }
 

@@ -105,6 +105,16 @@ export default {
             const contextMap = new Map();
             contextData.forEach(c => contextMap.set(c.ticker, c));
 
+            const prevDate = this.prevTradingDayUTC(date);
+            // Fetch 20 trading-day stats + sector digest in parallel
+            const [processedStatsMaps, sectorDigestMap] = await Promise.all([
+                this.fetchProcessedDailyStatsMaps(env, date, 20),
+                this.fetchSectorDigestMap(env, date)
+            ]);
+            const processedStatsMap     = processedStatsMaps[0]; // D0 = today
+            const prevProcessedStatsMap = processedStatsMaps[1]; // D1 = yesterday
+            console.log(`Step 2.5: processed-stats maps ${processedStatsMaps.filter(m => m.size > 0).length}/20 loaded; sector digest ${sectorDigestMap.size} symbols`);
+
             // Create footprint lookup for quick access
             const footprintMap = new Map();
             footprintData.forEach(fp => footprintMap.set(fp.ticker, fp));
@@ -130,6 +140,63 @@ export default {
                     // HAS FOOTPRINT: Full hybrid calculation
                     const item = this.calculateHybridItem(fp, ctx, ctxFound);
                     if (item) {
+                        const rawCandleCount = Number(fp?.candle_count || 0);
+                        const stats = processedStatsMap.get(ticker);
+                        const prevStats = prevProcessedStatsMap.get(ticker);
+
+                        if (rawCandleCount < 30) {
+                            if (stats) {
+                                // S1/C2: Sparse D1 (<30 candles) — override Δ%/Mom%/Absorb with EOD processed stats.
+                                // p_src switches from 'intraday' → 'overnight' (close-to-close daily return).
+                                const vol = Number(stats.vol);
+                                const netVol = Number(stats.netVol);
+                                const close = Number(stats.close);
+                                const prevClose = Number(prevStats?.close);
+
+                                if (Number.isFinite(vol) && vol > 0 && Number.isFinite(netVol)) {
+                                    const deltaPctFallback = (netVol / vol) * 100;
+                                    item.d         = Number(deltaPctFallback.toFixed(2));
+                                    item.net_delta = Number(netVol); // B1: keep in sync
+                                    item.cvd       = item.net_delta; // B1: alias
+                                }
+
+                                if (Number.isFinite(close) && close > 0 && Number.isFinite(prevClose) && prevClose > 0) {
+                                    const momPctFallback = ((close - prevClose) / prevClose) * 100;
+                                    item.p = Number(momPctFallback.toFixed(2));
+                                    item.p_src = 'overnight'; // C2: semantics changed — daily close-to-close, NOT intraday
+                                    item.growth_pct = Number(momPctFallback.toFixed(2));
+                                    item.open_price = prevClose;
+                                    item.recent_price = close;
+                                }
+
+                                if (Number.isFinite(item.d) && Number.isFinite(item.p)) {
+                                    item.div = Number((Math.abs(item.d) / (1 + Math.abs(item.p))).toFixed(2));
+                                }
+
+                                if (Number.isFinite(stats.freq) && stats.freq > 0) {
+                                    item.freq_tx = Math.round(stats.freq);
+                                }
+                            } else {
+                                // S1: Sparse D1 + no processed stats available (intraday, pre-EOD).
+                                // Keep whatever few-candle intraday values calculateHybridItem produced
+                                // but mark them as noisy so consumers can choose to hide/dim.
+                                item.p_src = 'intraday_sparse';
+                            }
+                        }
+
+                        // S2: Defensive growth_pct fallback — fires only when growth_pct is still null
+                        // after the sparse-data block above (e.g. sparse + no prevStats.close).
+                        // NOTE: does NOT override item.p — growth_pct is display-only in this path.
+                        if (item.growth_pct == null) {
+                            const curClose = Number(processedStatsMap.get(ticker)?.close);
+                            const prevClose = Number(prevProcessedStatsMap.get(ticker)?.close);
+                            if (Number.isFinite(curClose) && Number.isFinite(prevClose) && prevClose > 0) {
+                                item.open_price = prevClose;
+                                item.recent_price = curClose;
+                                item.growth_pct = Number((((curClose - prevClose) / prevClose) * 100).toFixed(2));
+                                // item.p intentionally NOT overridden here
+                            }
+                        }
                         item.src = 'FULL';  // Source indicator
                         items.push(item);
                         withFootprint++;
@@ -146,6 +213,71 @@ export default {
             }
 
             console.log(`Step 4: Generated ${items.length} items (${withFootprint} full, ${zscoreOnly} zscore-only)`);
+
+            // Step 4.5: Merge sector digest + CVD windows into every item
+            for (const item of items) {
+                const ticker = item.t;
+
+                // Sector digest: overwrite freq_tx and growth_pct with scraper values.
+                // freq_tx: sector scraper levels_sum is the most accurate tx count — always override.
+                // growth_pct: sector scraper = (price_last_now - price_open_first_snapshot) / price_open.
+                //   Only override when item.p_src is 'intraday' or growth_pct is still null.
+                //   Do NOT override 'overnight' path — that uses processed-stats close-to-close which
+                //   is more meaningful than a sparse single-snapshot growth from sector scraper.
+                const digest = sectorDigestMap.get(ticker);
+                if (digest) {
+                    if (Number.isFinite(digest.freq_tx) && digest.freq_tx > 0) {
+                        item.freq_tx  = Math.round(digest.freq_tx);
+                        item.freq_src = 'sector_digest';
+                    }
+                    const canOverrideGrowth = item.growth_pct == null
+                        || item.p_src === 'intraday'
+                        || item.p_src === 'intraday_sparse';
+                    if (canOverrideGrowth && Number.isFinite(digest.growth_pct)) {
+                        item.growth_pct   = parseFloat(digest.growth_pct.toFixed(2));
+                        item.open_price   = digest.price_open   ?? item.open_price;
+                        item.recent_price = digest.price_last   ?? item.recent_price;
+                    }
+                }
+
+                // CVD windows: cumulative netVol from processed stats (broksum-sourced)
+                // maps[0]=D0(today, often empty intraday), maps[1]=D1, ... maps[19]=D20
+                let cvd_2d = 0, cvd_5d = 0, cvd_10d = 0, cvd_20d = 0;
+                for (let i = 0; i < 20; i++) {
+                    const nv = processedStatsMaps[i]?.get(ticker)?.netVol;
+                    if (!Number.isFinite(nv)) continue;
+                    if (i < 2)  cvd_2d  += nv;
+                    if (i < 5)  cvd_5d  += nv;
+                    if (i < 10) cvd_10d += nv;
+                    cvd_20d += nv;
+                }
+                item.cvd_2d  = cvd_2d  !== 0 ? cvd_2d  : null;
+                item.cvd_5d  = cvd_5d  !== 0 ? cvd_5d  : null;
+                item.cvd_10d = cvd_10d !== 0 ? cvd_10d : null;
+                item.cvd_20d = cvd_20d !== 0 ? cvd_20d : null;
+
+                // RVOL windows: today_vol / avg_vol(window)
+                // Use item.v (footprint candle volume) as today's volume — processedStatsMaps[0]
+                // is often empty intraday because processed/{date}.json is written at EOD.
+                const todayVol = item.v || processedStatsMaps[0]?.get(ticker)?.vol;
+                if (Number.isFinite(todayVol) && todayVol > 0) {
+                    const calcRvol = (windowSize) => {
+                        let sum = 0, count = 0;
+                        // Start from D1 (yesterday) to avoid including today in average
+                        for (let i = 1; i <= windowSize && i < 20; i++) {
+                            const v = processedStatsMaps[i]?.get(ticker)?.vol;
+                            if (Number.isFinite(v) && v > 0) { sum += v; count++; }
+                        }
+                        if (count === 0) return null;
+                        const avg = sum / count;
+                        return parseFloat((todayVol / avg).toFixed(2));
+                    };
+                    item.rvol_2d  = calcRvol(2);
+                    item.rvol_5d  = calcRvol(5);
+                    item.rvol_10d = calcRvol(10);
+                    item.rvol_20d = calcRvol(20);
+                }
+            }
 
             // 5. Sort by Score Descending
             items.sort((a, b) => (b.sc || 0) - (a.sc || 0));
@@ -169,6 +301,33 @@ export default {
                 items: items
             };
 
+            // PRE-MARKET GUARD: Don't overwrite a FULL summary with a zscore-only one
+            // when market is closed. Between 00:00–02:00 UTC (07:00–09:00 WIB),
+            // D1 has no footprint data for the new UTC date, so the cron produces
+            // zscore-only output. Overwriting the previous FULL summary would cause
+            // empty charts for users opening the page in the morning.
+            if (withFootprint === 0 && zscoreOnly > 0) {
+                const nowUTC = new Date();
+                const hourUTC = nowUTC.getUTCHours();
+                const isPreMarket = hourUTC < 2 || hourUTC >= 10; // Before 09:00 WIB or after 17:00 WIB
+                if (isPreMarket) {
+                    // Check if existing summary has footprint data — if so, preserve it
+                    try {
+                        const existingObj = await env.SSSAHAM_EMITEN.get('features/footprint-summary.json');
+                        if (existingObj) {
+                            const existing = await existingObj.json();
+                            const existingFull = Number(existing?.validation?.with_footprint || 0);
+                            if (existingFull > 0) {
+                                console.log(`[PRE-MARKET GUARD] Skipping save: current summary has ${existingFull} full items, new has 0. Preserving existing.`);
+                                return output; // Return but don't save
+                            }
+                        }
+                    } catch (e) {
+                        console.warn('[PRE-MARKET GUARD] Failed to read existing summary:', e?.message);
+                    }
+                }
+            }
+
             await env.SSSAHAM_EMITEN.put('features/footprint-summary.json', JSON.stringify(output));
             console.log(`Saved Merged Summary (v3.1) with ${items.length} items (${withFootprint} full + ${zscoreOnly} zscore-only)`);
 
@@ -178,6 +337,148 @@ export default {
             await env.SSSAHAM_EMITEN.put('debug/hybrid_crash.txt', `Date: ${date}\nError: ${err.message}\nStack: ${err.stack}`);
             throw err;
         }
+    },
+
+    prevTradingDayUTC(dateStr) {
+        let d = new Date(`${dateStr}T12:00:00Z`);
+        do {
+            d = new Date(d.getTime() - 86400000);
+        } while ([0, 6].includes(d.getUTCDay()));
+        return d.toISOString().slice(0, 10);
+    },
+
+    async fetchProcessedDailyStatsMap(env, dateStr) {
+        const out = new Map();
+        if (!env?.TAPE_DATA_SAHAM || !dateStr) return out;
+
+        try {
+            const obj = await env.TAPE_DATA_SAHAM.get(`processed/${dateStr}.json`);
+            if (!obj) return out;
+
+            const parsed = await obj.json();
+            const items = Array.isArray(parsed)
+                ? parsed
+                : (Array.isArray(parsed?.items) ? parsed.items : []);
+
+            for (const item of items) {
+                const ticker = String(item?.kode || item?.t || '').toUpperCase();
+                const open = Number(item?.open ?? item?.o);
+                const close = Number(item?.close ?? item?.c);
+                const vol = Number(item?.vol ?? item?.v);
+                const netVol = Number(item?.net_vol ?? item?.nv);
+                const freq = Number(item?.freq ?? item?.f);
+                if (!ticker || !this.isValidTicker(ticker)) continue;
+                out.set(ticker, {
+                    open: Number.isFinite(open) ? open : null,
+                    close: Number.isFinite(close) ? close : null,
+                    vol: Number.isFinite(vol) ? vol : null,
+                    netVol: Number.isFinite(netVol) ? netVol : null,
+                    freq: Number.isFinite(freq) ? freq : null,
+                });
+            }
+        } catch (e) {
+            console.warn(`[R2-CLOSE] Failed to read processed/${dateStr}.json:`, e?.message || e);
+        }
+
+        return out;
+    },
+
+    /**
+     * Fetch processed daily stats for N consecutive trading days in parallel.
+     * Returns array where [0]=date (today), [1]=prev day, ..., [N-1]=oldest.
+     */
+    async fetchProcessedDailyStatsMaps(env, date, n = 20) {
+        const dates = [date];
+        let d = new Date(`${date}T12:00:00Z`);
+        while (dates.length < n) {
+            d = new Date(d.getTime() - 86400000);
+            if (![0, 6].includes(d.getUTCDay())) {
+                dates.push(d.toISOString().slice(0, 10));
+            }
+        }
+        return Promise.all(dates.map(dt => this.fetchProcessedDailyStatsMap(env, dt)));
+    },
+
+    /**
+     * Compute freq_tx + growth_pct digest from an array of sector tape records.
+     * Ported from sector-scrapper's computeDigest() — keeps logic in one place.
+     */
+    computeSectorDigest(records) {
+        if (!records || records.length === 0) return null;
+        const sorted = [...records].sort((a, b) =>
+            new Date(a.ts).getTime() - new Date(b.ts).getTime()
+        );
+        const first = sorted[0];
+        const last  = sorted[sorted.length - 1];
+
+        let freq_tx = null;
+        if (Array.isArray(last.levels) && last.levels.length > 0) {
+            freq_tx = last.levels.reduce((sum, lv) =>
+                sum + (Number(lv.b_freq) || 0) + (Number(lv.s_freq) || 0), 0);
+        } else if (last.freq_tx != null) {
+            freq_tx = Number(last.freq_tx) || null;
+        }
+
+        const price_open = first.price_last ?? null;
+        const price_last = last.price_last  ?? null;
+        const price_high = last.price_high  ?? null;
+        const price_low  = last.price_low   ?? null;
+
+        let growth_pct = null;
+        if (price_open != null && price_last != null && price_open !== 0) {
+            growth_pct = parseFloat((((price_last - price_open) / price_open) * 100).toFixed(4));
+        }
+
+        return { freq_tx, price_open, price_last, price_high, price_low,
+                 growth_pct, snapshots_count: sorted.length,
+                 ts_first: first.ts, ts_last: last.ts };
+    },
+
+    /**
+     * Read all 11 sector aggregate JSONL files from R2 (11 reads total).
+     * Groups records by symbol, computes digest per symbol.
+     * Returns Map<ticker, digest>.
+     */
+    async fetchSectorDigestMap(env, date) {
+        const out = new Map();
+        if (!env?.TAPE_DATA_SAHAM || !date) return out;
+
+        const ALL_SECTORS = [
+            'IDXBASIC','IDXENERGY','IDXINDUST','IDXNONCYC','IDXCYCLIC',
+            'IDXHEALTH','IDXFINANCE','IDXPROPERT','IDXTECHNO','IDXINFRA','IDXTRANS'
+        ];
+        const [yyyy, mm, dd] = date.split('-');
+
+        await Promise.allSettled(ALL_SECTORS.map(async (sector) => {
+            try {
+                const key = `sector/${sector}/${yyyy}/${mm}/${dd}.jsonl`;
+                const obj = await env.TAPE_DATA_SAHAM.get(key);
+                if (!obj) return;
+                const text = await obj.text();
+
+                // Group records by symbol within this sector file
+                const bySymbol = new Map();
+                for (const line of text.split('\n')) {
+                    if (!line.trim()) continue;
+                    try {
+                        const rec = JSON.parse(line);
+                        const sym = String(rec?.symbol || '').toUpperCase();
+                        if (!sym) continue;
+                        if (!bySymbol.has(sym)) bySymbol.set(sym, []);
+                        bySymbol.get(sym).push(rec);
+                    } catch { /* skip malformed line */ }
+                }
+
+                for (const [sym, records] of bySymbol.entries()) {
+                    const digest = this.computeSectorDigest(records);
+                    if (digest) out.set(sym, { ...digest, sector });
+                }
+            } catch (e) {
+                console.warn(`[SECTOR-DIGEST] Failed to read sector ${sector} for ${date}:`, e?.message || e);
+            }
+        }));
+
+        return out;
     },
 
     async fetchFootprintAggregates(env, date, limitHour, forceR2 = false) {
@@ -213,6 +514,7 @@ export default {
                 ticker,
                 SUM(vol) as total_vol,
                 SUM(delta) as total_delta,
+                COUNT(*) as candle_count,
                 MIN(time_key) as first_time,
                 MAX(time_key) as last_time,
                 MAX(high) as high,
@@ -232,31 +534,105 @@ export default {
             return await this.fetchFootprintFromR2(env, date, []);  // Empty excludeList = probe all
         }
 
-        // D1 has some data - use it and SUPPLEMENT from R2 only for missing tickers
-        const d1Tickers = results.map(r => r.ticker);
-        console.log(`[D1-DATA] Found ${d1Tickers.length} tickers in D1 for ${date}`);
+        // D1 has some data - but some rows can be partial (e.g. only one hour from fallback backfill).
+        // For such rows, replace with targeted R2 multi-hour reconstruction.
+        const todayUTC = new Date().toISOString().slice(0, 10);
+        const isToday = date === todayUTC;
+        const fullSessionEndTs = new Date(`${date}T09:00:00Z`).getTime();
+        const endCutoffTs = isToday
+            ? Math.max(new Date(`${date}T02:00:00Z`).getTime(), Date.now() - (15 * 60 * 1000))
+            : new Date(`${date}T08:50:00Z`).getTime();
 
-        // Supplement from R2 only for tickers NOT in D1 (budget-friendly)
+        const d1CompleteRows = [];
+        const d1IncompleteTickers = [];
+        for (const row of results) {
+            const lastTs = Number(row?.last_time || 0);
+            const isCoverageOk = Number.isFinite(lastTs) && lastTs >= Math.min(endCutoffTs, fullSessionEndTs);
+            if (isCoverageOk) {
+                d1CompleteRows.push(row);
+            } else {
+                d1IncompleteTickers.push(String(row?.ticker || '').toUpperCase());
+            }
+        }
+
+        const d1Tickers = d1CompleteRows.map(r => r.ticker);
+        console.log(`[D1-DATA] Found ${results.length} tickers in D1 (${d1CompleteRows.length} complete, ${d1IncompleteTickers.length} incomplete) for ${date}`);
+
+        // Supplement from R2 only for tickers NOT in complete D1 set (budget-friendly)
         const r2Supplement = await this.fetchFootprintFromR2(env, date, d1Tickers);
         console.log(`[R2-SUPPLEMENT] Found ${r2Supplement.length} additional tickers from R2`);
 
+        // For incomplete D1 rows, force targeted multi-hour R2 rebuild to avoid wrong Growth/Freq/CVD.
+        const r2Replacements = d1IncompleteTickers.length
+            ? await this.fetchFootprintFromR2(env, date, [], d1IncompleteTickers)
+            : [];
+        if (d1IncompleteTickers.length) {
+            console.log(`[R2-REPLACE] Rebuilt ${r2Replacements.length}/${d1IncompleteTickers.length} incomplete D1 tickers from R2`);
+        }
+
         console.log("DEBUG: Raw D1 Aggregation Item [0]:", JSON.stringify(results[0]));
 
-        // Step B: Enrich D1 data with OHLC
+        // Step B: Enrich COMPLETE D1 data with OHLC
         const enriched = [];
         const BATCH_SIZE = 50;
 
-        for (let i = 0; i < results.length; i += BATCH_SIZE) {
-            const chunk = results.slice(i, i + BATCH_SIZE);
+        for (let i = 0; i < d1CompleteRows.length; i += BATCH_SIZE) {
+            const chunk = d1CompleteRows.slice(i, i + BATCH_SIZE);
             const enrichedChunk = await this.enrichWithOHLC(env, chunk);
             enriched.push(...enrichedChunk);
         }
 
-        // Step C: Merge D1 enriched + R2 supplement
-        const merged = [...enriched, ...r2Supplement];
-        console.log(`[MERGED] D1(${enriched.length}) + R2(${r2Supplement.length}) = ${merged.length} total footprint items`);
+        // Step C: Merge D1 enriched + R2 supplement + R2 replacements (dedupe by ticker)
+        const mergedMap = new Map();
+        for (const row of [...enriched, ...r2Supplement, ...r2Replacements]) {
+            const t = String(row?.ticker || '').toUpperCase();
+            if (!t) continue;
+            mergedMap.set(t, row);
+        }
+        const merged = Array.from(mergedMap.values());
+        console.log(`[MERGED] D1(${enriched.length}) + R2-supp(${r2Supplement.length}) + R2-replace(${r2Replacements.length}) = ${merged.length} total footprint items`);
+
+        // Prefer true transaction frequency from processed daily snapshot when available.
+        const processedFreqMap = await this.fetchProcessedDailyFreqMap(env, date);
+        if (processedFreqMap.size > 0) {
+            for (const row of merged) {
+                const t = String(row?.ticker || '').toUpperCase();
+                const freq = processedFreqMap.get(t);
+                if (Number.isFinite(freq) && freq > 0) {
+                    row.trade_freq = Math.round(freq);
+                }
+            }
+        }
         
         return merged;
+    },
+
+    async fetchProcessedDailyFreqMap(env, date) {
+        const out = new Map();
+        if (!env?.TAPE_DATA_SAHAM || !date) return out;
+
+        try {
+            const key = `processed/${date}.json`;
+            const obj = await env.TAPE_DATA_SAHAM.get(key);
+            if (!obj) return out;
+
+            const parsed = await obj.json();
+            const items = Array.isArray(parsed)
+                ? parsed
+                : (Array.isArray(parsed?.items) ? parsed.items : []);
+
+            for (const item of items) {
+                const ticker = String(item?.kode || item?.t || '').toUpperCase();
+                const freq = Number(item?.freq ?? item?.f);
+                if (!ticker || !this.isValidTicker(ticker)) continue;
+                if (!Number.isFinite(freq) || freq <= 0) continue;
+                out.set(ticker, Math.round(freq));
+            }
+        } catch (e) {
+            console.warn(`[R2-FREQ] Failed to read processed/${date}.json:`, e?.message || e);
+        }
+
+        return out;
     },
 
     async enrichWithOHLC(env, chunk) {
@@ -303,28 +679,42 @@ export default {
      * Falls back to reading raw hourly files for a limited set of tickers.
      * @param {Array<string>} excludeTickers - Tickers to skip (already in D1)
      */
-    async fetchFootprintFromR2(env, date, excludeTickers = []) {
+    async fetchFootprintFromR2(env, date, excludeTickers = [], targetTickersOverride = null) {
         const [y, m, d] = date.split("-");
         const excludeSet = new Set(excludeTickers);
+        const isTargetedMode = Array.isArray(targetTickersOverride) && targetTickersOverride.length > 0;
 
         // PRIMARY: Use emiten table as master list (R2.list is unreliable/incomplete)
         let targetTickers = [];
-        try {
-            const { results } = await env.SSSAHAM_DB.prepare(
-                "SELECT ticker FROM emiten"  // No status filter - get ALL tickers
-            ).all();
-            if (results) {
-                targetTickers = results
-                    .map(r => r.ticker.replace(/\.JK$/, ''))
-                    .filter(t => this.isValidTicker(t) && !excludeSet.has(t));
+        if (isTargetedMode) {
+            const seen = new Set();
+            targetTickers = targetTickersOverride
+                .map(t => String(t || '').toUpperCase())
+                .filter(t => this.isValidTicker(t) && !excludeSet.has(t))
+                .filter(t => {
+                    if (seen.has(t)) return false;
+                    seen.add(t);
+                    return true;
+                });
+            console.log(`[R2-FALLBACK] Targeted mode for ${targetTickers.length} tickers`);
+        } else {
+            try {
+                const { results } = await env.SSSAHAM_DB.prepare(
+                    "SELECT ticker FROM emiten"  // No status filter - get ALL tickers
+                ).all();
+                if (results) {
+                    targetTickers = results
+                        .map(r => r.ticker.replace(/\.JK$/, ''))
+                        .filter(t => this.isValidTicker(t) && !excludeSet.has(t));
+                }
+                console.log(`[R2-FALLBACK] Using ${targetTickers.length} tickers from emiten (excluded ${excludeSet.size} D1 tickers)`);
+            } catch (e) {
+                console.warn("[R2-FALLBACK] Cannot get tickers from emiten table:", e.message);
             }
-            console.log(`[R2-FALLBACK] Using ${targetTickers.length} tickers from emiten (excluded ${excludeSet.size} D1 tickers)`);
-        } catch (e) {
-            console.warn("[R2-FALLBACK] Cannot get tickers from emiten table:", e.message);
         }
 
         // Fallback: R2 list only if emiten query fails
-        if (targetTickers.length === 0 && excludeSet.size === 0) {
+        if (!isTargetedMode && targetTickers.length === 0 && excludeSet.size === 0) {
             try {
                 let allPrefixes = [];
                 let cursor = undefined;
@@ -352,11 +742,9 @@ export default {
 
         console.log(`[R2-FALLBACK] Checking ${targetTickers.length} tickers for date ${date}`);
 
-        // === MULTI-HOUR DISCOVERY STRATEGY ===
-        // Goal: Maximize ticker coverage within 1000 R2 read budget.
-        // Trading hours in UTC: 02 (09:00 WIB) through 09 (16:00 WIB)
-        // Strategy: Probe peak hour first, then other hours for unfound tickers.
-        // Now that we exclude D1 tickers (~158), we only probe ~615 tickers.
+        // === R2 READ STRATEGY ===
+        // - Default mode: probe only peak hour for broad coverage (budget-limited).
+        // - Targeted mode: read full session hours for specific tickers (accuracy mode).
 
         const PARALLEL = 50;
         const tickerDataMap = new Map(); // ticker -> candles[]
@@ -368,34 +756,62 @@ export default {
         const probeTickers = targetTickers.slice(0, Math.min(targetTickers.length, MAX_READS - 100));
         console.log(`[R2-FALLBACK] Will probe ${probeTickers.length} tickers`);
 
-        // Round 1: Probe peak hour (03 = 10:00 WIB) for tickers
-        const PEAK_HOUR = "03";
-        for (let i = 0; i < probeTickers.length && totalReads < MAX_READS; i += PARALLEL) {
-            const batch = probeTickers.slice(i, Math.min(i + PARALLEL, probeTickers.length));
-            const remaining = MAX_READS - totalReads;
-            if (remaining < batch.length) break;
-            
-            await Promise.all(batch.map(async (ticker) => {
-                totalReads++;
-                const key = `footprint/${ticker}/1m/${y}/${m}/${d}/${PEAK_HOUR}.jsonl`;
+        const parseCandlesFromText = (text) => {
+            const candles = [];
+            for (const line of String(text || '').split("\n")) {
+                if (!line.trim()) continue;
                 try {
-                    const obj = await env.TAPE_DATA_SAHAM.get(key);
-                    if (!obj) return;
-                    const text = await obj.text();
-                    const candles = [];
-                    for (const line of text.split("\n")) {
-                        if (!line.trim()) continue;
-                        try { const c = JSON.parse(line); if (c.ohlc && c.t0) candles.push(c); } catch (_) { }
-                    }
-                    if (candles.length > 0) tickerDataMap.set(ticker, candles);
+                    const c = JSON.parse(line);
+                    if (c && c.ohlc && c.t0) candles.push(c);
                 } catch (_) { }
-            }));
+            }
+            return candles;
+        };
+
+        if (isTargetedMode) {
+            const HOURS = ["02", "03", "04", "05", "06", "07", "08", "09"];
+            for (let i = 0; i < probeTickers.length && totalReads < MAX_READS; i += PARALLEL) {
+                const batch = probeTickers.slice(i, Math.min(i + PARALLEL, probeTickers.length));
+                await Promise.all(batch.map(async (ticker) => {
+                    const allCandles = [];
+                    for (const hh of HOURS) {
+                        if (totalReads >= MAX_READS) break;
+                        totalReads++;
+                        const key = `footprint/${ticker}/1m/${y}/${m}/${d}/${hh}.jsonl`;
+                        try {
+                            const obj = await env.TAPE_DATA_SAHAM.get(key);
+                            if (!obj) continue;
+                            const text = await obj.text();
+                            allCandles.push(...parseCandlesFromText(text));
+                        } catch (_) { }
+                    }
+                    if (allCandles.length > 0) tickerDataMap.set(ticker, allCandles);
+                }));
+            }
+            console.log(`[R2-FALLBACK] Targeted full-session read found ${tickerDataMap.size}/${probeTickers.length} tickers. Reads: ${totalReads}`);
+        } else {
+            // Round 1: Probe peak hour (03 = 10:00 WIB) for broad fallback coverage
+            const PEAK_HOUR = "03";
+            for (let i = 0; i < probeTickers.length && totalReads < MAX_READS; i += PARALLEL) {
+                const batch = probeTickers.slice(i, Math.min(i + PARALLEL, probeTickers.length));
+                const remaining = MAX_READS - totalReads;
+                if (remaining < batch.length) break;
+
+                await Promise.all(batch.map(async (ticker) => {
+                    totalReads++;
+                    const key = `footprint/${ticker}/1m/${y}/${m}/${d}/${PEAK_HOUR}.jsonl`;
+                    try {
+                        const obj = await env.TAPE_DATA_SAHAM.get(key);
+                        if (!obj) return;
+                        const text = await obj.text();
+                        const candles = parseCandlesFromText(text);
+                        if (candles.length > 0) tickerDataMap.set(ticker, candles);
+                    } catch (_) { }
+                }));
+            }
+
+            console.log(`[R2-FALLBACK] Probed peak hour found ${tickerDataMap.size}/${probeTickers.length} tickers. Reads: ${totalReads}`);
         }
-
-        console.log(`[R2-FALLBACK] Probed hour ${PEAK_HOUR}: ${tickerDataMap.size} tickers found from ${probeTickers.length} probes. Reads: ${totalReads}`);
-
-        // Skip Round 2: Multi-hour discovery uses too much budget.
-        // Tickers not found at peak hour will fallback to ZSCORE-only in the merge phase.
 
         console.log(`[R2-FALLBACK] Discovery complete: ${tickerDataMap.size} tickers found. Total reads: ${totalReads}/${MAX_READS}`);
 
@@ -428,6 +844,7 @@ export default {
                 ticker,
                 total_vol: unique.reduce((s, c) => s + (c.vol || 0), 0),
                 total_delta: unique.reduce((s, c) => s + (c.delta || 0), 0),
+                candle_count: unique.length,
                 first_time: unique[0].t0,
                 last_time: unique[unique.length - 1].t0,
                 high: Math.max(...unique.map(c => c.ohlc.h)),
@@ -583,7 +1000,8 @@ export default {
         const vol = footprint.total_vol || 0;
         const delta = footprint.total_delta || 0;
 
-        if (vol === 0 || open === 0) return null;
+        // C3: guard against zero open/close — close=0 produces Mom%=-100% which corrupts scoring
+        if (vol === 0 || open === 0 || close === 0) return null;
 
         // Metrics
         const deltaPct = (delta / vol) * 100;
@@ -645,16 +1063,33 @@ export default {
         // High Delta + Low Price Chg = High Absorption (Potential Breakout)
         const divScore = Math.abs(deltaPct) / (1 + Math.abs(pricePct));
 
+        const candleCount = Number(footprint.candle_count || 0);
+        const trueFreq = Number(footprint.trade_freq);
+        const freqTx = Number.isFinite(trueFreq) && trueFreq > 0 ? Math.round(trueFreq) : candleCount;
+        const reliableGrowth = candleCount >= 30;
+
         return {
             t: footprint.ticker,
             d: parseFloat(deltaPct.toFixed(2)),
             p: parseFloat(pricePct.toFixed(2)),
+            p_src: 'intraday', // C2: semantic tag — open_firstCandle → close_lastCandle (intraday)
             v: vol,
             h: footprint.high,
             l: footprint.low,
             r: range,
             f: parseFloat(fluctuation.toFixed(2)),
             div: parseFloat(divScore.toFixed(2)),
+
+            // Extended fields for frontend compatibility
+            growth_pct: reliableGrowth ? parseFloat(pricePct.toFixed(2)) : null,
+            freq_tx: freqTx,
+            freq_src: 'D1_candle_count', // B3: source tag; overwritten to 'sector_digest' in aggregateHybrid
+            net_delta: Number(delta || 0), // B1: current-day SUM(delta) — NOT cumulative
+            cvd: Number(delta || 0),       // B1: alias for backward compat — will be removed next release
+            open_price: reliableGrowth ? open : null,
+            recent_price: reliableGrowth ? close : null,
+            notional_val: (close && delta !== 0) ? Math.round(delta * close * 100) : null, // B2: net value = delta(lot)×100(lembar/lot)×price — signed (+ buy, - sell), in Rp
+            nv: (close && delta !== 0) ? Math.round(delta * close * 100) : null,           // B2: alias for backward compat
 
             ctx_found: ctxFound, // Telemetry
             ctx_net: parseFloat(hist_z_ngr.toFixed(2)),

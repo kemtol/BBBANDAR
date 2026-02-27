@@ -101,15 +101,12 @@
  * - Reads/Writes: SSSAHAM_EMITEN logo/{ticker}.png
  *
  * GET /debug/raw-file?key=...
- * - Debug helper to inspect RAW_BROKSUM object body
- * - Reads: RAW_BROKSUM
- *
- * ------------------------------------------------------------
- * AI ENDPOINTS
- * ------------------------------------------------------------
- *
- * PUT /ai/screenshot?symbol=BBRI&label=7d[&origin=client|service]
- * - Uploads image/* to R2 with key: ai-screenshots/{symbol}/{today}_{label}.{ext}
+  const processedStatsMap = fromDateStr === toDateStr
+    ? await fetchProcessedDailyStatsMap(env, fromDateStr)
+    : new Map();
+  const prevProcessedStatsMap = fromDateStr === toDateStr
+    ? await fetchProcessedDailyStatsMap(env, prevTradingDayUTC(fromDateStr))
+    : new Map();
  * - Writes: SSSAHAM_EMITEN ai-screenshots/...
  * - Side-effect: if origin !== "service" and label != "intraday", triggers intraday capture scheduling
  *
@@ -284,6 +281,46 @@ function json(data, status = 200, extraHeaders = {}) {
   );
 }
 
+async function readJsonlTailFromR2(bucket, key, tailCount = 1) {
+  const obj = await bucket.get(key);
+  if (!obj) return [];
+  const txt = await obj.text();
+  if (!txt) return [];
+
+  const lines = txt
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
+
+  if (!lines.length) return [];
+  const tail = lines.slice(-Math.max(1, tailCount));
+  const out = [];
+  for (const ln of tail) {
+    try {
+      out.push(JSON.parse(ln));
+    } catch {
+      // ignore malformed line
+    }
+  }
+  return out;
+}
+
+function getRecentWibDates(maxDays = 5) {
+  const dates = [];
+  for (let i = 0; i < maxDays; i++) {
+    const ts = Date.now() - (i * 24 * 60 * 60 * 1000);
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Jakarta",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(new Date(ts));
+    const get = (t) => parts.find((p) => p.type === t)?.value || "";
+    dates.push(`${get("year")}-${get("month")}-${get("day")}`);
+  }
+  return dates;
+}
+
 async function ensureDashboardTables(env) {
   const ddl = [
     `CREATE TABLE IF NOT EXISTS feed_events (
@@ -327,7 +364,62 @@ async function ensureDashboardTables(env) {
       source TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )`,
-    `CREATE INDEX IF NOT EXISTS idx_ipo_events_time ON ipo_events(event_date, event_time_wib)`
+    `CREATE INDEX IF NOT EXISTS idx_ipo_events_time ON ipo_events(event_date, event_time_wib)`,
+
+    `CREATE TABLE IF NOT EXISTS catalyst_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      source TEXT NOT NULL DEFAULT 'ipot_calca',
+      event_type TEXT NOT NULL,
+      event_subtype TEXT,
+      seq TEXT,
+      event_ts INTEGER,
+      event_date TEXT NOT NULL,
+      event_time_wib TEXT,
+      symbol_primary TEXT,
+      symbols_json TEXT,
+      status TEXT,
+      phase TEXT,
+      label TEXT,
+      sector_primary TEXT,
+      detail_pending INTEGER NOT NULL DEFAULT 0,
+      raw_line TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(source, event_type, seq, event_ts, symbol_primary, phase)
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_catalyst_events_time ON catalyst_events(event_date, event_time_wib)`,
+    `CREATE INDEX IF NOT EXISTS idx_catalyst_events_symbol_time ON catalyst_events(symbol_primary, event_date)`,
+
+    `CREATE TABLE IF NOT EXISTS catalyst_ca_detail (
+      seq TEXT PRIMARY KEY,
+      sec TEXT,
+      act_type TEXT,
+      description_html TEXT,
+      description_text TEXT,
+      amount REAL,
+      ratio1 REAL,
+      ratio2 REAL,
+      cum_date TEXT,
+      ex_date TEXT,
+      rec_date TEXT,
+      start_dist_date TEXT,
+      end_dist_date TEXT,
+      status TEXT,
+      fetched_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`,
+
+    `CREATE TABLE IF NOT EXISTS catalyst_sector_cache (
+      symbol TEXT PRIMARY KEY,
+      sector TEXT,
+      fetched_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`,
+
+    `CREATE TABLE IF NOT EXISTS ipot_session_cache (
+      cache_key TEXT PRIMARY KEY,
+      token TEXT NOT NULL,
+      expires_at INTEGER NOT NULL,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`
   ];
 
   for (const sql of ddl) {
@@ -381,6 +473,612 @@ function toEventTimestamp(dateIso, timeHHmm) {
   const t = normalizeWibTime(timeHHmm || "00:00") || "00:00";
   if (!d) return Number.MAX_SAFE_INTEGER;
   return new Date(`${d}T${t}:00+07:00`).getTime();
+}
+
+function formatWibDateHour(ts = Date.now()) {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Jakarta",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    hour12: false
+  }).formatToParts(new Date(ts));
+  const get = (type) => parts.find((p) => p.type === type)?.value || "";
+  const yyyy = get("year");
+  const mm = get("month");
+  const dd = get("day");
+  const hh = get("hour");
+  return {
+    date: `${yyyy}-${mm}-${dd}`,
+    hour: hh
+  };
+}
+
+async function saveCatalystRawSnapshot(env, {
+  queryType,
+  cmdid,
+  cid,
+  batchId,
+  requestPayload,
+  records,
+  seq,
+  syncedAt
+}) {
+  try {
+    if (!env?.SSSAHAM_EMITEN?.put) return null;
+    const { date, hour } = formatWibDateHour(Date.now());
+    const safeQuery = String(queryType || "unknown").replace(/[^a-z0-9_\-]/gi, "_").toLowerCase();
+    const safeSeq = seq ? `seq=${String(seq).replace(/[^a-z0-9_\-]/gi, "_")}/` : "";
+    const key = `catalyst/raw/v1/date=${date}/hour=${hour}/query=${safeQuery}/batch=${batchId}/${safeSeq}cid=${cid}-cmdid=${cmdid}.ndjson`;
+
+    const header = {
+      kind: "meta",
+      synced_at: syncedAt,
+      query_type: safeQuery,
+      cmdid,
+      cid,
+      batch_id: batchId,
+      request: requestPayload || null,
+      total_records: Array.isArray(records) ? records.length : 0
+    };
+
+    const lines = [JSON.stringify(header)];
+    const list = Array.isArray(records) ? records : [];
+    for (let i = 0; i < list.length; i++) {
+      lines.push(JSON.stringify({ kind: "record", idx: i, data: list[i] ?? null }));
+    }
+
+    await env.SSSAHAM_EMITEN.put(key, `${lines.join("\n")}\n`, {
+      httpMetadata: { contentType: "application/x-ndjson; charset=utf-8" }
+    });
+    return key;
+  } catch (e) {
+    console.error("[catalyst.raw] save snapshot failed", e?.message || e);
+    return null;
+  }
+}
+
+function makeWebSocketKey() {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  let bin = "";
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin);
+}
+
+async function fetchIpotAppSession(env) {
+  const nowSec = Math.floor(Date.now() / 1000);
+
+  // Primary cache (10 min)
+  try {
+    const primary = await env.SSSAHAM_DB.prepare(
+      `SELECT token, expires_at FROM ipot_session_cache WHERE cache_key = ? LIMIT 1`
+    ).bind("IPOT_APPSESSION").first();
+    if (primary?.token && Number(primary.expires_at || 0) > nowSec) {
+      return String(primary.token);
+    }
+  } catch {
+    // ignore cache read error, proceed to network fetch
+  }
+
+  const url = env.IPOT_APPSESSION_URL || "https://indopremier.com/ipc/appsession.js";
+  const origin = env.IPOT_ORIGIN || "https://indopremier.com";
+  try {
+    const resp = await fetch(url, {
+      headers: {
+        "Accept": "*/*",
+        "User-Agent": "api-saham/1.0",
+        "Origin": origin,
+        "Referer": `${origin}/`
+      }
+    });
+    if (!resp.ok) throw new Error(`appsession fetch failed: ${resp.status}`);
+
+    const text = await resp.text();
+    const patterns = [
+      /appsession\s*[:=]\s*["']([^"']+)["']/i,
+      /appsession=([a-zA-Z0-9\-_]+)/i,
+      /["']appsession["']\s*[:,]\s*["']([^"']+)["']/i,
+    ];
+
+    let token = null;
+    for (const re of patterns) {
+      const m = text.match(re);
+      if (m && m[1]) {
+        token = m[1];
+        break;
+      }
+    }
+
+    if (!token) {
+      const near = text.match(/appsession[^A-Za-z0-9\-_]{0,30}([A-Za-z0-9\-_]{16,128})/i);
+      if (near?.[1]) token = near[1];
+    }
+
+    if (!token) throw new Error("could not parse appsession token");
+
+    const updatedAt = new Date().toISOString();
+    await env.SSSAHAM_DB.prepare(
+      `INSERT INTO ipot_session_cache (cache_key, token, expires_at, updated_at)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(cache_key) DO UPDATE SET
+         token=excluded.token,
+         expires_at=excluded.expires_at,
+         updated_at=excluded.updated_at`
+    ).bind("IPOT_APPSESSION", token, nowSec + 600, updatedAt).run();
+
+    await env.SSSAHAM_DB.prepare(
+      `INSERT INTO ipot_session_cache (cache_key, token, expires_at, updated_at)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(cache_key) DO UPDATE SET
+         token=excluded.token,
+         expires_at=excluded.expires_at,
+         updated_at=excluded.updated_at`
+    ).bind("IPOT_APPSESSION_BACKUP", token, nowSec + 21600, updatedAt).run();
+
+    return token;
+  } catch (e) {
+    // Stale-if-error fallback to backup cache
+    try {
+      const backup = await env.SSSAHAM_DB.prepare(
+        `SELECT token FROM ipot_session_cache WHERE cache_key = ? LIMIT 1`
+      ).bind("IPOT_APPSESSION_BACKUP").first();
+      if (backup?.token) {
+        console.warn(`[catalyst] fetchIpotAppSession fallback to backup: ${e?.message || e}`);
+        return String(backup.token);
+      }
+    } catch {
+      // ignore and rethrow original
+    }
+
+    throw e;
+  }
+}
+
+async function clearIpotAppSession(env) {
+  try {
+    await env.SSSAHAM_DB.prepare(
+      `DELETE FROM ipot_session_cache WHERE cache_key IN (?, ?)`
+    ).bind("IPOT_APPSESSION", "IPOT_APPSESSION_BACKUP").run();
+  } catch {
+    // ignore clear errors
+  }
+}
+
+function epochSecToWibParts(epochSec) {
+  const sec = Number(epochSec);
+  if (!Number.isFinite(sec) || sec <= 0) return { date: null, time: null, ts: null };
+  const dt = new Date(sec * 1000);
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Jakarta",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  }).formatToParts(dt);
+  const get = (type) => parts.find((p) => p.type === type)?.value || "";
+  const yyyy = get("year");
+  const mm = get("month");
+  const dd = get("day");
+  const hh = get("hour");
+  const mi = get("minute");
+  const date = yyyy && mm && dd ? `${yyyy}-${mm}-${dd}` : null;
+  const time = hh && mi ? `${hh}:${mi}` : null;
+  return { date, time, ts: dt.getTime() };
+}
+
+function stripHtml(raw) {
+  const txt = String(raw || "");
+  return txt
+    .replace(/<br\s*\/?\s*>/gi, "\n")
+    .replace(/<\/(p|li|ul|ol)>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function parseCalcaLine(line) {
+  if (typeof line !== "string" || !line.trim()) return null;
+  const p = line.split("|").map((s) => String(s || "").trim());
+  while (p.length < 12) p.push("");
+  const [eventType, eventSubtype, seq, epochSec, year, month, day, symbolsCsv, primarySymbol, status, phase, label] = p;
+
+  const symbols = String(symbolsCsv || "")
+    .split(",")
+    .map((s) => s.trim().toUpperCase())
+    .filter(Boolean);
+
+  const wib = epochSecToWibParts(epochSec);
+  const dateFallback =
+    year && month && day
+      ? `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`
+      : null;
+
+  const symbolPrimary = String(primarySymbol || symbols[0] || "").trim().toUpperCase() || null;
+  const eventDate = normalizeIsoDate(wib.date || dateFallback);
+  const eventTime = normalizeWibTime(wib.time || "");
+  const eventTs = Number.isFinite(wib.ts) ? wib.ts : toEventTimestamp(eventDate, eventTime || "00:00");
+
+  if (!eventDate) return null;
+
+  return {
+    source: "ipot_calca",
+    event_type: String(eventType || "").toUpperCase() || "UNKNOWN",
+    event_subtype: eventSubtype || null,
+    seq: seq || null,
+    event_ts: Number.isFinite(eventTs) ? eventTs : null,
+    event_date: eventDate,
+    event_time_wib: eventTime || null,
+    symbol_primary: symbolPrimary,
+    symbols,
+    status: status || null,
+    phase: phase || null,
+    label: label || null,
+    raw_line: line
+  };
+}
+
+function calcCatalystSubtitle(row) {
+  const phase = String(row?.phase || "").trim();
+  if (phase) {
+    const m = {
+      cum: "Cum Date",
+      ex: "Ex Date",
+      rec: "Recording Date",
+      start: "Start",
+      end: "End"
+    };
+    return m[phase.toLowerCase()] || phase;
+  }
+  return row?.event_subtype || null;
+}
+
+async function connectIpotSocket(env) {
+  const appsession = await fetchIpotAppSession(env);
+  const origin = env.IPOT_ORIGIN || "https://indopremier.com";
+  const base = env.IPOT_WS_HTTP_BASE || "https://ipotapp.ipot.id/socketcluster/";
+  const wsUrl = new URL(base);
+  wsUrl.searchParams.set("appsession", appsession);
+  const wsHttpUrl = wsUrl.toString().startsWith("wss://")
+    ? `https://${wsUrl.toString().slice("wss://".length)}`
+    : wsUrl.toString().startsWith("ws://")
+      ? `http://${wsUrl.toString().slice("ws://".length)}`
+      : wsUrl.toString();
+
+  const resp = await fetch(wsHttpUrl, {
+    headers: {
+      Upgrade: "websocket",
+      Connection: "Upgrade",
+      Origin: origin,
+      "Sec-WebSocket-Version": "13",
+      "Sec-WebSocket-Key": makeWebSocketKey(),
+      "User-Agent": "api-saham/1.0"
+    }
+  });
+  if (!resp.webSocket) throw new Error(`WS upgrade failed: ${resp.status}`);
+  const ws = resp.webSocket;
+  ws.accept();
+  try {
+    ws.send(JSON.stringify({ event: "#handshake", data: { authToken: env.IPOT_AUTH_TOKEN || null }, cid: 1 }));
+  } catch {}
+  return ws;
+}
+
+async function ipotQueryRecords(ws, cmdid, param, cid, opts = {}) {
+  const records = [];
+  const idleMs = Number(opts.idleMs || 800);
+  const maxMs = Number(opts.maxMs || 8000);
+  const emptyIdleMs = Number(opts.emptyIdleMs || 2500);
+  let lastAt = Date.now();
+  const startAt = Date.now();
+  let gotRes = false;
+  let resAt = null;
+
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    throw new Error("WebSocket not open");
+  }
+
+  const onMsg = (ev) => {
+    lastAt = Date.now();
+    const txt = typeof ev.data === "string" ? ev.data : "";
+    if (txt === "#1") {
+      try { ws.send("#2"); } catch {}
+      return;
+    }
+    let j;
+    try { j = JSON.parse(txt); } catch { return; }
+
+    const msgCmdid = Number(j?.data?.cmdid);
+    if (j?.event === "record" && msgCmdid === Number(cmdid)) {
+      records.push(j?.data?.data);
+    }
+    if (j?.event === "res" && msgCmdid === Number(cmdid)) {
+      gotRes = true;
+      resAt = Date.now();
+    }
+  };
+
+  ws.addEventListener("message", onMsg);
+  ws.send(JSON.stringify({ event: "cmd", data: { cmdid, param }, cid }));
+
+  while (true) {
+    const now = Date.now();
+    if (now - startAt > maxMs) break;
+    if (gotRes && resAt && now - resAt > 500) break;
+    if (records.length > 0 && now - lastAt > idleMs) break;
+    if (records.length === 0 && now - lastAt > emptyIdleMs) break;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+
+  ws.removeEventListener("message", onMsg);
+  return records;
+}
+
+async function runIpotCatalystSync(env, { fromDate, toDate, includeDetail = true, detailLimit = 100 } = {}) {
+  await ensureDashboardTables(env);
+
+  const now = new Date();
+  const today = now.toISOString().slice(0, 10);
+  const from = normalizeIsoDate(fromDate) || new Date(now.getTime() - 7 * 86400000).toISOString().slice(0, 10);
+  const to = normalizeIsoDate(toDate) || new Date(now.getTime() + 30 * 86400000).toISOString().slice(0, 10);
+
+  let ws;
+  try {
+    ws = await connectIpotSocket(env);
+  } catch (e) {
+    console.warn(`[catalyst] WS connect failed, resetting appsession and retrying once: ${e?.message || e}`);
+    await clearIpotAppSession(env);
+    ws = await connectIpotSocket(env);
+  }
+  const batchId = crypto.randomUUID();
+  let cid = 70;
+  let cmdid = 70;
+  const nextCid = () => ++cid;
+  const nextCmdid = () => ++cmdid;
+  const rawKeys = [];
+
+  try {
+    const calcaCmd = nextCmdid();
+    const calcaCid = nextCid();
+    const calcaRequest = {
+      service: "midata",
+      cmd: "query",
+      param: {
+        source: "common",
+        index: "CALCA",
+        args: ["<>", from, to]
+      }
+    };
+    const calcaRecordsRaw = await ipotQueryRecords(
+      ws,
+      calcaCmd,
+      calcaRequest,
+      calcaCid,
+      { maxMs: 12000, emptyIdleMs: 3500 }
+    );
+    {
+      const key = await saveCatalystRawSnapshot(env, {
+        queryType: "calca",
+        cmdid: calcaCmd,
+        cid: calcaCid,
+        batchId,
+        requestPayload: calcaRequest,
+        records: calcaRecordsRaw,
+        syncedAt: new Date().toISOString()
+      });
+      if (key) rawKeys.push(key);
+    }
+
+    const parsedEvents = (calcaRecordsRaw || [])
+      .map((line) => parseCalcaLine(String(line || "")))
+      .filter(Boolean);
+
+    const symbols = [...new Set(parsedEvents.flatMap((e) => e.symbols || []).filter(Boolean))];
+    const sectorMap = new Map();
+
+    for (let i = 0; i < symbols.length; i += 100) {
+      const chunk = symbols.slice(i, i + 100);
+      const secCmd = nextCmdid();
+      const secCid = nextCid();
+      const secRequest = {
+        cmd: "query",
+        service: "mi",
+        param: {
+          source: "jsx",
+          index: "sector",
+          args: { code: chunk }
+        }
+      };
+      const secRecs = await ipotQueryRecords(
+        ws,
+        secCmd,
+        secRequest,
+        secCid,
+        { maxMs: 9000, emptyIdleMs: 2000 }
+      );
+      {
+        const key = await saveCatalystRawSnapshot(env, {
+          queryType: "sector",
+          cmdid: secCmd,
+          cid: secCid,
+          batchId,
+          requestPayload: secRequest,
+          records: secRecs,
+          syncedAt: new Date().toISOString()
+        });
+        if (key) rawKeys.push(key);
+      }
+
+      for (const r of secRecs || []) {
+        const code = String(r?.code || "").trim().toUpperCase();
+        const sector = String(r?.data || "").trim() || null;
+        if (code) sectorMap.set(code, sector);
+      }
+    }
+
+    const nowIso = new Date().toISOString();
+    let upsertedEvents = 0;
+    for (const ev of parsedEvents) {
+      const sectorPrimary = sectorMap.get(ev.symbol_primary || "") || null;
+      await env.SSSAHAM_DB.prepare(
+        `INSERT INTO catalyst_events
+          (source, event_type, event_subtype, seq, event_ts, event_date, event_time_wib, symbol_primary, symbols_json, status, phase, label, sector_primary, detail_pending, raw_line, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(source, event_type, seq, event_ts, symbol_primary, phase)
+         DO UPDATE SET
+          event_subtype=excluded.event_subtype,
+          event_date=excluded.event_date,
+          event_time_wib=excluded.event_time_wib,
+          symbols_json=excluded.symbols_json,
+          status=excluded.status,
+          label=excluded.label,
+          sector_primary=excluded.sector_primary,
+          detail_pending=excluded.detail_pending,
+          raw_line=excluded.raw_line,
+          updated_at=excluded.updated_at`
+      ).bind(
+        ev.source,
+        ev.event_type,
+        ev.event_subtype,
+        ev.seq,
+        ev.event_ts,
+        ev.event_date,
+        ev.event_time_wib,
+        ev.symbol_primary,
+        JSON.stringify(ev.symbols || []),
+        ev.status,
+        ev.phase,
+        ev.label,
+        sectorPrimary,
+        ev.event_type === "CA" ? 1 : 0,
+        ev.raw_line,
+        nowIso,
+        nowIso
+      ).run();
+      upsertedEvents++;
+
+      if (ev.symbol_primary && sectorPrimary !== null) {
+        await env.SSSAHAM_DB.prepare(
+          `INSERT INTO catalyst_sector_cache (symbol, sector, fetched_at)
+           VALUES (?, ?, ?)
+           ON CONFLICT(symbol) DO UPDATE SET sector=excluded.sector, fetched_at=excluded.fetched_at`
+        ).bind(ev.symbol_primary, sectorPrimary, nowIso).run();
+      }
+    }
+
+    let detailFetched = 0;
+    if (includeDetail) {
+      const seqs = [...new Set(parsedEvents
+        .filter((e) => e.event_type === "CA" && e.seq)
+        .map((e) => String(e.seq)))]
+        .slice(0, Math.max(0, Number(detailLimit) || 0));
+
+      for (const seq of seqs) {
+        const detailCmd = nextCmdid();
+        const detailCid = nextCid();
+        const detailRequest = {
+          cmd: "query",
+          service: "midata",
+          param: {
+            source: "research",
+            index: "enQB_0_1_DescriptionCA",
+            args: [seq],
+            info: { cache_allow: true }
+          }
+        };
+        const detailRecs = await ipotQueryRecords(
+          ws,
+          detailCmd,
+          detailRequest,
+          detailCid,
+          { maxMs: 7000, emptyIdleMs: 1500 }
+        );
+        {
+          const key = await saveCatalystRawSnapshot(env, {
+            queryType: "ca_detail",
+            cmdid: detailCmd,
+            cid: detailCid,
+            batchId,
+            requestPayload: detailRequest,
+            records: detailRecs,
+            seq,
+            syncedAt: new Date().toISOString()
+          });
+          if (key) rawKeys.push(key);
+        }
+
+        const d = detailRecs?.[0];
+        if (!d || typeof d !== "object") continue;
+
+        const descHtml = String(d.description || "");
+        const descText = stripHtml(descHtml);
+        await env.SSSAHAM_DB.prepare(
+          `INSERT INTO catalyst_ca_detail
+            (seq, sec, act_type, description_html, description_text, amount, ratio1, ratio2, cum_date, ex_date, rec_date, start_dist_date, end_dist_date, status, fetched_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(seq) DO UPDATE SET
+             sec=excluded.sec,
+             act_type=excluded.act_type,
+             description_html=excluded.description_html,
+             description_text=excluded.description_text,
+             amount=excluded.amount,
+             ratio1=excluded.ratio1,
+             ratio2=excluded.ratio2,
+             cum_date=excluded.cum_date,
+             ex_date=excluded.ex_date,
+             rec_date=excluded.rec_date,
+             start_dist_date=excluded.start_dist_date,
+             end_dist_date=excluded.end_dist_date,
+             status=excluded.status,
+             fetched_at=excluded.fetched_at`
+        ).bind(
+          String(d.seq || seq),
+          d.sec || null,
+          d.act_type || null,
+          descHtml || null,
+          descText || null,
+          Number.isFinite(Number(d.amount)) ? Number(d.amount) : null,
+          Number.isFinite(Number(d.ratio1)) ? Number(d.ratio1) : null,
+          Number.isFinite(Number(d.ratio2)) ? Number(d.ratio2) : null,
+          d.cum_date || null,
+          d.ex_date || null,
+          d.rec_date || null,
+          d.start_dist_date || null,
+          d.end_dist_date || null,
+          d.status || null,
+          nowIso
+        ).run();
+
+        await env.SSSAHAM_DB.prepare(
+          `UPDATE catalyst_events SET detail_pending = 0, updated_at = ? WHERE seq = ?`
+        ).bind(nowIso, String(d.seq || seq)).run();
+
+        detailFetched++;
+      }
+    }
+
+    return {
+      ok: true,
+      batch_id: batchId,
+      from,
+      to,
+      total_calca_records: calcaRecordsRaw.length,
+      parsed_events: parsedEvents.length,
+      unique_symbols: symbols.length,
+      upserted_events: upsertedEvents,
+      detail_fetched: detailFetched,
+      raw_snapshot_saved: rawKeys.length,
+      raw_snapshot_keys: rawKeys.slice(0, 20),
+      synced_at: nowIso,
+      market_date: today
+    };
+  } finally {
+    try { ws.close(1000, "done"); } catch {}
+  }
 }
 
 function buildFeedEventFromAnalysis(symbol, analysisJson, provider, modelUsed, fromDate, toDate, cacheKey) {
@@ -625,6 +1323,7 @@ async function calculateFootprintRange(env, fromDateStr, toDateStr) {
       ticker,
       SUM(vol) as total_vol,
       SUM(delta) as total_delta,
+      COUNT(*) as candle_count,
       MIN(time_key) as first_time,
       MAX(time_key) as last_time,
 
@@ -701,10 +1400,58 @@ async function calculateFootprintRange(env, fromDateStr, toDateStr) {
     if (ctxList) ctxList.forEach(c => contextMap.set(c.ticker, c));
   }
 
+  const processedStatsMap = fromDateStr === toDateStr
+    ? await fetchProcessedDailyStatsMap(env, fromDateStr)
+    : new Map();
+  const prevProcessedStatsMap = fromDateStr === toDateStr
+    ? await fetchProcessedDailyStatsMap(env, prevTradingDayUTC(fromDateStr))
+    : new Map();
+
   // 5. Calculate Hybrid Scores
   const items = enriched.map(fp => {
+    const t = String(fp?.ticker || "").toUpperCase();
+    const stats = processedStatsMap.get(t);
+    const prevStats = prevProcessedStatsMap.get(t);
+    const freq = Number(stats?.freq);
+    if (Number.isFinite(freq) && freq > 0) {
+      fp.trade_freq = Math.round(freq);
+    }
     const ctx = contextMap.get(fp.ticker) || {};
-    return calculateHybridItem(fp, ctx);
+    const item = calculateHybridItem(fp, ctx);
+    if (!item) return null;
+
+    if (fromDateStr === toDateStr) {
+      const candleCount = Number(fp?.candle_count || 0);
+      const vol = Number(stats?.vol);
+      const netVol = Number(stats?.netVol);
+      const curClose = Number(stats?.close);
+      const prevClose = Number(prevStats?.close);
+
+      if (candleCount < 30 && Number.isFinite(vol) && vol > 0 && Number.isFinite(netVol)) {
+        const deltaPctFallback = (netVol / vol) * 100;
+        item.d         = Number(deltaPctFallback.toFixed(2));
+        item.net_delta = Number(netVol); // keep in sync
+        item.cvd       = item.net_delta; // alias
+      }
+
+      if (candleCount < 30 && Number.isFinite(curClose) && Number.isFinite(prevClose) && prevClose > 0) {
+        const momPctFallback = ((curClose - prevClose) / prevClose) * 100;
+        item.p = Number(momPctFallback.toFixed(2));
+      }
+
+      if (candleCount < 30 && Number.isFinite(item.d) && Number.isFinite(item.p)) {
+        item.div = Number((Math.abs(item.d) / (1 + Math.abs(item.p))).toFixed(2));
+      }
+
+      if (item.growth_pct == null && Number.isFinite(curClose) && Number.isFinite(prevClose) && prevClose > 0) {
+        const growthFallback = ((curClose - prevClose) / prevClose) * 100;
+        item.open_price = prevClose;
+        item.recent_price = curClose;
+        item.growth_pct = Number(growthFallback.toFixed(2));
+      }
+    }
+
+    return item;
   }).filter(i => i !== null);
 
   // 6. Return Format
@@ -862,7 +1609,7 @@ function calculateHybridItem(footprint, context) {
   const high = footprint.high || close;
   const low = footprint.low || close;
 
-  if (vol === 0 || open === 0) return null;
+  if (vol === 0 || open === 0 || close === 0) return null; // C3: guard close=0 → Mom%=-100%
 
   const deltaPct = (delta / vol) * 100;
   const pricePct = ((close - open) / open) * 100;
@@ -898,6 +1645,11 @@ function calculateHybridItem(footprint, context) {
 
   const signal = getSignal(hybridScore, deltaPct, hist_z_ngr, hist_state, pricePct);
 
+  const candleCount = Number(footprint.candle_count || 0);
+  const trueFreq = Number(footprint.trade_freq);
+  const freqTx = Number.isFinite(trueFreq) && trueFreq > 0 ? Math.round(trueFreq) : candleCount;
+  const reliableGrowth = candleCount >= 30;
+
   return {
     t: footprint.ticker,
     d: parseFloat(deltaPct.toFixed(2)),
@@ -911,7 +1663,16 @@ function calculateHybridItem(footprint, context) {
     ctx_net: parseFloat(hist_z_ngr.toFixed(2)),
     ctx_st: hist_state,
     sc: parseFloat(hybridScore.toFixed(3)),
-    sig: signal
+    sig: signal,
+    // Extended fields for frontend compatibility
+    growth_pct: reliableGrowth ? parseFloat(pricePct.toFixed(2)) : null,
+    freq_tx: freqTx,
+    net_delta: Number(footprint.total_delta || 0), // B1: current-day net delta (NOT cumulative)
+    cvd: Number(footprint.total_delta || 0),       // B1: alias for backward compat
+    open_price: reliableGrowth ? open : null,
+    recent_price: reliableGrowth ? close : null,
+    notional_val: (close && delta !== 0) ? Math.round(delta * close * 100) : null, // B2: net value = delta(lot)×100(lembar/lot)×price — signed (+ buy, - sell), in Rp
+    nv: (close && delta !== 0) ? Math.round(delta * close * 100) : null      // B2: alias for backward compat
   };
 }
 
@@ -1233,6 +1994,290 @@ function getTodayOrderflowWindow(now = new Date()) {
   return { dateStr, startTs: sessionStartUTC, endTs };
 }
 
+async function resolveOrderflowWindow(env, now = new Date()) {
+  if (!env?.SSSAHAM_DB) return null;
+
+  const todayWindow = getTodayOrderflowWindow(now);
+  const todayDateStr = todayWindow.dateStr;
+
+  try {
+    const todayRow = await env.SSSAHAM_DB.prepare(`
+      SELECT
+        COUNT(*) as candles,
+        MIN(time_key) as first_ts,
+        MAX(time_key) as last_ts
+      FROM temp_footprint_consolidate
+      WHERE date = ? AND time_key >= ? AND time_key <= ?
+    `).bind(todayDateStr, todayWindow.startTs, todayWindow.endTs).first();
+
+    const todayCandles = Number(todayRow?.candles || 0);
+    if (todayCandles > 0) {
+      return {
+        dateStr: todayDateStr,
+        startTs: todayWindow.startTs,
+        endTs: todayWindow.endTs,
+        isFallbackDay: false
+      };
+    }
+
+    const fallbackRow = await env.SSSAHAM_DB.prepare(`
+      SELECT
+        date,
+        MIN(time_key) as first_ts,
+        MAX(time_key) as last_ts
+      FROM temp_footprint_consolidate
+      WHERE date <= ?
+      GROUP BY date
+      ORDER BY date DESC
+      LIMIT 1
+    `).bind(todayDateStr).first();
+
+    if (!fallbackRow?.date) return null;
+
+    const fbDate = String(fallbackRow.date);
+    const fallbackStart = Number(fallbackRow.first_ts || 0) || new Date(`${fbDate}T02:00:00Z`).getTime();
+    const fallbackEnd = Number(fallbackRow.last_ts || 0) || new Date(`${fbDate}T09:00:00Z`).getTime();
+
+    return {
+      dateStr: fbDate,
+      startTs: fallbackStart,
+      endTs: fallbackEnd,
+      isFallbackDay: fbDate !== todayDateStr
+    };
+  } catch (err) {
+    console.error("[orderflow] resolve window failed:", err);
+    return null;
+  }
+}
+
+async function fetchProcessedDailyFreqMap(env, dateStr) {
+  const out = new Map();
+  if (!env?.FOOTPRINT_BUCKET || !dateStr) return out;
+
+  try {
+    const obj = await env.FOOTPRINT_BUCKET.get(`processed/${dateStr}.json`);
+    if (!obj) return out;
+
+    const parsed = await obj.json();
+    const items = Array.isArray(parsed)
+      ? parsed
+      : (Array.isArray(parsed?.items) ? parsed.items : []);
+
+    for (const item of items) {
+      const ticker = String(item?.kode || item?.t || "").toUpperCase();
+      const freq = Number(item?.freq ?? item?.f);
+      if (!ticker || !Number.isFinite(freq) || freq <= 0) continue;
+      out.set(ticker, Math.round(freq));
+    }
+  } catch (err) {
+    console.warn(`[orderflow] processed freq map failed for ${dateStr}:`, err?.message || err);
+  }
+
+  return out;
+}
+
+async function fetchProcessedDailyCloseMap(env, dateStr) {
+  const out = new Map();
+  if (!env?.FOOTPRINT_BUCKET || !dateStr) return out;
+
+  try {
+    const obj = await env.FOOTPRINT_BUCKET.get(`processed/${dateStr}.json`);
+    if (!obj) return out;
+
+    const parsed = await obj.json();
+    const items = Array.isArray(parsed)
+      ? parsed
+      : (Array.isArray(parsed?.items) ? parsed.items : []);
+
+    for (const item of items) {
+      const ticker = String(item?.kode || item?.t || "").toUpperCase();
+      const close = Number(item?.close ?? item?.c);
+      if (!ticker || !Number.isFinite(close) || close <= 0) continue;
+      out.set(ticker, close);
+    }
+  } catch (err) {
+    console.warn(`[orderflow] processed close map failed for ${dateStr}:`, err?.message || err);
+  }
+
+  return out;
+}
+
+async function fetchProcessedDailyStatsMap(env, dateStr) {
+  const out = new Map();
+  if (!env?.FOOTPRINT_BUCKET || !dateStr) return out;
+
+  try {
+    const obj = await env.FOOTPRINT_BUCKET.get(`processed/${dateStr}.json`);
+    if (!obj) return out;
+
+    const parsed = await obj.json();
+    const items = Array.isArray(parsed)
+      ? parsed
+      : (Array.isArray(parsed?.items) ? parsed.items : []);
+
+    for (const item of items) {
+      const ticker = String(item?.kode || item?.t || "").toUpperCase();
+      const open = Number(item?.open ?? item?.o);
+      const close = Number(item?.close ?? item?.c);
+      const vol = Number(item?.vol ?? item?.v);
+      const netVol = Number(item?.net_vol ?? item?.nv);
+      const freq = Number(item?.freq ?? item?.f);
+      if (!ticker) continue;
+
+      out.set(ticker, {
+        open: Number.isFinite(open) ? open : null,
+        close: Number.isFinite(close) ? close : null,
+        vol: Number.isFinite(vol) ? vol : null,
+        netVol: Number.isFinite(netVol) ? netVol : null,
+        freq: Number.isFinite(freq) ? freq : null,
+      });
+    }
+  } catch (err) {
+    console.warn(`[orderflow] processed stats map failed for ${dateStr}:`, err?.message || err);
+  }
+
+  return out;
+}
+
+/**
+ * Fetch processed daily stats for N consecutive trading days in parallel.
+ * Returns array where [0]=date (most recent), [1]=prev day, ..., [N-1]=oldest.
+ */
+async function fetchProcessedDailyStatsMaps(env, date, n = 20) {
+  const dates = [date];
+  let d = new Date(`${date}T12:00:00Z`);
+  while (dates.length < n) {
+    d = new Date(d.getTime() - 86400000);
+    if (![0, 6].includes(d.getUTCDay())) {
+      dates.push(d.toISOString().slice(0, 10));
+    }
+  }
+  return Promise.all(dates.map(dt => fetchProcessedDailyStatsMap(env, dt)));
+}
+
+/**
+ * Enrich items with multi-window CVD (2d/5d/10d/20d) and RVOL (2d/5d/10d/20d)
+ * using 20 trading days of processed daily stats from R2.
+ */
+async function enrichWithMultiWindowCvdRvol(env, items, baseDate) {
+  if (!items || !items.length || !baseDate) return;
+  try {
+    const maps = await fetchProcessedDailyStatsMaps(env, baseDate, 20);
+    const loadedCount = maps.filter(m => m.size > 0).length;
+    console.log(`[SUMMARY] Multi-window enrichment: ${loadedCount}/20 processed-stats maps loaded`);
+    if (loadedCount === 0) return;
+
+    for (const item of items) {
+      const ticker = String(item.t || "").toUpperCase();
+      if (!ticker) continue;
+
+      // CVD windows: cumulative netVol
+      let cvd_2d = 0, cvd_5d = 0, cvd_10d = 0, cvd_20d = 0;
+      for (let i = 0; i < 20; i++) {
+        const nv = maps[i]?.get(ticker)?.netVol;
+        if (!Number.isFinite(nv)) continue;
+        if (i < 2)  cvd_2d  += nv;
+        if (i < 5)  cvd_5d  += nv;
+        if (i < 10) cvd_10d += nv;
+        cvd_20d += nv;
+      }
+      item.cvd_2d  = cvd_2d  !== 0 ? cvd_2d  : null;
+      item.cvd_5d  = cvd_5d  !== 0 ? cvd_5d  : null;
+      item.cvd_10d = cvd_10d !== 0 ? cvd_10d : null;
+      item.cvd_20d = cvd_20d !== 0 ? cvd_20d : null;
+
+      // RVOL windows: todayVol / avg(D1..DW)
+      const todayVol = item.v || maps[0]?.get(ticker)?.vol;
+      if (Number.isFinite(todayVol) && todayVol > 0) {
+        const calcRvol = (windowSize) => {
+          let sum = 0, count = 0;
+          for (let i = 1; i <= windowSize && i < 20; i++) {
+            const v = maps[i]?.get(ticker)?.vol;
+            if (Number.isFinite(v) && v > 0) { sum += v; count++; }
+          }
+          if (count === 0) return null;
+          return parseFloat((todayVol / (sum / count)).toFixed(2));
+        };
+        item.rvol_2d  = calcRvol(2);
+        item.rvol_5d  = calcRvol(5);
+        item.rvol_10d = calcRvol(10);
+        item.rvol_20d = calcRvol(20);
+      }
+    }
+  } catch (e) {
+    console.warn(`[SUMMARY] Multi-window enrichment failed:`, e?.message || e);
+  }
+}
+
+function parsePositiveInt(value) {
+  if (value === null || value === undefined) return null;
+  const num = Number(String(value).replace(/[^0-9.-]/g, ""));
+  if (!Number.isFinite(num) || num <= 0) return null;
+  return Math.round(num);
+}
+
+async function fetchBroksumFrequency(env, symbol, dateStr) {
+  if (!env?.RAW_BROKSUM || !symbol || !dateStr) return null;
+  const key = `${String(symbol).toUpperCase()}/${dateStr}.json`;
+
+  try {
+    const obj = await env.RAW_BROKSUM.get(key);
+    if (!obj) return null;
+    const j = await obj.json();
+
+    const parseFreqFromRawSummary = (rawLine) => {
+      if (!rawLine || typeof rawLine !== "string") return null;
+      const parts = rawLine.split("|");
+      if (parts.length < 4) return null;
+      // IPOT raw summary format:
+      // CODE|TOTAL_VALUE|TOTAL_VOLUME_SHARES|TOTAL_FREQ|...
+      return parsePositiveInt(parts[3]);
+    };
+
+    // Prefer exchange-level total transaction count first.
+    // bandar_detector.frequency can be partial and much lower on some feeds.
+    const totalFreqCandidates = [
+      j?.data?.broker_summary?.stock_summary?.total_freq,
+      j?.broker_summary?.stock_summary?.total_freq,
+      j?.data?.stock_summary?.total_freq,
+      j?.stock_summary?.total_freq,
+      j?._meta?.summary?.total_freq,
+      j?.data?._meta?.summary?.total_freq
+    ];
+    for (const c of totalFreqCandidates) {
+      const n = parsePositiveInt(c);
+      if (n) return n;
+    }
+
+    const rawSummaryCandidates = [
+      j?._meta?.summary?.raw,
+      j?.data?._meta?.summary?.raw,
+      j?.data?.broker_summary?.stock_summary?.raw,
+      j?.broker_summary?.stock_summary?.raw,
+      j?.data?.stock_summary?.raw,
+      j?.stock_summary?.raw
+    ];
+    for (const raw of rawSummaryCandidates) {
+      const n = parseFreqFromRawSummary(raw);
+      if (n) return n;
+    }
+
+    const fallbackCandidates = [
+      j?.data?.bandar_detector?.frequency,
+      j?.bandar_detector?.frequency
+    ];
+    for (const c of fallbackCandidates) {
+      const n = parsePositiveInt(c);
+      if (n) return n;
+    }
+
+    return null;
+  } catch (err) {
+    console.warn(`[orderflow] broksum freq read failed for ${key}:`, err?.message || err);
+    return null;
+  }
+}
+
 function mapQuadrant(deltaPct, pricePct) {
   if (deltaPct >= 0 && pricePct >= 0) return "Q1";
   if (deltaPct < 0 && pricePct >= 0) return "Q2";
@@ -1318,20 +2363,27 @@ async function getOrderflowSnapshot(env, symbol) {
   if (!env?.SSSAHAM_DB || !symbol) return null;
 
   const normalizedSymbol = symbol.toUpperCase();
-  const { dateStr, startTs, endTs } = getTodayOrderflowWindow();
+  const window = await resolveOrderflowWindow(env);
+  if (!window) return null;
+  const { dateStr, startTs, endTs, isFallbackDay } = window;
+  const processedStatsMap = await fetchProcessedDailyStatsMap(env, dateStr);
+  const prevDateStr = prevTradingDayUTC(dateStr);
+  const prevProcessedStatsMap = await fetchProcessedDailyStatsMap(env, prevDateStr);
+  const broksumFreq = await fetchBroksumFrequency(env, normalizedSymbol, dateStr);
 
   try {
     const aggregate = await env.SSSAHAM_DB.prepare(`
       SELECT 
         SUM(vol) as total_vol,
         SUM(delta) as total_delta,
+        COUNT(*) as candle_count,
         MIN(time_key) as first_ts,
         MAX(time_key) as last_ts,
         MAX(high) as high,
         MIN(low) as low
       FROM temp_footprint_consolidate
-      WHERE ticker = ? AND time_key >= ? AND time_key <= ?
-    `).bind(normalizedSymbol, startTs, endTs).first();
+      WHERE ticker = ? AND date = ? AND time_key >= ? AND time_key <= ?
+    `).bind(normalizedSymbol, dateStr, startTs, endTs).first();
 
     if (!aggregate || !aggregate.total_vol || aggregate.total_vol <= 0 || !aggregate.first_ts || !aggregate.last_ts) {
       return null;
@@ -1378,23 +2430,75 @@ async function getOrderflowSnapshot(env, symbol) {
 
     const netValue = hybrid.v && close ? hybrid.v * close : null;
     const snapshotAt = aggregate.last_ts ? new Date(aggregate.last_ts).toISOString() : new Date().toISOString();
+    const growthPctRaw = open > 0 ? ((close - open) / open) * 100 : null;
+    const candleCount = Number(aggregate.candle_count || 0);
+    const stats = processedStatsMap.get(normalizedSymbol);
+    const prevStats = prevProcessedStatsMap.get(normalizedSymbol);
+    const statsFreq = Number(stats?.freq);
+    // S3: Use explicit priority instead of Math.max across different-unit sources.
+    // broksumFreq = exchange total transaction count (IPOT); statsFreq = processed stats freq;
+    // candleCount = D1 1-min candle count (different unit, fallback only).
+    const freqTx = (Number.isFinite(broksumFreq) && broksumFreq > 0)
+      ? Math.round(broksumFreq)
+      : (Number.isFinite(statsFreq) && statsFreq > 0)
+        ? Math.round(statsFreq)
+        : candleCount;
+    const reliableGrowth = candleCount >= 30;
+
+    let openPriceOut = reliableGrowth ? open : null;
+    let recentPriceOut = reliableGrowth ? close : null;
+    let growthPctOut = (reliableGrowth && Number.isFinite(growthPctRaw)) ? Number(growthPctRaw.toFixed(2)) : null;
+    let deltaPctOut = hybrid.d;
+    let momPctOut = hybrid.p;
+    let absorbOut = hybrid.div;
+    let cvdOut = Number(aggregate.total_delta || 0);
+
+    if (!reliableGrowth) {
+      const vol = Number(stats?.vol);
+      const netVol = Number(stats?.netVol);
+      const curClose = Number(stats?.close);
+      const prevClose = Number(prevStats?.close);
+
+      if (Number.isFinite(vol) && vol > 0 && Number.isFinite(netVol)) {
+        deltaPctOut = Number(((netVol / vol) * 100).toFixed(2));
+        cvdOut = Number(netVol);
+      }
+
+      if (Number.isFinite(curClose) && Number.isFinite(prevClose) && prevClose > 0) {
+        const pct = ((curClose - prevClose) / prevClose) * 100;
+        momPctOut = Number(pct.toFixed(2));
+        openPriceOut = prevClose;
+        recentPriceOut = curClose;
+        growthPctOut = Number(pct.toFixed(2));
+      }
+
+      if (Number.isFinite(deltaPctOut) && Number.isFinite(momPctOut)) {
+        absorbOut = Number((Math.abs(deltaPctOut) / (1 + Math.abs(momPctOut))).toFixed(2));
+      }
+    }
 
     return {
       ticker: normalizedSymbol,
       price: close,
-      delta_pct: hybrid.d,
-      price_pct: hybrid.p,
-      mom_pct: hybrid.p,
-      absorb: hybrid.div,
-      cvd: Number(aggregate.total_delta || 0),
+      open_price: openPriceOut,
+      recent_price: recentPriceOut,
+      growth_pct: growthPctOut,
+      freq_tx: freqTx,
+      delta_pct: deltaPctOut,
+      price_pct: momPctOut,
+      mom_pct: momPctOut,
+      absorb: absorbOut,
+      cvd: cvdOut,
       net_value: netValue,
       volume: hybrid.v,
       range: hybrid.r,
       score: hybrid.sc,
       signal: hybrid.sig,
-      quadrant: mapQuadrant(hybrid.d, hybrid.p),
+      quadrant: mapQuadrant(deltaPctOut, momPctOut),
       context_state: hybrid.ctx_st,
       context_z: hybrid.ctx_net,
+      trading_date: dateStr,
+      is_fallback_day: !!isFallbackDay,
       snapshot_at: snapshotAt,
       generated_at: new Date().toISOString(),
       source: "d1"
@@ -1408,15 +2512,20 @@ async function getOrderflowSnapshot(env, symbol) {
 async function getOrderflowSnapshotMap(env) {
   if (!env?.SSSAHAM_DB) return {};
 
-  const { dateStr, startTs, endTs } = getTodayOrderflowWindow();
+  const window = await resolveOrderflowWindow(env);
+  if (!window) return {};
+  const { dateStr, startTs, endTs, isFallbackDay } = window;
+  const processedStatsMap = await fetchProcessedDailyStatsMap(env, dateStr);
+  const prevDateStr = prevTradingDayUTC(dateStr);
+  const prevProcessedStatsMap = await fetchProcessedDailyStatsMap(env, prevDateStr);
 
   try {
     const { results: rows = [] } = await env.SSSAHAM_DB.prepare(`
       SELECT ticker, time_key, open, close, vol, delta, high, low
       FROM temp_footprint_consolidate
-      WHERE time_key >= ? AND time_key <= ?
+      WHERE date = ? AND time_key >= ? AND time_key <= ?
       ORDER BY ticker ASC, time_key ASC
-    `).bind(startTs, endTs).all();
+    `).bind(dateStr, startTs, endTs).all();
 
     if (!rows.length) return {};
 
@@ -1442,6 +2551,7 @@ async function getOrderflowSnapshotMap(env) {
           total_delta: 0,
           high,
           low,
+          freq_tx: 0,
           first_ts: ts,
           last_ts: ts
         });
@@ -1454,6 +2564,7 @@ async function getOrderflowSnapshotMap(env) {
       agg.total_delta += delta;
       agg.high = Math.max(agg.high || high, high);
       agg.low = Math.min(agg.low || low, low);
+      agg.freq_tx = Number(agg.freq_tx || 0) + 1;
       if (ts && (!agg.first_ts || ts < agg.first_ts)) agg.first_ts = ts;
       if (ts && (!agg.last_ts || ts > agg.last_ts)) agg.last_ts = ts;
     }
@@ -1501,22 +2612,67 @@ async function getOrderflowSnapshotMap(env) {
       if (!hybrid) continue;
 
       const netValue = hybrid.v && agg.close ? hybrid.v * agg.close : null;
+      const growthPctRaw = agg.open > 0 ? ((agg.close - agg.open) / agg.open) * 100 : null;
+      const candleCount = Number(agg.freq_tx || 0);
+      const stats = processedStatsMap.get(ticker);
+      const prevStats = prevProcessedStatsMap.get(ticker);
+      const freqTx = Number(stats?.freq ?? candleCount);
+      const reliableGrowth = candleCount >= 30;
+
+      let openPriceOut = reliableGrowth ? agg.open : null;
+      let recentPriceOut = reliableGrowth ? agg.close : null;
+      let growthPctOut = (reliableGrowth && Number.isFinite(growthPctRaw)) ? Number(growthPctRaw.toFixed(2)) : null;
+      let deltaPctOut = hybrid.d;
+      let momPctOut = hybrid.p;
+      let absorbOut = hybrid.div;
+      let cvdOut = Number(agg.total_delta || 0);
+
+      if (!reliableGrowth) {
+        const vol = Number(stats?.vol);
+        const netVol = Number(stats?.netVol);
+        const curClose = Number(stats?.close);
+        const prevClose = Number(prevStats?.close);
+
+        if (Number.isFinite(vol) && vol > 0 && Number.isFinite(netVol)) {
+          deltaPctOut = Number(((netVol / vol) * 100).toFixed(2));
+          cvdOut = Number(netVol);
+        }
+
+        if (Number.isFinite(curClose) && Number.isFinite(prevClose) && prevClose > 0) {
+          const pct = ((curClose - prevClose) / prevClose) * 100;
+          openPriceOut = prevClose;
+          recentPriceOut = curClose;
+          growthPctOut = Number(pct.toFixed(2));
+          momPctOut = Number(pct.toFixed(2));
+        }
+
+        if (Number.isFinite(deltaPctOut) && Number.isFinite(momPctOut)) {
+          absorbOut = Number((Math.abs(deltaPctOut) / (1 + Math.abs(momPctOut))).toFixed(2));
+        }
+      }
+
       out[ticker] = {
         ticker,
         price: agg.close,
-        delta_pct: hybrid.d,
-        price_pct: hybrid.p,
-        mom_pct: hybrid.p,
-        absorb: hybrid.div,
-        cvd: Number(agg.total_delta || 0),
+        open_price: openPriceOut,
+        recent_price: recentPriceOut,
+        growth_pct: growthPctOut,
+        freq_tx: freqTx,
+        delta_pct: deltaPctOut,
+        price_pct: momPctOut,
+        mom_pct: momPctOut,
+        absorb: absorbOut,
+        cvd: cvdOut,
         net_value: netValue,
         volume: hybrid.v,
         range: hybrid.r,
         score: hybrid.sc,
         signal: hybrid.sig,
-        quadrant: mapQuadrant(hybrid.d, hybrid.p),
+        quadrant: mapQuadrant(deltaPctOut, momPctOut),
         context_state: hybrid.ctx_st,
         context_z: hybrid.ctx_net,
+        trading_date: dateStr,
+        is_fallback_day: !!isFallbackDay,
         snapshot_at: agg.last_ts ? new Date(agg.last_ts).toISOString() : new Date().toISOString(),
         generated_at: new Date().toISOString(),
         source: "d1"
@@ -1567,6 +2723,140 @@ export default {
         } catch (err) {
           console.error("[/admin/emiten/sync] Failed to trigger idx-handler", err);
           return json({ error: "IDX sync failed", details: err.message }, 502);
+        }
+      }
+
+      // 0.a GET /ws-token
+      // Expose cached IPOT appsession token for frontend/edge producers.
+      // Cache behavior (inside fetchIpotAppSession):
+      // - primary: 10 minutes
+      // - backup: 6 hours stale-if-error
+      if (url.pathname === "/ws-token" && req.method === "GET") {
+        try {
+          const forceRefresh = ["1", "true", "yes"].includes(
+            String(url.searchParams.get("refresh") || "").toLowerCase()
+          );
+
+          if (forceRefresh) {
+            await clearIpotAppSession(env);
+          }
+
+          const token = await fetchIpotAppSession(env);
+          const masked = token ? `${String(token).slice(0, 6)}...${String(token).slice(-4)}` : null;
+          return json({
+            ok: true,
+            token,
+            token_masked: masked,
+            ttl_seconds: 600,
+            source: forceRefresh ? "network_refresh" : "cache_or_network",
+            ts_unix_ms: Date.now()
+          });
+        } catch (err) {
+          console.error("[/ws-token] failed", err);
+          return json({ ok: false, error: err?.message || "failed_to_fetch_ws_token" }, 500);
+        }
+      }
+
+      // 0.b GET /ob2/snapshot15s/latest
+      // Read latest 15s OB2 snapshot line from daily JSONL file.
+      // Query:
+      // - symbol=BBRI (required)
+      // - date=YYYY-MM-DD (optional, defaults search recent WIB dates)
+      // - tail=1..20 (optional)
+      if (url.pathname === "/ob2/snapshot15s/latest" && req.method === "GET") {
+        try {
+          const symbol = String(url.searchParams.get("symbol") || "").trim().toUpperCase();
+          if (!symbol) {
+            return json({ ok: false, error: "symbol is required" }, 400);
+          }
+
+          const dateQ = String(url.searchParams.get("date") || "").trim();
+          const tail = Math.max(1, Math.min(20, Number(url.searchParams.get("tail") || "1") || 1));
+          const datesToTry = /^\d{4}-\d{2}-\d{2}$/.test(dateQ)
+            ? [dateQ]
+            : getRecentWibDates(5);
+
+          let foundKey = null;
+          let foundDate = null;
+          let rows = [];
+
+          for (const d of datesToTry) {
+            const key = `ob2/snapshot15s/v1/symbol=${symbol}/date=${d}/daily.jsonl`;
+            rows = await readJsonlTailFromR2(env.FOOTPRINT_BUCKET, key, tail);
+            if (rows.length) {
+              foundKey = key;
+              foundDate = d;
+              break;
+            }
+          }
+
+          if (!rows.length) {
+            return json({
+              ok: true,
+              symbol,
+              found: false,
+              message: "no snapshot found for recent days",
+              tried_dates: datesToTry,
+            });
+          }
+
+          return json({
+            ok: true,
+            symbol,
+            found: true,
+            date: foundDate,
+            key: foundKey,
+            count: rows.length,
+            items: rows,
+          });
+        } catch (err) {
+          console.error("[/ob2/snapshot15s/latest] failed", err);
+          return json({ ok: false, error: err?.message || "failed_to_read_ob2_snapshot" }, 500);
+        }
+      }
+
+      // 0.c GET /internal/e2e-most-active-check
+      // quick readiness probe: ws token + latest ob2 snapshot
+      if (url.pathname === "/internal/e2e-most-active-check" && req.method === "GET") {
+        try {
+          const symbol = String(url.searchParams.get("symbol") || "BBRI").trim().toUpperCase();
+
+          let tokenOk = false;
+          let tokenErr = null;
+          try {
+            const token = await fetchIpotAppSession(env);
+            tokenOk = Boolean(token);
+          } catch (e) {
+            tokenErr = e?.message || String(e);
+          }
+
+          const datesToTry = getRecentWibDates(3);
+          let obFound = false;
+          let obKey = null;
+          for (const d of datesToTry) {
+            const key = `ob2/snapshot15s/v1/symbol=${symbol}/date=${d}/daily.jsonl`;
+            const head = await env.FOOTPRINT_BUCKET.head(key);
+            if (head) {
+              obFound = true;
+              obKey = key;
+              break;
+            }
+          }
+
+          return json({
+            ok: tokenOk,
+            checklist: {
+              ws_token_available: tokenOk,
+              ws_token_error: tokenErr,
+              ob2_snapshot15s_available: obFound,
+              ob2_snapshot15s_key: obKey,
+            },
+            symbol,
+            ts_unix_ms: Date.now(),
+          }, tokenOk ? 200 : 503);
+        } catch (err) {
+          console.error("[/internal/e2e-most-active-check] failed", err);
+          return json({ ok: false, error: err?.message || "e2e_check_failed" }, 500);
         }
       }
 
@@ -1622,6 +2912,8 @@ export default {
             try {
               const rangeData = await calculateFootprintRange(env, tryDateStr, tryDateStr);
               if (rangeData && rangeData.items && rangeData.items.length > 0) {
+                // Enrich with multi-window CVD (2d/5d/10d/20d) and RVOL (2d/5d/10d/20d)
+                await enrichWithMultiWindowCvdRvol(env, rangeData.items, tryDateStr);
                 return json({
                   version: "v3.0-hybrid",
                   generated_at: new Date().toISOString(),
@@ -3253,6 +4545,25 @@ export default {
         }
       }
 
+      // 6.6 DEBUG: SSSAHAM_EMITEN File Inspection (admin only)
+      if (url.pathname === "/debug/emiten-file") {
+        const auth = requireIdxAdmin(req, env);
+        if (!auth.ok) return auth.response;
+
+        const key = url.searchParams.get("key");
+        if (!key) return json({ error: "Missing key" }, 400);
+
+        try {
+          const obj = await env.SSSAHAM_EMITEN.get(key);
+          if (!obj) return json({ error: "Object not found", key }, 404);
+
+          const headers = new Headers({ "Content-Type": "application/x-ndjson; charset=utf-8" });
+          return new Response(obj.body, { headers });
+        } catch (e) {
+          return json({ error: "Fetch error", details: e.message }, 500);
+        }
+      }
+
       // ============================================
       // AI ANALYTICS
       // ============================================
@@ -4364,10 +5675,65 @@ export default {
         return json({ ok: true, inserted, total_input: entries.length });
       }
 
+      // 7.35 POST /dashboard/catalyst/sync-ipot
+      if (url.pathname === "/dashboard/catalyst/sync-ipot" && req.method === "POST") {
+        const auth = requireIdxAdmin(req, env);
+        if (!auth.ok) return auth.response;
+
+        const body = await req.json().catch(() => ({}));
+        const result = await runIpotCatalystSync(env, {
+          fromDate: body?.from || url.searchParams.get("from"),
+          toDate: body?.to || url.searchParams.get("to"),
+          includeDetail: body?.include_detail !== false,
+          detailLimit: Number(body?.detail_limit || url.searchParams.get("detail_limit") || 120)
+        });
+
+        return json(result);
+      }
+
+      // 7.36 GET /dashboard/catalyst/detail?seq=xxxx
+      if (url.pathname === "/dashboard/catalyst/detail" && req.method === "GET") {
+        await ensureDashboardTables(env);
+        const seq = String(url.searchParams.get("seq") || "").trim();
+        if (!seq) return json({ ok: false, error: "seq is required" }, 400);
+
+        const row = await env.SSSAHAM_DB.prepare(
+          `SELECT seq, sec, act_type, description_html, description_text, amount, ratio1, ratio2, cum_date, ex_date, rec_date, start_dist_date, end_dist_date, status, fetched_at
+           FROM catalyst_ca_detail
+           WHERE seq = ?
+           LIMIT 1`
+        ).bind(seq).first();
+
+        if (!row) return json({ ok: false, error: "detail not found", seq }, 404);
+        return json({ ok: true, ...row });
+      }
+
       // 7.4 GET /dashboard/catalyst
       if (url.pathname === "/dashboard/catalyst" && req.method === "GET") {
         await ensureDashboardTables(env);
         const limit = Math.min(Math.max(Number(url.searchParams.get("limit") || 50), 1), 300);
+
+        const { results: catalystRows } = await env.SSSAHAM_DB.prepare(
+          `SELECT
+              e.id,
+              e.event_type,
+              e.event_subtype,
+              e.seq,
+              e.event_date,
+              e.event_time_wib,
+              e.symbol_primary,
+              e.symbols_json,
+              e.status,
+              e.phase,
+              e.label,
+              e.sector_primary,
+              e.created_at,
+              d.description_text
+           FROM catalyst_events e
+           LEFT JOIN catalyst_ca_detail d ON d.seq = e.seq
+           ORDER BY e.event_date ASC, COALESCE(e.event_time_wib, '23:59') ASC, e.id DESC
+           LIMIT ?`
+        ).bind(limit).all();
 
         const { results: pubexRows } = await env.SSSAHAM_DB.prepare(
           `SELECT id, kode_emiten, nama_perusahaan, tanggal, pukul_wib, lokasi, agenda, sumber, created_at
@@ -4383,6 +5749,39 @@ export default {
            ORDER BY event_date ASC, COALESCE(event_time_wib, '23:59') ASC, id DESC
            LIMIT ?`
         ).bind(limit).all();
+
+        const catalystItems = (catalystRows || []).map((r) => {
+          const isRups = String(r.event_type || "").toUpperCase() === "RUPS";
+          const symbol = r.symbol_primary || null;
+          const subtitle = calcCatalystSubtitle(r);
+          const parsedSymbols = (() => {
+            try {
+              const arr = JSON.parse(r.symbols_json || "[]");
+              return Array.isArray(arr) ? arr : [];
+            } catch {
+              return [];
+            }
+          })();
+
+          return {
+            type: isRups ? "rups" : "ca",
+            id: `ipot-${r.id}`,
+            seq: r.seq || null,
+            symbol,
+            symbols: parsedSymbols,
+            title: isRups ? `RUPS ${symbol || "Emiten"}` : `Corporate Action ${symbol || "Emiten"}`,
+            subtitle: subtitle || (r.event_subtype || null),
+            description: r.description_text || r.label || (isRups ? "Jadwal RUPS" : "Corporate Action"),
+            phase: r.phase || null,
+            status: r.status || null,
+            sector: r.sector_primary || null,
+            source: "ipot_calca",
+            event_date: r.event_date,
+            event_time_wib: r.event_time_wib || null,
+            event_ts: toEventTimestamp(r.event_date, r.event_time_wib),
+            created_at: r.created_at
+          };
+        });
 
         const pubexItems = (pubexRows || []).map((r) => ({
           type: "pubex",
@@ -4414,7 +5813,7 @@ export default {
           created_at: r.created_at
         }));
 
-        const items = [...pubexItems, ...ipoItems]
+        const items = [...catalystItems, ...pubexItems, ...ipoItems]
           .sort((a, b) => (a.event_ts - b.event_ts) || (String(a.created_at).localeCompare(String(b.created_at))))
           .slice(0, limit)
           .map(({ event_ts, ...rest }) => rest);

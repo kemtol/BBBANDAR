@@ -308,9 +308,10 @@
             .chart-container-responsive {
                 height: 30vh !important;
             }
+
             #foreign-sentiment-widget {
-            min-height: 50vh !important;
-        }
+                min-height: 50vh !important;
+            }
         }
 
         .nav-title {
@@ -633,8 +634,12 @@
                                 data-preset="strict" title="Foreign & Smart Money positif setiap hari">
                                 Strict
                             </a>
+                            <a href="#" class="btn btn-outline-danger btn-sm" style="width: 85px;font-size: 0.9rem;"
+                                data-preset="ara" title="ARA Hunter: Effort positif + Δ%≥3 + Mom≥1 + RVOL≥1.2">
+                                🚀 ARA
+                            </a>
                         </div>
-                        <small class="text-muted" id="preset-desc" style="font-size:0.85rem;">Tanpa
+                        <small class="text-muted d-none" id="preset-desc" style="font-size:0.85rem;">Tanpa
                             filter</small>
                     </div>
                     <div class="d-flex align-items-center gap-2 ms-auto">
@@ -644,29 +649,58 @@
                                 data-bs-toggle="dropdown" id="dd-view">
                                 <i class="fa-solid fa-eye me-1"></i>View
                             </button>
-                            <div class="dropdown-menu dropdown-menu-end dropdown-menu-sm p-2" style="min-width: 190px;">
-                                <label class="dropdown-item small d-flex align-items-center gap-2 mb-1">
-                                    <input type="checkbox" class="form-check-input m-0" data-view-horizon="2" checked>
-                                    <span>Show 2D columns</span>
-                                </label>
-                                <label class="dropdown-item small d-flex align-items-center gap-2 mb-1">
-                                    <input type="checkbox" class="form-check-input m-0" data-view-horizon="5" checked>
-                                    <span>Show 5D columns</span>
-                                </label>
-                                <label class="dropdown-item small d-flex align-items-center gap-2 mb-1">
-                                    <input type="checkbox" class="form-check-input m-0" data-view-horizon="10" checked>
-                                    <span>Show 10D columns</span>
-                                </label>
-                                <label class="dropdown-item small d-flex align-items-center gap-2">
-                                    <input type="checkbox" class="form-check-input m-0" data-view-horizon="20" checked>
-                                    <span>Show 20D columns</span>
-                                </label>
+                            <div class="dropdown-menu dropdown-menu-end p-3" style="min-width: 440px;">
+                                <div class="d-flex gap-3">
+                                    <div style="min-width: 100px;">
+                                        <div class="small fw-bold text-muted mb-2" style="font-size:0.75rem;">HORIZON
+                                        </div>
+                                        <label class="d-flex align-items-center gap-2 mb-1 small"><input type="checkbox"
+                                                class="form-check-input m-0" data-view-horizon="2" checked> 2D</label>
+                                        <label class="d-flex align-items-center gap-2 mb-1 small"><input type="checkbox"
+                                                class="form-check-input m-0" data-view-horizon="5" checked> 5D</label>
+                                        <label class="d-flex align-items-center gap-2 mb-1 small"><input type="checkbox"
+                                                class="form-check-input m-0" data-view-horizon="10" checked> 10D</label>
+                                        <label class="d-flex align-items-center gap-2 small"><input type="checkbox"
+                                                class="form-check-input m-0" data-view-horizon="20" checked> 20D</label>
+                                    </div>
+                                    <div class="border-start ps-3" style="min-width: 100px;">
+                                        <div class="small fw-bold text-muted mb-2" style="font-size:0.75rem;">Z-SCORE
+                                        </div>
+                                        <label class="d-flex align-items-center gap-2 mb-1 small"><input type="checkbox"
+                                                class="form-check-input m-0" data-view-group="eff" checked>
+                                            Effort</label>
+                                        <label class="d-flex align-items-center gap-2 small"><input type="checkbox"
+                                                class="form-check-input m-0" data-view-group="vwp" checked> V-WP</label>
+                                    </div>
+                                    <div class="border-start ps-3" style="min-width: 130px;">
+                                        <div class="small fw-bold text-muted mb-2" style="font-size:0.75rem;">DATA
+                                            COLUMNS</div>
+                                        <label class="d-flex align-items-center gap-2 mb-1 small"><input type="checkbox"
+                                                class="form-check-input m-0" data-view-group="fflw" checked>
+                                            FFLW</label>
+                                        <label class="d-flex align-items-center gap-2 mb-1 small"><input type="checkbox"
+                                                class="form-check-input m-0" data-view-group="lflw" checked>
+                                            LFLW</label>
+                                        <label class="d-flex align-items-center gap-2 mb-1 small"><input type="checkbox"
+                                                class="form-check-input m-0" data-view-group="smny" checked>
+                                            SMNY</label>
+                                        <label class="d-flex align-items-center gap-2 mb-1 small"><input type="checkbox"
+                                                class="form-check-input m-0" data-view-group="cvdm" checked> CVD
+                                            Multi</label>
+                                        <label class="d-flex align-items-center gap-2 mb-1 small"><input type="checkbox"
+                                                class="form-check-input m-0" data-view-group="rvol" checked>
+                                            RVOL</label>
+                                        <label class="d-flex align-items-center gap-2 small"><input type="checkbox"
+                                                class="form-check-input m-0" data-view-group="flow" checked>
+                                            Flow</label>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
                 </div>
                 <!-- Row 2: Individual Filters -->
-                <div class="d-flex align-items-center gap-2 flex-wrap mb-1 pt-2 pb-3" id="filter-row">
+                <div class="d-flex align-items-center gap-2 flex-wrap py-2" id="filter-row">
                     <span class="text-muted fw-bold text-uppercase"
                         style="font-size:0.85rem; letter-spacing:0.5px;width: 75px;">FILTER</span>
                     <!-- Foreign Net -->
@@ -682,6 +716,18 @@
                                     tiap hari</a></li>
                             <li><a class="dropdown-item small" href="#" data-filter="foreign"
                                     data-val="dominant">Kumulatif &gt; 0</a></li>
+                        </ul>
+                    </div>
+                    <!-- Local Flow -->
+                    <div class="dropdown">
+                        <button class="btn btn-sm btn-outline-secondary dropdown-toggle px-2" type="button"
+                            data-bs-toggle="dropdown" id="dd-local">
+                            Local: Any
+                        </button>
+                        <ul class="dropdown-menu dropdown-menu-sm">
+                            <li><a class="dropdown-item small" href="#" data-filter="local" data-val="any">Any</a></li>
+                            <li><a class="dropdown-item small" href="#" data-filter="local"
+                                    data-val="positive">Kumulatif &gt; 0</a></li>
                         </ul>
                     </div>
                     <!-- Smart Money -->
@@ -820,7 +866,7 @@
                         </ul>
                     </div>
                     <!-- Horizon Selector -->
-                    <div class="dropdown">
+                    <div class="dropdown d-none">
                         <button class="btn btn-sm btn-outline-info dropdown-toggle py-0 px-2" type="button"
                             data-bs-toggle="dropdown" id="dd-horizon">
                             Horizon: Any
@@ -839,8 +885,145 @@
                         </ul>
                     </div>
                 </div>
+                <!-- Row 2b: Numeric column filters (inline) -->
+                <div class="d-flex align-items-center gap-2 flex-wrap mb-1 pt-1 pb-2" id="filter-row-2">
+                    <span class="text-muted fw-bold text-uppercase"
+                        style="font-size:0.75rem; letter-spacing:0.5px;width: 75px;">MORE</span>
+                    <!-- Growth -->
+                    <div class="dropdown">
+                        <button class="btn btn-sm btn-outline-secondary dropdown-toggle px-2" type="button"
+                            data-bs-toggle="dropdown" data-bs-auto-close="outside" id="dd-growth">Growth: Any</button>
+                        <div class="dropdown-menu dropdown-menu-sm px-2 py-2" style="min-width:150px;">
+                            <label class="small text-muted mb-1">Growth ≥</label>
+                            <input type="number" step="any" class="form-control form-control-sm num-filter-input"
+                                data-nf="growth_min" placeholder="e.g. 5">
+                        </div>
+                    </div>
+                    <!-- Freq -->
+                    <div class="dropdown">
+                        <button class="btn btn-sm btn-outline-secondary dropdown-toggle px-2" type="button"
+                            data-bs-toggle="dropdown" data-bs-auto-close="outside" id="dd-freq">Freq: Any</button>
+                        <div class="dropdown-menu dropdown-menu-sm px-2 py-2" style="min-width:150px;">
+                            <label class="small text-muted mb-1">Freq ≥</label>
+                            <input type="number" step="1" class="form-control form-control-sm num-filter-input"
+                                data-nf="freq_min" placeholder="e.g. 100">
+                        </div>
+                    </div>
+                    <!-- TOM2 -->
+                    <div class="dropdown">
+                        <button class="btn btn-sm btn-outline-secondary dropdown-toggle px-2" type="button"
+                            data-bs-toggle="dropdown" data-bs-auto-close="outside" id="dd-tom2">TOM2: Any</button>
+                        <div class="dropdown-menu dropdown-menu-sm px-2 py-2" style="min-width:150px;">
+                            <label class="small text-muted mb-1">TOM2 ≥</label>
+                            <input type="number" step="1" min="0" max="90"
+                                class="form-control form-control-sm num-filter-input" data-nf="tom2_min"
+                                placeholder="e.g. 60">
+                        </div>
+                    </div>
+                    <!-- SWG5 -->
+                    <div class="dropdown">
+                        <button class="btn btn-sm btn-outline-secondary dropdown-toggle px-2" type="button"
+                            data-bs-toggle="dropdown" data-bs-auto-close="outside" id="dd-swg5">SWG5: Any</button>
+                        <div class="dropdown-menu dropdown-menu-sm px-2 py-2" style="min-width:150px;">
+                            <label class="small text-muted mb-1">SWG5 ≥</label>
+                            <input type="number" step="1" min="0" max="90"
+                                class="form-control form-control-sm num-filter-input" data-nf="swg5_min"
+                                placeholder="e.g. 60">
+                        </div>
+                    </div>
+                    <!-- Δ% -->
+                    <div class="dropdown hide-mobile">
+                        <button class="btn btn-sm btn-outline-secondary dropdown-toggle px-2" type="button"
+                            data-bs-toggle="dropdown" data-bs-auto-close="outside" id="dd-delta">Δ%: Any</button>
+                        <div class="dropdown-menu dropdown-menu-sm px-2 py-2" style="min-width:150px;">
+                            <label class="small text-muted mb-1">Delta% ≥</label>
+                            <input type="number" step="any" class="form-control form-control-sm num-filter-input"
+                                data-nf="delta_min" placeholder="e.g. 0">
+                        </div>
+                    </div>
+                    <!-- Mom% -->
+                    <div class="dropdown hide-mobile">
+                        <button class="btn btn-sm btn-outline-secondary dropdown-toggle px-2" type="button"
+                            data-bs-toggle="dropdown" data-bs-auto-close="outside" id="dd-mom">Mom%: Any</button>
+                        <div class="dropdown-menu dropdown-menu-sm px-2 py-2" style="min-width:150px;">
+                            <label class="small text-muted mb-1">Momentum% ≥</label>
+                            <input type="number" step="any" class="form-control form-control-sm num-filter-input"
+                                data-nf="mom_min" placeholder="e.g. 0">
+                        </div>
+                    </div>
+                    <!-- Absorb -->
+                    <div class="dropdown hide-mobile">
+                        <button class="btn btn-sm btn-outline-secondary dropdown-toggle px-2" type="button"
+                            data-bs-toggle="dropdown" data-bs-auto-close="outside" id="dd-absorb">Absorb: Any</button>
+                        <div class="dropdown-menu dropdown-menu-sm px-2 py-2" style="min-width:150px;">
+                            <label class="small text-muted mb-1">Absorb ≥</label>
+                            <input type="number" step="any" class="form-control form-control-sm num-filter-input"
+                                data-nf="absorb_min" placeholder="e.g. 2">
+                        </div>
+                    </div>
+                    <!-- CVD -->
+                    <div class="dropdown hide-mobile">
+                        <button class="btn btn-sm btn-outline-secondary dropdown-toggle px-2" type="button"
+                            data-bs-toggle="dropdown" data-bs-auto-close="outside" id="dd-cvd">CVD: Any</button>
+                        <div class="dropdown-menu dropdown-menu-sm px-2 py-2" style="min-width:150px;">
+                            <label class="small text-muted mb-1">CVD ≥</label>
+                            <input type="number" step="any" class="form-control form-control-sm num-filter-input"
+                                data-nf="cvd_min" placeholder="e.g. 0">
+                        </div>
+                    </div>
+                    <!-- RVOL -->
+                    <div class="dropdown hide-mobile">
+                        <button class="btn btn-sm btn-outline-secondary dropdown-toggle px-2" type="button"
+                            data-bs-toggle="dropdown" data-bs-auto-close="outside" id="dd-rvol">RVOL: Any</button>
+                        <div class="dropdown-menu dropdown-menu-sm px-2 py-2" style="min-width:150px;">
+                            <label class="small text-muted mb-1">RVOL ≥</label>
+                            <input type="number" step="any" class="form-control form-control-sm num-filter-input"
+                                data-nf="rvol_min" placeholder="e.g. 1.5">
+                        </div>
+                    </div>
+                    <!-- Value -->
+                    <div class="dropdown hide-mobile">
+                        <button class="btn btn-sm btn-outline-secondary dropdown-toggle px-2" type="button"
+                            data-bs-toggle="dropdown" data-bs-auto-close="outside" id="dd-value">Value: Any</button>
+                        <div class="dropdown-menu dropdown-menu-sm px-2 py-2" style="min-width:160px;">
+                            <label class="small text-muted mb-1">Net Value ≥</label>
+                            <input type="number" step="any" class="form-control form-control-sm num-filter-input"
+                                data-nf="value_min" placeholder="e.g. 0">
+                        </div>
+                    </div>
+                    <!-- Quadrant -->
+                    <div class="dropdown">
+                        <button class="btn btn-sm btn-outline-secondary dropdown-toggle px-2" type="button"
+                            data-bs-toggle="dropdown" id="dd-quadrant">Q: Any</button>
+                        <ul class="dropdown-menu dropdown-menu-sm">
+                            <li><a class="dropdown-item small" href="#" data-filter="quadrant" data-val="any">Any</a>
+                            </li>
+                            <li><a class="dropdown-item small" href="#" data-filter="quadrant" data-val="Q1">Q1
+                                    (Strong)</a></li>
+                            <li><a class="dropdown-item small" href="#" data-filter="quadrant" data-val="Q2">Q2
+                                    (Caution)</a></li>
+                            <li><a class="dropdown-item small" href="#" data-filter="quadrant" data-val="Q3">Q3
+                                    (Weak)</a></li>
+                            <li><a class="dropdown-item small" href="#" data-filter="quadrant" data-val="Q4">Q4
+                                    (Recover)</a></li>
+                        </ul>
+                    </div>
+                    <!-- Reset All -->
+                    <a href="#" class="btn btn-sm px-2" id="btn-reset-filters" title="Reset semua filter">
+                        <i class="fa-solid fa-rotate-left"></i>
+                    </a>
+                </div>
                 <!-- Row 3: Active filter pills -->
-                <div id="active-pills" class="d-flex flex-wrap gap-1 mb-1 border-top" style="min-height:0;"></div>
+                <div id="active-pills" class="d-flex flex-wrap gap-1 mb-1" style="min-height:0;"></div>
+            </div>
+            <div class="d-flex justify-content-between align-items-center border-bottom py-2"
+                style="line-height:normal">
+                <small class="small text-muted" style="font-size: 0.75rem;line-height:normal">Shift+Scroll untuk geser
+                    ke kiri/kanan</small>
+                <div class="d-flex align-items-center gap-1">
+                    <input type="text" id="emiten-search" class="form-control form-control-sm"
+                        placeholder="BBRI, TLKM.." style="width:220px; font-size:0.8rem;border-radius: 0px;">
+                </div>
             </div>
             <div class="card card-swing" style="border-radius: 0;">
                 <div class="table-responsive">
@@ -848,63 +1031,157 @@
                         <thead>
                             <tr>
                                 <th class="text-center sticky-col sticky-col-no">#</th>
-                                <th class="sticky-col sticky-col-symbol" data-sort="symbol" style="cursor:pointer">Emiten <i
+                                <th class="sticky-col sticky-col-symbol" data-sort="symbol" style="cursor:pointer">
+                                    Emiten <i class="fa-solid fa-sort small text-muted"></i></th>
+                                <th class="text-center" data-sort="order_growth_pct"
+                                    style="cursor:pointer; white-space: nowrap;">Growth <i
                                         class="fa-solid fa-sort small text-muted"></i></th>
-                                <th class="text-center" data-sort="tom2_prob" style="cursor:pointer; white-space:nowrap;">TOM2% <i
-                                    class="fa-solid fa-sort small text-muted"></i></th>
-                                <th class="text-center" data-sort="swg5_prob" style="cursor:pointer; white-space:nowrap;">SWG5% <i
-                                    class="fa-solid fa-sort small text-muted"></i></th>
+                                <th class="text-center" data-sort="order_freq_tx"
+                                    style="cursor:pointer; white-space: nowrap;">Freq <i
+                                        class="fa-solid fa-sort small text-muted"></i></th>
+                                <th class="text-center" data-sort="tom2_prob"
+                                    style="cursor:pointer; white-space:nowrap;"
+                                    title="TOM2 = Ranking Score untuk potensi +2% besok.&#10;Komposit: Smart Money (45%) + Orderflow (35%) + Effort (20%) + State Bonus.&#10;Menggunakan cross-sectional percentile rank (5-90).&#10;Bukan probability — ini ranking relatif terhadap seluruh emiten.">
+                                    TOM2 <i class="fa-solid fa-sort small text-muted"></i></th>
+                                <th class="text-center" data-sort="swg5_prob"
+                                    style="cursor:pointer; white-space:nowrap;"
+                                    title="SWG5 = Ranking Score untuk potensi swing +5% dalam ~5 hari.&#10;Komposit: Smart Money (35%) + Flow (20%) + Effort (15%) + VWAP (15%) + CVD (15%) + Trend/State Bonus.&#10;Menggunakan cross-sectional percentile rank (5-90).&#10;Bukan probability — ini ranking relatif terhadap seluruh emiten.">
+                                    SWG5 <i class="fa-solid fa-sort small text-muted"></i></th>
                                 <th class="text-center" data-sort="order_delta_pct"
-                                    style="cursor:pointer; white-space: nowrap;">Δ% <i
-                                        class="fa-solid fa-sort small text-muted"></i></th>
+                                    style="cursor:pointer; white-space: nowrap;"
+                                    title="Δ% = delta / volume × 100.&#10;delta = SUM(buyVol − sellVol) dari D1 footprint (tick-rule).&#10;Positif = dominasi buyer, Negatif = dominasi seller.">
+                                    Δ% <i class="fa-solid fa-sort small text-muted"></i></th>
                                 <th class="text-center" data-sort="order_mom_pct"
-                                    style="cursor:pointer; white-space: nowrap;">Mom% <i
-                                        class="fa-solid fa-sort small text-muted"></i></th>
+                                    style="cursor:pointer; white-space: nowrap;"
+                                    title="Mom% = (close − open) / open × 100 (intraday).&#10;Untuk data sparse (&lt;30 candle): close-to-close harian.&#10;p_src field menandai sumbernya: intraday / overnight / intraday_sparse.">
+                                    Mom% <i class="fa-solid fa-sort small text-muted"></i></th>
                                 <th class="text-center" data-sort="order_absorb"
-                                    style="cursor:pointer; white-space: nowrap;">Absorb <i
-                                        class="fa-solid fa-sort small text-muted"></i></th>
+                                    style="cursor:pointer; white-space: nowrap;"
+                                    title="Absorb = |Δ%| / (1 + |Mom%|).&#10;Tinggi = banyak volume terserap tapi harga tidak bergerak banyak = potensi breakout.&#10;Skala: &gt;5 hijau, 2–5 oranye, 0.5–2 netral, &lt;0.5 redup.">
+                                    Absorb <i class="fa-solid fa-sort small text-muted"></i></th>
                                 <th class="text-center" data-sort="order_cvd"
-                                    style="cursor:pointer; white-space: nowrap;">CVD <i
+                                    style="cursor:pointer; white-space: nowrap;"
+                                    title="CVD = Cumulative Volume Delta hari ini.&#10;Metode: tick-rule dari D1 footprint (open-relative).&#10;+ = net buy pressure, - = net sell pressure">
+                                    CVD <i class="fa-solid fa-sort small text-muted"></i></th>
+                                <th class="text-center hide-mobile col-h2 col-cvdm" data-sort="order_cvd_2d"
+                                    style="cursor:pointer; white-space: nowrap;"
+                                    title="CVD kumulatif 2 hari trading.&#10;Sumber: rolling sum net_delta dari D1 footprint.">
+                                    CVD 2D <i class="fa-solid fa-sort small text-muted"></i></th>
+                                <th class="text-center hide-mobile col-h5 col-cvdm" data-sort="order_cvd_5d"
+                                    style="cursor:pointer; white-space: nowrap;"
+                                    title="CVD kumulatif 5 hari trading.&#10;Sumber: rolling sum net_delta dari D1 footprint.">
+                                    CVD 5D <i class="fa-solid fa-sort small text-muted"></i></th>
+                                <th class="text-center hide-mobile col-h10 col-cvdm" data-sort="order_cvd_10d"
+                                    style="cursor:pointer; white-space: nowrap;"
+                                    title="CVD kumulatif 10 hari trading.&#10;Sumber: rolling sum net_delta dari D1 footprint.">
+                                    CVD 10D <i class="fa-solid fa-sort small text-muted"></i></th>
+                                <th class="text-center hide-mobile col-h20 col-cvdm" data-sort="order_cvd_20d"
+                                    style="cursor:pointer; white-space: nowrap;"
+                                    title="CVD kumulatif 20 hari trading.&#10;Sumber: rolling sum net_delta dari D1 footprint.">
+                                    CVD 20D <i class="fa-solid fa-sort small text-muted"></i></th>
+                                <th class="text-center col-h2 col-fflw" data-sort="fn2" style="cursor:pointer"
+                                    title="Foreign Flow net kumulatif 2 hari.&#10;Hanya broker asing (Foreign fund / Asing).">
+                                    FFLW 2D <i class="fa-solid fa-sort small text-muted"></i></th>
+                                <th class="text-center col-h5 col-fflw" data-sort="fn5" style="cursor:pointer"
+                                    title="Foreign Flow net kumulatif 5 hari.">FFLW 5D <i
                                         class="fa-solid fa-sort small text-muted"></i></th>
-                                <th class="text-center col-h2" data-sort="sm2" style="cursor:pointer">2D <i
-                                        class="fa-solid fa-sort small text-muted"></i></th>
-                                <th class="text-center col-h5" data-sort="sm5" style="cursor:pointer">5D <i
-                                        class="fa-solid fa-sort small text-muted"></i></th>
-                                <th class="text-center hide-mobile col-h10" data-sort="sm10" style="cursor:pointer">10D
+                                <th class="text-center hide-mobile col-h10 col-fflw" data-sort="fn10"
+                                    style="cursor:pointer" title="Foreign Flow net kumulatif 10 hari.">FFLW 10D
                                     <i class="fa-solid fa-sort small text-muted"></i>
                                 </th>
-                                <th class="text-center hide-mobile col-h20" data-sort="sm20" style="cursor:pointer">20D
+                                <th class="text-center hide-mobile col-h20 col-fflw" data-sort="fn20"
+                                    style="cursor:pointer" title="Foreign Flow net kumulatif 20 hari.">FFLW 20D
                                     <i class="fa-solid fa-sort small text-muted"></i>
                                 </th>
-                                <th class="text-center hide-mobile col-h2" data-sort="vwap2" style="cursor:pointer">
+                                <th class="text-center col-h2 col-lflw" data-sort="ln2" style="cursor:pointer"
+                                    title="Local Fund Flow net kumulatif 2 hari.&#10;Broker lokal institusi (bukan retail).">
+                                    LFLW 2D <i class="fa-solid fa-sort small text-muted"></i></th>
+                                <th class="text-center col-h5 col-lflw" data-sort="ln5" style="cursor:pointer"
+                                    title="Local Fund Flow net kumulatif 5 hari.">LFLW 5D <i
+                                        class="fa-solid fa-sort small text-muted"></i></th>
+                                <th class="text-center hide-mobile col-h10 col-lflw" data-sort="ln10"
+                                    style="cursor:pointer" title="Local Fund Flow net kumulatif 10 hari.">LFLW 10D
+                                    <i class="fa-solid fa-sort small text-muted"></i>
+                                </th>
+                                <th class="text-center hide-mobile col-h20 col-lflw" data-sort="ln20"
+                                    style="cursor:pointer" title="Local Fund Flow net kumulatif 20 hari.">LFLW 20D
+                                    <i class="fa-solid fa-sort small text-muted"></i>
+                                </th>
+                                <th class="text-center col-h2 col-smny" data-sort="sm2" style="cursor:pointer"
+                                    title="Smart Money = Foreign + Local net kumulatif 2 hari.&#10;● = foreign & SM positif tiap hari.&#10;◐ = SM positif tiap hari.">
+                                    SMNY 2D <i class="fa-solid fa-sort small text-muted"></i></th>
+                                <th class="text-center col-h5 col-smny" data-sort="sm5" style="cursor:pointer"
+                                    title="Smart Money = Foreign + Local net kumulatif 5 hari.">SMNY 5D <i
+                                        class="fa-solid fa-sort small text-muted"></i></th>
+                                <th class="text-center hide-mobile col-h10 col-smny" data-sort="sm10"
+                                    style="cursor:pointer" title="Smart Money = Foreign + Local net kumulatif 10 hari.">
+                                    SMNY 10D
+                                    <i class="fa-solid fa-sort small text-muted"></i>
+                                </th>
+                                <th class="text-center hide-mobile col-h20 col-smny" data-sort="sm20"
+                                    style="cursor:pointer" title="Smart Money = Foreign + Local net kumulatif 20 hari.">
+                                    SMNY 20D
+                                    <i class="fa-solid fa-sort small text-muted"></i>
+                                </th>
+                                <th class="text-center hide-mobile col-h2 col-rvol" data-sort="rvol_2d"
+                                    style="cursor:pointer"
+                                    title="Relative Volume 2D = today_vol / avg_vol(2D).&#10;> 1.5 = volume tinggi, < 0.5 = volume rendah.">
+                                    RVOL 2D <i class="fa-solid fa-sort small text-muted"></i></th>
+                                <th class="text-center hide-mobile col-h5 col-rvol" data-sort="rvol_5d"
+                                    style="cursor:pointer"
+                                    title="Relative Volume 5D = today_vol / avg_vol(5D).&#10;> 1.5 = volume tinggi, < 0.5 = volume rendah.">
+                                    RVOL 5D <i class="fa-solid fa-sort small text-muted"></i></th>
+                                <th class="text-center hide-mobile col-h10 col-rvol" data-sort="rvol_10d"
+                                    style="cursor:pointer"
+                                    title="Relative Volume 10D = today_vol / avg_vol(10D).&#10;> 1.5 = volume tinggi, < 0.5 = volume rendah.">
+                                    RVOL 10D <i class="fa-solid fa-sort small text-muted"></i></th>
+                                <th class="text-center hide-mobile col-h20 col-rvol" data-sort="rvol_20d"
+                                    style="cursor:pointer"
+                                    title="Relative Volume 20D = today_vol / avg_vol(20D).&#10;> 1.5 = volume tinggi, < 0.5 = volume rendah.">
+                                    RVOL 20D <i class="fa-solid fa-sort small text-muted"></i></th>
+                                <th class="text-center hide-mobile col-h2 col-vwp" data-sort="vwap2"
+                                    style="cursor:pointer">
                                     V-WP 2D <i class="fa-solid fa-sort small text-muted"></i></th>
-                                <th class="text-center hide-mobile col-h5" data-sort="vwap5" style="cursor:pointer">
+                                <th class="text-center hide-mobile col-h5 col-vwp" data-sort="vwap5"
+                                    style="cursor:pointer">
                                     V-WP 5D <i class="fa-solid fa-sort small text-muted"></i></th>
-                                <th class="text-center hide-mobile col-h10" data-sort="vwap10" style="cursor:pointer">
+                                <th class="text-center hide-mobile col-h10 col-vwp" data-sort="vwap10"
+                                    style="cursor:pointer">
                                     V-WP 10D <i class="fa-solid fa-sort small text-muted"></i></th>
-                                <th class="text-center hide-mobile col-h20" data-sort="vwap20" style="cursor:pointer">
+                                <th class="text-center hide-mobile col-h20 col-vwp" data-sort="vwap20"
+                                    style="cursor:pointer">
                                     V-WP 20D <i class="fa-solid fa-sort small text-muted"></i></th>
-                                <th class="text-center col-h2" data-sort="flow2" style="cursor:pointer">Flow 2D <i
-                                        class="fa-solid fa-sort small text-muted"></i></th>
-                                <th class="text-center col-h5" data-sort="flow5" style="cursor:pointer">Flow 5D <i
-                                        class="fa-solid fa-sort small text-muted"></i></th>
-                                <th class="text-center hide-mobile col-h10" data-sort="flow10" style="cursor:pointer">
+                                <th class="text-center col-h2 col-flow" data-sort="flow2" style="cursor:pointer"
+                                    title="Flow Score = komposit z-score effort + NGR + state bonus (0-7).&#10;Effort Bonus: min(effort_z × 2, 4) jika positif.&#10;NGR Bonus: +1 jika ngr_z &gt; 0.&#10;State Bonus: +2 (Accum/Markup), +1 (Transition).&#10;Berbeda dari FFLW/SMNY yang dalam Rupiah.">
+                                    Flow 2D <i class="fa-solid fa-sort small text-muted"></i></th>
+                                <th class="text-center col-h5 col-flow" data-sort="flow5" style="cursor:pointer"
+                                    title="Flow Score = komposit z-score effort + NGR + state bonus (0-7).&#10;Window: 5 hari.&#10;Berbeda dari FFLW/SMNY yang dalam Rupiah.">
+                                    Flow 5D <i class="fa-solid fa-sort small text-muted"></i></th>
+                                <th class="text-center hide-mobile col-h10 col-flow" data-sort="flow10"
+                                    style="cursor:pointer"
+                                    title="Flow Score = komposit z-score effort + NGR + state bonus (0-7).&#10;Window: 10 hari.&#10;Berbeda dari FFLW/SMNY yang dalam Rupiah.">
                                     Flow 10D <i class="fa-solid fa-sort small text-muted"></i></th>
-                                <th class="text-center hide-mobile col-h20" data-sort="flow20" style="cursor:pointer">
+                                <th class="text-center hide-mobile col-h20 col-flow" data-sort="flow20"
+                                    style="cursor:pointer"
+                                    title="Flow Score = komposit z-score effort + NGR + state bonus (0-7).&#10;Window: 20 hari.&#10;Berbeda dari FFLW/SMNY yang dalam Rupiah.">
                                     Flow 20D <i class="fa-solid fa-sort small text-muted"></i></th>
-                                <th class="text-center col-h2" data-sort="effort2" style="cursor:pointer">Eff 2D <i
-                                        class="fa-solid fa-sort small text-muted"></i></th>
-                                <th class="text-center col-h5" data-sort="effort5" style="cursor:pointer">Eff 5D <i
-                                        class="fa-solid fa-sort small text-muted"></i></th>
-                                <th class="text-center hide-mobile col-h10" data-sort="effort10" style="cursor:pointer">
+                                <th class="text-center col-h2 col-eff" data-sort="effort2" style="cursor:pointer">Eff 2D
+                                    <i class="fa-solid fa-sort small text-muted"></i></th>
+                                <th class="text-center col-h5 col-eff" data-sort="effort5" style="cursor:pointer">Eff 5D
+                                    <i class="fa-solid fa-sort small text-muted"></i></th>
+                                <th class="text-center hide-mobile col-h10 col-eff" data-sort="effort10"
+                                    style="cursor:pointer">
                                     Eff 10D <i class="fa-solid fa-sort small text-muted"></i></th>
-                                <th class="text-center hide-mobile col-h20" data-sort="effort20" style="cursor:pointer">
+                                <th class="text-center hide-mobile col-h20 col-eff" data-sort="effort20"
+                                    style="cursor:pointer">
                                     Eff 20D <i class="fa-solid fa-sort small text-muted"></i></th>
-                                <th class="text-center" data-sort="state" style="cursor:pointer">State <i
-                                        class="fa-solid fa-sort small text-muted"></i></th>
+                                <th class="text-center" data-sort="state" style="cursor:pointer"
+                                    title="State klasifikasi berdasarkan Z-NGR &amp; delta harian.&#10;Accum: z_ngr &gt; 0.5 &amp; delta &gt; 5%&#10;Ready: z_ngr &gt; 1.0 &amp; delta &gt; 10%&#10;Dist: z_ngr &lt; -0.5&#10;Neutral: sisanya">
+                                    State <i class="fa-solid fa-sort small text-muted"></i></th>
                                 <th class="text-center" data-sort="order_net_value"
-                                    style="cursor:pointer; white-space: nowrap;">Value <i
-                                        class="fa-solid fa-sort small text-muted"></i></th>
+                                    style="cursor:pointer; white-space: nowrap;"
+                                    title="Net Value = delta (lot) × 100 (lembar/lot) × harga (Rp/lembar) = Rp.&#10;Positif = tekanan beli bersih, Negatif = tekanan jual bersih.&#10;Sumber: D1 footprint (tick-rule)">
+                                    Value <i class="fa-solid fa-sort small text-muted"></i></th>
                                 <th class="text-center" data-sort="order_quadrant"
                                     style="cursor:pointer; white-space: nowrap;">Q <i
                                         class="fa-solid fa-sort small text-muted"></i></th>
@@ -945,11 +1222,11 @@
             <!-- TABS -->
             <ul class="nav nav-tabs mb-3 mt-3" id="detailTabs" role="tablist">
                 <li class="nav-item" role="presentation">
-                    <a class="nav-link" id="intraday-link" href="#">Intraday</a>
-                </li>
-                <li class="nav-item" role="presentation">
                     <button class="nav-link active" id="summary-tab" data-bs-toggle="tab" data-bs-target="#summary-pane"
                         type="button" role="tab">Fund Flow</button>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <a class="nav-link" id="intraday-link" href="#">Chart</a>
                 </li>
                 <li class="nav-item" role="presentation">
                     <button class="nav-link" id="audit-tab" data-bs-toggle="tab" data-bs-target="#audit-pane"
@@ -1138,7 +1415,7 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0"></script>
     <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
-    <script src="component.js"></script>
+    <script src="component.js?v=72"></script>
 
     <script>
         (function () {
@@ -1153,7 +1430,7 @@
     </script>
 
     <!-- MAIN APP LOGIC -->
-    <script src="broker-summary.js?v=64"></script>
+    <script src="broker-summary.js?v=80"></script>
     <script defer
         src="https://static.cloudflareinsights.com/beacon.min.js/vcd15cbe7772f49c399c6a5babf22c1241717689176015"
         integrity="sha512-ZpsOmlRQV6y907TI0dKBHq9Md29nnaEIPlkf84rnaERnq6zvWvPUqr2ft8M1aS28oN72PdrCzSjY4U6VaAw1EQ=="
