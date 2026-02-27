@@ -319,7 +319,7 @@ function updateViewButtonLabel() {
     const gHidden = Object.values(columnGroupVisibility).filter(v => !v).length;
     const totalHidden = hHidden + gHidden;
     const label = totalHidden === 0 ? 'All' : `${totalHidden} hidden`;
-    $('#dd-view').html(`<i class="fa-solid fa-eye me-1"></i>View: ${label}`);
+    $('#dd-view').html(`<i class="fa-solid fa-eye me-1"></i><span class="d-none">View: ${label}</span>`);
 }
 
 // Preset recipes

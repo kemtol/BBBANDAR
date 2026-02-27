@@ -2173,18 +2173,19 @@ async function enrichWithMultiWindowCvdRvol(env, items, baseDate) {
 
       // CVD windows: cumulative netVol
       let cvd_2d = 0, cvd_5d = 0, cvd_10d = 0, cvd_20d = 0;
+      let has_2d = 0, has_5d = 0, has_10d = 0, has_20d = 0;
       for (let i = 0; i < 20; i++) {
         const nv = maps[i]?.get(ticker)?.netVol;
         if (!Number.isFinite(nv)) continue;
-        if (i < 2)  cvd_2d  += nv;
-        if (i < 5)  cvd_5d  += nv;
-        if (i < 10) cvd_10d += nv;
-        cvd_20d += nv;
+        if (i < 2)  { cvd_2d  += nv; has_2d++; }
+        if (i < 5)  { cvd_5d  += nv; has_5d++; }
+        if (i < 10) { cvd_10d += nv; has_10d++; }
+        cvd_20d += nv; has_20d++;
       }
-      item.cvd_2d  = cvd_2d  !== 0 ? cvd_2d  : null;
-      item.cvd_5d  = cvd_5d  !== 0 ? cvd_5d  : null;
-      item.cvd_10d = cvd_10d !== 0 ? cvd_10d : null;
-      item.cvd_20d = cvd_20d !== 0 ? cvd_20d : null;
+      item.cvd_2d  = has_2d  ? cvd_2d  : null;
+      item.cvd_5d  = has_5d  ? cvd_5d  : null;
+      item.cvd_10d = has_10d ? cvd_10d : null;
+      item.cvd_20d = has_20d ? cvd_20d : null;
 
       // RVOL windows: todayVol / avg(D1..DW)
       const todayVol = item.v || maps[0]?.get(ticker)?.vol;

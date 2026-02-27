@@ -318,8 +318,11 @@
             font-size: 0.9rem !important;
         }
 
-        #filter-row button {
+        #preset-selector a.btn,
+        #filter-row button,
+        #filter-row-2 button {
             font-size: 0.9rem;
+            border-radius:0px;
         }
 
         #active-pills {
@@ -700,7 +703,7 @@
                     </div>
                 </div>
                 <!-- Row 2: Individual Filters -->
-                <div class="d-flex align-items-center gap-2 flex-wrap py-2" id="filter-row">
+                <div class="d-flex align-items-center flex-wrap py-2" id="filter-row">
                     <span class="text-muted fw-bold text-uppercase"
                         style="font-size:0.85rem; letter-spacing:0.5px;width: 75px;">FILTER</span>
                     <!-- Foreign Net -->
@@ -886,7 +889,7 @@
                     </div>
                 </div>
                 <!-- Row 2b: Numeric column filters (inline) -->
-                <div class="d-flex align-items-center gap-2 flex-wrap mb-1 pt-1 pb-2" id="filter-row-2">
+                <div class="d-flex align-items-center flex-wrap mb-1 pt-1 pb-2" id="filter-row-2">
                     <span class="text-muted fw-bold text-uppercase"
                         style="font-size:0.75rem; letter-spacing:0.5px;width: 75px;">MORE</span>
                     <!-- Growth -->
