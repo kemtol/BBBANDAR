@@ -920,7 +920,18 @@ async function handleClaudeScoreClick() {
     const $btn = $('#btn-claude-score');
     if ($btn.prop('disabled')) return;
 
-    // Check localStorage cache first
+    // Layer 1: In-memory check — scores already applied on candidates?
+    if (currentCandidates && currentCandidates.length > 0) {
+        const scored = currentCandidates.filter(c => typeof c.claude_score === 'number');
+        if (scored.length >= Math.floor(currentCandidates.length * 0.8)) {
+            // ≥80% already scored → just re-render, no API call
+            updateVisibleClaudeCells(false);
+            showToast('✓ Claude Score sudah tersedia', 'info');
+            return;
+        }
+    }
+
+    // Layer 2: localStorage cache (TTL 30 min)
     const cached = loadClaudeScoresFromCache();
     if (cached) {
         applyClaudeScores(cached, true); // animate reveal
@@ -995,7 +1006,9 @@ async function handleClaudeScoreClick() {
         applyClaudeScores(data.scores, true);
         saveClaudeScoresToCache(data.scores, data.symbols);
 
-        const msg = `✓ Claude scored ${data.universe_size || Object.keys(data.scores).length} emiten`;
+        const count = data.universe_size || Object.keys(data.scores).length;
+        const src = data.source === 'r2_cache' ? ' (cached)' : '';
+        const msg = `✓ Claude scored ${count} emiten${src}`;
         showToast(msg, 'success');
 
     } catch (err) {

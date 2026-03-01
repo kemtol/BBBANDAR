@@ -5611,7 +5611,8 @@ export default {
           const dateStr = wibDate.toISOString().split("T")[0]; // YYYY-MM-DD WIB
           const timeStr = wibDate.toISOString().split("T")[1].replace(/[:\.]/g, "").slice(0, 6); // HHmmss
 
-          // ── Check R2 cache (TTL 15 min) — filter-aware ──
+          // ── Check R2 cache (TTL 30 min) — filter-aware ──
+          const R2_CACHE_TTL_MIN = 30;
           const cacheKey = `ai-screener-cache/${dateStr}/latest_${filterHash}.json`;
           try {
             const cached = await env.SSSAHAM_EMITEN.get(cacheKey);
@@ -5620,9 +5621,11 @@ export default {
               const generatedAt = meta.generated_at || "";
               if (generatedAt) {
                 const age = (now.getTime() - new Date(generatedAt).getTime()) / 60000;
-                if (age < 15) {
-                  console.log(`[Claude-Score] R2 cache hit, age=${age.toFixed(1)}min`);
+                if (age < R2_CACHE_TTL_MIN) {
+                  console.log(`[Claude-Score] R2 cache hit, age=${age.toFixed(1)}min, ttl=${R2_CACHE_TTL_MIN}min`);
                   const cachedBody = await cached.json();
+                  cachedBody.source = "r2_cache";
+                  cachedBody.cache_age_min = Math.round(age * 10) / 10;
                   return json(cachedBody);
                 }
               }
@@ -5745,8 +5748,8 @@ export default {
                   "Content-Type": "application/json"
                 },
                 body: JSON.stringify({
-                  model: "claude-sonnet-4-5",
-                  max_tokens: 16000,
+                  model: claudeModel || "claude-opus-4-6",
+                  max_tokens: claudeMaxTokens || 16000,
                   system: systemPrompt,
                   messages: [
                     { role: "user", content: userMessage },
@@ -5805,7 +5808,8 @@ export default {
             sort_key: sortKey,
             sort_dir: sortDir,
             generated_at: generatedAt,
-            model: "claude-sonnet-4-5",
+            source: "claude_api",
+            model: claudeModel || "claude-opus-4-6",
             usage,
             elapsed_ms: elapsedMs,
             universe_size: candidates.length
@@ -5818,9 +5822,9 @@ export default {
             customMetadata: {
               generated_at: generatedAt,
               universe_size: String(candidates.length),
-              model: "claude-sonnet-4-5",
+              model: claudeModel || "claude-opus-4-6",
               filter_hash: filterHash,
-              ttl_minutes: "15"
+              ttl_minutes: String(R2_CACHE_TTL_MIN)
             }
           };
           const resultJson = JSON.stringify(result);
