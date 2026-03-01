@@ -8,17 +8,10 @@
 
     <script>
         (function () {
-            const STORAGE_KEY = 'ui:theme';
             const root = document.documentElement;
-            try {
-                const saved = window.localStorage ? localStorage.getItem(STORAGE_KEY) : null;
-                const theme = saved || 'dark';
-                root.setAttribute('data-theme', theme);
-                root.style.colorScheme = theme === 'dark' ? 'dark' : 'light';
-            } catch (error) {
-                root.setAttribute('data-theme', 'dark');
-                root.style.colorScheme = 'dark';
-            }
+            root.setAttribute('data-theme', 'dark');
+            root.style.colorScheme = 'dark';
+            try { localStorage.setItem('ui:theme', 'dark'); } catch(e) {}
         })();
     </script>
 
@@ -561,6 +554,69 @@
             color: var(--accent-primary, var(--primary));
             font-weight: 600;
         }
+
+        /* ── Column Group Headers ── */
+        .thead-group-row th {
+            font-size: 0.7rem;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            padding: 4px 6px !important;
+            white-space: nowrap;
+            vertical-align: bottom;
+        }
+        .thead-group-label {
+            border-left: 1px solid var(--card-divider);
+        }
+        .thead-group-end {
+            border-right: 1px solid var(--card-divider);
+        }
+        .thead-group-row th[rowspan] {
+            vertical-align: middle;
+        }
+        /* thead background = same as sticky-col-bg */
+        #screener-table thead th {
+            background: var(--sticky-col-bg);
+        }
+
+        /* ── Claude Score Column ── */
+        .claude-score-header { position: relative; }
+        .claude-trigger-btn {
+            display: block; margin: 0 auto 2px;
+            border: none; background: none; padding: 0; cursor: pointer;
+            opacity: 0.7; transition: opacity 0.2s, filter 0.2s;
+            line-height: 1; color: #d97706;
+        }
+        .claude-trigger-btn:hover:not(:disabled) {
+            opacity: 1; filter: drop-shadow(0 0 6px rgba(255, 149, 0, 0.6));
+        }
+        .claude-trigger-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+        .claude-trigger-btn.loading svg { animation: claude-spin 1s linear infinite; }
+        @keyframes claude-spin { to { transform: rotate(360deg); } }
+        .claude-score-badge { font-weight: 500; transition: color 0.15s; }
+
+        /* ── Claude Reveal Animation ── */
+        .claude-cell .claude-score-badge {
+            display: inline-block;
+        }
+        .claude-cell.claude-locked .claude-score-badge {
+            opacity: 0;
+            transform: translateY(8px) scale(0.85);
+            filter: blur(4px);
+        }
+        .claude-cell.claude-revealed .claude-score-badge {
+            animation: claudeReveal 0.45s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+        }
+        @keyframes claudeReveal {
+            0%   { opacity: 0; transform: translateY(8px) scale(0.85); filter: blur(4px); }
+            60%  { opacity: 0.8; transform: translateY(-2px) scale(1.02); filter: blur(0); }
+            100% { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
+        }
+        /* Instant reveal (for cached / no-animation) */
+        .claude-cell.claude-revealed-instant .claude-score-badge {
+            opacity: 1; transform: none; filter: none;
+        }
     </style>
 </head>
 
@@ -576,7 +632,7 @@
         <div class="container d-flex align-items-center justify-content-between"
             style="max-width: 1440px;position: relative;">
             <div class="d-flex align-items-center gap-3" style="min-width: 140px;">
-                <i class="fa-solid fa-circle-half-stroke" id="theme-toggle-icon" title="Toggle theme (Shift + D)"></i>
+                <i class="fa-solid fa-circle-half-stroke d-none" id="theme-toggle-icon" title="Toggle theme (Shift + D)"></i>
                 <a href="https://buy.sssaham.com" id="nav-back" class="d-flex align-items-center text-decoration-none">
                     <i class="fa-solid fa-chevron-left me-1"></i>
                     <span class="small d-none">Bandar Radar</span>
@@ -613,6 +669,18 @@
     </div>
 
     <div id="app" class="container mb-3" style="display:none;">
+    <script>
+        (function () {
+            const p = new URLSearchParams(window.location.search);
+            if (p.get('container') === 'fluid') {
+                const app = document.getElementById('app');
+                if (app) { app.classList.replace('container', 'container-fluid'); app.style.maxWidth = 'none'; }
+                document.querySelectorAll('.navbar .container').forEach(function (el) {
+                    el.classList.replace('container', 'container-fluid'); el.style.maxWidth = 'none';
+                });
+            }
+        })();
+    </script>
 
         <!-- VIEW 1: INDEX (DAFTAR EMITEN) -->
         <div id="index-view">
@@ -1080,7 +1148,8 @@
             </div>
             <div class="d-flex justify-content-between align-items-center border-bottom py-2"
                 style="line-height:normal">
-                <small class="small text-muted" style="font-size: 0.75rem;line-height:normal">Shift+Scroll untuk geser
+                <div style="min-width:220px;"></div>
+                <small class="small text-muted flex-grow-1 text-center" style="font-size: 0.75rem;line-height:normal">Shift+Scroll untuk geser
                     ke kiri/kanan</small>
                 <div class="d-flex align-items-center gap-1">
                     <input type="text" id="emiten-search" class="form-control form-control-sm"
@@ -1091,162 +1160,187 @@
                 <div class="table-responsive">
                     <table id="screener-table" class="table table-hover mb-0 table-orderflow align-middle">
                         <thead>
-                            <tr>
-                                <th class="text-center sticky-col sticky-col-no">#</th>
-                                <th class="sticky-col sticky-col-symbol" data-sort="symbol" style="cursor:pointer">
+                            <!-- Row 1: Group Headers -->
+                            <tr class="thead-group-row">
+                                <th rowspan="2" class="text-center sticky-col sticky-col-no">#</th>
+                                <th rowspan="2" class="sticky-col sticky-col-symbol" data-sort="symbol" style="cursor:pointer">
                                     Emiten <i class="fa-solid fa-sort small text-muted"></i></th>
-                                <th class="text-center" data-sort="order_growth_pct"
+                                <th rowspan="2" class="text-center" data-sort="order_growth_pct"
                                     style="cursor:pointer; white-space: nowrap;">Growth <i
                                         class="fa-solid fa-sort small text-muted"></i></th>
-                                <th class="text-center" data-sort="order_freq_tx"
+                                <th rowspan="2" class="text-center" data-sort="order_freq_tx"
                                     style="cursor:pointer; white-space: nowrap;">Freq <i
                                         class="fa-solid fa-sort small text-muted"></i></th>
-                                <th class="text-center" data-sort="tom2_prob"
+                                <th rowspan="2" class="text-center d-none" data-sort="tom2_prob"
                                     style="cursor:pointer; white-space:nowrap;"
-                                    title="TOM2 = Ranking Score untuk potensi +2% besok.&#10;Komposit: Smart Money (45%) + Orderflow (35%) + Effort (20%) + State Bonus.&#10;Menggunakan cross-sectional percentile rank (5-90).&#10;Bukan probability — ini ranking relatif terhadap seluruh emiten.">
-                                    TOM2 <i class="fa-solid fa-sort small text-muted"></i></th>
-                                <th class="text-center" data-sort="swg5_prob"
+                                    title="TOM2 = Ranking Score untuk potensi +2% besok.">TOM2 <i class="fa-solid fa-sort small text-muted"></i></th>
+                                <th rowspan="2" class="text-center d-none" data-sort="swg5_prob"
                                     style="cursor:pointer; white-space:nowrap;"
-                                    title="SWG5 = Ranking Score untuk potensi swing +5% dalam ~5 hari.&#10;Komposit: Smart Money (35%) + Flow (20%) + Effort (15%) + VWAP (15%) + CVD (15%) + Trend/State Bonus.&#10;Menggunakan cross-sectional percentile rank (5-90).&#10;Bukan probability — ini ranking relatif terhadap seluruh emiten.">
-                                    SWG5 <i class="fa-solid fa-sort small text-muted"></i></th>
-                                <th class="text-center" data-sort="order_delta_pct"
+                                    title="SWG5 = Ranking Score untuk potensi swing +5% dalam ~5 hari.">SWG5 <i class="fa-solid fa-sort small text-muted"></i></th>
+                                <th rowspan="2" class="text-center claude-score-header" data-sort="claude_score"
+                                    style="cursor:pointer; white-space:nowrap;"
+                                    title="Claude Score = AI-powered scoring (0-100).&#10;Klik icon Claude untuk generate score.">
+                                    <button type="button" class="claude-trigger-btn mb-3" id="btn-claude-score"
+                                        title="Click to generate AI scores"
+                                        onclick="event.stopPropagation(); handleClaudeScoreClick();">
+                                        <svg width="16" height="16" viewBox="0 0 512 512" fill="#d97706" xmlns="http://www.w3.org/2000/svg"><path d="M100.4 340.5l100.7-56.5 1.7-4.9-1.7-2.7-4.9 0-16.8-1-57.5-1.6-49.9-2.1-48.3-2.6-12.2-2.6-11.4-15 1.2-7.5 10.2-6.9 14.7 1.3c18.9 1.3 45.9 3.1 81 5.6l35.2 2.1 52.2 5.4 8.3 0 1.2-3.4-2.8-2.1-2.2-2.1-50.3-34.1-54.4-36-28.5-20.7-15.4-10.5-7.8-9.8-3.4-21.5 14-15.4 18.8 1.3 4.8 1.3 19 14.7 40.7 31.5 53.1 39.1 7.8 6.5 3.1-2.2.4-1.6-3.5-5.8-28.9-52.2-30.8-53.1-13.7-22-3.6-13.2c-1.3-5.4-2.2-10-2.2-15.5l15.9-21.6 8.8-2.8 21.2 2.8 8.9 7.8 13.2 30.2 21.4 47.5 33.2 64.6 9.7 19.2 5.2 17.8 1.9 5.4 3.4 0 0-3.1 2.7-36.4 5-44.7 4.9-57.5 1.7-16.2 8-19.4 15.9-10.5 12.4 5.9 10.2 14.7-1.4 9.5-6.1 39.5-11.9 61.9-7.8 41.5 4.5 0 5.2-5.2 21-27.8 35.2-44.1 15.5-17.5 18.1-19.3 11.6-9.2 22 0 16.2 24.1-7.3 24.9-22.7 28.7-18.8 24.4-27 36.3-16.8 29 1.6 2.3 4-.4 60.9-13 32.9-5.9 39.3-6.7 17.8 8.3 1.9 8.4-7 17.2-42 10.4-49.2 9.8-73.3 17.3-.9.7 1 1.3 33 3.1 14.1.8 34.6 0 64.4 4.8 16.8 11.1 10.1 13.6-1.7 10.4-25.9 13.2c-15.5-3.7-54.4-12.9-116.6-27.7l-28-7-3.9 0 0 2.3 23.3 22.8 42.7 38.6 53.5 49.8 2.7 12.3-6.9 9.7-7.3-1-47-35.4-18.1-15.9-41.1-34.6-2.7 0 0 3.6 9.5 13.9 50 75.2 2.6 23-3.6 7.5-13 4.5-14.2-2.6-29.3-41.1-30.2-46.3-24.4-41.5-3 1.7-14.4 154.8-6.7 7.9-15.5 5.9-13-9.8-6.9-15.9 6.9-31.5 8.3-41.1 6.7-32.7 6.1-40.6 3.6-13.5-.2-.9-3 .4-30.6 42-46.5 62.9-36.8 39.4-8.8 3.5-15.3-7.9 1.4-14.1 8.5-12.6 50.9-64.8 30.7-40.2 19.8-23.2-.1-3.4-1.2 0-135.3 87.8-24.1 3.1-10.4-9.7 1.3-15.9 4.9-5.2z"/></svg>
+                                    </button>
+                                    Claude <i class="fa-solid fa-sort small text-muted"></i>
+                                </th>
+                                <!-- Group: Orderflow (3 cols) -->
+                                <th colspan="3" class="text-center thead-group-label">Orderflow</th>
+                                <!-- Group: Cum Volume Delta (5 cols) -->
+                                <th colspan="5" class="text-center thead-group-label">Cum Volume Delta</th>
+                                <!-- Group: Foreign Flow (4 cols) -->
+                                <th colspan="4" class="text-center thead-group-label">Foreign Flow</th>
+                                <!-- Group: Local Flow (4 cols) -->
+                                <th colspan="4" class="text-center thead-group-label">Local Flow</th>
+                                <!-- Group: Smart Money (4 cols) -->
+                                <th colspan="4" class="text-center thead-group-label">Smart Money</th>
+                                <!-- Group: Rel Volume (4 cols) -->
+                                <th colspan="4" class="text-center thead-group-label hide-mobile">Rel Volume</th>
+                                <!-- Group: VWAP Position (4 cols) -->
+                                <th colspan="4" class="text-center thead-group-label hide-mobile">VWAP Position</th>
+                                <!-- Group: Flow Score (4 cols) -->
+                                <th colspan="4" class="text-center thead-group-label">Flow Score</th>
+                                <!-- Group: Effort (4 cols) -->
+                                <th colspan="4" class="text-center thead-group-label thead-group-end">Effort</th>
+                                <th rowspan="2" class="text-center thead-group-label" data-sort="state" style="cursor:pointer"
+                                    title="State klasifikasi berdasarkan Z-NGR &amp; delta harian.">
+                                    State <i class="fa-solid fa-sort small text-muted"></i></th>
+                                <th rowspan="2" class="text-center" data-sort="order_net_value"
                                     style="cursor:pointer; white-space: nowrap;"
-                                    title="Δ% = delta / volume × 100.&#10;delta = SUM(buyVol − sellVol) dari D1 footprint (tick-rule).&#10;Positif = dominasi buyer, Negatif = dominasi seller.">
+                                    title="Net Value = delta (lot) × 100 × harga = Rp.">
+                                    Value <i class="fa-solid fa-sort small text-muted"></i></th>
+                                <th rowspan="2" class="text-center" data-sort="order_quadrant"
+                                    style="cursor:pointer; white-space: nowrap;">Q <i
+                                        class="fa-solid fa-sort small text-muted"></i></th>
+                            </tr>
+                            <!-- Row 2: Column Sub-Headers -->
+                            <tr>
+                                <!-- Orderflow -->
+                                <th class="text-center thead-group-label" data-sort="order_delta_pct"
+                                    style="cursor:pointer; white-space: nowrap;"
+                                    title="Δ% = delta / volume × 100.&#10;Positif = dominasi buyer, Negatif = dominasi seller.">
                                     Δ% <i class="fa-solid fa-sort small text-muted"></i></th>
                                 <th class="text-center" data-sort="order_mom_pct"
                                     style="cursor:pointer; white-space: nowrap;"
-                                    title="Mom% = (close − open) / open × 100 (intraday).&#10;Untuk data sparse (&lt;30 candle): close-to-close harian.&#10;p_src field menandai sumbernya: intraday / overnight / intraday_sparse.">
+                                    title="Mom% = (close − open) / open × 100 (intraday).">
                                     Mom% <i class="fa-solid fa-sort small text-muted"></i></th>
                                 <th class="text-center" data-sort="order_absorb"
                                     style="cursor:pointer; white-space: nowrap;"
-                                    title="Absorb = |Δ%| / (1 + |Mom%|).&#10;Tinggi = banyak volume terserap tapi harga tidak bergerak banyak = potensi breakout.&#10;Skala: &gt;5 hijau, 2–5 oranye, 0.5–2 netral, &lt;0.5 redup.">
+                                    title="Absorb = |Δ%| / (1 + |Mom%|).&#10;Tinggi = potensi breakout.">
                                     Absorb <i class="fa-solid fa-sort small text-muted"></i></th>
-                                <th class="text-center" data-sort="order_cvd"
+                                <!-- Cum Volume Delta -->
+                                <th class="text-center thead-group-label" data-sort="order_cvd"
                                     style="cursor:pointer; white-space: nowrap;"
-                                    title="CVD = Cumulative Volume Delta hari ini.&#10;Metode: tick-rule dari D1 footprint (open-relative).&#10;+ = net buy pressure, - = net sell pressure">
+                                    title="CVD = Cumulative Volume Delta hari ini.">
                                     CVD <i class="fa-solid fa-sort small text-muted"></i></th>
                                 <th class="text-center hide-mobile col-h2 col-cvdm" data-sort="order_cvd_2d"
                                     style="cursor:pointer; white-space: nowrap;"
-                                    title="CVD kumulatif 2 hari trading.&#10;Sumber: rolling sum net_delta dari D1 footprint.">
-                                    CVD 2D <i class="fa-solid fa-sort small text-muted"></i></th>
+                                    title="CVD kumulatif 2 hari trading.">
+                                    2D <i class="fa-solid fa-sort small text-muted"></i></th>
                                 <th class="text-center hide-mobile col-h5 col-cvdm" data-sort="order_cvd_5d"
                                     style="cursor:pointer; white-space: nowrap;"
-                                    title="CVD kumulatif 5 hari trading.&#10;Sumber: rolling sum net_delta dari D1 footprint.">
-                                    CVD 5D <i class="fa-solid fa-sort small text-muted"></i></th>
+                                    title="CVD kumulatif 5 hari trading.">
+                                    5D <i class="fa-solid fa-sort small text-muted"></i></th>
                                 <th class="text-center hide-mobile col-h10 col-cvdm" data-sort="order_cvd_10d"
                                     style="cursor:pointer; white-space: nowrap;"
-                                    title="CVD kumulatif 10 hari trading.&#10;Sumber: rolling sum net_delta dari D1 footprint.">
-                                    CVD 10D <i class="fa-solid fa-sort small text-muted"></i></th>
+                                    title="CVD kumulatif 10 hari trading.">
+                                    10D <i class="fa-solid fa-sort small text-muted"></i></th>
                                 <th class="text-center hide-mobile col-h20 col-cvdm" data-sort="order_cvd_20d"
                                     style="cursor:pointer; white-space: nowrap;"
-                                    title="CVD kumulatif 20 hari trading.&#10;Sumber: rolling sum net_delta dari D1 footprint.">
-                                    CVD 20D <i class="fa-solid fa-sort small text-muted"></i></th>
-                                <th class="text-center col-h2 col-fflw" data-sort="fn2" style="cursor:pointer"
-                                    title="Foreign Flow net kumulatif 2 hari.&#10;Hanya broker asing (Foreign fund / Asing).">
-                                    FFLW 2D <i class="fa-solid fa-sort small text-muted"></i></th>
+                                    title="CVD kumulatif 20 hari trading.">
+                                    20D <i class="fa-solid fa-sort small text-muted"></i></th>
+                                <!-- Foreign Flow -->
+                                <th class="text-center thead-group-label col-h2 col-fflw" data-sort="fn2" style="cursor:pointer"
+                                    title="Foreign Flow net kumulatif 2 hari.">
+                                    2D <i class="fa-solid fa-sort small text-muted"></i></th>
                                 <th class="text-center col-h5 col-fflw" data-sort="fn5" style="cursor:pointer"
-                                    title="Foreign Flow net kumulatif 5 hari.">FFLW 5D <i
+                                    title="Foreign Flow net kumulatif 5 hari.">5D <i
                                         class="fa-solid fa-sort small text-muted"></i></th>
                                 <th class="text-center hide-mobile col-h10 col-fflw" data-sort="fn10"
-                                    style="cursor:pointer" title="Foreign Flow net kumulatif 10 hari.">FFLW 10D
-                                    <i class="fa-solid fa-sort small text-muted"></i>
-                                </th>
+                                    style="cursor:pointer" title="Foreign Flow net kumulatif 10 hari.">10D
+                                    <i class="fa-solid fa-sort small text-muted"></i></th>
                                 <th class="text-center hide-mobile col-h20 col-fflw" data-sort="fn20"
-                                    style="cursor:pointer" title="Foreign Flow net kumulatif 20 hari.">FFLW 20D
-                                    <i class="fa-solid fa-sort small text-muted"></i>
-                                </th>
-                                <th class="text-center col-h2 col-lflw" data-sort="ln2" style="cursor:pointer"
-                                    title="Local Fund Flow net kumulatif 2 hari.&#10;Broker lokal institusi (bukan retail).">
-                                    LFLW 2D <i class="fa-solid fa-sort small text-muted"></i></th>
+                                    style="cursor:pointer" title="Foreign Flow net kumulatif 20 hari.">20D
+                                    <i class="fa-solid fa-sort small text-muted"></i></th>
+                                <!-- Local Flow -->
+                                <th class="text-center thead-group-label col-h2 col-lflw" data-sort="ln2" style="cursor:pointer"
+                                    title="Local Fund Flow net kumulatif 2 hari.">
+                                    2D <i class="fa-solid fa-sort small text-muted"></i></th>
                                 <th class="text-center col-h5 col-lflw" data-sort="ln5" style="cursor:pointer"
-                                    title="Local Fund Flow net kumulatif 5 hari.">LFLW 5D <i
+                                    title="Local Fund Flow net kumulatif 5 hari.">5D <i
                                         class="fa-solid fa-sort small text-muted"></i></th>
                                 <th class="text-center hide-mobile col-h10 col-lflw" data-sort="ln10"
-                                    style="cursor:pointer" title="Local Fund Flow net kumulatif 10 hari.">LFLW 10D
-                                    <i class="fa-solid fa-sort small text-muted"></i>
-                                </th>
+                                    style="cursor:pointer" title="Local Fund Flow net kumulatif 10 hari.">10D
+                                    <i class="fa-solid fa-sort small text-muted"></i></th>
                                 <th class="text-center hide-mobile col-h20 col-lflw" data-sort="ln20"
-                                    style="cursor:pointer" title="Local Fund Flow net kumulatif 20 hari.">LFLW 20D
-                                    <i class="fa-solid fa-sort small text-muted"></i>
-                                </th>
-                                <th class="text-center col-h2 col-smny" data-sort="sm2" style="cursor:pointer"
-                                    title="Smart Money = Foreign + Local net kumulatif 2 hari.&#10;● = foreign & SM positif tiap hari.&#10;◐ = SM positif tiap hari.">
-                                    SMNY 2D <i class="fa-solid fa-sort small text-muted"></i></th>
+                                    style="cursor:pointer" title="Local Fund Flow net kumulatif 20 hari.">20D
+                                    <i class="fa-solid fa-sort small text-muted"></i></th>
+                                <!-- Smart Money -->
+                                <th class="text-center thead-group-label col-h2 col-smny" data-sort="sm2" style="cursor:pointer"
+                                    title="Smart Money = Foreign + Local net kumulatif 2 hari.">
+                                    2D <i class="fa-solid fa-sort small text-muted"></i></th>
                                 <th class="text-center col-h5 col-smny" data-sort="sm5" style="cursor:pointer"
-                                    title="Smart Money = Foreign + Local net kumulatif 5 hari.">SMNY 5D <i
+                                    title="Smart Money net kumulatif 5 hari.">5D <i
                                         class="fa-solid fa-sort small text-muted"></i></th>
                                 <th class="text-center hide-mobile col-h10 col-smny" data-sort="sm10"
-                                    style="cursor:pointer" title="Smart Money = Foreign + Local net kumulatif 10 hari.">
-                                    SMNY 10D
-                                    <i class="fa-solid fa-sort small text-muted"></i>
-                                </th>
+                                    style="cursor:pointer" title="Smart Money net kumulatif 10 hari.">
+                                    10D <i class="fa-solid fa-sort small text-muted"></i></th>
                                 <th class="text-center hide-mobile col-h20 col-smny" data-sort="sm20"
-                                    style="cursor:pointer" title="Smart Money = Foreign + Local net kumulatif 20 hari.">
-                                    SMNY 20D
-                                    <i class="fa-solid fa-sort small text-muted"></i>
-                                </th>
-                                <th class="text-center hide-mobile col-h2 col-rvol" data-sort="rvol_2d"
-                                    style="cursor:pointer"
-                                    title="Relative Volume 2D = today_vol / avg_vol(2D).&#10;> 1.5 = volume tinggi, < 0.5 = volume rendah.">
-                                    RVOL 2D <i class="fa-solid fa-sort small text-muted"></i></th>
+                                    style="cursor:pointer" title="Smart Money net kumulatif 20 hari.">
+                                    20D <i class="fa-solid fa-sort small text-muted"></i></th>
+                                <!-- Rel Volume -->
+                                <th class="text-center hide-mobile thead-group-label col-h2 col-rvol" data-sort="rvol_2d"
+                                    style="cursor:pointer" title="Relative Volume 2D.">
+                                    2D <i class="fa-solid fa-sort small text-muted"></i></th>
                                 <th class="text-center hide-mobile col-h5 col-rvol" data-sort="rvol_5d"
-                                    style="cursor:pointer"
-                                    title="Relative Volume 5D = today_vol / avg_vol(5D).&#10;> 1.5 = volume tinggi, < 0.5 = volume rendah.">
-                                    RVOL 5D <i class="fa-solid fa-sort small text-muted"></i></th>
+                                    style="cursor:pointer" title="Relative Volume 5D.">
+                                    5D <i class="fa-solid fa-sort small text-muted"></i></th>
                                 <th class="text-center hide-mobile col-h10 col-rvol" data-sort="rvol_10d"
-                                    style="cursor:pointer"
-                                    title="Relative Volume 10D = today_vol / avg_vol(10D).&#10;> 1.5 = volume tinggi, < 0.5 = volume rendah.">
-                                    RVOL 10D <i class="fa-solid fa-sort small text-muted"></i></th>
+                                    style="cursor:pointer" title="Relative Volume 10D.">
+                                    10D <i class="fa-solid fa-sort small text-muted"></i></th>
                                 <th class="text-center hide-mobile col-h20 col-rvol" data-sort="rvol_20d"
-                                    style="cursor:pointer"
-                                    title="Relative Volume 20D = today_vol / avg_vol(20D).&#10;> 1.5 = volume tinggi, < 0.5 = volume rendah.">
-                                    RVOL 20D <i class="fa-solid fa-sort small text-muted"></i></th>
-                                <th class="text-center hide-mobile col-h2 col-vwp" data-sort="vwap2"
+                                    style="cursor:pointer" title="Relative Volume 20D.">
+                                    20D <i class="fa-solid fa-sort small text-muted"></i></th>
+                                <!-- VWAP Position -->
+                                <th class="text-center hide-mobile thead-group-label col-h2 col-vwp" data-sort="vwap2"
                                     style="cursor:pointer">
-                                    V-WP 2D <i class="fa-solid fa-sort small text-muted"></i></th>
+                                    2D <i class="fa-solid fa-sort small text-muted"></i></th>
                                 <th class="text-center hide-mobile col-h5 col-vwp" data-sort="vwap5"
                                     style="cursor:pointer">
-                                    V-WP 5D <i class="fa-solid fa-sort small text-muted"></i></th>
+                                    5D <i class="fa-solid fa-sort small text-muted"></i></th>
                                 <th class="text-center hide-mobile col-h10 col-vwp" data-sort="vwap10"
                                     style="cursor:pointer">
-                                    V-WP 10D <i class="fa-solid fa-sort small text-muted"></i></th>
+                                    10D <i class="fa-solid fa-sort small text-muted"></i></th>
                                 <th class="text-center hide-mobile col-h20 col-vwp" data-sort="vwap20"
                                     style="cursor:pointer">
-                                    V-WP 20D <i class="fa-solid fa-sort small text-muted"></i></th>
-                                <th class="text-center col-h2 col-flow" data-sort="flow2" style="cursor:pointer"
-                                    title="Flow Score = komposit z-score effort + NGR + state bonus (0-7).&#10;Effort Bonus: min(effort_z × 2, 4) jika positif.&#10;NGR Bonus: +1 jika ngr_z &gt; 0.&#10;State Bonus: +2 (Accum/Markup), +1 (Transition).&#10;Berbeda dari FFLW/SMNY yang dalam Rupiah.">
-                                    Flow 2D <i class="fa-solid fa-sort small text-muted"></i></th>
+                                    20D <i class="fa-solid fa-sort small text-muted"></i></th>
+                                <!-- Flow Score -->
+                                <th class="text-center thead-group-label col-h2 col-flow" data-sort="flow2" style="cursor:pointer"
+                                    title="Flow Score komposit z-score (0-7). Window: 2 hari.">
+                                    2D <i class="fa-solid fa-sort small text-muted"></i></th>
                                 <th class="text-center col-h5 col-flow" data-sort="flow5" style="cursor:pointer"
-                                    title="Flow Score = komposit z-score effort + NGR + state bonus (0-7).&#10;Window: 5 hari.&#10;Berbeda dari FFLW/SMNY yang dalam Rupiah.">
-                                    Flow 5D <i class="fa-solid fa-sort small text-muted"></i></th>
+                                    title="Flow Score. Window: 5 hari.">
+                                    5D <i class="fa-solid fa-sort small text-muted"></i></th>
                                 <th class="text-center hide-mobile col-h10 col-flow" data-sort="flow10"
-                                    style="cursor:pointer"
-                                    title="Flow Score = komposit z-score effort + NGR + state bonus (0-7).&#10;Window: 10 hari.&#10;Berbeda dari FFLW/SMNY yang dalam Rupiah.">
-                                    Flow 10D <i class="fa-solid fa-sort small text-muted"></i></th>
+                                    style="cursor:pointer" title="Flow Score. Window: 10 hari.">
+                                    10D <i class="fa-solid fa-sort small text-muted"></i></th>
                                 <th class="text-center hide-mobile col-h20 col-flow" data-sort="flow20"
-                                    style="cursor:pointer"
-                                    title="Flow Score = komposit z-score effort + NGR + state bonus (0-7).&#10;Window: 20 hari.&#10;Berbeda dari FFLW/SMNY yang dalam Rupiah.">
-                                    Flow 20D <i class="fa-solid fa-sort small text-muted"></i></th>
-                                <th class="text-center col-h2 col-eff" data-sort="effort2" style="cursor:pointer">Eff 2D
-                                    <i class="fa-solid fa-sort small text-muted"></i></th>
-                                <th class="text-center col-h5 col-eff" data-sort="effort5" style="cursor:pointer">Eff 5D
-                                    <i class="fa-solid fa-sort small text-muted"></i></th>
+                                    style="cursor:pointer" title="Flow Score. Window: 20 hari.">
+                                    20D <i class="fa-solid fa-sort small text-muted"></i></th>
+                                <!-- Effort -->
+                                <th class="text-center thead-group-label col-h2 col-eff" data-sort="effort2" style="cursor:pointer">
+                                    2D <i class="fa-solid fa-sort small text-muted"></i></th>
+                                <th class="text-center col-h5 col-eff" data-sort="effort5" style="cursor:pointer">
+                                    5D <i class="fa-solid fa-sort small text-muted"></i></th>
                                 <th class="text-center hide-mobile col-h10 col-eff" data-sort="effort10"
                                     style="cursor:pointer">
-                                    Eff 10D <i class="fa-solid fa-sort small text-muted"></i></th>
-                                <th class="text-center hide-mobile col-h20 col-eff" data-sort="effort20"
+                                    10D <i class="fa-solid fa-sort small text-muted"></i></th>
+                                <th class="text-center hide-mobile col-h20 col-eff thead-group-end" data-sort="effort20"
                                     style="cursor:pointer">
-                                    Eff 20D <i class="fa-solid fa-sort small text-muted"></i></th>
-                                <th class="text-center" data-sort="state" style="cursor:pointer"
-                                    title="State klasifikasi berdasarkan Z-NGR &amp; delta harian.&#10;Accum: z_ngr &gt; 0.5 &amp; delta &gt; 5%&#10;Ready: z_ngr &gt; 1.0 &amp; delta &gt; 10%&#10;Dist: z_ngr &lt; -0.5&#10;Neutral: sisanya">
-                                    State <i class="fa-solid fa-sort small text-muted"></i></th>
-                                <th class="text-center" data-sort="order_net_value"
-                                    style="cursor:pointer; white-space: nowrap;"
-                                    title="Net Value = delta (lot) × 100 (lembar/lot) × harga (Rp/lembar) = Rp.&#10;Positif = tekanan beli bersih, Negatif = tekanan jual bersih.&#10;Sumber: D1 footprint (tick-rule)">
-                                    Value <i class="fa-solid fa-sort small text-muted"></i></th>
-                                <th class="text-center" data-sort="order_quadrant"
-                                    style="cursor:pointer; white-space: nowrap;">Q <i
-                                        class="fa-solid fa-sort small text-muted"></i></th>
+                                    20D <i class="fa-solid fa-sort small text-muted"></i></th>
                             </tr>
                         </thead>
                         <tbody id="tbody-index">
@@ -1499,19 +1593,7 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0"></script>
     <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
-    <script src="component.js?v=72"></script>
-
-    <script>
-        (function () {
-            const params = new URLSearchParams(window.location.search);
-            if (params.has('kode')) {
-                const icon = document.getElementById('theme-toggle-icon');
-                if (icon) {
-                    icon.classList.add('d-none');
-                }
-            }
-        })();
-    </script>
+    <script src="component.js?v=73"></script>
 
     <!-- MAIN APP LOGIC -->
     <script src="broker-summary.js?v=80"></script>

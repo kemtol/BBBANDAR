@@ -5505,6 +5505,345 @@ export default {
         return json(result);
       }
 
+      // ── GET /ai/claude-score/verify — List recent R2 cache artifacts for verification ──
+      if (url.pathname === "/ai/claude-score/verify" && req.method === "GET") {
+        try {
+          const now = new Date();
+          const wibMs = now.getTime() + 7 * 3600000;
+          const wibDate = new Date(wibMs);
+          const dateStr = url.searchParams.get("date") || wibDate.toISOString().split("T")[0];
+          const filterHash = url.searchParams.get("hash") || null;
+
+          const prefix = `ai-screener-cache/${dateStr}/`;
+          const listed = await env.SSSAHAM_EMITEN.list({ prefix, limit: 50 });
+          const artifacts = [];
+
+          for (const obj of listed.objects) {
+            const meta = obj.customMetadata || {};
+            artifacts.push({
+              key: obj.key,
+              size: obj.size,
+              uploaded: obj.uploaded,
+              generated_at: meta.generated_at || null,
+              universe_size: meta.universe_size || null,
+              filter_hash: meta.filter_hash || null,
+              model: meta.model || null,
+              ttl_minutes: meta.ttl_minutes || null
+            });
+          }
+
+          // If hash is specified, also fetch the latest_{hash}.json content for comparison
+          let latestContent = null;
+          if (filterHash) {
+            const latestKey = `ai-screener-cache/${dateStr}/latest_${filterHash}.json`;
+            const latestObj = await env.SSSAHAM_EMITEN.get(latestKey);
+            if (latestObj) {
+              const body = await latestObj.json();
+              latestContent = {
+                key: latestKey,
+                ok: body.ok,
+                universe_size: body.universe_size,
+                symbols: body.symbols || Object.keys(body.scores || {}),
+                symbol_count: (body.symbols || Object.keys(body.scores || {})).length,
+                score_count: Object.keys(body.scores || {}).length,
+                top5: body.top5,
+                summary: body.summary,
+                filter_state: body.filter_state,
+                filter_hash: body.filter_hash,
+                generated_at: body.generated_at,
+                model: body.model,
+                elapsed_ms: body.elapsed_ms
+              };
+            }
+          }
+
+          return json({
+            ok: true,
+            date: dateStr,
+            filter_hash_query: filterHash,
+            artifact_count: artifacts.length,
+            artifacts,
+            latest: latestContent
+          });
+        } catch (err) {
+          return json({ ok: false, error: err.message }, 500);
+        }
+      }
+
+      // ── POST /ai/claude-score — Batch AI scoring for screener candidates ──
+      if (url.pathname === "/ai/claude-score" && req.method === "POST") {
+        try {
+          const body = await req.json();
+          const candidates = body?.candidates;
+          const filterState = body?.filter_state || {};
+          const symbolsList = body?.symbols || [];
+          const sortKey = body?.sort_key || '';
+          const sortDir = body?.sort_dir || '';
+
+          // ── Validate payload ──
+          if (!Array.isArray(candidates) || candidates.length < 10 || candidates.length > 1000) {
+            return json({ ok: false, error: "candidates array required (10-1000 items)" }, 400);
+          }
+          for (const c of candidates) {
+            if (!c.symbol || typeof c.symbol !== "string") {
+              return json({ ok: false, error: "Each candidate must have a string 'symbol'" }, 400);
+            }
+          }
+
+          // ── Build filter hash for cache key ──
+          const filterParts = [];
+          for (const [k, v] of Object.entries(filterState).sort()) {
+            filterParts.push(`${k}=${v}`);
+          }
+          filterParts.push(`n=${candidates.length}`);
+          let filterHash = 'all';
+          if (filterParts.length > 1) {
+            let h = 0;
+            const s = filterParts.join('&');
+            for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+            filterHash = (h >>> 0).toString(36);
+          }
+
+          // ── Date helpers (WIB = UTC+7) ──
+          const now = new Date();
+          const wibMs = now.getTime() + 7 * 3600000;
+          const wibDate = new Date(wibMs);
+          const dateStr = wibDate.toISOString().split("T")[0]; // YYYY-MM-DD WIB
+          const timeStr = wibDate.toISOString().split("T")[1].replace(/[:\.]/g, "").slice(0, 6); // HHmmss
+
+          // ── Check R2 cache (TTL 15 min) — filter-aware ──
+          const cacheKey = `ai-screener-cache/${dateStr}/latest_${filterHash}.json`;
+          try {
+            const cached = await env.SSSAHAM_EMITEN.get(cacheKey);
+            if (cached) {
+              const meta = cached.customMetadata || {};
+              const generatedAt = meta.generated_at || "";
+              if (generatedAt) {
+                const age = (now.getTime() - new Date(generatedAt).getTime()) / 60000;
+                if (age < 15) {
+                  console.log(`[Claude-Score] R2 cache hit, age=${age.toFixed(1)}min`);
+                  const cachedBody = await cached.json();
+                  return json(cachedBody);
+                }
+              }
+            }
+          } catch (cacheErr) {
+            console.warn("[Claude-Score] R2 cache check error:", cacheErr.message);
+          }
+
+          // ── ANTHROPIC_API_KEY check ──
+          if (!env.ANTHROPIC_API_KEY) {
+            return json({ ok: false, error: "Missing ANTHROPIC_API_KEY" }, 500);
+          }
+
+          // ── Fetch prompt from prompt-service ──
+          let systemPrompt, userTemplate, claudeModel, claudeMaxTokens;
+          try {
+            const promptResp = await env.PROMPT_SERVICE.fetch(
+              new Request("https://prompt-service/prompts/claude-screener-score")
+            );
+            if (promptResp.ok) {
+              const promptData = await promptResp.json();
+              systemPrompt = promptData.prompt?.system;
+              userTemplate = promptData.prompt?.user_template;
+              claudeModel = promptData.model;
+              claudeMaxTokens = promptData.max_tokens;
+            }
+          } catch (e) {
+            console.warn("[Claude-Score] prompt-service fetch failed, using fallback:", e.message);
+          }
+
+          // Fallback prompt if prompt-service unavailable
+          if (!systemPrompt) {
+            systemPrompt = `Anda adalah expert analis pasar saham Indonesia. Score setiap emiten 0-100 berdasarkan potensi naik +5% dalam 5 hari ke depan. Pertimbangkan smart money flow, effort z-score, orderflow intraday, state, dan trend quality. Return ONLY valid JSON: { "scores": { "SYMBOL": number, ... }, "top5": [...], "summary": { "high_confidence": n, "medium_confidence": n, "low_confidence": n } }`;
+          }
+          if (!userTemplate) {
+            userTemplate = `Score semua {universe_size} emiten berikut berdasarkan potensi naik +5% dalam 5 hari ke depan.\n\nDATA:\n{candidates_json}`;
+          }
+
+          // ── Build compact candidate JSON ──
+          const compactCandidates = candidates.map(c => ({
+            s: c.symbol,
+            g: c.growth_pct ?? null,
+            fq: c.freq ?? null,
+            sm: c.sm || [0,0,0,0],
+            fn: c.fn || [0,0,0,0],
+            ln: c.ln || [0,0,0,0],
+            fl: c.flow || [0,0,0,0],
+            ef: c.effort || [0,0,0,0],
+            vw: c.vwap || [null,null,null,null],
+            ng: c.ngr || [null,null,null,null],
+            rv: c.rvol || [null,null,null,null],
+            cm: c.cvd_multi || [null,null,null,null],
+            of: c.orderflow || {},
+            q: c.quadrant || null,
+            st: c.state || "NEUTRAL",
+            tr: c.trend || {}
+          }));
+
+          const userMessage = userTemplate
+            .replace("{universe_size}", String(candidates.length))
+            .replace("{candidates_json}", JSON.stringify(compactCandidates));
+
+          // ── Call Claude API ──
+          const CLAUDE_URL = "https://api.anthropic.com/v1/messages";
+          const claudePayload = {
+            model: claudeModel || "claude-opus-4-6",
+            max_tokens: claudeMaxTokens || 16000,
+            system: systemPrompt,
+            messages: [{ role: "user", content: userMessage }]
+          };
+
+          console.log(`[Claude-Score] Calling Claude API with ${candidates.length} candidates...`);
+          const startTime = Date.now();
+
+          const resp = await fetch(CLAUDE_URL, {
+            method: "POST",
+            headers: {
+              "x-api-key": env.ANTHROPIC_API_KEY,
+              "anthropic-version": "2023-06-01",
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify(claudePayload)
+          });
+
+          if (!resp.ok) {
+            const errText = await resp.text();
+            console.error(`[Claude-Score] API error: ${resp.status} - ${errText}`);
+            if (resp.status === 429) {
+              return json({ ok: false, error: "Rate limited, coba lagi nanti", status: 429 }, 429);
+            }
+            return json({ ok: false, error: `Claude API error: ${resp.status}`, status: resp.status }, 502);
+          }
+
+          const data = await resp.json();
+          const rawContent = data.content?.[0]?.text || "";
+          const usage = {
+            input_tokens: data.usage?.input_tokens || 0,
+            output_tokens: data.usage?.output_tokens || 0
+          };
+
+          // ── Parse Claude response JSON ──
+          let parsed;
+          try {
+            // Strip markdown code fences if present
+            let cleanJson = rawContent.trim();
+            if (cleanJson.startsWith("```")) {
+              cleanJson = cleanJson.replace(/^```(?:json)?\s*/, "").replace(/```\s*$/, "").trim();
+            }
+            parsed = JSON.parse(cleanJson);
+          } catch (parseErr) {
+            console.warn(`[Claude-Score] First parse failed: ${parseErr.message}. Retrying with correction...`);
+
+            // Retry with correction prompt
+            try {
+              const retryResp = await fetch(CLAUDE_URL, {
+                method: "POST",
+                headers: {
+                  "x-api-key": env.ANTHROPIC_API_KEY,
+                  "anthropic-version": "2023-06-01",
+                  "Content-Type": "application/json"
+                },
+                body: JSON.stringify({
+                  model: "claude-sonnet-4-5",
+                  max_tokens: 16000,
+                  system: systemPrompt,
+                  messages: [
+                    { role: "user", content: userMessage },
+                    { role: "assistant", content: rawContent },
+                    { role: "user", content: `Output sebelumnya bukan JSON valid. Error: ${parseErr.message}. Kembalikan HANYA JSON object valid, mulai dari '{' tanpa markdown code fences.` }
+                  ]
+                })
+              });
+              if (retryResp.ok) {
+                const retryData = await retryResp.json();
+                let retryText = (retryData.content?.[0]?.text || "").trim();
+                if (retryText.startsWith("```")) {
+                  retryText = retryText.replace(/^```(?:json)?\s*/, "").replace(/```\s*$/, "").trim();
+                }
+                parsed = JSON.parse(retryText);
+                usage.input_tokens += retryData.usage?.input_tokens || 0;
+                usage.output_tokens += retryData.usage?.output_tokens || 0;
+              } else {
+                throw new Error("Retry request failed");
+              }
+            } catch (retryErr) {
+              console.error("[Claude-Score] Retry also failed:", retryErr.message);
+              return json({ ok: false, error: "AI returned invalid JSON after retry" }, 500);
+            }
+          }
+
+          // ── Validate parsed response ──
+          if (!parsed?.scores || typeof parsed.scores !== "object") {
+            return json({ ok: false, error: "AI response missing 'scores' object" }, 500);
+          }
+
+          const elapsedMs = Date.now() - startTime;
+          const generatedAt = new Date().toISOString();
+
+          // Count confidence buckets
+          const scoreValues = Object.values(parsed.scores);
+          const summary = parsed.summary || {
+            high_confidence: scoreValues.filter(s => s >= 70).length,
+            medium_confidence: scoreValues.filter(s => s >= 50 && s < 70).length,
+            low_confidence: scoreValues.filter(s => s < 50).length
+          };
+
+          // Build ordered symbol list (preserving input order for verification)
+          const scoredSymbols = symbolsList.length === candidates.length
+            ? symbolsList.map(s => String(s).toUpperCase())
+            : candidates.map(c => String(c.symbol).toUpperCase());
+
+          const result = {
+            ok: true,
+            scores: parsed.scores,
+            symbols: scoredSymbols,
+            top5: parsed.top5 || Object.entries(parsed.scores).sort((a,b) => b[1]-a[1]).slice(0,5).map(e => e[0]),
+            summary,
+            filter_state: filterState,
+            filter_hash: filterHash,
+            sort_key: sortKey,
+            sort_dir: sortDir,
+            generated_at: generatedAt,
+            model: "claude-sonnet-4-5",
+            usage,
+            elapsed_ms: elapsedMs,
+            universe_size: candidates.length
+          };
+
+          // ── Save to R2 (immutable artifact + latest pointer) ──
+          const artifactKey = `ai-screener-cache/${dateStr}/${timeStr}_${filterHash}_${candidates.length}.json`;
+          const r2Meta = {
+            httpMetadata: { contentType: "application/json" },
+            customMetadata: {
+              generated_at: generatedAt,
+              universe_size: String(candidates.length),
+              model: "claude-sonnet-4-5",
+              filter_hash: filterHash,
+              ttl_minutes: "15"
+            }
+          };
+          const resultJson = JSON.stringify(result);
+
+          try {
+            await Promise.all([
+              env.SSSAHAM_EMITEN.put(artifactKey, resultJson, r2Meta),
+              env.SSSAHAM_EMITEN.put(cacheKey, resultJson, r2Meta)
+            ]);
+            console.log(`[Claude-Score] Saved: ${artifactKey} + latest_${filterHash}.json (${elapsedMs}ms, ${candidates.length} emiten)`);
+          } catch (r2Err) {
+            console.error("[Claude-Score] R2 save failed:", r2Err.message);
+            // Still return result even if R2 fails
+          }
+
+          return json(result);
+
+        } catch (err) {
+          console.error("[Claude-Score] Unexpected error:", err.stack || err.message);
+          return json({ ok: false, error: "Internal error", details: err.message }, 500);
+        }
+      }
+
       // 7.1 GET /dashboard/feed/detail?slug=YYYY-MM-DD-SYMBOL-title
       if (url.pathname === "/dashboard/feed/detail" && req.method === "GET") {
         await ensureDashboardTables(env);

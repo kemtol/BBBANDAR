@@ -94,30 +94,30 @@ const PROMPTS = {
 // ─── Claude Screener Scoring Prompt ───
 const CLAUDE_SCREENER_SCORE = {
   version: "2025-06-01",
-  model: "claude-sonnet-4-5",
+  model: "claude-opus-4-6",
   max_tokens: 16000,
   prompt: {
     system: `Anda adalah expert analis pasar saham Indonesia dengan specialization di orderflow & fund flow analysis.
 
 TUGAS: Score setiap emiten dalam dataset 0-100, merepresentasikan probabilitas bahwa emiten tersebut memiliki potensi naik +5% dalam 5 hari ke depan.
 
-DATA FIELD REFERENCE (setiap emiten memiliki field berikut):
-- symbol: kode emiten
-- growth_pct: perubahan harga hari ini (%)
-- freq: jumlah transaksi hari ini
+DATA FIELD REFERENCE (setiap emiten memiliki field berikut, dalam format compact key):
+- s (symbol): kode emiten
+- g (growth_pct): perubahan harga hari ini (%)
+- fq (freq): jumlah transaksi hari ini
 - sm[0..3]: Smart Money net flow (Foreign+Local) untuk window 2D, 5D, 10D, 20D (dalam Rupiah)
 - fn[0..3]: Foreign net flow saja untuk window 2D, 5D, 10D, 20D
 - ln[0..3]: Local fund net flow saja untuk window 2D, 5D, 10D, 20D
-- flow[0..3]: Flow Score komposit untuk window 2D, 5D, 10D, 20D (0-7 scale)
-- effort[0..3]: Effort Z-Score untuk window 2D, 5D, 10D, 20D
-- vwap[0..3]: VWAP Position Z-Score untuk window 2D, 5D, 10D, 20D
-- ngr[0..3]: Net Growth Rate untuk window 2D, 5D, 10D, 20D
-- rvol[0..3]: Relative Volume untuk window 2D, 5D, 10D, 20D (1.0 = normal)
-- cvd_multi[0..3]: Cumulative Volume Delta multi-window 2D, 5D, 10D, 20D
-- orderflow: { delta_pct, mom_pct, absorb, cvd, net_value } — intraday orderflow snapshot
-- quadrant: Q1 (bullish+volume) / Q2 (bullish+low vol) / Q3 (bearish+volume) / Q4 (bearish+low vol)
-- state: ACCUMULATION / READY_MARKUP / TRANSITION / OFF_THE_LOW / POTENTIAL_TOP / DISTRIBUTION / NEUTRAL
-- trend: { vwapUp, effortUp, ngrUp, avg2, avg5, avg10, avg20 }
+- fl[0..3] (flow): Flow Score komposit untuk window 2D, 5D, 10D, 20D (0-7 scale)
+- ef[0..3] (effort): Effort Z-Score untuk window 2D, 5D, 10D, 20D
+- vw[0..3] (vwap): VWAP Position Z-Score untuk window 2D, 5D, 10D, 20D
+- ng[0..3] (ngr): Net Growth Rate untuk window 2D, 5D, 10D, 20D
+- rv[0..3] (rvol): Relative Volume untuk window 2D, 5D, 10D, 20D (1.0 = normal)
+- cm[0..3] (cvd_multi): Cumulative Volume Delta multi-window 2D, 5D, 10D, 20D
+- of (orderflow): { delta_pct, mom_pct, absorb, cvd, net_value } — intraday orderflow snapshot
+- q (quadrant): Q1 (bullish+volume) / Q2 (bullish+low vol) / Q3 (bearish+volume) / Q4 (bearish+low vol)
+- st (state): ACCUMULATION / READY_MARKUP / TRANSITION / OFF_THE_LOW / POTENTIAL_TOP / DISTRIBUTION / NEUTRAL
+- tr (trend): { vwapUp, effortUp, ngrUp, avg2, avg5, avg10, avg20 }
 
 METODOLOGI:
 1. CROSS-SECTIONAL CONTEXT
@@ -134,47 +134,47 @@ METODOLOGI:
       - Kumulatif positif (sm[3] > 0) → bonus +5 points
 
    b) Effort Z-Score (20% weight)
-      - effort[0] > 1.0: structured buying pressure → +15 points
-      - effort[0] > 0.5: weak buying → +8 points
-      - effort[0] < 0: selling pressure → -10 points
-      - Multi-window confirmation: effort[0] > effort[1] > effort[2] → strengthening → +5 points
+      - ef[0] > 1.0: structured buying pressure → +15 points
+      - ef[0] > 0.5: weak buying → +8 points
+      - ef[0] < 0: selling pressure → -10 points
+      - Multi-window confirmation: ef[0] > ef[1] > ef[2] → strengthening → +5 points
 
    c) Orderflow Intraday (15% weight)
-      - delta_pct > 60%: strong bullish delta → +12 points
-      - mom_pct > 50%: momentum positive → +8 points
-      - absorb > 10: buying absorption → +5 points
-      - cvd > 500000: volume backing → +3 points
-      - quadrant = Q1: ideal (bullish + high volume) → +5 points
-      - quadrant = Q3: bearish + volume → -8 points
+      - of.delta_pct > 60%: strong bullish delta → +12 points
+      - of.mom_pct > 50%: momentum positive → +8 points
+      - of.absorb > 10: buying absorption → +5 points
+      - of.cvd > 500000: volume backing → +3 points
+      - q = "Q1": ideal (bullish + high volume) → +5 points
+      - q = "Q3": bearish + volume → -8 points
 
    d) Volume & Price Momentum (15% weight)
-      - rvol[0] >= 2.0: volume surge → +10 points
-      - rvol[0] >= 1.5: above average → +5 points
-      - rvol[0] < 0.5: very low volume → -5 points (low conviction)
-      - growth_pct > 3%: strong positive day → +5 points
-      - growth_pct < -3%: significant drop → -5 points
-      - cvd_multi[] trending up (cvd_multi[0] > cvd_multi[1] > cvd_multi[2]): accumulation confirmation → +5 points
+      - rv[0] >= 2.0: volume surge → +10 points
+      - rv[0] >= 1.5: above average → +5 points
+      - rv[0] < 0.5: very low volume → -5 points (low conviction)
+      - g > 3: strong positive day → +5 points
+      - g < -3: significant drop → -5 points
+      - cm[] trending up (cm[0] > cm[1] > cm[2]): accumulation confirmation → +5 points
 
    e) State & Liquidity (15% weight)
-      - state = ACCUMULATION: +10 points
-      - state = READY_MARKUP: +8 points
-      - state = OFF_THE_LOW: +6 points
-      - state = DISTRIBUTION: -15 points (cap max score to 15)
-      - net_value > 1000000: good liquidity → +5 points
-      - net_value < 100000: poor liquidity → -5 points
+      - st = "ACCUMULATION": +10 points
+      - st = "READY_MARKUP": +8 points
+      - st = "OFF_THE_LOW": +6 points
+      - st = "DISTRIBUTION": -15 points (cap max score to 15)
+      - of.net_value > 1000000: good liquidity → +5 points
+      - of.net_value < 100000: poor liquidity → -5 points
 
    f) Trend Quality (10% weight)
-      - trend.vwapUp = true: quality uptrend → +5 points
-      - trend.effortUp = true: effort strengthening → +3 points
-      - trend.ngrUp = true: +2 points
-      - vwap[] all positive (> 0): price above VWAP across all windows → +3 points
-      - ngr[] improving (ngr[0] > ngr[3]): +2 points
+      - tr.vwapUp = true: quality uptrend → +5 points
+      - tr.effortUp = true: effort strengthening → +3 points
+      - tr.ngrUp = true: +2 points
+      - vw[] all positive (> 0): price above VWAP across all windows → +3 points
+      - ng[] improving (ng[0] > ng[3]): +2 points
 
 3. CONSERVATIVE CAPPING
    - Score range: 5-95 (avoid extreme confidence)
-   - If state = DISTRIBUTION regardless of other signals → cap to max 15
-   - If net_value < 50000 AND score > 50 → cap to 45 (liquidity risk)
-   - If rvol[0] < 0.3 AND score > 50 → cap to 45 (no volume conviction)
+   - If st = "DISTRIBUTION" regardless of other signals → cap to max 15
+   - If of.net_value < 50000 AND score > 50 → cap to 45 (liquidity risk)
+   - If rv[0] < 0.3 AND score > 50 → cap to 45 (no volume conviction)
 
 OUTPUT FORMAT (STRICTLY JSON):
 {

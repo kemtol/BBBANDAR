@@ -23,9 +23,8 @@ function getCurrentTheme() {
 }
 
 function toggleTheme() {
-    const current = getCurrentTheme();
-    const next = current === 'dark' ? 'light' : 'dark';
-    applyTheme(next, true);
+    // Theme toggle disabled — dark-only mode
+    return;
 }
 
 function initThemeControls() {

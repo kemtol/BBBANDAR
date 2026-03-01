@@ -38,6 +38,10 @@
         {
             "binding": "AI_SCREENSHOT_SERVICE",
             "service": "ai-screenshot-service"
+        },
+        {
+            "binding": "PROMPT_SERVICE",
+            "service": "prompt-service"
         }
     ]
 }
