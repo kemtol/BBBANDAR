@@ -502,6 +502,12 @@ async function loadScreenerData() {
         pushUrlState(true);
         loadForeignSentiment();
 
+        // Restore Claude scores from cache if available (instant, no animation)
+        const cachedClaudeScores = loadClaudeScoresFromCache();
+        if (cachedClaudeScores) {
+            applyClaudeScores(cachedClaudeScores, false);
+        }
+
     } catch (error) {
         console.error('[Brokerflow] loadScreenerData failed:', error);
         $('#tbody-index').html('<tr><td colspan="41" class="text-center text-danger">Error loading screener data</td></tr>');
@@ -767,6 +773,320 @@ function updateVisibleProbCells() {
         $(this).find('.swg5-cell').html(fmtProbCell(item.swg5));
     });
 }
+
+// ── Claude Score Helpers ──
+function showToast(message, type = 'info') {
+    // Create a lightweight Bootstrap-style toast
+    const bgMap = { success: '#198754', danger: '#dc3545', warning: '#fd7e14', info: '#0d6efd' };
+    const bg = bgMap[type] || bgMap.info;
+    const $toast = $(`<div style="position:fixed;top:16px;right:16px;z-index:9999;padding:10px 18px;border-radius:8px;
+        background:${bg};color:#fff;font-size:0.85rem;box-shadow:0 4px 12px rgba(0,0,0,0.3);
+        opacity:0;transition:opacity 0.3s;">${message}</div>`);
+    $('body').append($toast);
+    requestAnimationFrame(() => $toast.css('opacity', 1));
+    setTimeout(() => $toast.css('opacity', 0), 3000);
+    setTimeout(() => $toast.remove(), 3500);
+}
+
+function fmtClaudeCell(score) {
+    if (score == null || typeof score !== 'number') return '<span class="claude-score-badge text-muted"><i class="fa-solid fa-lock" style="font-size:0.7rem;opacity:0.35;"></i></span>';
+    const cls = score >= 70 ? 'text-success fw-bold'
+        : score >= 50 ? 'text-primary fw-bold'
+            : score >= 35 ? 'text-warning'
+                : 'text-muted';
+    return `<span class="claude-score-badge ${cls}">${score}</span>`;
+}
+
+function updateVisibleClaudeCells(animate = false) {
+    const symbolToItem = new Map(currentCandidates.map(c => [String(c.symbol || '').toUpperCase(), c]));
+    let delay = 0;
+    $('#tbody-index tr[data-symbol]').each(function () {
+        const symbol = String($(this).data('symbol') || '').toUpperCase();
+        const item = symbolToItem.get(symbol);
+        if (!item) return;
+        const $cell = $(this).find('.claude-cell');
+        $cell.html(fmtClaudeCell(item.claude_score));
+        if (typeof item.claude_score === 'number') {
+            $cell.removeClass('claude-locked claude-revealed claude-revealed-instant');
+            if (animate) {
+                const d = delay;
+                setTimeout(() => $cell.addClass('claude-revealed'), d);
+                delay += 18; // stagger 18ms per row
+            } else {
+                $cell.addClass('claude-revealed-instant');
+            }
+        }
+    });
+}
+
+function collectClaudeScoringData() {
+    return currentCandidates.map(c => {
+        const m = c.metrics || {};
+        return {
+            symbol: c.symbol,
+            growth_pct: c.order_growth_pct ?? null,
+            freq: c.order_freq_tx ?? null,
+            sm: [c.sm2 || 0, c.sm5 || 0, c.sm10 || 0, c.sm20 || 0],
+            fn: [c.fn2 || 0, c.fn5 || 0, c.fn10 || 0, c.fn20 || 0],
+            ln: [c.ln2 || 0, c.ln5 || 0, c.ln10 || 0, c.ln20 || 0],
+            flow: [c.flow2 || 0, c.flow5 || 0, c.flow10 || 0, c.flow20 || 0],
+            effort: [m.effort2 || 0, m.effort5 || 0, m.effort10 || 0, m.effort20 || 0],
+            vwap: [m.vwap2 ?? null, m.vwap5 ?? null, m.vwap10 ?? null, m.vwap20 ?? null],
+            ngr: [m.ngr2 ?? null, m.ngr5 ?? null, m.ngr10 ?? null, m.ngr20 ?? null],
+            rvol: [c.rvol_2d ?? null, c.rvol_5d ?? null, c.rvol_10d ?? null, c.rvol_20d ?? null],
+            cvd_multi: [c.order_cvd_2d ?? null, c.order_cvd_5d ?? null, c.order_cvd_10d ?? null, c.order_cvd_20d ?? null],
+            orderflow: {
+                delta_pct: c.order_delta_pct ?? null,
+                mom_pct: c.order_mom_pct ?? null,
+                absorb: c.order_absorb ?? null,
+                cvd: c.order_cvd ?? null,
+                net_value: c.order_net_value ?? null
+            },
+            quadrant: c.order_quadrant || null,
+            state: c.state || 'NEUTRAL',
+            trend: c.trend || {}
+        };
+    });
+}
+
+function getActiveFilterFingerprint() {
+    // Build a stable string from active filters + sort + numeric filters
+    const parts = [];
+    for (const [k, v] of Object.entries(activeFilters)) {
+        if (v !== 'any') parts.push(`${k}=${v}`);
+    }
+    for (const [k, v] of Object.entries(numericFilters)) {
+        if (!isNaN(v)) parts.push(`${k}=${v}`);
+    }
+    parts.push(`sort=${sortState.key}`);
+    parts.push(`dir=${sortState.desc ? 'd' : 'a'}`);
+    if (searchQuery) parts.push(`q=${searchQuery}`);
+    return parts.sort().join('&');
+}
+
+function simpleHash(str) {
+    let h = 0;
+    for (let i = 0; i < str.length; i++) {
+        h = ((h << 5) - h + str.charCodeAt(i)) | 0;
+    }
+    return (h >>> 0).toString(36);
+}
+
+function getClaudeCacheKey() {
+    const today = new Date().toISOString().split('T')[0];
+    const fp = getActiveFilterFingerprint();
+    const hash = fp ? simpleHash(fp) : 'all';
+    return `claude_scores_${today}_${hash}`;
+}
+
+function loadClaudeScoresFromCache() {
+    try {
+        const raw = localStorage.getItem(getClaudeCacheKey());
+        if (!raw) return null;
+        const data = JSON.parse(raw);
+        const age = (Date.now() - (data.timestamp || 0)) / 60000;
+        if (age > 30) { localStorage.removeItem(getClaudeCacheKey()); return null; }
+        return data.scores;
+    } catch { return null; }
+}
+
+function saveClaudeScoresToCache(scores, symbols) {
+    try {
+        localStorage.setItem(getClaudeCacheKey(), JSON.stringify({
+            scores,
+            symbols: symbols || Object.keys(scores),
+            filter_fingerprint: getActiveFilterFingerprint(),
+            timestamp: Date.now()
+        }));
+    } catch { /* ignore */ }
+}
+
+function applyClaudeScores(scores, animate = false) {
+    if (!scores || typeof scores !== 'object') return;
+    const scoreMap = scores;
+    // Apply to allCandidates so scores persist across filter/sort changes
+    (allCandidates || []).forEach(c => {
+        const s = scoreMap[String(c.symbol).toUpperCase()];
+        if (typeof s === 'number') c.claude_score = s;
+    });
+    (currentCandidates || []).forEach(c => {
+        const s = scoreMap[String(c.symbol).toUpperCase()];
+        if (typeof s === 'number') c.claude_score = s;
+    });
+    updateVisibleClaudeCells(animate);
+}
+
+async function handleClaudeScoreClick() {
+    const $btn = $('#btn-claude-score');
+    if ($btn.prop('disabled')) return;
+
+    // Check localStorage cache first
+    const cached = loadClaudeScoresFromCache();
+    if (cached) {
+        applyClaudeScores(cached, true); // animate reveal
+        showToast('✓ Claude Score loaded from cache', 'success');
+        return;
+    }
+
+    if (!currentCandidates || currentCandidates.length < 10) {
+        showToast('⚠ Terlalu sedikit emiten untuk scoring (min 10)', 'warning');
+        return;
+    }
+
+    // UI: loading state
+    $btn.prop('disabled', true).addClass('loading');
+
+    try {
+        // Wait for data maturity: orderflow hydration may still be in-flight.
+        // Check if key fields have settled for at least some visible rows.
+        const maturityStart = Date.now();
+        const MATURITY_MAX_WAIT = 5000; // max 5s
+        const MATURITY_CHECK_INTERVAL = 500;
+        while (Date.now() - maturityStart < MATURITY_MAX_WAIT) {
+            const sample = currentCandidates.slice(0, 20);
+            const hydratedCount = sample.filter(c =>
+                c.order_delta_pct != null || c.order_freq_tx != null ||
+                c.rvol_2d != null || c.order_cvd_2d != null
+            ).length;
+            if (hydratedCount >= Math.min(10, sample.length)) break; // enough data
+            await new Promise(r => setTimeout(r, MATURITY_CHECK_INTERVAL));
+        }
+
+        const candidates = collectClaudeScoringData();
+        const symbols = candidates.map(c => c.symbol);
+
+        // Build filter_state from URL params for R2 keying
+        const filterState = {};
+        for (const [k, v] of Object.entries(activeFilters)) {
+            if (v !== 'any') filterState[k] = v;
+        }
+        for (const [k, v] of Object.entries(numericFilters)) {
+            if (!isNaN(v)) filterState[k] = v;
+        }
+
+        const payload = {
+            timestamp: new Date().toISOString(),
+            universe_size: candidates.length,
+            symbols,
+            filter_state: filterState,
+            sort_key: sortState.key,
+            sort_dir: sortState.desc ? 'desc' : 'asc',
+            candidates
+        };
+
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 90000); // 90s timeout
+
+        const resp = await fetch(`${WORKER_BASE_URL}/ai/claude-score`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+            signal: controller.signal
+        });
+        clearTimeout(timeout);
+
+        const data = await resp.json();
+
+        if (!data.ok) {
+            throw new Error(data.error || 'Scoring failed');
+        }
+
+        // Apply scores with reveal animation
+        applyClaudeScores(data.scores, true);
+        saveClaudeScoresToCache(data.scores, data.symbols);
+
+        const msg = `✓ Claude scored ${data.universe_size || Object.keys(data.scores).length} emiten`;
+        showToast(msg, 'success');
+
+    } catch (err) {
+        if (err.name === 'AbortError') {
+            showToast('⚠ Scoring timeout, coba lagi', 'warning');
+        } else {
+            showToast(`✗ ${err.message}`, 'danger');
+        }
+        console.error('[Claude-Score]', err);
+    } finally {
+        $btn.prop('disabled', false).removeClass('loading');
+    }
+}
+
+// ── Scenario Test: Verify R2 cache matches frontend ──
+window.__verifyClaudeCache = async function () {
+    console.log('[Claude-Verify] Starting verification...');
+
+    // 1. Collect current frontend state
+    const frontendSymbols = currentCandidates.map(c => String(c.symbol).toUpperCase());
+    console.log(`[Claude-Verify] Frontend: ${frontendSymbols.length} candidates, filter: ${getActiveFilterFingerprint() || '(none)'}`);
+
+    // 2. Check localStorage cache
+    const cacheKey = getClaudeCacheKey();
+    const localRaw = localStorage.getItem(cacheKey);
+    if (!localRaw) {
+        console.warn('[Claude-Verify] No localStorage cache found for key:', cacheKey);
+    } else {
+        const localData = JSON.parse(localRaw);
+        const localSymbols = localData.symbols || Object.keys(localData.scores || {});
+        const localScoreCount = Object.keys(localData.scores || {}).length;
+        const ageMins = ((Date.now() - (localData.timestamp || 0)) / 60000).toFixed(1);
+        console.log(`[Claude-Verify] localStorage: ${localScoreCount} scores, ${localSymbols.length} symbols, age=${ageMins}min, fingerprint=${localData.filter_fingerprint || '(none)'}`);
+
+        // Check symbol match
+        const frontendSet = new Set(frontendSymbols);
+        const localSet = new Set(localSymbols.map(s => s.toUpperCase()));
+        const missingInCache = frontendSymbols.filter(s => !localSet.has(s));
+        const extraInCache = localSymbols.filter(s => !frontendSet.has(s.toUpperCase()));
+        if (missingInCache.length) console.warn(`[Claude-Verify] localStorage missing ${missingInCache.length} frontend symbols:`, missingInCache.slice(0, 10));
+        if (extraInCache.length) console.warn(`[Claude-Verify] localStorage has ${extraInCache.length} extra symbols:`, extraInCache.slice(0, 10));
+        if (!missingInCache.length && !extraInCache.length) console.log('[Claude-Verify] ✓ localStorage symbols match frontend exactly');
+    }
+
+    // 3. Fetch latest R2 cache via verify endpoint
+    try {
+        const fp = getActiveFilterFingerprint();
+        const hash = fp ? simpleHash(fp) : 'all';
+        const today = new Date().toISOString().split('T')[0];
+        const verifyUrl = `${WORKER_BASE_URL}/ai/claude-score/verify?date=${today}&hash=${hash}`;
+        console.log(`[Claude-Verify] Fetching R2 verify: ${verifyUrl}`);
+        const r2Resp = await fetch(verifyUrl);
+        const r2Data = await r2Resp.json();
+        if (r2Data.ok && r2Data.latest) {
+            const r2 = r2Data.latest;
+            console.log(`[Claude-Verify] R2 latest: ${r2.symbol_count} symbols, ${r2.score_count} scores, hash=${r2.filter_hash}, generated=${r2.generated_at}`);
+            // Compare R2 symbols with frontend
+            const r2Set = new Set((r2.symbols || []).map(s => s.toUpperCase()));
+            const r2Missing = frontendSymbols.filter(s => !r2Set.has(s));
+            const r2Extra = (r2.symbols || []).filter(s => !new Set(frontendSymbols).has(s.toUpperCase()));
+            if (r2Missing.length) console.warn(`[Claude-Verify] R2 missing ${r2Missing.length} frontend symbols:`, r2Missing.slice(0, 10));
+            if (r2Extra.length) console.warn(`[Claude-Verify] R2 has ${r2Extra.length} extra symbols:`, r2Extra.slice(0, 10));
+            if (!r2Missing.length && !r2Extra.length) console.log('[Claude-Verify] ✓ R2 symbols match frontend exactly');
+        } else {
+            console.log(`[Claude-Verify] No R2 latest found for hash=${hash}. ${r2Data.artifact_count || 0} artifacts on ${today}.`);
+        }
+    } catch (e) {
+        console.error('[Claude-Verify] R2 verify fetch failed:', e);
+    }
+
+    // 4. Compare scores on currently displayed rows
+    const scoreMap = {};
+    if (localRaw) {
+        const localData = JSON.parse(localRaw);
+        Object.assign(scoreMap, localData.scores);
+    }
+    let matched = 0, mismatched = 0, unscored = 0;
+    currentCandidates.forEach(c => {
+        const sym = String(c.symbol).toUpperCase();
+        const frontendScore = c.claude_score;
+        const cachedScore = scoreMap[sym];
+        if (frontendScore == null && cachedScore == null) { unscored++; return; }
+        if (frontendScore === cachedScore) { matched++; }
+        else { mismatched++; if (mismatched <= 5) console.warn(`[Claude-Verify] Mismatch: ${sym} frontend=${frontendScore} cache=${cachedScore}`); }
+    });
+    console.log(`[Claude-Verify] Score comparison: ${matched} matched, ${mismatched} mismatched, ${unscored} unscored`);
+
+    const passed = mismatched === 0 && matched > 0;
+    console.log(`[Claude-Verify] Result: ${passed ? '✅ PASSED' : '❌ FAILED'}`);
+    return { passed, matched, mismatched, unscored, frontendCount: frontendSymbols.length };
+};
 
 function scheduleProbRefreshAfterOrderflow() {
     if (probRefreshTimer) clearTimeout(probRefreshTimer);
@@ -1741,6 +2061,10 @@ function sortCandidates(key, desc) {
             valA = isNum(a.swg5_prob) ? a.swg5_prob : PROB_MISSING_SORT_VALUE;
             valB = isNum(b.swg5_prob) ? b.swg5_prob : PROB_MISSING_SORT_VALUE;
         }
+        else if (key === 'claude_score') {
+            valA = (typeof a.claude_score === 'number') ? a.claude_score : -Infinity;
+            valB = (typeof b.claude_score === 'number') ? b.claude_score : -Infinity;
+        }
         else if (key === 'order_quadrant') {
             const qRank = (q) => q === 'Q1' ? 4 : q === 'Q2' ? 3 : q === 'Q4' ? 2 : q === 'Q3' ? 1 : -1;
             valA = qRank(a.order_quadrant);
@@ -1809,6 +2133,13 @@ $(document).on('click', 'th[data-sort]', function () {
     }
     sortCandidates(sortState.key, sortState.desc);
     pushUrlState();
+});
+
+// Claude Score button handler
+$(document).on('click', '#btn-claude-score', function (e) {
+    e.preventDefault();
+    e.stopPropagation();
+    handleClaudeScoreClick();
 });
 
 
@@ -2003,8 +2334,9 @@ function renderScreenerTable(candidates) {
                 </td>
                 <td class="text-center of-growth">${fmtPct(item.order_growth_pct)}</td>
                 <td class="text-center of-freq">${fmtFreq(item.order_freq_tx)}</td>
-                <td class="text-center tom2-cell">${fmtProbCell(item.tom2)}</td>
-                <td class="text-center swg5-cell">${fmtProbCell(item.swg5)}</td>
+                <td class="text-center tom2-cell d-none">${fmtProbCell(item.tom2)}</td>
+                <td class="text-center swg5-cell d-none">${fmtProbCell(item.swg5)}</td>
+                <td class="text-center claude-cell ${typeof item.claude_score === 'number' ? 'claude-revealed-instant' : 'claude-locked'}">${fmtClaudeCell(item.claude_score)}</td>
                 <td class="text-center of-delta">${fmtPct(item.order_delta_pct)}</td>
                 <td class="text-center of-mom">${fmtPct(item.order_mom_pct)}</td>
                 <td class="text-center of-absorb">${fmtAbsorb(item.order_absorb)}</td>
