@@ -144,7 +144,7 @@ let searchQuery = ''; // Emiten symbol search text
 const activeFilters = {
     foreign: 'any',   // any | allPos | dominant
     smart:   'any',   // any | allPos | positive
-    local:   'any',   // any | positive
+    local:   'any',   // any | allPos | positive
     streak:  'any',   // any | s3 | trend5up | trend10up | trend20up
     zeffort: 'any',   // any | 2gt5 | 2gt10 | 2gt20 | 5gt10 | 5gt20 | 10gt20 | ladderUp
     zngr:    'any',   // any | 2gt5 | 2gt10 | 2gt20 | 5gt10 | 5gt20 | 10gt20 | ladderUp
@@ -326,25 +326,25 @@ function updateViewButtonLabel() {
 const PRESETS = {
     strict:  { foreign:'allPos', smart:'allPos', local:'any', streak:'any', zeffort:'any', zngr:'any', zvwap:'any', effort:'any', state:'any', horizon:'any', quadrant:'any' },
     smart:   { foreign:'any',    smart:'allPos', local:'any', streak:'any', zeffort:'any', zngr:'any', zvwap:'any', effort:'any', state:'any', horizon:'any', quadrant:'any' },
-    ara:     { foreign:'any',    smart:'any',    local:'any', streak:'any', zeffort:'any', zngr:'any', zvwap:'any', effort:'positive', state:'any', horizon:'any', quadrant:'any' },
+    ara:     { foreign:'any',    smart:'positive', local:'any', streak:'any', zeffort:'any', zngr:'any', zvwap:'any', effort:'positive', state:'any', horizon:'any', quadrant:'any' },
     all:     { foreign:'any',    smart:'any',    local:'any', streak:'any', zeffort:'any', zngr:'any', zvwap:'any', effort:'any', state:'any', horizon:'any', quadrant:'any' }
 };
 
 const PRESET_NUMERIC = {
-    ara: { growth_min: NaN, freq_min: NaN, tom2_min: NaN, swg5_min: NaN, delta_min: 3, mom_min: 1, absorb_min: NaN, cvd_min: NaN, rvol_min: 1.2, value_min: NaN }
+    ara: { growth_min: NaN, freq_min: NaN, tom2_min: NaN, swg5_min: NaN, delta_min: 20, mom_min: NaN, absorb_min: NaN, cvd_min: NaN, rvol_min: 1.5, value_min: NaN }
 };
 
 const PRESET_DESC = {
     strict: 'Foreign & Smart Money positif tiap hari',
     smart:  'Smart Money positif tiap hari',
-    ara:    'Effort positif + Δ%≥3 + Mom≥1 + RVOL≥1.2',
+    ara:    'Saham ARA (Δ%≥20) + Smart Money + Effort positif + RVOL≥1.5',
     all:    'Tanpa filter'
 };
 
 const FILTER_LABELS = {
     foreign: { any:'Any', allPos:'Positif tiap hari', dominant:'Kumulatif > 0' },
     smart:   { any:'Any', allPos:'Positif tiap hari', positive:'Kumulatif > 0' },
-    local:   { any:'Any', positive:'Kumulatif > 0' },
+    local:   { any:'Any', allPos:'Positif tiap hari', positive:'Kumulatif > 0' },
     streak:  { any:'Any', s3:'Streak ≥ 3 hari', trend5up:'Trend 5D Up', trend10up:'Trend 10D Up', trend20up:'Trend 20D Up' },
     zeffort: { any:'Any', '2gt5':'2D > 5D', '2gt10':'2D > 10D', '2gt20':'2D > 20D', '5gt10':'5D > 10D', '5gt20':'5D > 20D', '10gt20':'10D > 20D', ladderUp:'2D ≥ 5D ≥ 10D ≥ 20D' },
     zngr:    { any:'Any', '2gt5':'2D > 5D', '2gt10':'2D > 10D', '2gt20':'2D > 20D', '5gt10':'5D > 10D', '5gt20':'5D > 20D', '10gt20':'10D > 20D', ladderUp:'2D ≥ 5D ≥ 10D ≥ 20D' },
@@ -485,8 +485,8 @@ async function loadScreenerData() {
         // Fast path: prefill intraday columns from bulk footprint summary.
         // This helps Δ%, Mom%, Absorb appear quickly before per-symbol hydration completes.
         await prefillIntradayFromFootprintSummary(allCandidates, { updateDom: false });
-        // NOTE: sector-scrapper is write-only (R2). freq_tx + growth_pct are now
-        // served by features-service via /footprint/summary (included in footprint-summary.json).
+        // Sector digest provides authoritative closing price data with weekend fallback.
+        await prefillSectorDigest(allCandidates);
 
         // Restore filter/sort/page from URL (or localStorage fallback)
         restoreFromUrl();
@@ -824,6 +824,7 @@ function applyFilter() {
             if (activeFilters.smart === 'positive' && (w.sm || 0) <= 0) return false;
 
             // Local flow filter
+            if (activeFilters.local === 'allPos' && !w.localAllPos) return false;
             if (activeFilters.local === 'positive' && (w.ln || 0) <= 0) return false;
 
             // Streak / Trend filter
@@ -2066,7 +2067,7 @@ async function fetchOrderflowSnapshotForSymbol(symbol) {
 
     orderflowInFlight.add(key);
     try {
-        const today = new Date().toISOString().split('T')[0];
+        const today = _getLastTradingDayString();
         const url = `${WORKER_BASE_URL}/cache-summary?symbol=${encodeURIComponent(key)}&from=${today}&to=${today}&cache=default&_ts=${Date.now()}`;
         const resp = await fetch(url);
         if (!resp.ok) {
@@ -2239,19 +2240,36 @@ async function prefillSectorDigest(candidates) {
         return { count, map };
     };
 
+    // Start with the last trading day (skips weekends) to avoid empty results on Sat/Sun.
+    const lastTradingDay = _getLastTradingDayString();
     const today = _getWibDateString();
-    let { count: newEntries, map: digestMap } = await _fetchDate(today);
-    let usedDate = today;
+    const tryDates = [lastTradingDay];
+    // If lastTradingDay is the same as today, also try the previous trading day as fallback
+    // (covers pre-market hours when cron hasn't run yet).
+    if (lastTradingDay === today) {
+        const prevMs = Date.now() - 86400000;
+        const prevDay = _getWibDateString(new Date(prevMs));
+        // Ensure we don't push the same date again
+        if (prevDay !== lastTradingDay) tryDates.push(prevDay);
+    } else {
+        // lastTradingDay is already a fallback (e.g. Friday on a Saturday), but
+        // also try the day before in case that sector cron didn't run.
+        const prevMs = new Date(`${lastTradingDay}T00:00:00Z`).getTime() - 86400000;
+        const prevDay = _getWibDateString(new Date(prevMs));
+        if (prevDay !== lastTradingDay) tryDates.push(prevDay);
+    }
 
-    // Fallback to yesterday if today has no data yet (cron hasn't run / pre-market)
-    if (newEntries === 0) {
-        const yesterdayMs = Date.now() - 86400000;
-        const yesterday = _getWibDateString(new Date(yesterdayMs));
-        const fb = await _fetchDate(yesterday);
-        if (fb.count > 0) {
-            digestMap  = fb.map;
-            newEntries = fb.count;
-            usedDate   = yesterday;
+    let newEntries = 0;
+    let digestMap = new Map();
+    let usedDate = lastTradingDay;
+
+    for (const dateStr of tryDates) {
+        const result = await _fetchDate(dateStr);
+        if (result.count > 0) {
+            digestMap  = result.map;
+            newEntries = result.count;
+            usedDate   = dateStr;
+            break;
         }
     }
 
@@ -2268,6 +2286,60 @@ function _getWibDateString(d) {
     const now = d || new Date();
     const wib = new Date(now.getTime() + 7 * 60 * 60 * 1000);
     return `${wib.getUTCFullYear()}-${String(wib.getUTCMonth()+1).padStart(2,'0')}-${String(wib.getUTCDate()).padStart(2,'0')}`;
+}
+
+/**
+ * Returns the most recent trading day date string (YYYY-MM-DD) in WIB.
+ * If today is Saturday → returns Friday.
+ * If today is Sunday  → returns Friday.
+ * Otherwise            → returns today.
+ */
+// IDX public holidays (weekday-only dates that are market-closed)
+const IDX_HOLIDAYS = new Set([
+    // 2025
+    '2025-01-01','2025-01-27','2025-01-28','2025-03-28','2025-03-31',
+    '2025-04-01','2025-04-18','2025-05-01','2025-05-12','2025-05-29',
+    '2025-06-01','2025-06-06','2025-06-27','2025-09-05',
+    '2025-12-25','2025-12-26',
+    // 2026
+    '2026-01-01','2026-02-16','2026-02-17','2026-03-11','2026-03-31',
+    '2026-04-01','2026-04-02','2026-04-03','2026-04-10','2026-05-01',
+    '2026-05-21','2026-06-01','2026-06-08','2026-06-29','2026-08-17',
+    '2026-09-08','2026-12-25','2026-12-26'
+]);
+
+function _getLastTradingDayString() {
+    const now = new Date();
+    const wib = new Date(now.getTime() + 7 * 60 * 60 * 1000);
+    // Walk back until we find a trading day (not weekend, not holiday)
+    for (let i = 0; i < 14; i++) {
+        const dayOfWeek = wib.getUTCDay();
+        const dateStr = `${wib.getUTCFullYear()}-${String(wib.getUTCMonth()+1).padStart(2,'0')}-${String(wib.getUTCDate()).padStart(2,'0')}`;
+        if (dayOfWeek !== 0 && dayOfWeek !== 6 && !IDX_HOLIDAYS.has(dateStr)) {
+            return dateStr;
+        }
+        wib.setUTCDate(wib.getUTCDate() - 1);
+    }
+    // Fallback: return current date
+    return `${wib.getUTCFullYear()}-${String(wib.getUTCMonth()+1).padStart(2,'0')}-${String(wib.getUTCDate()).padStart(2,'0')}`;
+}
+
+/**
+ * Returns true if IDX market is likely open right now (weekday, 09:00-16:30 WIB, not a holiday).
+ * Used to decide whether to force per-symbol live hydration or trust bulk summary data.
+ */
+function _isMarketLikelyOpen() {
+    const now = new Date();
+    const wib = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Jakarta' }));
+    const dayOfWeek = wib.getDay(); // 0=Sun, 6=Sat
+    if (dayOfWeek === 0 || dayOfWeek === 6) return false;
+    const dateStr = `${wib.getFullYear()}-${String(wib.getMonth()+1).padStart(2,'0')}-${String(wib.getDate()).padStart(2,'0')}`;
+    if (IDX_HOLIDAYS.has(dateStr)) return false;
+    const hour = wib.getHours();
+    const min = wib.getMinutes();
+    const timeMinutes = hour * 60 + min;
+    // IDX trading hours: 09:00 - 16:30 WIB (with some buffer: 08:55 - 16:35)
+    return timeMinutes >= 535 && timeMinutes <= 995;
 }
 
 /**
@@ -2326,8 +2398,12 @@ async function prefillIntradayFromFootprintSummary(candidates, options = {}) {
             const row = map.get(symbol);
             if (!row) continue;
             if (applyFootprintRowToCandidate(item, row, { applyFreq: true })) {
-                // Prefill is coarse summary data; force immediate live snapshot hydration.
-                item._orderflowFetchedAt = 0;
+                // During trading hours: force live hydration for fresher per-symbol data.
+                // Outside trading hours: footprint/summary is authoritative, keep fetchedAt
+                // so TOM2/SWG5 can compute immediately without waiting for per-symbol calls.
+                if (_isMarketLikelyOpen()) {
+                    item._orderflowFetchedAt = 0;
+                }
                 changed += 1;
                 if (options.updateDom) updateOrderflowCells(symbol, item);
             }
@@ -2755,6 +2831,9 @@ async function initDetailMode(symbol) {
     $('#index-view').hide();
     $('#detail-view').show();
 
+    // Reset broker flow state for fresh detail view
+    resetBrokerFlowState();
+
     // Set header with logo + symbol anchor
     const logoUrl = `https://api-saham.mkemalw.workers.dev/logo?symbol=${symbol}`;
     $('.nav-title').html(`
@@ -2770,7 +2849,7 @@ async function initDetailMode(symbol) {
 
     let endDate = endParam ? new Date(endParam) : new Date();
     let startDate = startParam ? new Date(startParam) : new Date();
-    if (!startParam) startDate.setDate(endDate.getDate() - 14); // Default 14 days per user request
+    if (!startParam) startDate.setDate(endDate.getDate() - 20); // Default 20 days
 
     $('#date-from').val(startDate.toISOString().split('T')[0]);
     $('#date-to').val(endDate.toISOString().split('T')[0]);
@@ -3458,13 +3537,14 @@ function renderChart(history) {
             plugins: {
                 legend: { display: false },
                 datalabels: { display: false },
+                tooltip: { enabled: false }
             },
             interaction: { mode: 'index', intersect: false },
             scales: {
                 x: {
                     grid: { display: false },
                     ticks: { color: '#9ca3af' },
-                    border: { color: '#ffffff' }
+                    border: { color: 'transparent' }
                 },
                 y: {
                     type: 'linear',
@@ -3477,7 +3557,7 @@ function renderChart(history) {
                             return formatCompactNumber(value);
                         }
                     },
-                    border: { color: '#ffffff' }
+                    border: { color: 'transparent' }
                 },
                 y1: {
                     type: 'linear',
@@ -3508,7 +3588,7 @@ function renderChart(history) {
                 if (yPos >= yScale.top && yPos <= yScale.bottom) {
                     ctx.save();
                     ctx.beginPath();
-                    ctx.setLineDash([5, 5]); // Dashed line
+                    ctx.setLineDash([2, 3]); // Dotted line
                     ctx.strokeStyle = '#9ca3af'; // Grey for visibility on white bg
                     ctx.lineWidth = 1.5;
                     ctx.moveTo(xScale.left, yPos);
@@ -3517,8 +3597,317 @@ function renderChart(history) {
                     ctx.restore();
                 }
             }
+        }, {
+            // Draw value labels on cumulative line data points (Foreign, Retail, Local)
+            id: 'smartMoneyNodeLabels',
+            afterDatasetsDraw: (chart) => {
+                const ctx = chart.ctx;
+                const numPoints = chart.data.labels.length;
+
+                // Only label cumulative line datasets (0=Price, 1=Foreign, 2=Retail, 3=Local)
+                [0, 1, 2, 3].forEach(dsIdx => {
+                    const ds = chart.data.datasets[dsIdx];
+                    if (!ds || ds.hidden) return;
+                    const meta = chart.getDatasetMeta(dsIdx);
+                    if (!meta.visible) return;
+
+                    for (let p = 0; p < numPoints; p++) {
+                        const pt = meta.data[p];
+                        if (!pt) continue;
+                        const val = ds.data[p];
+                        if (val === null || val === undefined) continue;
+
+                        ctx.save();
+                        ctx.font = '8px sans-serif';
+                        ctx.fillStyle = ds.borderColor;
+                        ctx.textAlign = 'center';
+                        ctx.textBaseline = 'bottom';
+                        ctx.fillText(formatCompactNumber(val), pt.x, pt.y - 5);
+                        ctx.restore();
+                    }
+                });
+            }
         }]
     });
+}
+
+// =========================================
+// BROKER FLOW CHART (Per-Broker Cumulative)
+// =========================================
+let brokerFlowChart = null;
+let brokerFlowData = null; // Cached response from /cache-summary/broker-daily
+let brokerFlowInitialized = false;
+let currentTopN = 9;
+
+// Color shades per category — matched to SmartMoney Flow chart
+// Foreign = green, Local = blue, Retail = red
+const BROKER_COLORS = {
+    foreign: ['#16a34a', '#22c55e', '#4ade80', '#86efac'],
+    local:   ['#2563eb', '#3b82f6', '#60a5fa', '#93c5fd'],
+    retail:  ['#dc2626', '#ef4444', '#f87171', '#fca5a5']
+};
+
+// Sub-tab toggle handler
+$(document).on('click', '#chart-subtab-group .btn', function () {
+    const tab = $(this).data('chart-tab');
+    $('#chart-subtab-group .btn').removeClass('active');
+    $(this).addClass('active');
+
+    if (tab === 'smartmoney') {
+        $('#smartmoney-chart-panel').show();
+        $('#broker-flow-chart-panel').hide();
+        $('#broker-topn-group').css('display', 'none').addClass('d-none');
+    } else if (tab === 'brokerflow') {
+        $('#smartmoney-chart-panel').hide();
+        $('#broker-flow-chart-panel').show();
+        $('#broker-topn-group').css('display', '').removeClass('d-none').addClass('d-flex');
+        // Lazy-init: fetch & render on first click
+        if (!brokerFlowInitialized && kodeParam) {
+            const fromDate = $('#date-from').val();
+            const toDate = $('#date-to').val();
+            fetchAndRenderBrokerFlow(kodeParam, fromDate, toDate);
+        }
+    }
+});
+
+// Top N toggle handler
+$(document).on('click', '#broker-topn-group .broker-topn-link', function (e) {
+    e.preventDefault();
+    const n = parseInt($(this).data('topn'), 10);
+    if (!n || n === currentTopN) return;
+    currentTopN = n;
+    $('#broker-topn-group .broker-topn-link').removeClass('active');
+    $(this).addClass('active');
+    if (brokerFlowData) {
+        applyBrokerTopNFilter(n);
+    }
+});
+
+async function fetchAndRenderBrokerFlow(symbol, from, to) {
+    const panel = $('#broker-flow-chart-panel');
+    const canvas = document.getElementById('brokerFlowChart');
+    if (!canvas) return;
+
+    // Show loading state
+    $('#broker-flow-legend').html('<span class="text-muted small">Memuat data broker flow...</span>');
+
+    try {
+        const url = `${WORKER_BASE_URL}/cache-summary/broker-daily?symbol=${encodeURIComponent(symbol)}&from=${from}&to=${to}`;
+        const resp = await fetch(url);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+
+        if (!data || !data.brokers || !data.brokers.length || !data.dates || !data.dates.length) {
+            $('#broker-flow-legend').html('<span class="text-muted small">Belum ada data broker flow untuk range ini.</span>');
+            brokerFlowInitialized = true;
+            return;
+        }
+
+        brokerFlowData = data;
+        brokerFlowInitialized = true;
+        renderBrokerFlowChart(data);
+    } catch (e) {
+        console.error('[BrokerFlow] Fetch failed:', e);
+        $('#broker-flow-legend').html('<span class="text-danger small">Gagal memuat data broker flow.</span>');
+    }
+}
+
+function renderBrokerFlowChart(data) {
+    const ctx = document.getElementById('brokerFlowChart').getContext('2d');
+    if (brokerFlowChart) brokerFlowChart.destroy();
+
+    const { brokers, dates, series } = data;
+
+    // Labels (DD/MM)
+    const labels = dates.map(dateStr => {
+        const d = new Date(dateStr);
+        return `${d.getDate()}/${d.getMonth() + 1}`;
+    });
+
+    // ── Rank ALL brokers by absolute total net (across categories) ──
+    const ranked = brokers.map(broker => {
+        const dailyNets = series[broker.code] || [];
+        const totalNet = dailyNets.reduce((s, v) => s + v, 0);
+        return { ...broker, totalAbsNet: Math.abs(totalNet), totalNet };
+    }).sort((a, b) => b.totalAbsNet - a.totalAbsNet);
+
+    // Build cumulative datasets
+    const datasets = [];
+    // Track color index per category so shades don't collide
+    const catColorIdx = { foreign: 0, local: 0, retail: 0 };
+
+    ranked.forEach((broker, globalRank) => {
+        const cat = broker.type; // 'foreign' | 'local' | 'retail'
+        const colorIdx = catColorIdx[cat] || 0;
+        catColorIdx[cat] = colorIdx + 1;
+
+        const colorPalette = BROKER_COLORS[cat] || BROKER_COLORS.local;
+        const color = colorPalette[Math.min(colorIdx, colorPalette.length - 1)];
+
+        const dailyNets = series[broker.code] || [];
+        const cumData = [];
+        let acc = 0;
+        for (let i = 0; i < dates.length; i++) {
+            acc += (dailyNets[i] || 0);
+            cumData.push(acc);
+        }
+
+        datasets.push({
+            label: `${broker.code} - ${broker.name.split(' ')[0]}`,
+            data: cumData,
+            borderColor: color,
+            backgroundColor: color,
+            borderWidth: globalRank < 3 ? 2.5 : (globalRank < 6 ? 2 : 1.5),
+            pointRadius: 3,
+            pointBackgroundColor: color,
+            pointBorderColor: color,
+            pointBorderWidth: 0,
+            tension: 0.15,
+            yAxisID: 'y',
+            _brokerCode: broker.code,
+            _brokerType: cat,
+            _globalRank: globalRank, // 0-based absolute rank
+            hidden: globalRank >= currentTopN
+        });
+    });
+
+    brokerFlowChart = new Chart(ctx, {
+        type: 'line',
+        data: { labels, datasets },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            layout: { padding: { right: 60 } },
+            plugins: {
+                legend: { display: false },
+                datalabels: { display: false },
+                tooltip: { enabled: false }
+            },
+            interaction: { mode: 'index', intersect: false },
+            scales: {
+                x: {
+                    grid: { display: false },
+                    ticks: { color: '#9ca3af' },
+                    border: { color: 'transparent' }
+                },
+                y: {
+                    type: 'linear',
+                    display: false, // Hide Y axis — values shown on node labels
+                    position: 'left',
+                    grid: { display: false },
+                    border: { display: false }
+                }
+            }
+        },
+        plugins: [{
+            // Dashed zero line
+            id: 'zeroLineBroker',
+            afterDatasetsDraw: (chart) => {
+                const ctx2 = chart.ctx;
+                const yScale = chart.scales.y;
+                const xScale = chart.scales.x;
+                const yPos = yScale.getPixelForValue(0);
+                if (yPos >= yScale.top && yPos <= yScale.bottom) {
+                    ctx2.save();
+                    ctx2.beginPath();
+                    ctx2.setLineDash([2, 3]);
+                    ctx2.strokeStyle = '#9ca3af';
+                    ctx2.lineWidth = 1;
+                    ctx2.moveTo(xScale.left, yPos);
+                    ctx2.lineTo(xScale.right, yPos);
+                    ctx2.stroke();
+                    ctx2.restore();
+                }
+            }
+        }, {
+            // Draw "CODE value" label on every data point
+            id: 'brokerNodeLabels',
+            afterDatasetsDraw: (chart) => {
+                const ctx2 = chart.ctx;
+                const datasets = chart.data.datasets;
+                const numPoints = chart.data.labels.length;
+
+                datasets.forEach((ds, i) => {
+                    if (ds.hidden) return;
+                    const meta = chart.getDatasetMeta(i);
+                    if (!meta.visible) return;
+
+                    for (let p = 0; p < numPoints; p++) {
+                        const pt = meta.data[p];
+                        if (!pt) continue;
+
+                        const x = pt.x;
+                        const y = pt.y;
+                        const val = ds.data[p] || 0;
+                        const code = ds._brokerCode || '';
+
+                        // Always show "CODE value" on every node
+                        const text = `${code} ${formatCompactNumber(val)}`;
+
+                        ctx2.save();
+                        ctx2.font = p === numPoints - 1 ? 'bold 9px sans-serif' : '8px sans-serif';
+                        ctx2.fillStyle = ds.borderColor;
+                        ctx2.textAlign = p === numPoints - 1 ? 'left' : 'center';
+                        ctx2.textBaseline = 'bottom';
+                        ctx2.fillText(text, p === numPoints - 1 ? x + 8 : x, y - 6);
+                        ctx2.restore();
+                    }
+                });
+            }
+        }]
+    });
+
+    // Render legend — use ranked order
+    renderBrokerFlowLegend(ranked);
+}
+
+function renderBrokerFlowLegend(rankedBrokers) {
+    const container = $('#broker-flow-legend');
+    const catColorIdx = { foreign: 0, local: 0, retail: 0 };
+    const catLabel = { foreign: 'F', local: 'L', retail: 'R' };
+    let html = '';
+
+    rankedBrokers.forEach(b => {
+        const cat = b.type;
+        const idx = catColorIdx[cat] || 0;
+        catColorIdx[cat] = idx + 1;
+        const colorPalette = BROKER_COLORS[cat] || BROKER_COLORS.local;
+        const color = colorPalette[Math.min(idx, colorPalette.length - 1)];
+        const shortName = b.name.split(' ')[0];
+        html += `<span class="broker-legend-item"><span class="broker-dot" style="background:${color}"></span>${b.code} - ${shortName} <span class="text-muted">(${catLabel[cat]})</span></span>`;
+    });
+
+    container.html(html);
+}
+
+function applyBrokerTopNFilter(topN) {
+    if (!brokerFlowChart) return;
+    brokerFlowChart.data.datasets.forEach(ds => {
+        ds.hidden = (ds._globalRank ?? 0) >= topN;
+    });
+    brokerFlowChart.update();
+}
+
+// Reset broker flow state when detail view changes
+function resetBrokerFlowState() {
+    brokerFlowInitialized = false;
+    brokerFlowData = null;
+    currentTopN = 9;
+    if (brokerFlowChart) {
+        brokerFlowChart.destroy();
+        brokerFlowChart = null;
+    }
+    $('#broker-flow-legend').empty();
+    // Reset sub-tab to SmartMoney
+    $('#chart-subtab-group .btn').removeClass('active');
+    $('#chart-subtab-group .btn[data-chart-tab="smartmoney"]').addClass('active');
+    $('#smartmoney-chart-panel').show();
+    $('#broker-flow-chart-panel').hide();
+    // Hide & reset Top N
+    currentTopN = 9;
+    $('#broker-topn-group').css('display', 'none').removeClass('d-flex').addClass('d-none');
+    $('#broker-topn-group .broker-topn-link').removeClass('active');
+    $('#broker-topn-group .broker-topn-link[data-topn="9"]').addClass('active');
 }
 
 // =========================================

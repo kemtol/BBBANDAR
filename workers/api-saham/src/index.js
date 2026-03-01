@@ -145,7 +145,7 @@
 import { auditAndBackfillDailyBrokerFlow } from "./audit-backfill-daily.js";
 import openapi from "./openapi.json";
 
-const PUBLIC_PATHS = new Set(["/", "/docs", "/console", "/openapi.json", "/health", "/screener", "/screener-accum", "/cache-summary", "/features/history"]);
+const PUBLIC_PATHS = new Set(["/", "/docs", "/console", "/openapi.json", "/health", "/screener", "/screener-accum", "/cache-summary", "/cache-summary/broker-daily", "/features/history"]);
 
 // ==============================
 // CORS helper
@@ -252,6 +252,20 @@ function resolveOHLC(candle) {
 // ==============================
 // UTC Trading Calendar Helpers
 // ==============================
+// IDX public holidays (market-closed weekdays)
+const IDX_HOLIDAYS = new Set([
+  // 2025
+  '2025-01-01','2025-01-27','2025-01-28','2025-03-28','2025-03-31',
+  '2025-04-01','2025-04-18','2025-05-01','2025-05-12','2025-05-29',
+  '2025-06-01','2025-06-06','2025-06-27','2025-09-05',
+  '2025-12-25','2025-12-26',
+  // 2026
+  '2026-01-01','2026-02-16','2026-02-17','2026-03-11','2026-03-31',
+  '2026-04-01','2026-04-02','2026-04-03','2026-04-10','2026-05-01',
+  '2026-05-21','2026-06-01','2026-06-08','2026-06-29','2026-08-17',
+  '2026-09-08','2026-12-25','2026-12-26'
+]);
+
 // Use T12:00Z to avoid timezone edge-shifts
 function isWeekendUTC(dateStr) {
   const d = new Date(`${dateStr}T12:00:00Z`);
@@ -259,11 +273,20 @@ function isWeekendUTC(dateStr) {
   return dow === 0 || dow === 6;
 }
 
+function isHolidayUTC(dateStr) {
+  return IDX_HOLIDAYS.has(dateStr);
+}
+
+/** Returns true if dateStr is a weekend OR an IDX public holiday */
+function isNonTradingDayUTC(dateStr) {
+  return isWeekendUTC(dateStr) || isHolidayUTC(dateStr);
+}
+
 function prevTradingDayUTC(dateStr) {
   let d = new Date(`${dateStr}T12:00:00Z`);
   do {
     d = new Date(d.getTime() - 86400000); // -1 day
-  } while ([0, 6].includes(d.getUTCDay()));
+  } while ([0, 6].includes(d.getUTCDay()) || IDX_HOLIDAYS.has(d.toISOString().slice(0, 10)));
   return d.toISOString().slice(0, 10);
 }
 
@@ -1449,6 +1472,14 @@ async function calculateFootprintRange(env, fromDateStr, toDateStr) {
         item.recent_price = curClose;
         item.growth_pct = Number(growthFallback.toFixed(2));
       }
+
+      // S2: ALWAYS override growth_pct with close-to-close (prevClose → curClose)
+      // for consistency with standard stock app conventions (Google Finance, IPOT, etc.)
+      if (Number.isFinite(curClose) && curClose > 0 && Number.isFinite(prevClose) && prevClose > 0) {
+        item.open_price = prevClose;
+        item.recent_price = curClose;
+        item.growth_pct = Number((((curClose - prevClose) / prevClose) * 100).toFixed(2));
+      }
     }
 
     return item;
@@ -2144,12 +2175,22 @@ async function fetchProcessedDailyStatsMap(env, dateStr) {
  * Returns array where [0]=date (most recent), [1]=prev day, ..., [N-1]=oldest.
  */
 async function fetchProcessedDailyStatsMaps(env, date, n = 20) {
-  const dates = [date];
-  let d = new Date(`${date}T12:00:00Z`);
+  // Ensure dates[0] is always the most recent TRADING day, not a weekend/holiday.
+  let startDate = date;
+  {
+    let sd = new Date(`${date}T12:00:00Z`);
+    while ([0, 6].includes(sd.getUTCDay()) || IDX_HOLIDAYS.has(sd.toISOString().slice(0, 10))) {
+      sd = new Date(sd.getTime() - 86400000);
+    }
+    startDate = sd.toISOString().slice(0, 10);
+  }
+  const dates = [startDate];
+  let d = new Date(`${startDate}T12:00:00Z`);
   while (dates.length < n) {
     d = new Date(d.getTime() - 86400000);
-    if (![0, 6].includes(d.getUTCDay())) {
-      dates.push(d.toISOString().slice(0, 10));
+    const ds = d.toISOString().slice(0, 10);
+    if (![0, 6].includes(d.getUTCDay()) && !IDX_HOLIDAYS.has(ds)) {
+      dates.push(ds);
     }
   }
   return Promise.all(dates.map(dt => fetchProcessedDailyStatsMap(env, dt)));
@@ -2478,6 +2519,18 @@ async function getOrderflowSnapshot(env, symbol) {
       }
     }
 
+    // ALWAYS override growth_pct with close-to-close (prevClose → curClose)
+    // for consistency with standard stock app conventions (Google Finance, IPOT, etc.)
+    {
+      const curClose = Number(stats?.close);
+      const prevClose = Number(prevStats?.close);
+      if (Number.isFinite(curClose) && curClose > 0 && Number.isFinite(prevClose) && prevClose > 0) {
+        openPriceOut = prevClose;
+        recentPriceOut = curClose;
+        growthPctOut = Number((((curClose - prevClose) / prevClose) * 100).toFixed(2));
+      }
+    }
+
     return {
       ticker: normalizedSymbol,
       price: close,
@@ -2649,6 +2702,18 @@ async function getOrderflowSnapshotMap(env) {
 
         if (Number.isFinite(deltaPctOut) && Number.isFinite(momPctOut)) {
           absorbOut = Number((Math.abs(deltaPctOut) / (1 + Math.abs(momPctOut))).toFixed(2));
+        }
+      }
+
+      // ALWAYS override growth_pct with close-to-close (prevClose → curClose)
+      // for consistency with standard stock app conventions (Google Finance, IPOT, etc.)
+      {
+        const curClose = Number(stats?.close);
+        const prevClose = Number(prevStats?.close);
+        if (Number.isFinite(curClose) && curClose > 0 && Number.isFinite(prevClose) && prevClose > 0) {
+          openPriceOut = prevClose;
+          recentPriceOut = curClose;
+          growthPctOut = Number((((curClose - prevClose) / prevClose) * 100).toFixed(2));
         }
       }
 
@@ -2867,7 +2932,7 @@ export default {
         // WEEKEND FALLBACK (UTC): check weekend by UTC date string
         const now = new Date();
         const todayUTC = now.toISOString().slice(0, 10);
-        const isWeekend = isWeekendUTC(todayUTC);
+        const isWeekend = isNonTradingDayUTC(todayUTC);
 
 
         let key = "features/footprint-summary.json";
@@ -2889,7 +2954,13 @@ export default {
         const withFootprint = Number(validation.with_footprint || validation.data_sources?.FULL || 0);
         const zscoreOnly = Number(validation.zscore_only || validation.data_sources?.ZSCORE || 0);
         const isZscoreOnlySummary = withFootprint === 0 && zscoreOnly > 0;
-        const needsFallback = isEmpty || isWeekend || isZscoreOnlySummary;
+
+        // v3.1+ summaries include ZSCORE items enriched with CVD/RVOL windows.
+        // Don't discard them just because withFootprint=0 — they have valuable data.
+        // Only fallback if the summary is truly empty or has very few items.
+        const hasEnrichedData = (cachedData?.items?.length || 0) > 100 &&
+            cachedData?.version?.includes('v3.1');
+        const needsFallback = isEmpty || (isWeekend && !hasEnrichedData) || (isZscoreOnlySummary && !hasEnrichedData);
 
         // If empty/weekend/zscore-only summary, search back up to 7 days for last FULL trading data.
         if (needsFallback) {
@@ -2903,11 +2974,10 @@ export default {
           for (let daysBack = 1; daysBack <= 7; daysBack++) {
             const tryDate = new Date(now);
             tryDate.setDate(tryDate.getDate() - daysBack);
-            const tryDay = tryDate.getDay();
-            // Skip weekends
-            if (tryDay === 0 || tryDay === 6) continue;
-
             const tryDateStr = tryDate.toISOString().split("T")[0];
+            // Skip weekends & holidays
+            if (isNonTradingDayUTC(tryDateStr)) continue;
+
             console.log(`[SUMMARY] Trying fallback date: ${tryDateStr} (${daysBack} days back)`);
 
             try {
@@ -2975,10 +3045,10 @@ export default {
         let dateStr = url.searchParams.get("date") || todayWIBStr;
         if (!kode) return json({ error: "Missing kode" }, 400);
 
-        // WEEKEND FALLBACK (UTC): If requested date is weekend, fallback to previous trading day
-        if (isWeekendUTC(dateStr)) {
+        // NON-TRADING DAY FALLBACK: If requested date is weekend or holiday, fallback to previous trading day
+        if (isNonTradingDayUTC(dateStr)) {
           const fallback = prevTradingDayUTC(dateStr);
-          console.log(`[API] Weekend fallback (UTC): ${dateStr} -> ${fallback}`);
+          console.log(`[API] Non-trading day fallback: ${dateStr} -> ${fallback}`);
           dateStr = fallback;
         }
 
@@ -4441,6 +4511,171 @@ export default {
         }));
       }
 
+      // 4b. GET /cache-summary/broker-daily — Per-broker daily net for top 9 brokers
+      if (url.pathname === "/cache-summary/broker-daily" && req.method === "GET") {
+        const symbol = url.searchParams.get("symbol");
+        const from = url.searchParams.get("from");
+        const to = url.searchParams.get("to");
+        if (!symbol || !from || !to) return json({ error: "Missing params (symbol, from, to)" }, 400);
+
+        let cacheMode = url.searchParams.get("cache") || "default";
+        if (url.searchParams.get("reload") === "true") cacheMode = "rebuild";
+
+        const cacheKey = `broker/daily/v1/${symbol}/${from}_${to}.json`;
+
+        // 1. Check R2 cache
+        if (cacheMode === "default") {
+          const cached = await env.SSSAHAM_EMITEN.get(cacheKey);
+          if (cached) {
+            try {
+              const data = await cached.json();
+              if (data && data.brokers && data.dates) {
+                return withCORS(new Response(JSON.stringify(data), {
+                  headers: { "Content-Type": "application/json", "X-Cache": "HIT" }
+                }));
+              }
+            } catch (_) { /* stale cache, fallthrough */ }
+          }
+        }
+
+        // 2. Calculate per-broker daily data
+        let brokersMap = {};
+        try {
+          const { results } = await env.SSSAHAM_DB.prepare("SELECT * FROM brokers").all();
+          if (results) results.forEach(b => brokersMap[b.code] = b);
+        } catch (e) { console.error("broker-daily: Error fetching brokers:", e); }
+
+        const isRetail = (code) => {
+          const b = brokersMap[code];
+          if (!b) return false;
+          return (b.category || '').toLowerCase().includes('retail');
+        };
+
+        const classifyBroker = (code, ipotType) => {
+          if (isRetail(code)) return 'retail';
+          if (ipotType === 'Asing') return 'foreign';
+          return 'local';
+        };
+
+        const start = new Date(from);
+        const end = new Date(to);
+        const dateList = [];
+        // perBroker[code] = { dailyNets: [net_day1, net_day2, ...], type: 'foreign'|'local'|'retail', ipotType: 'Asing' }
+        const perBroker = {};
+
+        for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+          const dateStr = d.toISOString().split('T')[0];
+          if (isNonTradingDayUTC(dateStr)) continue;
+          dateList.push(dateStr);
+          const dayIdx = dateList.length - 1;
+
+          const key = `${symbol}/${dateStr}.json`;
+          try {
+            const object = await env.RAW_BROKSUM.get(key);
+            if (!object) continue;
+            const fullOuter = await object.json();
+            if (!fullOuter?.data) continue;
+
+            let bs = fullOuter.data.broker_summary;
+            if (!hasBrokerRows(bs)) {
+              const repaired = await fetchLiveBrokerSnapshot(env, symbol, dateStr);
+              if (hasBrokerRows(repaired?.broker_summary)) bs = repaired.broker_summary;
+              else continue;
+            }
+
+            // Process each broker on this day
+            const dayBrokerNet = {}; // code -> net
+
+            const processList = (list, side) => {
+              if (!Array.isArray(list)) return;
+              list.forEach(b => {
+                if (!b) return;
+                const code = b.netbs_broker_code;
+                if (!code) return;
+                const val = parseFloat(side === 'buy' ? b.bval : b.sval) || 0;
+                if (!dayBrokerNet[code]) dayBrokerNet[code] = { buy: 0, sell: 0, ipotType: b.type };
+                if (side === 'buy') dayBrokerNet[code].buy += val;
+                else dayBrokerNet[code].sell += val;
+              });
+            };
+
+            processList(bs.brokers_buy, 'buy');
+            processList(bs.brokers_sell, 'sell');
+
+            // Merge into perBroker
+            for (const [code, data] of Object.entries(dayBrokerNet)) {
+              if (!perBroker[code]) {
+                const cat = classifyBroker(code, data.ipotType);
+                perBroker[code] = { dailyNets: new Array(dayIdx).fill(0), type: cat, ipotType: data.ipotType };
+              }
+              // Pad any missing days (if broker appeared late)
+              while (perBroker[code].dailyNets.length < dayIdx) {
+                perBroker[code].dailyNets.push(0);
+              }
+              perBroker[code].dailyNets.push(data.buy - data.sell);
+            }
+
+            // Pad brokers that didn't appear today
+            for (const [code, info] of Object.entries(perBroker)) {
+              while (info.dailyNets.length <= dayIdx) {
+                info.dailyNets.push(0);
+              }
+            }
+          } catch (e) { /* skip date */ }
+        }
+
+        // 3. Select top brokers by abs(total net) — ranked globally, not per-category
+        const allBrokersSorted = [];
+        for (const [code, info] of Object.entries(perBroker)) {
+          const totalNet = info.dailyNets.reduce((s, v) => s + v, 0);
+          allBrokersSorted.push({ code, totalAbsNet: Math.abs(totalNet), totalNet, type: info.type });
+        }
+        allBrokersSorted.sort((a, b) => b.totalAbsNet - a.totalAbsNet);
+
+        // Return top 12 (client controls visibility via Top 3/5/9 toggle)
+        const topCount = Math.min(12, allBrokersSorted.length);
+        const selectedBrokers = [];
+        for (let i = 0; i < topCount; i++) {
+          const b = allBrokersSorted[i];
+          const bInfo = brokersMap[b.code];
+          selectedBrokers.push({
+            code: b.code,
+            name: bInfo?.name || b.code,
+            type: b.type
+          });
+        }
+
+        // 4. Build series for selected brokers
+        const series = {};
+        selectedBrokers.forEach(b => {
+          series[b.code] = perBroker[b.code]?.dailyNets || new Array(dateList.length).fill(0);
+          // Ensure correct length
+          while (series[b.code].length < dateList.length) series[b.code].push(0);
+        });
+
+        const responseData = {
+          symbol,
+          from,
+          to,
+          brokers: selectedBrokers,
+          dates: dateList,
+          series
+        };
+
+        // 5. Write to R2 cache
+        if (cacheMode !== "off") {
+          const ttl = cacheMode === "rebuild" ? 604800 : 172800;
+          ctx.waitUntil(env.SSSAHAM_EMITEN.put(cacheKey, JSON.stringify(responseData), {
+            httpMetadata: { contentType: "application/json", cacheControl: `public, max-age=${ttl}` },
+            customMetadata: { generated_at: new Date().toISOString(), ttl: ttl.toString() }
+          }));
+        }
+
+        return withCORS(new Response(JSON.stringify(responseData), {
+          headers: { "Content-Type": "application/json", "X-Cache": "MISS" }
+        }));
+      }
+
       // 5. GET /audit-trail (Proxy to R2)
       if (url.pathname === "/audit-trail" && req.method === "GET") {
         const symbol = url.searchParams.get("symbol");
@@ -5847,6 +6082,8 @@ export const __test__ = {
   checkDataCompleteness,
   shouldRepairFootprint,
   isWeekendUTC,
+  isHolidayUTC,
+  isNonTradingDayUTC,
   prevTradingDayUTC,
   countMissingSessionHours,
   buildFromFallbackTimeline,

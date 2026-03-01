@@ -907,8 +907,201 @@ This table maps each **filter option** on the screener UI to the underlying arti
 
 ---
 
-*Document Version: 1.7*
+## 17. Broker Flow Chart (Per-Broker Cumulative Time Series)
+
+### 17.1 Objective
+
+> **Idea**: "Lihat secara granular SIAPA yang akumulasi dan SIAPA yang distribusi — bukan hanya kategori (Foreign/Local/Retail), tapi broker individual."
+>
+> Pada SmartMoney Flow chart yang sudah ada, user hanya melihat 3 garis agregat (Foreign, Retail, Local).
+> Broker Flow chart menambah layer detail: **9 garis kumulatif** dari 3 broker teratas per kategori (Foreign, Local, Retail) sehingga user tahu apakah akumulasi didominasi oleh 1 broker besar atau tersebar merata.
+
+### 17.2 Problem Statement
+
+**Current State**:
+- Detail view hanya punya 1 chart: SmartMoney Flow (Foreign/Retail/Local cumulative lines + daily bars + price)
+- User tidak bisa melihat aktivitas broker individual dari waktu ke waktu
+- Top broker table di bawah hanya menunjukkan total range, BUKAN time series pergerakannya
+
+**Desired State**:
+- Tambah sub-tab toggle di atas chart: **SmartMoney Flow** | **Broker Flow**
+- Broker Flow menampilkan **line chart kumulatif** per broker individual (top 3 per kategori = 9 garis)
+- Broker Flow menggunakan **cache terpisah** agar tidak memperberat response `/cache-summary`
+- Tiap garis memiliki **colored circle + broker code** di ujung kanan sebagai legend
+
+### 17.3 UI Design
+
+```
+┌──────────────────────────────────────────────────────┐
+│  [SmartMoney Flow] [Broker Flow]     ← sub-tab toggle│
+│                                                       │
+│  ┌─────────────────────────────────────────────────┐ │
+│  │                                                 │ │
+│  │   ──── YP (green-1)                        ●YP  │ │
+│  │     ──── ML (green-2)                      ●ML  │ │
+│  │       ──── UB (green-3)                    ●UB  │ │
+│  │                                                 │ │
+│  │   ──── NI (blue-1)                         ●NI  │ │
+│  │     ──── AM (blue-2)                       ●AM  │ │
+│  │       ──── KK (blue-3)                     ●KK  │ │
+│  │                                                 │ │
+│  │   ──── PD (red-1)                          ●PD  │ │
+│  │     ──── RX (red-2)                        ●RX  │ │
+│  │       ──── SQ (red-3)                      ●SQ  │ │
+│  │                                                 │ │
+│  │  13/2  14/2  17/2  18/2  19/2  20/2  21/2      │ │
+│  └─────────────────────────────────────────────────┘ │
+│                                                       │
+│  [Top 3] [Top 6] [Top 9]        ← broker count toggle│
+│                                                       │
+│  ● YP - JP Morgan    ● NI - Nikko    ● PD - Panin    │
+│  ● ML - Merrill      ● AM - Mandiri  ● RX - Indo Prem│
+│  ● UB - UBS          ● KK - Korea    ● SQ - Stockbit │
+│  ← scrollable legend with colored circles             │
+└──────────────────────────────────────────────────────┘
+```
+
+### 17.4 Sub-Tab Toggle Behavior
+
+| Action | Result |
+|--------|--------|
+| Click "SmartMoney Flow" | Show existing `#detailChart` canvas, hide `#brokerFlowChart` |
+| Click "Broker Flow" | Hide `#detailChart`, show `#brokerFlowChart`, lazy-init on first click |
+| Default | SmartMoney Flow (existing behavior preserved) |
+
+### 17.5 Data Source & API
+
+**New Endpoint**: `GET /cache-summary/broker-daily?symbol=BBRI&from=YYYY-MM-DD&to=YYYY-MM-DD`
+
+Terpisah dari `/cache-summary` untuk mengisolasi beban:
+- `/cache-summary` tetap ringan (~5KB) untuk chart utama + broker table
+- `/cache-summary/broker-daily` (~3-8KB) hanya di-fetch saat user klik "Broker Flow"
+
+**Backend Logic** (inside `calculateRangeData` variant):
+1. Loop through dates (same as existing)
+2. Per day, track **per-broker net value** (bval - sval) per broker code
+3. At the end, determine top 3 per category by **abs(total net)** over entire range
+4. Return only those 9 brokers' daily series
+
+**Response**:
+```json
+{
+  "symbol": "BBRI",
+  "from": "2026-02-13",
+  "to": "2026-02-27",
+  "brokers": [
+    { "code": "YP", "name": "JP Morgan", "type": "foreign" },
+    { "code": "ML", "name": "Merrill Lynch", "type": "foreign" },
+    { "code": "UB", "name": "UBS", "type": "foreign" },
+    { "code": "NI", "name": "Nikko", "type": "local" },
+    { "code": "AM", "name": "Mandiri Sekuritas", "type": "local" },
+    { "code": "KK", "name": "Korea Investment", "type": "local" },
+    { "code": "PD", "name": "Panin Dana", "type": "retail" },
+    { "code": "RX", "name": "Indo Premier", "type": "retail" },
+    { "code": "SQ", "name": "Stockbit", "type": "retail" }
+  ],
+  "dates": ["2026-02-13", "2026-02-14", "2026-02-17", ...],
+  "series": {
+    "YP": [5000000, -2000000, 8000000, ...],
+    "ML": [3000000, 1000000, -500000, ...],
+    ...
+  }
+}
+```
+
+- `series[broker][i]` = **daily net value** (bval - sval) for that broker on `dates[i]`
+- Frontend computes cumulative from daily values (same pattern as existing chart)
+
+### 17.6 R2 Cache Key
+
+| Key | Written By | TTL |
+|-----|-----------|-----|
+| `broker/daily/v1/{symbol}/{from}_{to}.json` | `api-saham` | 2 days (same as cache-summary) |
+
+Separate R2 key prefix from `broker/summary/v5/` to avoid cache invalidation interference.
+
+### 17.7 Frontend Chart Specification
+
+| Property | Value |
+|----------|-------|
+| Type | Line Chart (Chart.js) |
+| Canvas | `#brokerFlowChart` (new, inside `#broker-flow-chart-container`) |
+| X-Axis | Date (DD/MM format, same as SmartMoney chart) |
+| Y-Axis | Cumulative Net Value (IDR, formatted: "125M", "-45B") |
+| Lines | 9 lines max (3 per category), configurable via Top 3/6/9 toggle |
+| Foreign colors | `#16a34a` (dark), `#22c55e` (medium), `#86efac` (light) |
+| Local colors | `#2563eb` (dark), `#3b82f6` (medium), `#93c5fd` (light) |
+| Retail colors | `#dc2626` (dark), `#ef4444` (medium), `#fca5a5` (light) |
+| Point style | `pointRadius: 0` for all points except last point |
+| Last point | Colored circle (8px radius) at line endpoint |
+| Legend | Custom HTML legend below chart with colored circles + broker code + name |
+| Zero line | Dashed grey line at y=0 (same plugin as SmartMoney chart) |
+
+### 17.8 Top N Toggle
+
+| Button | Behavior |
+|--------|----------|
+| **Top 3** | Show only rank-1 broker from each category (3 lines) |
+| **Top 6** | Show rank 1-2 from each category (6 lines) |
+| **Top 9** | Show all 3 per category (9 lines, default) |
+
+Toggle hides/shows Chart.js datasets by setting `dataset.hidden = true/false`, no re-fetch needed.
+
+### 17.9 Cumulative Calculation (Frontend)
+
+```javascript
+// Same pattern as existing renderChart()
+const cumulative = {};
+brokers.forEach(b => { cumulative[b.code] = []; });
+
+let accumulators = {};
+brokers.forEach(b => { accumulators[b.code] = 0; });
+
+dates.forEach((date, i) => {
+    brokers.forEach(b => {
+        const dailyNet = series[b.code]?.[i] || 0;
+        accumulators[b.code] += dailyNet;
+        cumulative[b.code].push(accumulators[b.code]);
+    });
+});
+```
+
+### 17.10 Edge Cases
+
+| Case | Handling |
+|------|---------|
+| Broker has 0 activity on a date | Push 0, cumulative stays flat |
+| Broker appears mid-range (IPO broker, new entrant) | Missing dates = 0, cumulative starts from first appearance |
+| < 3 brokers in a category | Show whatever is available (e.g., 2 foreign + 3 local + 3 retail = 8 lines) |
+| No broker data at all | Show "Belum ada data broker flow" message in chart area |
+| Mobile (< 576px) | Chart height reduced to 200px, legend wraps to 2 rows |
+
+### 17.11 Implementation Plan
+
+| # | Task | File | Type |
+|---|------|------|------|
+| 1 | Add `GET /cache-summary/broker-daily` endpoint | `workers/api-saham/src/index.js` | BACKEND |
+| 2 | Add R2 cache read/write for `broker/daily/v1/` | `workers/api-saham/src/index.js` | BACKEND |
+| 3 | Add sub-tab toggle HTML (SmartMoney Flow / Broker Flow) | `idx/emiten/broker-summary.html` | FRONTEND |
+| 4 | Add `#brokerFlowChart` canvas + legend container | `idx/emiten/broker-summary.html` | FRONTEND |
+| 5 | Add Top 3/6/9 toggle buttons | `idx/emiten/broker-summary.html` | FRONTEND |
+| 6 | Implement `fetchBrokerDailyData()` | `idx/emiten/broker-summary.js` | FRONTEND |
+| 7 | Implement `renderBrokerFlowChart()` | `idx/emiten/broker-summary.js` | FRONTEND |
+| 8 | Wire sub-tab toggle + lazy init | `idx/emiten/broker-summary.js` | FRONTEND |
+| 9 | Add CSS for sub-tab active state + legend styling | `idx/emiten/broker-summary.html` | FRONTEND |
+
+### 17.12 Performance Considerations
+
+- **Lazy fetch**: `/cache-summary/broker-daily` is ONLY called when user clicks "Broker Flow" tab
+- **Separate R2 cache**: Does not invalidate or increase size of existing `/cache-summary` cache
+- **Client-side cumulative**: Daily net values are small arrays; cumulative computed in browser
+- **No re-fetch on toggle**: Top 3/6/9 toggle only hides/shows datasets, no additional API call
+- **Estimated response size**: ~3-8KB for 14-day range with 9 brokers (vs ~5KB for cache-summary)
+
+---
+
+*Document Version: 1.8*
 *Created: 2026-02-10*
-*Last Updated: 2026-02-14*
+*Last Updated: 2026-02-27*
 *Author: Copilot + mkemalw*
-*Changelog: v1.7 — Z-Score filters migrated to dropdown relation per metric (Effort Rel, NGR Rel, VWAP Rel) with AND combination across active dropdowns*
+*Changelog: v1.8 — Added §17 Broker Flow Chart PRD: per-broker cumulative time series with separate cache, sub-tab toggle, Top 3/6/9, colored circle legend*

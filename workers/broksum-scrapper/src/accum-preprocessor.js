@@ -105,6 +105,7 @@ export async function runAccumPreprocessor(env, { sendWebhook }) {
             let fn = 0, ln = 0, rn = 0;
             let allPos = true;
             let foreignAllPos = true;
+            let localAllPos = true;
             let streak = 0;
             let streakCounting = true;
 
@@ -125,6 +126,7 @@ export async function runAccumPreprocessor(env, { sendWebhook }) {
                 rn += d.retail_net || 0;
                 if (d.smart_net <= 0) allPos = false;
                 if ((d.foreign_net || 0) <= 0) foreignAllPos = false;
+                if ((d.local_net || 0) <= 0) localAllPos = false;
             }
 
             const sm = fn + ln;
@@ -145,6 +147,7 @@ export async function runAccumPreprocessor(env, { sendWebhook }) {
                 streak,
                 allPos,
                 foreignAllPos,
+                localAllPos,
                 foreignDominant,
                 days: windowDays.length,
                 complete: true,

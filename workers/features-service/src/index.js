@@ -39,7 +39,20 @@ export default {
         const cron = event.cron;
         console.log(`Cron Triggered: ${cron}`);
 
-        const date = new Date().toISOString().split("T")[0]; // Today (UTC)
+        // Use last trading day instead of today's UTC date. This ensures
+        // weekends/holidays still find footprint data from the previous Friday.
+        let date = new Date().toISOString().split("T")[0]; // Today (UTC)
+        {
+            let dd = new Date(`${date}T12:00:00Z`);
+            while ([0, 6].includes(dd.getUTCDay()) || (this.IDX_HOLIDAYS && this.IDX_HOLIDAYS.has(dd.toISOString().slice(0, 10)))) {
+                dd = new Date(dd.getTime() - 86400000);
+            }
+            const tradingDate = dd.toISOString().slice(0, 10);
+            if (tradingDate !== date) {
+                console.log(`[scheduled] Adjusted date from ${date} (non-trading) to ${tradingDate} (last trading day)`);
+                date = tradingDate;
+            }
+        }
 
         // 1. Dispatch Job (Calculations) - 11:30 UTC
         // 1. Dispatch Job (Calculations) - 11:30 UTC
@@ -184,17 +197,18 @@ export default {
                             }
                         }
 
-                        // S2: Defensive growth_pct fallback — fires only when growth_pct is still null
-                        // after the sparse-data block above (e.g. sparse + no prevStats.close).
-                        // NOTE: does NOT override item.p — growth_pct is display-only in this path.
-                        if (item.growth_pct == null) {
+                        // S2: ALWAYS override growth_pct with close-to-close (prevClose → curClose)
+                        // when prevClose is available. This ensures GROWTH column matches standard
+                        // stock app conventions (Google Finance, IPOT, etc.) regardless of candle count.
+                        // NOTE: item.p (Mom%) is NOT overridden for ≥30 candle items — it retains
+                        // its intraday semantics for technical scoring purposes.
+                        {
                             const curClose = Number(processedStatsMap.get(ticker)?.close);
                             const prevClose = Number(prevProcessedStatsMap.get(ticker)?.close);
-                            if (Number.isFinite(curClose) && Number.isFinite(prevClose) && prevClose > 0) {
+                            if (Number.isFinite(curClose) && curClose > 0 && Number.isFinite(prevClose) && prevClose > 0) {
                                 item.open_price = prevClose;
                                 item.recent_price = curClose;
                                 item.growth_pct = Number((((curClose - prevClose) / prevClose) * 100).toFixed(2));
-                                // item.p intentionally NOT overridden here
                             }
                         }
                         item.src = 'FULL';  // Source indicator
@@ -307,20 +321,60 @@ export default {
             // D1 has no footprint data for the new UTC date, so the cron produces
             // zscore-only output. Overwriting the previous FULL summary would cause
             // empty charts for users opening the page in the morning.
+            //
+            // EXCEPTION: Allow save when new output has significantly more items
+            // (e.g., v3.1 adds ZSCORE-only items with CVD/RVOL windows enrichment).
+            // This ensures weekend/holiday runs can enrich the summary even without
+            // fresh footprint candle data, as long as we're not reducing data quality.
             if (withFootprint === 0 && zscoreOnly > 0) {
                 const nowUTC = new Date();
                 const hourUTC = nowUTC.getUTCHours();
                 const isPreMarket = hourUTC < 2 || hourUTC >= 10; // Before 09:00 WIB or after 17:00 WIB
                 if (isPreMarket) {
-                    // Check if existing summary has footprint data — if so, preserve it
                     try {
                         const existingObj = await env.SSSAHAM_EMITEN.get('features/footprint-summary.json');
                         if (existingObj) {
                             const existing = await existingObj.json();
                             const existingFull = Number(existing?.validation?.with_footprint || 0);
-                            if (existingFull > 0) {
-                                console.log(`[PRE-MARKET GUARD] Skipping save: current summary has ${existingFull} full items, new has 0. Preserving existing.`);
+                            const existingCount = Number(existing?.count || existing?.items?.length || 0);
+
+                            // Allow save if new output has ≥20% more items than existing
+                            // (covers v3.0→v3.1 upgrade where ZSCORE items are added).
+                            // Also merge: carry forward FULL items' intraday fields from existing.
+                            if (existingFull > 0 && items.length <= existingCount * 1.2) {
+                                console.log(`[PRE-MARKET GUARD] Skipping save: current summary has ${existingFull} full, ${existingCount} total items, new has ${items.length}. Preserving existing.`);
                                 return output; // Return but don't save
+                            }
+
+                            // New output has significantly more items — allow save but
+                            // carry forward intraday fields (d, p, div, net_delta, v)
+                            // from existing FULL items so we don't lose intraday quality.
+                            if (existingFull > 0) {
+                                const existingMap = new Map(
+                                    (existing?.items || []).map(it => [String(it?.t || '').toUpperCase(), it])
+                                );
+                                let carried = 0;
+                                for (const item of items) {
+                                    const prev = existingMap.get(String(item.t || '').toUpperCase());
+                                    if (!prev || prev.src === 'ZSCORE') continue;
+                                    // Carry forward intraday-specific fields from existing FULL items
+                                    // only if current item has zero/placeholder values
+                                    if (item.d === 0 && prev.d !== 0) item.d = prev.d;
+                                    if (item.p === 0 && prev.p !== 0) item.p = prev.p;
+                                    if (item.div === 0 && prev.div !== 0) item.div = prev.div;
+                                    if ((item.net_delta === 0 || item.net_delta == null) && prev.net_delta) {
+                                        item.net_delta = prev.net_delta;
+                                        item.cvd = prev.cvd ?? prev.net_delta;
+                                    }
+                                    if (!item.v && prev.v) item.v = prev.v;
+                                    if (!item.freq_tx && prev.freq_tx) item.freq_tx = prev.freq_tx;
+                                    if (item.growth_pct == null && prev.growth_pct != null) item.growth_pct = prev.growth_pct;
+                                    if (!item.open_price && prev.open_price) item.open_price = prev.open_price;
+                                    if (!item.recent_price && prev.recent_price) item.recent_price = prev.recent_price;
+                                    if (prev.src === 'FULL') item.src = 'FULL_CARRIED';
+                                    carried++;
+                                }
+                                console.log(`[PRE-MARKET GUARD] Merging: carried forward ${carried} FULL items' intraday data into ${items.length} new items.`);
                             }
                         }
                     } catch (e) {
@@ -340,11 +394,25 @@ export default {
         }
     },
 
+    // IDX public holidays (market-closed weekdays)
+    IDX_HOLIDAYS: new Set([
+        // 2025
+        '2025-01-01','2025-01-27','2025-01-28','2025-03-28','2025-03-31',
+        '2025-04-01','2025-04-18','2025-05-01','2025-05-12','2025-05-29',
+        '2025-06-01','2025-06-06','2025-06-27','2025-09-05',
+        '2025-12-25','2025-12-26',
+        // 2026
+        '2026-01-01','2026-02-16','2026-02-17','2026-03-11','2026-03-31',
+        '2026-04-01','2026-04-02','2026-04-03','2026-04-10','2026-05-01',
+        '2026-05-21','2026-06-01','2026-06-08','2026-06-29','2026-08-17',
+        '2026-09-08','2026-12-25','2026-12-26'
+    ]),
+
     prevTradingDayUTC(dateStr) {
         let d = new Date(`${dateStr}T12:00:00Z`);
         do {
             d = new Date(d.getTime() - 86400000);
-        } while ([0, 6].includes(d.getUTCDay()));
+        } while ([0, 6].includes(d.getUTCDay()) || this.IDX_HOLIDAYS.has(d.toISOString().slice(0, 10)));
         return d.toISOString().slice(0, 10);
     },
 
@@ -389,12 +457,24 @@ export default {
      * Returns array where [0]=date (today), [1]=prev day, ..., [N-1]=oldest.
      */
     async fetchProcessedDailyStatsMaps(env, date, n = 20) {
-        const dates = [date];
-        let d = new Date(`${date}T12:00:00Z`);
+        // Ensure dates[0] is always the most recent TRADING day, not a weekend/holiday.
+        // This prevents processedStatsMaps[0] from being empty on non-trading days,
+        // which would break RVOL calculation (todayVol = 0) and shift CVD windows.
+        let startDate = date;
+        {
+            let sd = new Date(`${date}T12:00:00Z`);
+            while ([0, 6].includes(sd.getUTCDay()) || this.IDX_HOLIDAYS.has(sd.toISOString().slice(0, 10))) {
+                sd = new Date(sd.getTime() - 86400000);
+            }
+            startDate = sd.toISOString().slice(0, 10);
+        }
+        const dates = [startDate];
+        let d = new Date(`${startDate}T12:00:00Z`);
         while (dates.length < n) {
             d = new Date(d.getTime() - 86400000);
-            if (![0, 6].includes(d.getUTCDay())) {
-                dates.push(d.toISOString().slice(0, 10));
+            const ds = d.toISOString().slice(0, 10);
+            if (![0, 6].includes(d.getUTCDay()) && !this.IDX_HOLIDAYS.has(ds)) {
+                dates.push(ds);
             }
         }
         return Promise.all(dates.map(dt => this.fetchProcessedDailyStatsMap(env, dt)));
@@ -1277,7 +1357,19 @@ export default {
             }
 
             if (url.pathname === "/aggregate-footprint") {
-                const date = url.searchParams.get("date") || new Date().toISOString().split("T")[0];
+                let date = url.searchParams.get("date") || new Date().toISOString().split("T")[0];
+                // Auto-adjust to last trading day if date falls on weekend/holiday
+                {
+                    let dd = new Date(`${date}T12:00:00Z`);
+                    while ([0, 6].includes(dd.getUTCDay()) || (this.IDX_HOLIDAYS && this.IDX_HOLIDAYS.has(dd.toISOString().slice(0, 10)))) {
+                        dd = new Date(dd.getTime() - 86400000);
+                    }
+                    const adjusted = dd.toISOString().slice(0, 10);
+                    if (adjusted !== date) {
+                        console.log(`[aggregate-footprint] Adjusted date from ${date} to ${adjusted} (last trading day)`);
+                        date = adjusted;
+                    }
+                }
                 const isDebug = url.searchParams.get("debug") === "1";
                 const hourParam = url.searchParams.get("hour");
                 const hour = hourParam ? parseInt(hourParam) : undefined;

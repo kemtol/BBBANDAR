@@ -504,6 +504,63 @@
             padding: 0.15rem 0.5rem;
             line-height: 1.1;
         }
+
+        /* Chart Sub-Tab Toggle */
+        .chart-subtab-group .btn {
+            font-size: 0.8rem;
+            padding: 0.2rem 0.75rem;
+            border-radius: 4px;
+            border: 1px solid var(--border);
+            color: var(--text-muted);
+            background: transparent;
+        }
+        .chart-subtab-group .btn.active {
+            background: var(--primary);
+            border-color: var(--primary);
+            color: var(--text-inverse);
+        }
+        .chart-subtab-group .btn:hover:not(.active) {
+            background: var(--table-hover-bg);
+            color: var(--text);
+        }
+        /* Broker Flow Legend */
+        #broker-flow-legend {
+            font-size: 0.75rem;
+            line-height: 1.6;
+        }
+        #broker-flow-legend .broker-legend-item {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            margin-right: 10px;
+            white-space: nowrap;
+        }
+        #broker-flow-legend .broker-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            display: inline-block;
+            flex-shrink: 0;
+        }
+        /* Broker TopN plain text links */
+        #broker-topn-group {
+            gap: 0.6rem;
+        }
+        #broker-topn-group .broker-topn-link {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            text-decoration: none;
+            cursor: pointer;
+            transition: color 0.15s;
+            white-space: nowrap;
+        }
+        #broker-topn-group .broker-topn-link:hover {
+            color: var(--text);
+        }
+        #broker-topn-group .broker-topn-link.active {
+            color: var(--accent-primary, var(--primary));
+            font-weight: 600;
+        }
     </style>
 </head>
 
@@ -638,7 +695,7 @@
                                 Strict
                             </a>
                             <a href="#" class="btn btn-outline-danger btn-sm" style="width: 85px;font-size: 0.9rem;"
-                                data-preset="ara" title="ARA Hunter: Effort positif + Δ%≥3 + Mom≥1 + RVOL≥1.2">
+                                data-preset="ara" title="ARA Hunter: Saham ARA (Δ%≥20) + Smart Money + Effort positif + RVOL≥1.5">
                                 🚀 ARA
                             </a>
                         </div>
@@ -729,6 +786,8 @@
                         </button>
                         <ul class="dropdown-menu dropdown-menu-sm">
                             <li><a class="dropdown-item small" href="#" data-filter="local" data-val="any">Any</a></li>
+                            <li><a class="dropdown-item small" href="#" data-filter="local"
+                                    data-val="allPos">Positif tiap hari</a></li>
                             <li><a class="dropdown-item small" href="#" data-filter="local"
                                     data-val="positive">Kumulatif &gt; 0</a></li>
                         </ul>
@@ -1279,10 +1338,26 @@
             <div class="tab-content" id="detailTabContent">
                 <!-- TAB: SUMMARY -->
                 <div class="tab-pane fade show active" id="summary-pane" role="tabpanel">
-                    <!-- CHART -->
+                    <!-- CHART SUB-TAB TOGGLE -->
                     <div class="mb-1">
-                        <div class="d-flex justify-content-between align-items-center mb-3 px-1">
-                            <div class="d-flex align-items-center gap-2 flex-wrap legend-group">
+                        <div class="d-flex justify-content-between align-items-center my-2 py-2 px-1">
+                            <div class="btn-group btn-group-sm chart-subtab-group" id="chart-subtab-group">
+                                <button class="btn active" data-chart-tab="smartmoney">Smartmoney</button>
+                                <button class="btn" data-chart-tab="brokerflow">Broker</button>
+                            </div>
+                            <div id="broker-topn-group" class="align-items-center gap-3 me-2 d-none">
+                                <a href="#" class="broker-topn-link" data-topn="3">Top 3</a>
+                                <a href="#" class="broker-topn-link" data-topn="5">Top 5</a>
+                                <a href="#" class="broker-topn-link active" data-topn="9">Top 9</a>
+                            </div>
+                        </div>
+
+                        <!-- SMARTMONEY FLOW CHART (existing) -->
+                        <div id="smartmoney-chart-panel">
+                            <div class="chart-container-responsive">
+                                <canvas id="detailChart"></canvas>
+                            </div>
+                            <div class="d-flex align-items-center gap-2 flex-wrap legend-group my-2 py-2 px-1">
                                 <span class="legend-swatch legend-foreign">━ Foreign</span>
                                 <span class="legend-swatch legend-retail">━ Retail</span>
                                 <span class="legend-swatch legend-local">━ Local</span>
@@ -1290,11 +1365,17 @@
                                 <span class="legend-swatch legend-retail-fill">▮ Retail</span>
                                 <span class="legend-swatch legend-price">- - Price</span>
                             </div>
-                            <small class="text-muted" style="font-size:0.75rem;">line: cumulative, bar: daily
-                                net</small>
                         </div>
-                        <div class="chart-container-responsive">
-                            <canvas id="detailChart"></canvas>
+
+                        <!-- BROKER FLOW CHART (new) -->
+                        <div id="broker-flow-chart-panel" style="display:none;">
+                            <div class="d-flex justify-content-end align-items-center mb-2 px-1 d-none">
+                                <small class="text-muted" style="font-size:0.75rem;">line: cumulative per broker</small>
+                            </div>
+                            <div class="chart-container-responsive">
+                                <canvas id="brokerFlowChart"></canvas>
+                            </div>
+                            <div id="broker-flow-legend" class="d-flex flex-wrap gap-1 my-2 py-2 px-1"></div>
                         </div>
                     </div>
 
