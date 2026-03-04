@@ -6785,6 +6785,149 @@ export default {
         return env.FEATURES_SERVICE.fetch(req);
       }
 
+      // ROUTE: Broker Logo — on-demand fetch + cache in R2
+      // GET /broker/logo/MG  → returns JPEG image
+      // Flow: check R2 sssaham-emiten/broker/logo/MG.jpg → if miss, fetch from IDX → save to R2 → serve
+      if (url.pathname.startsWith("/broker/logo/")) {
+        const code = url.pathname.split("/").pop().toUpperCase();
+        if (!/^[A-Z0-9]{2,4}$/.test(code)) {
+          return new Response("Invalid broker code", { status: 400 });
+        }
+
+        const r2Key = `broker/logo/${code}.jpg`;
+        const cacheHeaders = {
+          "Content-Type": "image/jpeg",
+          "Cache-Control": "public, max-age=2592000, immutable", // 30 days
+          "Access-Control-Allow-Origin": "*",
+        };
+
+        // 1. Try R2 cache
+        const cached = await env.SSSAHAM_EMITEN.get(r2Key);
+        if (cached) {
+          return new Response(cached.body, { headers: cacheHeaders });
+        }
+
+        // 2. Fetch from IDX on-demand
+        try {
+          const idxUrl = `https://www.idx.co.id/StaticData/Brokers/Logo/${code}.jpg`;
+          const idxResp = await fetch(idxUrl, {
+            headers: { "User-Agent": "Mozilla/5.0", "Referer": "https://www.idx.co.id/" }
+          });
+
+          if (!idxResp.ok || !idxResp.headers.get("content-type")?.includes("image")) {
+            // Return 1x1 transparent pixel as fallback
+            const pixel = new Uint8Array([
+              0x47,0x49,0x46,0x38,0x39,0x61,0x01,0x00,0x01,0x00,0x80,0x00,0x00,
+              0xFF,0xFF,0xFF,0x00,0x00,0x00,0x21,0xF9,0x04,0x01,0x00,0x00,0x00,
+              0x00,0x2C,0x00,0x00,0x00,0x00,0x01,0x00,0x01,0x00,0x00,0x02,0x02,
+              0x44,0x01,0x00,0x3B
+            ]);
+            return new Response(pixel, {
+              headers: { "Content-Type": "image/gif", "Cache-Control": "public, max-age=86400", "Access-Control-Allow-Origin": "*" }
+            });
+          }
+
+          const imgBuffer = await idxResp.arrayBuffer();
+
+          // 3. Save to R2 (fire-and-forget)
+          await env.SSSAHAM_EMITEN.put(r2Key, imgBuffer, {
+            httpMetadata: { contentType: "image/jpeg" }
+          });
+
+          return new Response(imgBuffer, { headers: cacheHeaders });
+        } catch (e) {
+          return new Response("Logo fetch error", { status: 502 });
+        }
+      }
+
+      // ROUTE: Broker Activity — Read BYBROKER data from R2
+      // GET /broker-activity?broker=MG&days=1  (single broker, N trading days aggregated)
+      // GET /broker-activity?days=1             (all brokers, returns list of available brokers with summary)
+      if (url.pathname === "/broker-activity") {
+        const broker = (url.searchParams.get("broker") || "").toUpperCase();
+        const days = Math.max(1, Math.min(20, parseInt(url.searchParams.get("days")) || 1));
+        const wibNow = new Date(Date.now() + 7 * 3600000);
+        const tradingDays = [];
+        let d = new Date(wibNow); d.setUTCHours(0, 0, 0, 0);
+        let checked = 0;
+        while (tradingDays.length < days && checked < days * 3) {
+          const dow = d.getUTCDay();
+          if (dow !== 0 && dow !== 6) tradingDays.push(d.toISOString().slice(0, 10));
+          d.setUTCDate(d.getUTCDate() - 1);
+          checked++;
+        }
+
+        if (broker && /^[A-Z0-9]{2,3}$/.test(broker)) {
+          // Single broker — aggregate N days
+          const allStocks = new Map();
+          const loadedDates = [];
+
+          for (const date of tradingDays) {
+            const [sy, sm, sd] = date.split("-");
+            const r2Key = `BYBROKER_${broker}/${sy}/${sm}/${sd}.json`;
+            try {
+              const obj = await env.RAW_BROKSUM.get(r2Key);
+              if (!obj) continue;
+              const data = await obj.json();
+              loadedDates.push(date);
+              for (const s of (data.stocks || [])) {
+                if (!allStocks.has(s.stock_code)) {
+                  allStocks.set(s.stock_code, {
+                    stock_code: s.stock_code,
+                    buy_val: 0, sell_val: 0, net_val: 0, total_val: 0,
+                    buy_vol: 0, sell_vol: 0, net_vol: 0,
+                    buy_freq: 0, sell_freq: 0
+                  });
+                }
+                const agg = allStocks.get(s.stock_code);
+                agg.buy_val += Number(s.buy_val) || 0;
+                agg.sell_val += Number(s.sell_val) || 0;
+                agg.net_val += Number(s.net_val) || 0;
+                agg.total_val += Number(s.total_val) || 0;
+                agg.buy_vol += Number(s.buy_vol) || 0;
+                agg.sell_vol += Number(s.sell_vol) || 0;
+                agg.net_vol += Number(s.net_vol) || 0;
+                agg.buy_freq += Number(s.buy_freq) || 0;
+                agg.sell_freq += Number(s.sell_freq) || 0;
+              }
+            } catch (e) { console.warn(`[broker-activity] R2 read error ${r2Key}: ${e.message}`); }
+          }
+
+          const stocks = Array.from(allStocks.values())
+            .sort((a, b) => Math.abs(b.net_val) - Math.abs(a.net_val));
+
+          return json({
+            ok: true, broker, days,
+            dates_loaded: loadedDates,
+            breadth: stocks.length,
+            stocks
+          });
+
+        } else {
+          // All brokers — list available for first trading day
+          const targetDate = tradingDays[0];
+          if (!targetDate) return json({ ok: false, error: "No trading day found" });
+          const [sy, sm, sd] = targetDate.split("-");
+          const prefix = `BYBROKER_`;
+          const brokers = [];
+
+          try {
+            const listed = await env.RAW_BROKSUM.list({ prefix });
+            const seen = new Set();
+            for (const obj of (listed.objects || [])) {
+              // key = BYBROKER_MG/2026/03/05.json
+              const m = obj.key.match(/^BYBROKER_([A-Z0-9]{2,3})\//);
+              if (m && !seen.has(m[1])) {
+                seen.add(m[1]);
+                brokers.push(m[1]);
+              }
+            }
+          } catch (e) { /* ignore */ }
+
+          return json({ ok: true, date: targetDate, brokers: brokers.sort(), count: brokers.length });
+        }
+      }
+
       // Fallback
       return json({ error: "Not Found", method: req.method, path: url.pathname }, 404);
 

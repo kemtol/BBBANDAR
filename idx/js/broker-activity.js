@@ -98,6 +98,10 @@ function catBadge(cat) {
     return map[cat] || '<span class="cat-badge">?</span>';
 }
 
+function brokerLogo(code) {
+    return `<img src="${API_BASE}/broker/logo/${code}" alt="${code}" class="broker-logo" loading="lazy" onerror="this.style.display='none'">`;
+}
+
 // ── Z-Score & Conviction Helpers ──
 
 function fmtZ(z, minCount) {
@@ -314,7 +318,7 @@ function renderTable() {
             html += `<tr>
                 <td class="text-center sticky-col sticky-col-no">${start + i + 1}</td>
                 <td class="sticky-col sticky-col-code fw-semibold">
-                    ${r.broker} ${catBadge(cat)}
+                    ${brokerLogo(r.broker)} ${r.broker} ${catBadge(cat)}
                 </td>
                 <td class="fw-semibold">
                     <a href="/idx/emiten/detail.html?code=${r.stock_code}" class="text-decoration-none"
