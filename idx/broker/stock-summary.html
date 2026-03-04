@@ -1,0 +1,732 @@
+<!DOCTYPE html>
+<html lang="id">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0b0b0e" />
+
+    <script>
+        (function () {
+            const root = document.documentElement;
+            root.setAttribute('data-theme', 'dark');
+            root.style.colorScheme = 'dark';
+            try { localStorage.setItem('ui:theme', 'dark'); } catch (e) { }
+        })();
+    </script>
+
+    <title>SSSAHAM - Broker Activity Scanner</title>
+
+    <link rel="apple-touch-icon" sizes="180x180" href="../img/apple-touch-icon.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="../img/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="../img/favicon-16x16.png">
+
+    <!-- Bootstrap & Font Awesome -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css" rel="stylesheet" />
+    <link rel="stylesheet" href="../../theme.css" />
+    <link href="../css/component.css" rel="stylesheet" />
+
+    <style>
+        :root {
+            --table-header-text: var(--muted);
+            --table-hover-bg: #f1f5f9;
+            --sticky-col-bg: #ffffff;
+            --sticky-col-hover-bg: #eef2f7;
+            --card-divider: rgba(148, 163, 184, 0.35);
+            --card-radius: 12px;
+            --cat-foreign: #3b82f6;
+            --cat-local: #22c55e;
+            --cat-retail: #f97316;
+            --pull-indicator-bg: #f6f8fb;
+            --pull-indicator-icon: var(--muted);
+        }
+
+        :root[data-theme="dark"] {
+            --table-hover-bg: rgba(255, 255, 255, 0.05);
+            --sticky-col-bg: #171c24;
+            --sticky-col-hover-bg: #202734;
+            --card-divider: rgba(82, 94, 106, 0.55);
+            --pull-indicator-bg: var(--surface-alt);
+            --pull-indicator-icon: var(--text-secondary);
+        }
+
+        body {
+            background: var(--bg);
+            color: var(--text);
+            transition: background-color 0.3s ease, color 0.3s ease;
+        }
+
+        body,
+        .card,
+        .navbar,
+        .dropdown-menu,
+        .form-control {
+            transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease;
+        }
+
+        .bg-white {
+            background-color: var(--surface) !important;
+            color: var(--text);
+        }
+
+        .text-muted {
+            color: var(--text-muted) !important;
+        }
+
+        .card {
+            background-color: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--card-radius);
+            color: var(--text);
+        }
+
+        .card-swing {
+            border-radius: var(--card-radius);
+            border: 1px solid var(--card-divider);
+            box-shadow: none;
+            background: transparent !important;
+        }
+
+        .table-broker {
+            font-size: 0.9rem;
+            white-space: nowrap;
+            color: var(--text);
+        }
+
+        .table-broker thead th {
+            text-transform: uppercase;
+            font-size: 0.9rem;
+            color: var(--table-header-text);
+            border-bottom-color: var(--border);
+        }
+
+        .table-broker tbody tr {
+            cursor: pointer;
+        }
+
+        .table-broker tbody tr:hover {
+            background-color: var(--table-hover-bg);
+        }
+
+        #broker-table .sticky-col {
+            position: sticky;
+            background: var(--sticky-col-bg);
+            background-clip: padding-box;
+            overflow: hidden;
+        }
+
+        #broker-table {
+            border-collapse: separate;
+            border-spacing: 0;
+        }
+
+        #broker-table thead .sticky-col {
+            z-index: 6;
+        }
+
+        #broker-table tbody .sticky-col {
+            z-index: 3;
+        }
+
+        #broker-table .sticky-col-no {
+            left: 0;
+            min-width: 42px;
+            width: 42px;
+            max-width: 42px;
+        }
+
+        #broker-table .sticky-col-code {
+            left: 42px;
+            box-shadow: 1px 0 0 var(--border);
+        }
+
+        #broker-table tbody tr:hover .sticky-col {
+            background: var(--sticky-col-hover-bg) !important;
+        }
+
+        #broker-table thead th {
+            background: var(--sticky-col-bg);
+        }
+
+        .cat-badge {
+            font-size: 0.7rem;
+            border-radius: 999px;
+            padding: 2px 10px;
+            font-weight: 600;
+            letter-spacing: 0.3px;
+        }
+
+        .cat-foreign {
+            background: rgba(59, 130, 246, 0.15);
+            color: var(--cat-foreign);
+        }
+
+        .cat-local {
+            background: rgba(34, 197, 94, 0.15);
+            color: var(--cat-local);
+        }
+
+        .cat-retail {
+            background: rgba(249, 115, 22, 0.15);
+            color: var(--cat-retail);
+        }
+
+        .quadrant-badge {
+            width: 22px;
+            text-align: center;
+            border-radius: 999px;
+            font-size: 0.7rem;
+            font-weight: 600;
+            display: inline-block;
+            height: 22px;
+            line-height: 22px;
+        }
+
+        .top-stocks-cell {
+            max-width: 200px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .top-stocks-cell .stock-tag {
+            font-size: 0.7rem;
+            background: var(--surface-alt, #f1f5f9);
+            border-radius: 4px;
+            padding: 1px 6px;
+            display: inline-block;
+            margin: 1px 2px;
+            color: var(--text);
+        }
+
+        @media (max-width: 767px) {
+            .hide-mobile {
+                display: none !important;
+            }
+        }
+
+        #pull-indicator {
+            position: fixed;
+            top: -60px;
+            left: 0;
+            right: 0;
+            height: 60px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: var(--pull-indicator-bg);
+            transition: top 0.2s ease-out;
+            z-index: 1000;
+            color: var(--pull-indicator-icon);
+        }
+
+        #pull-indicator.visible {
+            top: 0;
+        }
+
+        #pull-indicator i {
+            font-size: 1.5rem;
+            color: var(--pull-indicator-icon);
+            transition: transform 0.2s;
+        }
+
+        #pull-indicator.ready i {
+            transform: rotate(180deg);
+        }
+
+        .chart-container-responsive {
+            height: 50vh;
+            width: 100%;
+            position: relative;
+        }
+
+        #broker-bubble-widget {
+            min-height: 35vh;
+        }
+
+        @media (orientation: portrait) {
+            .chart-container-responsive {
+                height: 30vh !important;
+            }
+
+            #broker-bubble-widget {
+                min-height: 50vh !important;
+            }
+        }
+
+        .nav-title {
+            font-size: 0.9rem !important;
+        }
+
+        #preset-selector a.btn,
+        #filter-row button {
+            font-size: 0.9rem;
+            border-radius: 0px;
+        }
+
+        #active-pills {
+            padding: 1rem 0;
+        }
+
+        #active-pills .badge {
+            font-size: 0.9rem;
+        }
+
+        .navbar {
+            box-shadow: none;
+        }
+
+        #theme-toggle-icon {
+            cursor: pointer;
+            color: var(--navbar-text);
+            transition: color 0.2s ease;
+        }
+
+        .quad-legend {
+            font-size: 0.75rem;
+        }
+
+        .quad-legend .q-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+
+        /* ── Column Group Headers ── */
+        .thead-group-row th {
+            font-size: 0.7rem;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            padding: 4px 6px !important;
+            white-space: nowrap;
+            vertical-align: bottom;
+        }
+
+        .thead-group-label {
+            border-left: 1px solid var(--card-divider);
+        }
+
+        .thead-group-end {
+            border-right: 1px solid var(--card-divider);
+        }
+
+        .thead-group-row th[rowspan] {
+            vertical-align: middle;
+        }
+
+        /* Dark mode overrides */
+        html[data-theme="dark"] .table-broker tbody tr:hover {
+            color: var(--text);
+        }
+
+        html[data-theme="dark"] .dropdown-menu {
+            background-color: var(--surface-alt);
+            border-color: var(--border);
+            color: var(--text);
+        }
+
+        html[data-theme="dark"] .dropdown-item:hover {
+            background-color: var(--table-hover-bg);
+            color: var(--text);
+        }
+
+        html[data-theme="dark"] .btn-outline-secondary {
+            color: var(--text);
+            border-color: var(--border);
+        }
+
+        html[data-theme="dark"] .btn-outline-secondary:hover {
+            background-color: var(--btn-outline-secondary-hover);
+            color: var(--text);
+        }
+
+        html[data-theme="dark"] .btn-outline-secondary.active,
+        html[data-theme="dark"] .btn-outline-secondary:active {
+            background-color: var(--primary);
+            border-color: var(--primary);
+            color: var(--text-inverse);
+        }
+
+        html[data-theme="dark"] .form-control {
+            background-color: var(--surface-alt);
+            color: var(--text);
+            border-color: var(--border);
+        }
+
+        html[data-theme="dark"] .form-control::placeholder {
+            color: var(--text-muted);
+        }
+
+        html[data-theme="dark"] .spinner-border.text-primary {
+            color: var(--primary) !important;
+        }
+
+        html[data-theme="dark"] .pagination .page-link {
+            background-color: var(--surface-alt);
+            border-color: var(--border);
+            color: var(--text);
+        }
+
+        html[data-theme="dark"] .pagination .page-item.active .page-link {
+            background-color: var(--primary);
+            border-color: var(--primary);
+            color: var(--text-inverse);
+        }
+
+        html[data-theme="dark"] .shadow-sm {
+            box-shadow: var(--shadow-elevated) !important;
+        }
+
+        html[data-theme="dark"] .top-stocks-cell .stock-tag {
+            background: var(--surface-alt);
+        }
+    </style>
+</head>
+
+<body>
+    <!-- Pull to Refresh Indicator -->
+    <div id="pull-indicator">
+        <i class="fa-solid fa-arrow-down"></i>
+        <span class="ms-2 small text-muted" id="pull-text">Tarik untuk refresh</span>
+    </div>
+
+    <!-- NAVBAR -->
+    <nav class="navbar sticky-top py-3">
+        <div class="container d-flex align-items-center justify-content-between"
+            style="max-width: 1440px;position: relative;">
+            <div class="d-flex align-items-center gap-3" style="min-width: 140px;">
+                <i class="fa-solid fa-circle-half-stroke d-none" id="theme-toggle-icon"
+                    title="Toggle theme (Shift + D)"></i>
+                <a href="https://buy.sssaham.com" id="nav-back" class="d-flex align-items-center text-decoration-none">
+                    <i class="fa-solid fa-chevron-left me-1"></i>
+                </a>
+            </div>
+            <div class="flex-grow-1 text-center">
+                <span class="nav-title" id="header-title">Broker Activity</span>
+            </div>
+            <div style="width:72px;" class="text-end">
+                <i class="fa-solid fa-magnifying-glass" style="cursor: pointer;" id="search-toggle-btn"></i>
+            </div>
+        </div>
+    </nav>
+
+    <div id="loading-indicator" class="text-center my-5">
+        <div class="spinner-border text-primary" role="status">
+            <span class="visually-hidden">Loading...</span>
+        </div>
+        <p class="small text-muted mt-2">Memuat data broker...</p>
+    </div>
+
+    <div id="app" class="container mb-3" style="display:none;">
+
+        <!-- INDEX VIEW -->
+        <div id="index-view">
+            <!-- DASHBOARD TABS -->
+            <ul class="nav nav-tabs mb-3" role="tablist">
+                <li class="nav-item" role="presentation">
+                    <a class="nav-link" href="../index.html">Feed</a>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <a class="nav-link active" href="../emiten/broker-summary.html">Brokerflow</a>
+                </li>
+            </ul>
+
+            <!-- ═══════════════════════════════════════════════════ -->
+            <!-- BUBBLE CHART: BROKER ACTIVITY MATRIX               -->
+            <!-- ═══════════════════════════════════════════════════ -->
+            <div id="broker-bubble-widget" class="p-3 mb-3 bg-white rounded-3 shadow-sm">
+                <!-- Header row: tabs + timeframe selector -->
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <div class="d-flex align-items-center gap-2">
+                        <ul class="nav nav-tabs nav-tabs-bubble mb-0" style="border-bottom:none;">
+                            <li class="nav-item">
+                                <a class="nav-link" href="/idx/emiten/broker-summary.html"
+                                    style="font-size:0.82rem;padding:4px 16px;border-radius:0px;background:transparent;color:#2563eb;border:1px solid #2563eb;font-weight:600;">by
+                                    Stock</a>
+                            </li>
+                            <li class="nav-item">
+                                <a class="nav-link active" href="#"
+                                    style="font-size:0.82rem;padding:4px 16px;border-radius:0px;background:#2563eb;color:#fff;border:1px solid #2563eb;font-weight:600;">by
+                                    Broker</a>
+                            </li>
+                        </ul>
+                    </div>
+                    <div class="btn-group btn-group-sm" id="broker-range-selector">
+                        <a href="#" class="btn btn-outline-secondary btn-sm" data-days="1">1D</a>
+                        <a href="#" class="btn btn-outline-secondary btn-sm active" data-days="5">5D</a>
+                        <a href="#" class="btn btn-outline-secondary btn-sm" data-days="10">10D</a>
+                        <a href="#" class="btn btn-outline-secondary btn-sm" data-days="20">20D</a>
+                    </div>
+                </div>
+
+                <!-- Subtitle -->
+                <div class="mb-2">
+                    <h6 class="text-muted mb-0" id="bubble-title">
+                        Broker Activity Matrix
+                        <span class="d-block small mt-1" style="font-weight:400;font-size:0.78rem;">
+                            X = Net Value &nbsp;|&nbsp; Y = Breadth (jumlah saham) &nbsp;|&nbsp; Size = Total Value
+                        </span>
+                    </h6>
+                </div>
+
+                <!-- Bubble Chart Canvas -->
+                <div id="broker-bubble-loading" class="text-center py-4">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                    <p class="small text-muted mt-2 mb-0">Memuat broker activity matrix...</p>
+                </div>
+                <div class="chart-container-responsive" style="height:35vh; display: none;"
+                    id="broker-bubble-container">
+                    <canvas id="broker-bubble-chart"></canvas>
+                </div>
+
+
+            </div>
+            <!-- Quadrant Legend -->
+            <div class="d-flex justify-content-center gap-3 mt-2 mb-4 quad-legend flex-wrap">
+                <span><span class="q-dot" style="background:rgba(34,197,94,0.75);"></span> Q1 Aggressive
+                    Accum</span>
+                <span><span class="q-dot" style="background:rgba(239,68,68,0.72);"></span> Q2 Aggressive
+                    Distrib</span>
+                <span><span class="q-dot" style="background:rgba(245,158,11,0.72);"></span> Q3 Quiet Exit</span>
+                <span><span class="q-dot" style="background:rgba(59,130,246,0.70);"></span> Q4 Stealth Accum</span>
+            </div>
+            <!-- ═══════════════════════════════════════════════════ -->
+            <!-- FILTER BAR                                         -->
+            <!-- ═══════════════════════════════════════════════════ -->
+            <div class="mb-2 container">
+                <!-- Row 1: Presets -->
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <div class="d-flex align-items-center gap-2 flex-wrap">
+                        <span class="text-muted fw-bold text-uppercase"
+                            style="font-size:0.85rem; letter-spacing:0.5px;width: 75px;">Preset</span>
+                        <div class="btn-group btn-group-sm" id="preset-selector">
+                            <a href="#" class="btn btn-outline-secondary btn-sm active"
+                                style="width: 65px;font-size: 0.9rem;" data-preset="all" title="Semua broker">
+                                All
+                            </a>
+                            <a href="#" class="btn btn-outline-primary btn-sm" style="width: 75px;font-size: 0.9rem;"
+                                data-preset="foreign" title="Broker asing saja">
+                                Foreign
+                            </a>
+                            <a href="#" class="btn btn-outline-success btn-sm" style="width: 65px;font-size: 0.9rem;"
+                                data-preset="local" title="Local fund saja">
+                                Local
+                            </a>
+                            <a href="#" class="btn btn-outline-warning btn-sm" style="width: 65px;font-size: 0.9rem;"
+                                data-preset="retail" title="Retail broker saja">
+                                Retail
+                            </a>
+                        </div>
+                    </div>
+                    <div class="d-flex align-items-center gap-2 ms-auto">
+                        <small class="text-muted" id="broker-count"></small>
+                    </div>
+                </div>
+
+                <!-- Row 2: Filters -->
+                <div class="d-flex align-items-center flex-wrap py-2" id="filter-row">
+                    <span class="text-muted fw-bold text-uppercase"
+                        style="font-size:0.85rem; letter-spacing:0.5px;width: 75px;">FILTER</span>
+                    <!-- Category -->
+                    <div class="dropdown">
+                        <button class="btn btn-sm btn-outline-secondary dropdown-toggle px-2" type="button"
+                            data-bs-toggle="dropdown" id="dd-category">
+                            Category: Any
+                        </button>
+                        <ul class="dropdown-menu dropdown-menu-sm">
+                            <li><a class="dropdown-item small" href="#" data-filter="category" data-val="any">Any</a>
+                            </li>
+                            <li><a class="dropdown-item small" href="#" data-filter="category"
+                                    data-val="foreign">Foreign</a></li>
+                            <li><a class="dropdown-item small" href="#" data-filter="category" data-val="local">Local
+                                    Fund</a></li>
+                            <li><a class="dropdown-item small" href="#" data-filter="category"
+                                    data-val="retail">Retail</a></li>
+                        </ul>
+                    </div>
+                    <!-- Net Direction -->
+                    <div class="dropdown">
+                        <button class="btn btn-sm btn-outline-secondary dropdown-toggle px-2" type="button"
+                            data-bs-toggle="dropdown" id="dd-netdir">
+                            Net: Any
+                        </button>
+                        <ul class="dropdown-menu dropdown-menu-sm">
+                            <li><a class="dropdown-item small" href="#" data-filter="netdir" data-val="any">Any</a></li>
+                            <li><a class="dropdown-item small" href="#" data-filter="netdir" data-val="buy">Net Buy
+                                    (Akumulasi)</a></li>
+                            <li><a class="dropdown-item small" href="#" data-filter="netdir" data-val="sell">Net Sell
+                                    (Distribusi)</a></li>
+                        </ul>
+                    </div>
+                    <!-- Breadth -->
+                    <div class="dropdown">
+                        <button class="btn btn-sm btn-outline-secondary dropdown-toggle px-2" type="button"
+                            data-bs-toggle="dropdown" data-bs-auto-close="outside" id="dd-breadth">
+                            Breadth: Any
+                        </button>
+                        <div class="dropdown-menu dropdown-menu-sm px-2 py-2" style="min-width:160px;">
+                            <label class="small text-muted mb-1">Min saham ditrade ≥</label>
+                            <input type="number" step="1" class="form-control form-control-sm num-filter-input"
+                                data-nf="breadth_min" placeholder="e.g. 10">
+                        </div>
+                    </div>
+                    <!-- Total Value -->
+                    <div class="dropdown hide-mobile">
+                        <button class="btn btn-sm btn-outline-secondary dropdown-toggle px-2" type="button"
+                            data-bs-toggle="dropdown" data-bs-auto-close="outside" id="dd-totalval">
+                            Value: Any
+                        </button>
+                        <div class="dropdown-menu dropdown-menu-sm px-2 py-2" style="min-width:160px;">
+                            <label class="small text-muted mb-1">Total Value ≥ (B)</label>
+                            <input type="number" step="any" class="form-control form-control-sm num-filter-input"
+                                data-nf="totalval_min" placeholder="e.g. 100">
+                        </div>
+                    </div>
+                    <!-- Quadrant -->
+                    <div class="dropdown">
+                        <button class="btn btn-sm btn-outline-secondary dropdown-toggle px-2" type="button"
+                            data-bs-toggle="dropdown" id="dd-quadrant">
+                            Quadrant: Any
+                        </button>
+                        <ul class="dropdown-menu dropdown-menu-sm">
+                            <li><a class="dropdown-item small" href="#" data-filter="quadrant" data-val="any">Any</a>
+                            </li>
+                            <li><a class="dropdown-item small" href="#" data-filter="quadrant" data-val="Q1">Q1
+                                    Aggressive Accum</a></li>
+                            <li><a class="dropdown-item small" href="#" data-filter="quadrant" data-val="Q2">Q2
+                                    Aggressive Distrib</a></li>
+                            <li><a class="dropdown-item small" href="#" data-filter="quadrant" data-val="Q3">Q3 Quiet
+                                    Exit</a></li>
+                            <li><a class="dropdown-item small" href="#" data-filter="quadrant" data-val="Q4">Q4 Stealth
+                                    Accum</a></li>
+                        </ul>
+                    </div>
+                    <!-- Reset All -->
+                    <a href="#" class="btn btn-sm px-2" id="btn-reset-filters" title="Reset semua filter">
+                        <i class="fa-solid fa-rotate-left"></i>
+                    </a>
+                </div>
+
+                <!-- Row 3: Active filter pills -->
+                <div id="active-pills" class="d-flex flex-wrap gap-1 mb-1" style="min-height:0;"></div>
+            </div>
+
+            <!-- Search + helper text -->
+            <div class="d-flex justify-content-between align-items-center border-bottom py-2"
+                style="line-height:normal">
+                <div style="min-width:220px;"></div>
+                <small class="small text-muted flex-grow-1 text-center"
+                    style="font-size: 0.75rem;line-height:normal">Shift+Scroll untuk geser ke kiri/kanan</small>
+                <div class="d-flex align-items-center gap-1">
+                    <input type="text" id="broker-search" class="form-control form-control-sm"
+                        placeholder="YP, ML, RX.." style="width:220px; font-size:0.8rem;border-radius: 0px;">
+                </div>
+            </div>
+
+            <!-- ═══════════════════════════════════════════════════ -->
+            <!-- BROKER TABLE                                       -->
+            <!-- ═══════════════════════════════════════════════════ -->
+            <div class="card card-swing" style="border-radius: 0;">
+                <div class="table-responsive">
+                    <table id="broker-table" class="table table-hover mb-0 table-broker align-middle">
+                        <thead>
+                            <tr class="thead-group-row">
+                                <th class="text-center sticky-col sticky-col-no">#</th>
+                                <th class="sticky-col sticky-col-code" data-sort="broker" style="cursor:pointer">
+                                    Broker <i class="fa-solid fa-sort small text-muted"></i>
+                                </th>
+                                <th data-sort="emiten" style="cursor:pointer">
+                                    Emiten <i class="fa-solid fa-sort small text-muted"></i>
+                                </th>
+                                <th class="text-end" data-sort="net_val" style="cursor:pointer"
+                                    title="Net value (buy − sell)">
+                                    Net Val <i class="fa-solid fa-sort small text-muted"></i>
+                                </th>
+                                <th class="text-end" data-sort="buy_val" style="cursor:pointer">
+                                    Buy Val <i class="fa-solid fa-sort small text-muted"></i>
+                                </th>
+                                <th class="text-end" data-sort="sell_val" style="cursor:pointer">
+                                    Sell Val <i class="fa-solid fa-sort small text-muted"></i>
+                                </th>
+                                <th class="text-end" data-sort="total_val" style="cursor:pointer"
+                                    title="Total buy + sell value">
+                                    Total Val <i class="fa-solid fa-sort small text-muted"></i>
+                                </th>
+                                <th class="text-end hide-mobile" data-sort="net_vol" style="cursor:pointer">
+                                    Net Vol <i class="fa-solid fa-sort small text-muted"></i>
+                                </th>
+                                <th class="text-center hide-mobile" data-sort="buy_freq" style="cursor:pointer"
+                                    title="Buy frequency">
+                                    B.Freq <i class="fa-solid fa-sort small text-muted"></i>
+                                </th>
+                                <th class="text-center hide-mobile" data-sort="sell_freq" style="cursor:pointer"
+                                    title="Sell frequency">
+                                    S.Freq <i class="fa-solid fa-sort small text-muted"></i>
+                                </th>
+                                <th class="text-center hide-mobile" data-sort="conviction" style="cursor:pointer"
+                                    title="Conviction = |Net| / Total × 100% — seberapa directional posisi ini">
+                                    CVT% <i class="fa-solid fa-sort small text-muted"></i>
+                                </th>
+                                <th class="text-center hide-mobile" data-sort="z_net" style="cursor:pointer"
+                                    title="Z-Score vs portofolio broker ini — outlier detection intra-broker">
+                                    Z-Net <i class="fa-solid fa-sort small text-muted"></i>
+                                </th>
+                                <th class="text-center hide-mobile" data-sort="z_ind" style="cursor:pointer"
+                                    title="Z-Score vs industry (semua broker di saham ini) — butuh ≥3 broker">
+                                    Z-Ind <i class="fa-solid fa-sort small text-muted"></i>
+                                </th>
+                            </tr>
+                        </thead>
+                        <tbody id="tbody-broker">
+                            <!-- Populated by JS -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- PAGINATION -->
+            <nav id="pagination-nav" class="d-flex justify-content-between align-items-center my-3">
+                <div class="text-muted small">
+                    Showing <span id="page-range">1-50</span> of <span id="total-items">0</span>
+                </div>
+                <ul class="pagination pagination-sm mb-0">
+                    <li class="page-item" id="prev-page">
+                        <a class="page-link" href="#" onclick="changeBrokerPage(-1); return false;">«</a>
+                    </li>
+                    <li class="page-item active">
+                        <span class="page-link" id="current-page-num">1</span>
+                    </li>
+                    <li class="page-item disabled">
+                        <span class="page-link" id="total-pages">/ 1</span>
+                    </li>
+                    <li class="page-item" id="next-page">
+                        <a class="page-link" href="#" onclick="changeBrokerPage(1); return false;">»</a>
+                    </li>
+                </ul>
+            </nav>
+        </div>
+
+    </div>
+
+    <!-- SCRIPTS -->
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0"></script>
+    <script src="../js/component.js?v=73"></script>
+
+    <!-- BROKER ACTIVITY LOGIC -->
+    <script src="../js/broker-activity.js?v=2"></script>
+
+    <script defer
+        src="https://static.cloudflareinsights.com/beacon.min.js/vcd15cbe7772f49c399c6a5babf22c1241717689176015"
+        data-cf-beacon='{"version":"2024.11.0","token":"0e06ac31f3fc47b3ab72d7670102e368","r":1}'
+        crossorigin="anonymous"></script>
+</body>
+
+</html>
