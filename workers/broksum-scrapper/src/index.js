@@ -254,7 +254,8 @@ export default {
                 "/scrape", "/backfill-queue", "/trigger-full-flow", "/init",
                 "/backfill/status", "/backfill/resume", "/backfill/pause", "/backfill/reset",
                 "/debug-token", "/test-range", "/auto-backfill",
-                "/backfill-flow", "/trigger-accum", "/benchmark-backfill"
+                "/backfill-flow", "/trigger-accum", "/benchmark-backfill",
+                "/broker-activity/backfill", "/broker-activity/status"
             ];
             if (sensitiveRoutes.includes(path)) {
                 const keyError = requireKey(request, env);
@@ -516,6 +517,66 @@ export default {
                 return await this.scrapeIpotBroksum(env, { symbol, from, to, flag5, save, debug });
             }
 
+            // ROUTE: Broker Activity — Scrape single broker's stock positions via IPOT WS
+            // GET /ipot/broker-activity?broker=MG&date=2026-03-04&save=true
+            // Returns parsed records + optionally saves to R2: raw-broksum/BYBROKER_{CODE}/{YYYY}/{MM}/{DD}.json
+            if (path === "/ipot/broker-activity") {
+                const key = url.searchParams.get("key");
+                if (env.IPOT_PUBLIC_KEY && key !== env.IPOT_PUBLIC_KEY) {
+                    return new Response(JSON.stringify({ ok: false, error: "Forbidden" }), {
+                        status: 403, headers: withCors({ "Content-Type": "application/json" })
+                    });
+                }
+                const broker = (url.searchParams.get("broker") || "").toUpperCase();
+                if (!broker || !/^[A-Z0-9]{2,3}$/.test(broker)) {
+                    return new Response(JSON.stringify({ ok: false, error: "Invalid broker code" }), {
+                        status: 400, headers: withCors({ "Content-Type": "application/json" })
+                    });
+                }
+                const defaultDate = (() => { const d = new Date(); d.setUTCDate(d.getUTCDate() - 1); return d.toISOString().slice(0, 10); })();
+                const date = url.searchParams.get("date") || defaultDate;
+                const save = url.searchParams.get("save") === "true";
+                const debug = url.searchParams.get("debug") === "true";
+                return await this.scrapeIpotBrokerActivity(env, { broker, date, save, debug });
+            }
+
+            // ROUTE: Broker Activity Backfill — Dispatch all brokers to queue for a date (or range)
+            // GET /broker-activity/backfill?date=2026-03-04&days=1&overwrite=false
+            if (path === "/broker-activity/backfill") {
+                const date = url.searchParams.get("date");
+                const days = clampInt(url.searchParams.get("days"), 1, 30, 1);
+                const dryRun = url.searchParams.get("dry") === "true";
+                const overwrite = url.searchParams.get("overwrite") === "true";
+                return await this.dispatchBrokerActivityJobs(env, { date, days, dryRun, overwrite });
+            }
+
+            // ROUTE: Broker Activity Status — Check queue progress for a date
+            // GET /broker-activity/status?date=2026-03-04
+            if (path === "/broker-activity/status") {
+                const date = url.searchParams.get("date");
+                if (!date) {
+                    // List all known statuses (last 7 days)
+                    const statuses = [];
+                    const recentDays = getTradingDays(7);
+                    for (const d of recentDays) {
+                        const raw = await env.SSSAHAM_WATCHLIST.get(`BROKER_ACTIVITY:${d}`, { type: "json" });
+                        if (raw) statuses.push({ date: d, ...raw });
+                    }
+                    return new Response(JSON.stringify({ ok: true, statuses }), {
+                        headers: withCors({ "Content-Type": "application/json" })
+                    });
+                }
+                const status = await env.SSSAHAM_WATCHLIST.get(`BROKER_ACTIVITY:${date}`, { type: "json" });
+                if (!status) {
+                    return new Response(JSON.stringify({ ok: false, error: `No status for date ${date}` }), {
+                        headers: withCors({ "Content-Type": "application/json" })
+                    });
+                }
+                return new Response(JSON.stringify({ ok: true, date, ...status }), {
+                    headers: withCors({ "Content-Type": "application/json" })
+                });
+            }
+
             // ROUTE TEST: E2E single symbol + date range (enqueue only)
             if (path === "/test-range") {
                 const symbol = (url.searchParams.get("symbol") || "BBCA").toUpperCase();
@@ -708,13 +769,28 @@ export default {
             }
 
             // MODE SELECTION
+            // UTC 10    (17:00 WIB) -> BROKER ACTIVITY SCRAPE
             // UTC 11    (18:00 WIB) -> DAILY REWRITE
             // UTC 12:00 (19:00 WIB) -> HEALTH CHECK
             // UTC 12:15 (19:15 WIB) -> ACCUM PREPROCESSOR
             // Otherwise              -> SWEEPING BACKFILL
+            const isBrokerActivity = (utcHour === 10);
             const isDailyRewrite = (utcHour === 11);
             const isHealthCheck = (utcHour === 12 && now.getUTCMinutes() < 10);
             const isAccumPreprocessor = (utcHour === 12 && now.getUTCMinutes() >= 15);
+
+            if (isBrokerActivity) {
+                console.log("📊 MODE: BROKER ACTIVITY (17:00 WIB) - Dispatching broker→stock jobs to queue");
+                try {
+                    const resp = await this.dispatchBrokerActivityJobs(env, { date: today, days: 1, dryRun: false, overwrite: true });
+                    const report = await resp.json();
+                    console.log(`📊 Broker activity dispatched: ${JSON.stringify({ dispatched: report.dispatched, skipped: report.skipped })}`);
+                } catch (e) {
+                    console.error(`📊 Broker activity dispatch error: ${e.message}`);
+                    await this.sendWebhook(env, `❌ **Broker Activity Dispatch Failed**\nError: ${e.message}`);
+                }
+                return;
+            }
 
             if (isAccumPreprocessor) {
                 console.log("📊 MODE: ACCUM PREPROCESSOR (19:15 WIB) - Building screener-accum artifact");
@@ -1645,9 +1721,69 @@ export default {
 
     async queue(batch, env) {
         // P0 Refactor: STRICTLY IPOT ONLY
-        // Removed Stockbit support completely.
+        // Supports two job types:
+        //   1. Default (stock broksum): { symbol, date, overwrite }
+        //   2. Broker activity:         { type: "broker_activity", broker, date, overwrite }
 
         for (const message of batch.messages) {
+
+            // ── BROKER ACTIVITY JOB ──
+            if (message.body.type === "broker_activity") {
+                const { broker, date, overwrite, attempt = 0 } = message.body;
+                const startTime = Date.now();
+                console.log(`[Queue:BA] Processing broker ${broker} for ${date} (attempt: ${attempt})`);
+
+                try {
+                    // Check if already exists (unless overwrite)
+                    if (!overwrite) {
+                        const [sy, sm, sd] = date.split("-");
+                        const r2Key = `BYBROKER_${broker}/${sy}/${sm.padStart(2, "0")}/${sd.padStart(2, "0")}.json`;
+                        const exists = await objectExists(env, r2Key);
+                        if (exists) {
+                            console.log(`[Queue:BA] Skipping ${broker}/${date} - already exists`);
+                            message.ack();
+                            continue;
+                        }
+                    }
+
+                    const result = await this.scrapeIpotBrokerActivity(env, {
+                        broker, date, save: true, debug: false
+                    });
+                    const resultData = await result.json();
+
+                    if (resultData.ok) {
+                        console.log(`[Queue:BA] ✅ ${broker}/${date} scraped (breadth: ${resultData.breadth})`);
+                        await this.updateBrokerActivityStatus(env, date, { success: true, broker });
+                        message.ack();
+                    } else {
+                        console.warn(`[Queue:BA] ❌ ${broker}/${date} failed: ${resultData.error}`);
+                        if (attempt >= 2) {
+                            console.error(`[Queue:BA] Max retries for ${broker}/${date}`);
+                            await this.updateBrokerActivityStatus(env, date, { failed: true, broker });
+                            message.ack();
+                        } else {
+                            await env.SSSAHAM_QUEUE.send({
+                                type: "broker_activity", broker, date, overwrite, attempt: attempt + 1
+                            });
+                            message.ack();
+                        }
+                    }
+                } catch (err) {
+                    console.error(`[Queue:BA] Error ${broker}/${date}:`, err.message);
+                    if (attempt >= 2) {
+                        await this.updateBrokerActivityStatus(env, date, { failed: true, broker });
+                        message.ack();
+                    } else {
+                        await env.SSSAHAM_QUEUE.send({
+                            type: "broker_activity", broker, date, overwrite: overwrite ?? false, attempt: attempt + 1
+                        });
+                        message.ack();
+                    }
+                }
+                continue;
+            }
+
+            // ── DEFAULT: STOCK BROKSUM JOB ──
             const { symbol, date, overwrite } = message.body;
 
             const startTime = Date.now();
@@ -1859,6 +1995,382 @@ export default {
             total_buyer: buyers.length,
             total_seller: sellers.length,
         };
+    },
+
+    /**
+     * Scrape broker activity: query IPOT WS with broker-first pivot.
+     * Saves to R2: raw-broksum/BYBROKER_{CODE}/{YYYY}/{MM}/{DD}.json
+     *
+     * WS args: ["s", "", brokerCode, "", "%", date, date]
+     *   Position 0: "s" = query mode (broker→stock)
+     *   Position 2: broker code
+     *
+     * Response record format (pipe-delimited en_qu_top_bs):
+     *   [0]=Stock [1]=BuyVal [2]=BuyVol [3]=BuyFreq [4]=SellVal
+     *   [5]=SellVol [6]=SellFreq [7]=NetVal [8]=NetVol [9]=TotalVal [10]=TotalVol [11]=?
+     *
+     * sum fields in first record: [totalBuyVal, totalSellVal, totalNetVal, totalTradingVal,
+     *   totalVol, totalBuyVol, totalNetVol, totalBuyFreq, totalSellVol, totalSellFreq]
+     */
+    async scrapeIpotBrokerActivity(env, { broker, date, save = false, debug = false }) {
+        const debugLogs = [];
+        const log = (msg) => { if (debug) debugLogs.push(`[${new Date().toISOString().split("T")[1]}] ${msg}`); };
+
+        // Format date for IPOT: "YYYY-M-DD" (non-zero-padded month)
+        const [y, m, d] = date.split("-");
+        const ipotDate = `${y}-${parseInt(m)}-${d}`;
+        log(`Scraping broker ${broker} for date ${date} (IPOT: ${ipotDate})`);
+
+        const IDLE_MS = parseInt(env.IPOT_IDLE_MS) || 800;
+        const MAX_MS = parseInt(env.IPOT_MAX_MS) || 8000;
+        const ORIGIN = env.IPOT_ORIGIN || "https://indopremier.com";
+        const WS_BASE = env.IPOT_WS_HTTP_BASE || "https://ipotapp.ipot.id/socketcluster/";
+
+        // Connect WebSocket
+        let ws;
+        const connectOnce = async () => {
+            const headers = {
+                Upgrade: "websocket", Connection: "Upgrade", Origin: ORIGIN,
+                "Sec-WebSocket-Version": "13", "Sec-WebSocket-Key": makeWebSocketKey(),
+                "User-Agent": "broksum-scrapper/1.0"
+            };
+            const appsession = await getIpotAppSession(env);
+            const wsWss = new URL(WS_BASE);
+            wsWss.searchParams.set("appsession", appsession);
+            const wsHttpUrl = wsWss.toString().startsWith("wss://")
+                ? "https://" + wsWss.toString().slice("wss://".length)
+                : wsWss.toString();
+            const resp = await fetch(wsHttpUrl, { headers });
+            if (!resp.webSocket) throw new Error(`WS upgrade failed: ${resp.status}`);
+            return resp.webSocket;
+        };
+
+        try {
+            ws = await connectOnce();
+            ws.accept();
+            try {
+                ws.send(JSON.stringify({ event: "#handshake", data: { authToken: env.IPOT_AUTH_TOKEN || null }, cid: 1 }));
+            } catch { }
+        } catch (e) {
+            log(`WS connect failed: ${e.message}, retrying...`);
+            try {
+                await clearIpotAppSession(env);
+                ws = await connectOnce();
+                ws.accept();
+                try { ws.send(JSON.stringify({ event: "#handshake", data: { authToken: null }, cid: 1 })); } catch { }
+            } catch (e2) {
+                return new Response(JSON.stringify({ ok: false, error: "WS Connect Failed: " + e2.message, debug_logs: debugLogs }), {
+                    headers: withCors({ "Content-Type": "application/json" })
+                });
+            }
+        }
+
+        // Query: broker→stocks (buy-sorted)
+        const runBrokerQuery = async (ordercol) => {
+            const cmdid = `${Date.now()}_${Math.random()}`;
+            const cid = `${Date.now()}_${Math.random()}`;
+            if (ws.readyState !== WebSocket.OPEN) throw new Error("WS Closed");
+
+            const msg = {
+                event: "cmd",
+                data: {
+                    cmdid,
+                    param: {
+                        cmd: "query",
+                        service: "midata",
+                        param: {
+                            source: "datafeed",
+                            index: "en_qu_top_bs",
+                            args: ["s", "", broker, "", "%", ipotDate, ipotDate],
+                            info: {
+                                orderby: [[ordercol, "DESC", "N"]],
+                                sum: [1, 4, 7, 9, 10, 2, 8, 3, 5, 6]
+                            },
+                            pagelen: 100,
+                            slid: ""
+                        }
+                    }
+                },
+                cid
+            };
+            ws.send(JSON.stringify(msg));
+            log(`Sent query ordercol=${ordercol}, cmdid=${cmdid}`);
+
+            const records = [];
+            let sumData = null;
+            let lastAt = Date.now();
+            const startAt = Date.now();
+            let gotRes = false;
+            let resAt = null;
+
+            const onMsg = (ev) => {
+                lastAt = Date.now();
+                const txt = typeof ev.data === "string" ? ev.data : "";
+                if (txt === "#1") { try { ws.send("#2"); } catch { } return; }
+                let j;
+                try { j = JSON.parse(txt); } catch { return; }
+
+                if (j?.event === "record" && j?.data?.cmdid === cmdid) {
+                    const line = j.data?.data?.rec?.en_qu_top_bs || j.data?.data?.en_qu_top_bs;
+                    if (typeof line === "string") records.push(line);
+                    if (j.data?.data?.sum && !sumData) sumData = j.data.data.sum;
+                }
+                if (j?.event === "res" && j?.data?.cmdid === cmdid) {
+                    gotRes = true;
+                    resAt = Date.now();
+                }
+            };
+            ws.addEventListener("message", onMsg);
+
+            while (true) {
+                const now = Date.now();
+                if (now - startAt > MAX_MS) break;
+                if (gotRes && resAt && (now - resAt) > 500) break;
+                if (records.length > 0 && (now - lastAt) > IDLE_MS) break;
+                if (records.length === 0 && (now - lastAt) > 2000) break;
+                await new Promise(r => setTimeout(r, 50));
+            }
+            ws.removeEventListener("message", onMsg);
+            log(`Query ordercol=${ordercol}: ${records.length} records, sum=${!!sumData}`);
+            return { records, sumData };
+        };
+
+        try {
+            // Run two queries: buy-sorted and sell-sorted (like the user's cmdid 77/78 pattern)
+            const resBuy = await runBrokerQuery(1);  // order by buy value desc
+            await new Promise(r => setTimeout(r, 80));
+            const resSell = await runBrokerQuery(4); // order by sell value desc
+
+            // Merge records (dedup by stock code)
+            const stockMap = new Map();
+            const mergeRecords = (recs) => {
+                for (const line of recs) {
+                    const parts = line.split("|");
+                    if (parts.length < 10) continue;
+                    const code = parts[0];
+                    if (!stockMap.has(code)) {
+                        stockMap.set(code, {
+                            stock_code: code,
+                            buy_val: parts[1] || "0",
+                            buy_vol: parts[2] || "0",
+                            buy_freq: parts[3] || "0",
+                            sell_val: parts[4] || "0",
+                            sell_vol: parts[5] || "0",
+                            sell_freq: parts[6] || "0",
+                            net_val: parts[7] || "0",
+                            net_vol: parts[8] || "0",
+                            total_val: parts[9] || "0",
+                            total_vol: parts[10] || "0"
+                        });
+                    }
+                }
+            };
+            mergeRecords(resBuy.records);
+            mergeRecords(resSell.records);
+
+            const stocks = Array.from(stockMap.values());
+            // Sort by absolute net_val desc
+            stocks.sort((a, b) => {
+                const av = Math.abs(Number(a.net_val) || 0);
+                const bv = Math.abs(Number(b.net_val) || 0);
+                return bv - av;
+            });
+
+            // Aggregate summary
+            const sum = resBuy.sumData || resSell.sumData || null;
+            const summary = sum ? {
+                total_buy_val: String(sum[0] || 0),
+                total_sell_val: String(sum[1] || 0),
+                total_net_val: String(sum[2] || 0),
+                total_trading_val: String(sum[3] || 0),
+                total_vol: String(sum[4] || 0),
+                total_buy_vol: String(sum[5] || 0),
+                total_net_vol: String(sum[6] || 0),
+                total_buy_freq: String(sum[7] || 0),
+                total_sell_vol: String(sum[8] || 0),
+                total_sell_freq: String(sum[9] || 0)
+            } : null;
+
+            // Build output
+            const brokerType = this.getBrokerType(broker);
+            const output = {
+                ok: true,
+                broker: broker,
+                broker_type: brokerType,
+                date: date,
+                scraped_at: new Date().toISOString(),
+                breadth: stocks.length,
+                summary: summary,
+                stocks: stocks
+            };
+
+            if (debug) output.debug_logs = debugLogs;
+
+            // Save to R2
+            if (save) {
+                const [sy, sm, sd] = date.split("-");
+                const r2Key = `BYBROKER_${broker}/${sy}/${sm.padStart(2, "0")}/${sd.padStart(2, "0")}.json`;
+                await env.RAW_BROKSUM.put(r2Key, JSON.stringify(output), {
+                    httpMetadata: { contentType: "application/json" }
+                });
+                output.saved_key = r2Key;
+                log(`Saved to R2: ${r2Key}`);
+            }
+
+            return new Response(JSON.stringify(output), {
+                headers: withCors({ "Content-Type": "application/json" })
+            });
+
+        } catch (e) {
+            return new Response(JSON.stringify({
+                ok: false, error: e.message, debug_logs: debugLogs
+            }), {
+                headers: withCors({ "Content-Type": "application/json" })
+            });
+        } finally {
+            try { ws.close(1000, "done"); } catch { }
+        }
+    },
+
+    /**
+     * Dispatch broker activity jobs to the message queue.
+     * Each broker+date combination becomes one queue message with type: "broker_activity".
+     * Progress is tracked in KV: BROKER_ACTIVITY:{date}
+     */
+    async dispatchBrokerActivityJobs(env, { date, days = 1, dryRun = false, overwrite = false }) {
+        // Get broker list from D1
+        let brokerCodes = [];
+        try {
+            const { results } = await env.SSSAHAM_DB.prepare("SELECT code FROM brokers").all();
+            brokerCodes = (results || []).map(r => r.code).filter(c => /^[A-Z0-9]{2,3}$/.test(c));
+        } catch (e) {
+            return new Response(JSON.stringify({ ok: false, error: "Failed to get broker list: " + e.message }), {
+                headers: withCors({ "Content-Type": "application/json" })
+            });
+        }
+
+        if (brokerCodes.length === 0) {
+            return new Response(JSON.stringify({ ok: false, error: "No brokers found in D1" }), {
+                headers: withCors({ "Content-Type": "application/json" })
+            });
+        }
+
+        // Get trading days
+        let targetDates;
+        if (date) {
+            targetDates = [date];
+        } else {
+            targetDates = getTradingDays(days).map(d => d);
+        }
+
+        if (dryRun) {
+            return new Response(JSON.stringify({
+                ok: true, dry_run: true,
+                brokers: brokerCodes.length,
+                dates: targetDates,
+                total_jobs: brokerCodes.length * targetDates.length
+            }), { headers: withCors({ "Content-Type": "application/json" }) });
+        }
+
+        let totalDispatched = 0;
+        let totalSkipped = 0;
+        const batchSize = 50;
+
+        for (const targetDate of targetDates) {
+            const messages = [];
+
+            for (const code of brokerCodes) {
+                if (!overwrite) {
+                    const [sy, sm, sd] = targetDate.split("-");
+                    const r2Key = `BYBROKER_${code}/${sy}/${sm.padStart(2, "0")}/${sd.padStart(2, "0")}.json`;
+                    const exists = await objectExists(env, r2Key);
+                    if (exists) {
+                        totalSkipped++;
+                        continue;
+                    }
+                }
+                messages.push({
+                    body: {
+                        type: "broker_activity",
+                        broker: code,
+                        date: targetDate,
+                        overwrite,
+                        attempt: 0
+                    }
+                });
+            }
+
+            // Dispatch in batches
+            for (let i = 0; i < messages.length; i += batchSize) {
+                const chunk = messages.slice(i, i + batchSize);
+                await env.SSSAHAM_QUEUE.sendBatch(chunk);
+            }
+            totalDispatched += messages.length;
+
+            // Initialize progress tracker in KV
+            const statusKey = `BROKER_ACTIVITY:${targetDate}`;
+            await env.SSSAHAM_WATCHLIST.put(statusKey, JSON.stringify({
+                state: "dispatched",
+                dispatched_at: new Date().toISOString(),
+                total: messages.length + totalSkipped,
+                dispatched: messages.length,
+                skipped: totalSkipped,
+                success: 0,
+                failed: 0,
+                completed: 0,
+                last_updated: new Date().toISOString()
+            }), { expirationTtl: 86400 * 7 }); // TTL 7 days
+
+            console.log(`[broker-activity] Dispatched ${messages.length} jobs for ${targetDate} (skipped: ${totalSkipped})`);
+        }
+
+        const msg = `📊 **Broker Activity Dispatched**\nDates: ${targetDates.join(", ")}\nBrokers: ${brokerCodes.length}\nDispatched: ${totalDispatched} | Skipped: ${totalSkipped}`;
+        await this.sendWebhook(env, msg);
+
+        return new Response(JSON.stringify({
+            ok: true,
+            dates: targetDates,
+            total_brokers: brokerCodes.length,
+            dispatched: totalDispatched,
+            skipped: totalSkipped,
+            status_check: `/broker-activity/status?date=${targetDates[0]}`
+        }), {
+            headers: withCors({ "Content-Type": "application/json" })
+        });
+    },
+
+    /**
+     * Update broker activity progress tracker in KV.
+     * Called by queue consumer after each broker_activity job completes.
+     */
+    async updateBrokerActivityStatus(env, date, { success = false, failed = false, broker = "" }) {
+        const statusKey = `BROKER_ACTIVITY:${date}`;
+        try {
+            const raw = await env.SSSAHAM_WATCHLIST.get(statusKey, { type: "json" });
+            if (!raw) return; // No status to update
+
+            if (success) raw.success = (raw.success || 0) + 1;
+            if (failed) raw.failed = (raw.failed || 0) + 1;
+            raw.completed = (raw.success || 0) + (raw.failed || 0);
+            raw.last_updated = new Date().toISOString();
+            raw.last_broker = broker;
+
+            // Check if complete
+            if (raw.completed >= raw.dispatched) {
+                raw.state = "completed";
+                raw.completed_at = new Date().toISOString();
+                const elapsed = raw.dispatched_at
+                    ? ((new Date(raw.completed_at) - new Date(raw.dispatched_at)) / 1000).toFixed(1)
+                    : "?";
+                await this.sendWebhook(env, `✅ **Broker Activity Complete**\nDate: ${date}\nSuccess: ${raw.success} | Failed: ${raw.failed} | Skipped: ${raw.skipped}\nElapsed: ${elapsed}s`);
+            } else {
+                raw.state = "processing";
+            }
+
+            await env.SSSAHAM_WATCHLIST.put(statusKey, JSON.stringify(raw), { expirationTtl: 86400 * 7 });
+        } catch (e) {
+            console.warn(`[broker-activity] Status update error for ${date}: ${e.message}`);
+        }
     },
 
     async scrapeIpotBroksum(env, { symbol, from, to, flag5, save, debug }) {

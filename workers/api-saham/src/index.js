@@ -6861,7 +6861,7 @@ export default {
           // Single broker — aggregate N days (with R2 cache)
           // Cache key: BYBROKER_{CODE}/cache/{days}D_{latestTradingDay}.json
           // Cache auto-invalidates when a new trading day starts (key changes)
-          const cacheKey = `BYBROKER_${broker}/cache/${days}D_${tradingDays[0]}.json`;
+          const cacheKey = `BYBROKER_${broker}/cache/v2_${days}D_${tradingDays[0]}.json`;
 
           // 1) Try cache first (days > 1 only; days=1 is already a single file read)
           if (days > 1) {
@@ -6878,6 +6878,7 @@ export default {
           // 2) Compute from daily files
           const allStocks = new Map();
           const loadedDates = [];
+          const dailyNetVol = {}; // stock_code → [net_vol_day0, net_vol_day1, ...] newest first
 
           for (const date of tradingDays) {
             const [sy, sm, sd] = date.split("-");
@@ -6906,8 +6907,27 @@ export default {
                 agg.net_vol += Number(s.net_vol) || 0;
                 agg.buy_freq += Number(s.buy_freq) || 0;
                 agg.sell_freq += Number(s.sell_freq) || 0;
+                // Track daily net_vol for streak computation
+                if (!dailyNetVol[s.stock_code]) dailyNetVol[s.stock_code] = [];
+                dailyNetVol[s.stock_code].push(Number(s.net_vol) || 0);
               }
             } catch (e) { console.warn(`[broker-activity] R2 read error ${r2Key}: ${e.message}`); }
+          }
+
+          // Compute streak: consecutive same-direction days from most recent
+          for (const [code, agg] of allStocks) {
+            const daily = dailyNetVol[code] || [];
+            let streak = 0;
+            if (daily.length > 0 && daily[0] !== 0) {
+              const dir = daily[0] > 0 ? 1 : -1;
+              streak = dir; // day 0 counts
+              for (let i = 1; i < daily.length; i++) {
+                const d = daily[i] > 0 ? 1 : daily[i] < 0 ? -1 : 0;
+                if (d === dir) streak += dir;
+                else break;
+              }
+            }
+            agg.streak = streak; // positive = buy streak, negative = sell streak
           }
 
           const stocks = Array.from(allStocks.values())

@@ -11,7 +11,7 @@
             const root = document.documentElement;
             root.setAttribute('data-theme', 'dark');
             root.style.colorScheme = 'dark';
-            try { localStorage.setItem('ui:theme', 'dark'); } catch(e) {}
+            try { localStorage.setItem('ui:theme', 'dark'); } catch (e) { }
         })();
     </script>
 
@@ -315,7 +315,7 @@
         #filter-row button,
         #filter-row-2 button {
             font-size: 0.9rem;
-            border-radius:0px;
+            border-radius: 0px;
         }
 
         #active-pills {
@@ -507,20 +507,24 @@
             color: var(--text-muted);
             background: transparent;
         }
+
         .chart-subtab-group .btn.active {
             background: var(--primary);
             border-color: var(--primary);
             color: var(--text-inverse);
         }
+
         .chart-subtab-group .btn:hover:not(.active) {
             background: var(--table-hover-bg);
             color: var(--text);
         }
+
         /* Broker Flow Legend */
         #broker-flow-legend {
             font-size: 0.75rem;
             line-height: 1.6;
         }
+
         #broker-flow-legend .broker-legend-item {
             display: inline-flex;
             align-items: center;
@@ -528,6 +532,7 @@
             margin-right: 10px;
             white-space: nowrap;
         }
+
         #broker-flow-legend .broker-dot {
             width: 10px;
             height: 10px;
@@ -535,10 +540,12 @@
             display: inline-block;
             flex-shrink: 0;
         }
+
         /* Broker TopN plain text links */
         #broker-topn-group {
             gap: 0.6rem;
         }
+
         #broker-topn-group .broker-topn-link {
             font-size: 0.8rem;
             color: var(--text-muted);
@@ -547,9 +554,11 @@
             transition: color 0.15s;
             white-space: nowrap;
         }
+
         #broker-topn-group .broker-topn-link:hover {
             color: var(--text);
         }
+
         #broker-topn-group .broker-topn-link.active {
             color: var(--accent-primary, var(--primary));
             font-weight: 600;
@@ -566,56 +575,107 @@
             white-space: nowrap;
             vertical-align: bottom;
         }
+
         .thead-group-label {
             border-left: 1px solid var(--card-divider);
         }
+
         .thead-group-end {
             border-right: 1px solid var(--card-divider);
         }
+
         .thead-group-row th[rowspan] {
             vertical-align: middle;
         }
+
         /* thead background = same as sticky-col-bg */
         #screener-table thead th {
             background: var(--sticky-col-bg);
         }
 
         /* ── Claude Score Column ── */
-        .claude-score-header { position: relative; }
+        .claude-score-header {
+            position: relative;
+        }
+
         .claude-trigger-btn {
-            display: block; margin: 0 auto 2px;
-            border: none; background: none; padding: 0; cursor: pointer;
-            opacity: 0.7; transition: opacity 0.2s, filter 0.2s;
-            line-height: 1; color: #d97706;
+            display: block;
+            margin: 0 auto 2px;
+            border: none;
+            background: none;
+            padding: 0;
+            cursor: pointer;
+            opacity: 0.7;
+            transition: opacity 0.2s, filter 0.2s;
+            line-height: 1;
+            color: #d97706;
         }
+
         .claude-trigger-btn:hover:not(:disabled) {
-            opacity: 1; filter: drop-shadow(0 0 6px rgba(255, 149, 0, 0.6));
+            opacity: 1;
+            filter: drop-shadow(0 0 6px rgba(255, 149, 0, 0.6));
         }
-        .claude-trigger-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-        .claude-trigger-btn.loading svg { animation: claude-spin 1s linear infinite; }
-        @keyframes claude-spin { to { transform: rotate(360deg); } }
-        .claude-score-badge { font-weight: 500; transition: color 0.15s; }
+
+        .claude-trigger-btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+
+        .claude-trigger-btn.loading svg {
+            animation: claude-spin 1s linear infinite;
+        }
+
+        @keyframes claude-spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        .claude-score-badge {
+            font-weight: 500;
+            transition: color 0.15s;
+        }
 
         /* ── Claude Reveal Animation ── */
         .claude-cell .claude-score-badge {
             display: inline-block;
         }
+
         .claude-cell.claude-locked .claude-score-badge {
             opacity: 0;
             transform: translateY(8px) scale(0.85);
             filter: blur(4px);
         }
+
         .claude-cell.claude-revealed .claude-score-badge {
             animation: claudeReveal 0.45s cubic-bezier(0.22, 1, 0.36, 1) forwards;
         }
+
         @keyframes claudeReveal {
-            0%   { opacity: 0; transform: translateY(8px) scale(0.85); filter: blur(4px); }
-            60%  { opacity: 0.8; transform: translateY(-2px) scale(1.02); filter: blur(0); }
-            100% { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
+            0% {
+                opacity: 0;
+                transform: translateY(8px) scale(0.85);
+                filter: blur(4px);
+            }
+
+            60% {
+                opacity: 0.8;
+                transform: translateY(-2px) scale(1.02);
+                filter: blur(0);
+            }
+
+            100% {
+                opacity: 1;
+                transform: translateY(0) scale(1);
+                filter: blur(0);
+            }
         }
+
         /* Instant reveal (for cached / no-animation) */
         .claude-cell.claude-revealed-instant .claude-score-badge {
-            opacity: 1; transform: none; filter: none;
+            opacity: 1;
+            transform: none;
+            filter: none;
         }
     </style>
 </head>
@@ -632,7 +692,8 @@
         <div class="container d-flex align-items-center justify-content-between"
             style="max-width: 1440px;position: relative;">
             <div class="d-flex align-items-center gap-3" style="min-width: 140px;">
-                <i class="fa-solid fa-circle-half-stroke d-none" id="theme-toggle-icon" title="Toggle theme (Shift + D)"></i>
+                <i class="fa-solid fa-circle-half-stroke d-none" id="theme-toggle-icon"
+                    title="Toggle theme (Shift + D)"></i>
                 <a href="https://buy.sssaham.com" id="nav-back" class="d-flex align-items-center text-decoration-none">
                     <i class="fa-solid fa-chevron-left me-1"></i>
                     <span class="small d-none">Bandar Radar</span>
@@ -669,18 +730,18 @@
     </div>
 
     <div id="app" class="container mb-3" style="display:none;">
-    <script>
-        (function () {
-            const p = new URLSearchParams(window.location.search);
-            if (p.get('container') === 'fluid') {
-                const app = document.getElementById('app');
-                if (app) { app.classList.replace('container', 'container-fluid'); app.style.maxWidth = 'none'; }
-                document.querySelectorAll('.navbar .container').forEach(function (el) {
-                    el.classList.replace('container', 'container-fluid'); el.style.maxWidth = 'none';
-                });
-            }
-        })();
-    </script>
+        <script>
+            (function () {
+                const p = new URLSearchParams(window.location.search);
+                if (p.get('container') === 'fluid') {
+                    const app = document.getElementById('app');
+                    if (app) { app.classList.replace('container', 'container-fluid'); app.style.maxWidth = 'none'; }
+                    document.querySelectorAll('.navbar .container').forEach(function (el) {
+                        el.classList.replace('container', 'container-fluid'); el.style.maxWidth = 'none';
+                    });
+                }
+            })();
+        </script>
 
         <!-- VIEW 1: INDEX (DAFTAR EMITEN) -->
         <div id="index-view">
@@ -695,14 +756,29 @@
             </ul>
             <!-- TOP CHART CAROUSEL (FOREIGN + BUBBLE) -->
             <div id="foreign-sentiment-widget" class="p-3 mb-3 bg-white rounded-3 shadow-sm">
+                <div id="bubble-tab-bar" class="d-none mb-2">
+                    <ul class="nav nav-tabs nav-tabs-bubble" style="border-bottom:none;">
+                        <li class="nav-item">
+                            <a class="nav-link active" href="#"
+                                style="font-size:0.82rem;padding:4px 16px;border-radius:0px;background:#2563eb;color:#fff;border:1px solid #2563eb;font-weight:600;">by
+                                Stock</a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href="/idx/broker/stock-summary.html"
+                                style="font-size:0.82rem;padding:4px 16px;border-radius:0px;background:transparent;color:#2563eb;border:1px solid #2563eb;font-weight:600;">by
+                                Broker</a>
+                        </li>
+                    </ul>
+                </div>
                 <div class="d-flex justify-content-between align-items-center mb-2">
-                    <h6 class="text-muted mb-0" id="market-widget-title">Foreign Flow</h6>
+                    <h6 class="text-muted mb-0 d-none" id="market-widget-title">Foreign Flow</h6>
                     <div class="btn-group btn-group-sm" id="foreign-range-selector">
                         <a href="#" class="btn btn-outline-secondary btn-sm active" data-days="7">7D</a>
                         <a href="#" class="btn btn-outline-secondary btn-sm" data-days="30">30D</a>
                         <a href="#" class="btn btn-outline-secondary btn-sm" data-days="90">90D</a>
                     </div>
                 </div>
+
                 <div id="market-chart-carousel" class="carousel slide" data-bs-interval="false" data-bs-touch="true">
                     <div class="carousel-inner">
                         <div class="carousel-item" data-chart="foreign">
@@ -763,7 +839,8 @@
                                 Strict
                             </a>
                             <a href="#" class="btn btn-outline-danger btn-sm" style="width: 85px;font-size: 0.9rem;"
-                                data-preset="ara" title="ARA Hunter: Saham ARA (Δ%≥20) + Smart Money + Effort positif + RVOL≥1.5">
+                                data-preset="ara"
+                                title="ARA Hunter: Saham ARA (Δ%≥20) + Smart Money + Effort positif + RVOL≥1.5">
                                 🚀 ARA
                             </a>
                         </div>
@@ -854,8 +931,8 @@
                         </button>
                         <ul class="dropdown-menu dropdown-menu-sm">
                             <li><a class="dropdown-item small" href="#" data-filter="local" data-val="any">Any</a></li>
-                            <li><a class="dropdown-item small" href="#" data-filter="local"
-                                    data-val="allPos">Positif tiap hari</a></li>
+                            <li><a class="dropdown-item small" href="#" data-filter="local" data-val="allPos">Positif
+                                    tiap hari</a></li>
                             <li><a class="dropdown-item small" href="#" data-filter="local"
                                     data-val="positive">Kumulatif &gt; 0</a></li>
                         </ul>
@@ -1149,7 +1226,8 @@
             <div class="d-flex justify-content-between align-items-center border-bottom py-2"
                 style="line-height:normal">
                 <div style="min-width:220px;"></div>
-                <small class="small text-muted flex-grow-1 text-center" style="font-size: 0.75rem;line-height:normal">Shift+Scroll untuk geser
+                <small class="small text-muted flex-grow-1 text-center"
+                    style="font-size: 0.75rem;line-height:normal">Shift+Scroll untuk geser
                     ke kiri/kanan</small>
                 <div class="d-flex align-items-center gap-1">
                     <input type="text" id="emiten-search" class="form-control form-control-sm"
@@ -1163,7 +1241,8 @@
                             <!-- Row 1: Group Headers -->
                             <tr class="thead-group-row">
                                 <th rowspan="2" class="text-center sticky-col sticky-col-no">#</th>
-                                <th rowspan="2" class="sticky-col sticky-col-symbol" data-sort="symbol" style="cursor:pointer">
+                                <th rowspan="2" class="sticky-col sticky-col-symbol" data-sort="symbol"
+                                    style="cursor:pointer">
                                     Emiten <i class="fa-solid fa-sort small text-muted"></i></th>
                                 <th rowspan="2" class="text-center" data-sort="order_growth_pct"
                                     style="cursor:pointer; white-space: nowrap;">Growth <i
@@ -1173,17 +1252,23 @@
                                         class="fa-solid fa-sort small text-muted"></i></th>
                                 <th rowspan="2" class="text-center d-none" data-sort="tom2_prob"
                                     style="cursor:pointer; white-space:nowrap;"
-                                    title="TOM2 = Ranking Score untuk potensi +2% besok.">TOM2 <i class="fa-solid fa-sort small text-muted"></i></th>
+                                    title="TOM2 = Ranking Score untuk potensi +2% besok.">TOM2 <i
+                                        class="fa-solid fa-sort small text-muted"></i></th>
                                 <th rowspan="2" class="text-center d-none" data-sort="swg5_prob"
                                     style="cursor:pointer; white-space:nowrap;"
-                                    title="SWG5 = Ranking Score untuk potensi swing +5% dalam ~5 hari.">SWG5 <i class="fa-solid fa-sort small text-muted"></i></th>
+                                    title="SWG5 = Ranking Score untuk potensi swing +5% dalam ~5 hari.">SWG5 <i
+                                        class="fa-solid fa-sort small text-muted"></i></th>
                                 <th rowspan="2" class="text-center claude-score-header" data-sort="claude_score"
                                     style="cursor:pointer; white-space:nowrap;"
                                     title="Claude Score = AI-powered scoring (0-100).&#10;Klik icon Claude untuk generate score.">
                                     <button type="button" class="claude-trigger-btn mb-3" id="btn-claude-score"
                                         title="Click to generate AI scores"
                                         onclick="event.stopPropagation(); handleClaudeScoreClick();">
-                                        <svg width="16" height="16" viewBox="0 0 512 512" fill="#d97706" xmlns="http://www.w3.org/2000/svg"><path d="M100.4 340.5l100.7-56.5 1.7-4.9-1.7-2.7-4.9 0-16.8-1-57.5-1.6-49.9-2.1-48.3-2.6-12.2-2.6-11.4-15 1.2-7.5 10.2-6.9 14.7 1.3c18.9 1.3 45.9 3.1 81 5.6l35.2 2.1 52.2 5.4 8.3 0 1.2-3.4-2.8-2.1-2.2-2.1-50.3-34.1-54.4-36-28.5-20.7-15.4-10.5-7.8-9.8-3.4-21.5 14-15.4 18.8 1.3 4.8 1.3 19 14.7 40.7 31.5 53.1 39.1 7.8 6.5 3.1-2.2.4-1.6-3.5-5.8-28.9-52.2-30.8-53.1-13.7-22-3.6-13.2c-1.3-5.4-2.2-10-2.2-15.5l15.9-21.6 8.8-2.8 21.2 2.8 8.9 7.8 13.2 30.2 21.4 47.5 33.2 64.6 9.7 19.2 5.2 17.8 1.9 5.4 3.4 0 0-3.1 2.7-36.4 5-44.7 4.9-57.5 1.7-16.2 8-19.4 15.9-10.5 12.4 5.9 10.2 14.7-1.4 9.5-6.1 39.5-11.9 61.9-7.8 41.5 4.5 0 5.2-5.2 21-27.8 35.2-44.1 15.5-17.5 18.1-19.3 11.6-9.2 22 0 16.2 24.1-7.3 24.9-22.7 28.7-18.8 24.4-27 36.3-16.8 29 1.6 2.3 4-.4 60.9-13 32.9-5.9 39.3-6.7 17.8 8.3 1.9 8.4-7 17.2-42 10.4-49.2 9.8-73.3 17.3-.9.7 1 1.3 33 3.1 14.1.8 34.6 0 64.4 4.8 16.8 11.1 10.1 13.6-1.7 10.4-25.9 13.2c-15.5-3.7-54.4-12.9-116.6-27.7l-28-7-3.9 0 0 2.3 23.3 22.8 42.7 38.6 53.5 49.8 2.7 12.3-6.9 9.7-7.3-1-47-35.4-18.1-15.9-41.1-34.6-2.7 0 0 3.6 9.5 13.9 50 75.2 2.6 23-3.6 7.5-13 4.5-14.2-2.6-29.3-41.1-30.2-46.3-24.4-41.5-3 1.7-14.4 154.8-6.7 7.9-15.5 5.9-13-9.8-6.9-15.9 6.9-31.5 8.3-41.1 6.7-32.7 6.1-40.6 3.6-13.5-.2-.9-3 .4-30.6 42-46.5 62.9-36.8 39.4-8.8 3.5-15.3-7.9 1.4-14.1 8.5-12.6 50.9-64.8 30.7-40.2 19.8-23.2-.1-3.4-1.2 0-135.3 87.8-24.1 3.1-10.4-9.7 1.3-15.9 4.9-5.2z"/></svg>
+                                        <svg width="16" height="16" viewBox="0 0 512 512" fill="#d97706"
+                                            xmlns="http://www.w3.org/2000/svg">
+                                            <path
+                                                d="M100.4 340.5l100.7-56.5 1.7-4.9-1.7-2.7-4.9 0-16.8-1-57.5-1.6-49.9-2.1-48.3-2.6-12.2-2.6-11.4-15 1.2-7.5 10.2-6.9 14.7 1.3c18.9 1.3 45.9 3.1 81 5.6l35.2 2.1 52.2 5.4 8.3 0 1.2-3.4-2.8-2.1-2.2-2.1-50.3-34.1-54.4-36-28.5-20.7-15.4-10.5-7.8-9.8-3.4-21.5 14-15.4 18.8 1.3 4.8 1.3 19 14.7 40.7 31.5 53.1 39.1 7.8 6.5 3.1-2.2.4-1.6-3.5-5.8-28.9-52.2-30.8-53.1-13.7-22-3.6-13.2c-1.3-5.4-2.2-10-2.2-15.5l15.9-21.6 8.8-2.8 21.2 2.8 8.9 7.8 13.2 30.2 21.4 47.5 33.2 64.6 9.7 19.2 5.2 17.8 1.9 5.4 3.4 0 0-3.1 2.7-36.4 5-44.7 4.9-57.5 1.7-16.2 8-19.4 15.9-10.5 12.4 5.9 10.2 14.7-1.4 9.5-6.1 39.5-11.9 61.9-7.8 41.5 4.5 0 5.2-5.2 21-27.8 35.2-44.1 15.5-17.5 18.1-19.3 11.6-9.2 22 0 16.2 24.1-7.3 24.9-22.7 28.7-18.8 24.4-27 36.3-16.8 29 1.6 2.3 4-.4 60.9-13 32.9-5.9 39.3-6.7 17.8 8.3 1.9 8.4-7 17.2-42 10.4-49.2 9.8-73.3 17.3-.9.7 1 1.3 33 3.1 14.1.8 34.6 0 64.4 4.8 16.8 11.1 10.1 13.6-1.7 10.4-25.9 13.2c-15.5-3.7-54.4-12.9-116.6-27.7l-28-7-3.9 0 0 2.3 23.3 22.8 42.7 38.6 53.5 49.8 2.7 12.3-6.9 9.7-7.3-1-47-35.4-18.1-15.9-41.1-34.6-2.7 0 0 3.6 9.5 13.9 50 75.2 2.6 23-3.6 7.5-13 4.5-14.2-2.6-29.3-41.1-30.2-46.3-24.4-41.5-3 1.7-14.4 154.8-6.7 7.9-15.5 5.9-13-9.8-6.9-15.9 6.9-31.5 8.3-41.1 6.7-32.7 6.1-40.6 3.6-13.5-.2-.9-3 .4-30.6 42-46.5 62.9-36.8 39.4-8.8 3.5-15.3-7.9 1.4-14.1 8.5-12.6 50.9-64.8 30.7-40.2 19.8-23.2-.1-3.4-1.2 0-135.3 87.8-24.1 3.1-10.4-9.7 1.3-15.9 4.9-5.2z" />
+                                        </svg>
                                     </button>
                                     Claude <i class="fa-solid fa-sort small text-muted"></i>
                                 </th>
@@ -1205,7 +1290,8 @@
                                 <th colspan="4" class="text-center thead-group-label">Flow Score</th>
                                 <!-- Group: Effort (4 cols) -->
                                 <th colspan="4" class="text-center thead-group-label thead-group-end">Effort</th>
-                                <th rowspan="2" class="text-center thead-group-label" data-sort="state" style="cursor:pointer"
+                                <th rowspan="2" class="text-center thead-group-label" data-sort="state"
+                                    style="cursor:pointer"
                                     title="State klasifikasi berdasarkan Z-NGR &amp; delta harian.">
                                     State <i class="fa-solid fa-sort small text-muted"></i></th>
                                 <th rowspan="2" class="text-center" data-sort="order_net_value"
@@ -1237,50 +1323,50 @@
                                     title="CVD = Cumulative Volume Delta hari ini.">
                                     CVD <i class="fa-solid fa-sort small text-muted"></i></th>
                                 <th class="text-center hide-mobile col-h2 col-cvdm" data-sort="order_cvd_2d"
-                                    style="cursor:pointer; white-space: nowrap;"
-                                    title="CVD kumulatif 2 hari trading.">
+                                    style="cursor:pointer; white-space: nowrap;" title="CVD kumulatif 2 hari trading.">
                                     2D <i class="fa-solid fa-sort small text-muted"></i></th>
                                 <th class="text-center hide-mobile col-h5 col-cvdm" data-sort="order_cvd_5d"
-                                    style="cursor:pointer; white-space: nowrap;"
-                                    title="CVD kumulatif 5 hari trading.">
+                                    style="cursor:pointer; white-space: nowrap;" title="CVD kumulatif 5 hari trading.">
                                     5D <i class="fa-solid fa-sort small text-muted"></i></th>
                                 <th class="text-center hide-mobile col-h10 col-cvdm" data-sort="order_cvd_10d"
-                                    style="cursor:pointer; white-space: nowrap;"
-                                    title="CVD kumulatif 10 hari trading.">
+                                    style="cursor:pointer; white-space: nowrap;" title="CVD kumulatif 10 hari trading.">
                                     10D <i class="fa-solid fa-sort small text-muted"></i></th>
                                 <th class="text-center hide-mobile col-h20 col-cvdm" data-sort="order_cvd_20d"
-                                    style="cursor:pointer; white-space: nowrap;"
-                                    title="CVD kumulatif 20 hari trading.">
+                                    style="cursor:pointer; white-space: nowrap;" title="CVD kumulatif 20 hari trading.">
                                     20D <i class="fa-solid fa-sort small text-muted"></i></th>
                                 <!-- Foreign Flow -->
-                                <th class="text-center thead-group-label col-h2 col-fflw" data-sort="fn2" style="cursor:pointer"
-                                    title="Foreign Flow net kumulatif 2 hari.">
+                                <th class="text-center thead-group-label col-h2 col-fflw" data-sort="fn2"
+                                    style="cursor:pointer" title="Foreign Flow net kumulatif 2 hari.">
                                     2D <i class="fa-solid fa-sort small text-muted"></i></th>
                                 <th class="text-center col-h5 col-fflw" data-sort="fn5" style="cursor:pointer"
                                     title="Foreign Flow net kumulatif 5 hari.">5D <i
                                         class="fa-solid fa-sort small text-muted"></i></th>
                                 <th class="text-center hide-mobile col-h10 col-fflw" data-sort="fn10"
                                     style="cursor:pointer" title="Foreign Flow net kumulatif 10 hari.">10D
-                                    <i class="fa-solid fa-sort small text-muted"></i></th>
+                                    <i class="fa-solid fa-sort small text-muted"></i>
+                                </th>
                                 <th class="text-center hide-mobile col-h20 col-fflw" data-sort="fn20"
                                     style="cursor:pointer" title="Foreign Flow net kumulatif 20 hari.">20D
-                                    <i class="fa-solid fa-sort small text-muted"></i></th>
+                                    <i class="fa-solid fa-sort small text-muted"></i>
+                                </th>
                                 <!-- Local Flow -->
-                                <th class="text-center thead-group-label col-h2 col-lflw" data-sort="ln2" style="cursor:pointer"
-                                    title="Local Fund Flow net kumulatif 2 hari.">
+                                <th class="text-center thead-group-label col-h2 col-lflw" data-sort="ln2"
+                                    style="cursor:pointer" title="Local Fund Flow net kumulatif 2 hari.">
                                     2D <i class="fa-solid fa-sort small text-muted"></i></th>
                                 <th class="text-center col-h5 col-lflw" data-sort="ln5" style="cursor:pointer"
                                     title="Local Fund Flow net kumulatif 5 hari.">5D <i
                                         class="fa-solid fa-sort small text-muted"></i></th>
                                 <th class="text-center hide-mobile col-h10 col-lflw" data-sort="ln10"
                                     style="cursor:pointer" title="Local Fund Flow net kumulatif 10 hari.">10D
-                                    <i class="fa-solid fa-sort small text-muted"></i></th>
+                                    <i class="fa-solid fa-sort small text-muted"></i>
+                                </th>
                                 <th class="text-center hide-mobile col-h20 col-lflw" data-sort="ln20"
                                     style="cursor:pointer" title="Local Fund Flow net kumulatif 20 hari.">20D
-                                    <i class="fa-solid fa-sort small text-muted"></i></th>
+                                    <i class="fa-solid fa-sort small text-muted"></i>
+                                </th>
                                 <!-- Smart Money -->
-                                <th class="text-center thead-group-label col-h2 col-smny" data-sort="sm2" style="cursor:pointer"
-                                    title="Smart Money = Foreign + Local net kumulatif 2 hari.">
+                                <th class="text-center thead-group-label col-h2 col-smny" data-sort="sm2"
+                                    style="cursor:pointer" title="Smart Money = Foreign + Local net kumulatif 2 hari.">
                                     2D <i class="fa-solid fa-sort small text-muted"></i></th>
                                 <th class="text-center col-h5 col-smny" data-sort="sm5" style="cursor:pointer"
                                     title="Smart Money net kumulatif 5 hari.">5D <i
@@ -1292,8 +1378,8 @@
                                     style="cursor:pointer" title="Smart Money net kumulatif 20 hari.">
                                     20D <i class="fa-solid fa-sort small text-muted"></i></th>
                                 <!-- Rel Volume -->
-                                <th class="text-center hide-mobile thead-group-label col-h2 col-rvol" data-sort="rvol_2d"
-                                    style="cursor:pointer" title="Relative Volume 2D.">
+                                <th class="text-center hide-mobile thead-group-label col-h2 col-rvol"
+                                    data-sort="rvol_2d" style="cursor:pointer" title="Relative Volume 2D.">
                                     2D <i class="fa-solid fa-sort small text-muted"></i></th>
                                 <th class="text-center hide-mobile col-h5 col-rvol" data-sort="rvol_5d"
                                     style="cursor:pointer" title="Relative Volume 5D.">
@@ -1318,8 +1404,8 @@
                                     style="cursor:pointer">
                                     20D <i class="fa-solid fa-sort small text-muted"></i></th>
                                 <!-- Flow Score -->
-                                <th class="text-center thead-group-label col-h2 col-flow" data-sort="flow2" style="cursor:pointer"
-                                    title="Flow Score komposit z-score (0-7). Window: 2 hari.">
+                                <th class="text-center thead-group-label col-h2 col-flow" data-sort="flow2"
+                                    style="cursor:pointer" title="Flow Score komposit z-score (0-7). Window: 2 hari.">
                                     2D <i class="fa-solid fa-sort small text-muted"></i></th>
                                 <th class="text-center col-h5 col-flow" data-sort="flow5" style="cursor:pointer"
                                     title="Flow Score. Window: 5 hari.">
@@ -1331,7 +1417,8 @@
                                     style="cursor:pointer" title="Flow Score. Window: 20 hari.">
                                     20D <i class="fa-solid fa-sort small text-muted"></i></th>
                                 <!-- Effort -->
-                                <th class="text-center thead-group-label col-h2 col-eff" data-sort="effort2" style="cursor:pointer">
+                                <th class="text-center thead-group-label col-h2 col-eff" data-sort="effort2"
+                                    style="cursor:pointer">
                                     2D <i class="fa-solid fa-sort small text-muted"></i></th>
                                 <th class="text-center col-h5 col-eff" data-sort="effort5" style="cursor:pointer">
                                     5D <i class="fa-solid fa-sort small text-muted"></i></th>

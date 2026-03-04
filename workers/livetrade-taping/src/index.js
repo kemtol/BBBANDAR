@@ -156,9 +156,13 @@ export class TradeIngestor extends DurableObject {
       return new Response(
         JSON.stringify(
           {
-            symbols: this.watchList,         // array ["BBRI","BBCA",...]
+            static_watchlist: this.watchList,        // LQ45+IDX30 (LT only, no OB2)
+            ob2_roster: [...this.dynamicSubscribed],  // actual OB2 subscriptions (from KV roster)
+            kv_watchlist: this.dynamicWatchlist,       // last KV sync result
             counts: {
-              total: this.watchList.length,
+              static_lt: this.watchList.length,
+              ob2_subscribed: this.dynamicSubscribed.size,
+              kv_symbols: this.dynamicWatchlist.length,
             },
           },
           null,
@@ -414,7 +418,7 @@ export class TradeIngestor extends DurableObject {
         );
 
         setTimeout(() => {
-          // 1) Live Trade global
+          // 1) Live Trade global (all symbols)
           console.log("[WS] Subscribe Live Trade (LT)...");
           const subLT = {
             event: "cmd",
@@ -432,25 +436,12 @@ export class TradeIngestor extends DurableObject {
           };
           this.ws.send(JSON.stringify(subLT));
 
-          // 2) OB2 untuk setiap kode unik
-          console.log("[WS] Subscribe Orderbook (OB2) untuk watchlist...");
-          this.watchList.forEach((kode, idx) => {
-            const subOB = {
-              event: "cmd",
-              data: {
-                cmdid: 1000 + idx,
-                param: {
-                  cmd: "subscribe",
-                  service: "mi",
-                  rtype: "OB2",
-                  code: kode,                        // 🟢 contoh: TLKM
-                  subsid: `ob_${kode}_sniper`,
-                },
-              },
-              cid: 1000 + idx,
-            };
-            this.ws.send(JSON.stringify(subOB));
-          });
+          // 2) OB2 is now roster-driven: subscribe only symbols from
+          //    the Most Active KV watchlist (synced by browser pipeline).
+          //    No static LQ45/IDX30 OB2 subscriptions — only roster matters.
+          console.log("[WS] OB2 subscriptions deferred to KV dynamic watchlist sync");
+          this.ctx.waitUntil(this.syncDynamicWatchlist());
+          this.lastKvCheckTs = Date.now();
         }, 1000);
       });
 
@@ -842,10 +833,9 @@ export class TradeIngestor extends DurableObject {
         return;
       }
 
-      // Build target set: KV symbols NOT already in static watchlist
-      const staticSet = new Set(this.watchList);
+      // Build target set: ALL KV symbols (roster is the sole OB2 driver)
       const targetDynamic = new Set(
-        kvSymbols.filter(s => !staticSet.has(s)).slice(0, 60)
+        kvSymbols.slice(0, 60)
       );
 
       // Subscribe new entrants
@@ -864,7 +854,7 @@ export class TradeIngestor extends DurableObject {
       }
 
       if (targetDynamic.size !== this.dynamicWatchlist.length) {
-        console.log(`[DynWL] synced: ${targetDynamic.size} dynamic symbols (static: ${staticSet.size}, total: ${staticSet.size + targetDynamic.size})`);
+        console.log(`[DynWL] synced: ${targetDynamic.size} roster OB2 symbols (subscribed: ${this.dynamicSubscribed.size})`);
       }
       this.dynamicWatchlist = [...targetDynamic];
     } catch (err) {

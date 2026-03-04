@@ -1255,15 +1255,18 @@ function refreshMarketWidgetHeader() {
     const activeChart = $('#market-chart-carousel .carousel-item.active').data('chart') || 'foreign';
     const $title = $('#market-widget-title');
     const $range = $('#foreign-range-selector');
+    const $tabBar = $('#bubble-tab-bar');
 
     if (activeChart === 'bubble') {
         $title.html('Orderflow Bubble Opportunity <span class="d-block small mt-2 mb-3" style="font-weight:500">Top peluang intraday</span>');
         $range.addClass('d-none');
+        $tabBar.removeClass('d-none');
         return;
     }
 
     $title.html(foreignWidgetTitleHtml);
     $range.removeClass('d-none');
+    $tabBar.addClass('d-none');
 }
 
 function setupMarketChartCarousel() {

@@ -1014,8 +1014,8 @@
 
         function _getSortValue(r, key) {
             if (key === 'cvd') {
-                const fpCvd = _footprintMap.get(r.code)?.cvd;
-                return (fpCvd != null) ? fpCvd : (_sectorCvdMap.get(r.code)?.cvd_lot ?? 0);
+                const scCvd = _sectorCvdMap.get(r.code)?.cvd_lot;
+                return (scCvd != null) ? scCvd : (_footprintMap.get(r.code)?.cvd ?? 0);
             }
             if (key === 'value') {
                 return r.value ?? 0;
@@ -1124,8 +1124,8 @@
                 const sc = _sectorCvdMap.get(r.code) || {};
                 // VALUE = IPOT unsigned trading value (always positive).
                 const displayValue = r.value || 0;
-                // CVD: footprint pipeline primary, sector-scrapper TradedSummary as fallback
-                const displayCvd = (fp.cvd != null) ? fp.cvd : (sc.cvd_lot ?? null);
+                // CVD: sector-scrapper TradedSummary primary (862 symbols), footprint as fallback
+                const displayCvd = (sc.cvd_lot != null) ? sc.cvd_lot : (fp.cvd ?? null);
                 // LAST PRICE: IPOT WS is primary (real-time), yfinance close as fallback
                 const displayLastPrice = (r.last_price > 0) ? r.last_price : (cp.close > 0 ? cp.close : 0);
                 // CHG%: IPOT WS is primary (same source as IPOT app screenshot)

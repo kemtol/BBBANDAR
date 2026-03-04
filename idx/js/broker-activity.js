@@ -99,7 +99,7 @@ function catBadge(cat) {
 }
 
 function brokerLogo(code) {
-    return `<img src="${API_BASE}/broker/logo/${code}" alt="${code}" class="broker-logo" loading="lazy" onerror="this.style.display='none'">`;
+    return `<img src="${API_BASE}/broker/logo/${code}" alt="${code}" class="broker-logo" loading="lazy" onerror="this.style.display='none'"> `;
 }
 
 // ── Z-Score & Conviction Helpers ──
@@ -157,6 +157,23 @@ function fmtCvdTrend(score) {
     if (score === 0) return '<span class="text-muted">─</span>';
     if (score >= -2) return '<span class="text-danger">▼</span>';
     return '<span class="text-danger fw-bold">▼▼</span>';
+}
+
+function fmtPrice(v) {
+    if (!Number.isFinite(v) || v <= 0) return '<span class="text-muted">—</span>';
+    return v.toLocaleString('id-ID', { maximumFractionDigits: 0 });
+}
+
+function fmtStreak(s) {
+    if (!s || s === 0) return '<span class="text-muted">—</span>';
+    const abs = Math.abs(s);
+    if (s > 0) {
+        const cls = abs >= 5 ? 'text-success fw-bold' : 'text-success';
+        return `<span class="${cls}">▲${abs}D</span>`;
+    } else {
+        const cls = abs >= 5 ? 'text-danger fw-bold' : 'text-danger';
+        return `<span class="${cls}">▼${abs}D</span>`;
+    }
 }
 
 /**
@@ -293,7 +310,7 @@ async function loadAllBrokers() {
             const mainData = dataByDays[activeDays];
             if (!mainData) { failed++; return; }
 
-            // Build CVD lookup: stock → { cvd_2d, cvd_5d, cvd_10d, cvd_20d }
+            // Build CVD lookup: stock → { cvd_2d, cvd_5d, cvd_10d, cvd_20d, streak }
             const cvdMap = {};
             for (const w of CVD_WINDOWS) {
                 const wd = dataByDays[w];
@@ -301,27 +318,38 @@ async function loadAllBrokers() {
                 for (const s of (wd.stocks || [])) {
                     if (!cvdMap[s.stock_code]) cvdMap[s.stock_code] = {};
                     cvdMap[s.stock_code][`cvd_${w}d`] = Number(s.net_vol) || 0;
+                    // Use streak from longest window (20D) for best coverage
+                    if (w === 20 && s.streak !== undefined) {
+                        cvdMap[s.stock_code].streak = Number(s.streak) || 0;
+                    }
                 }
             }
 
             for (const s of (mainData.stocks || [])) {
                 const cvd = cvdMap[s.stock_code] || {};
+                const bv = Number(s.buy_val) || 0;
+                const sv = Number(s.sell_val) || 0;
+                const bvol = Number(s.buy_vol) || 0;
+                const svol = Number(s.sell_vol) || 0;
                 allRows.push({
                     broker: code,
                     stock_code: s.stock_code,
-                    buy_val: Number(s.buy_val) || 0,
-                    sell_val: Number(s.sell_val) || 0,
+                    buy_val: bv,
+                    sell_val: sv,
                     net_val: Number(s.net_val) || 0,
                     total_val: Number(s.total_val) || 0,
-                    buy_vol: Number(s.buy_vol) || 0,
-                    sell_vol: Number(s.sell_vol) || 0,
+                    buy_vol: bvol,
+                    sell_vol: svol,
                     net_vol: Number(s.net_vol) || 0,
                     buy_freq: Number(s.buy_freq) || 0,
                     sell_freq: Number(s.sell_freq) || 0,
+                    avg_buy: bvol > 0 ? bv / bvol : 0,
+                    avg_sell: svol > 0 ? sv / svol : 0,
                     cvd_2d: cvd.cvd_2d || 0,
                     cvd_5d: cvd.cvd_5d || 0,
                     cvd_10d: cvd.cvd_10d || 0,
                     cvd_20d: cvd.cvd_20d || 0,
+                    streak: cvd.streak || Number(s.streak) || 0,
                 });
             }
             loaded++;
@@ -373,13 +401,13 @@ function renderTable() {
 
     if (total === 0 && !isLoading) {
         $tbody.html(
-            '<tr><td colspan="18" class="text-center text-muted py-4">' +
+            '<tr><td colspan="21" class="text-center text-muted py-4">' +
             '<i class="fa-solid fa-inbox me-2"></i>Tidak ada data. Pastikan data sudah di-scrape terlebih dahulu.' +
             '</td></tr>'
         );
     } else if (page.length === 0) {
         $tbody.html(
-            '<tr><td colspan="18" class="text-center text-muted py-4">' +
+            '<tr><td colspan="21" class="text-center text-muted py-4">' +
             '<i class="fa-solid fa-filter me-2"></i>Tidak ada data sesuai filter.' +
             '</td></tr>'
         );
@@ -396,6 +424,8 @@ function renderTable() {
                     <a href="/idx/emiten/detail.html?code=${r.stock_code}" class="text-decoration-none"
                        style="color:var(--text)">${r.stock_code}</a>
                 </td>
+                <td class="text-end hide-mobile">${fmtPrice(r.avg_buy)}</td>
+                <td class="text-end hide-mobile">${fmtPrice(r.avg_sell)}</td>
                 <td class="text-end ${netClass(r.net_val)}">${fmtValue(r.net_val)}</td>
                 <td class="text-end">${fmtValue(r.buy_val)}</td>
                 <td class="text-end">${fmtValue(r.sell_val)}</td>
@@ -408,6 +438,7 @@ function renderTable() {
                 <td class="text-end hide-mobile ${netClass(r.cvd_10d)}">${fmtVol(r.cvd_10d)}</td>
                 <td class="text-end hide-mobile ${netClass(r.cvd_20d)}">${fmtVol(r.cvd_20d)}</td>
                 <td class="text-center hide-mobile">${fmtCvdTrend(r.cvd_trend)}</td>
+                <td class="text-center hide-mobile">${fmtStreak(r.streak)}</td>
                 <td class="text-center hide-mobile">${fmtPct(r.conviction)}</td>
                 <td class="text-center hide-mobile">${fmtZ(r.z_net)}</td>
                 <td class="text-center hide-mobile">${fmtZ(r.z_ind, r.n_brokers_stock)}</td>
@@ -451,7 +482,7 @@ $(function () {
 
     // Initial placeholder
     $('#tbody-broker').html(
-        '<tr><td colspan="18" class="text-center text-muted py-4">' +
+        '<tr><td colspan="21" class="text-center text-muted py-4">' +
         '<i class="fa-solid fa-spinner fa-spin me-2"></i>Memuat data broker activity...' +
         '</td></tr>'
     );
