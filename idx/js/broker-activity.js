@@ -207,6 +207,8 @@ async function fetchBrokerList() {
 // DATA LOADING
 // ══════════════════════════════════════════════
 
+const CVD_WINDOWS = [2, 5, 10, 20];
+
 async function loadAllBrokers() {
     if (isLoading) return;
     isLoading = true;
@@ -215,46 +217,74 @@ async function loadAllBrokers() {
         ? DEFAULT_BROKER_LIST
         : DEFAULT_BROKER_LIST.filter(b => getBrokerCategory(b) === activePreset);
 
-    showLoading(`Memuat ${brokers.length} broker (${activeDays}D)...`);
+    showLoading(`Memuat ${brokers.length} broker (${activeDays}D + CVD)...`);
     allRows = [];
 
     let loaded = 0;
     let failed = 0;
 
-    // Fetch in parallel batches of 6
-    const batchSize = 6;
+    // For each broker: fetch activeDays for main columns + 4 CVD windows for net_vol
+    const batchSize = 4;
     for (let i = 0; i < brokers.length; i += batchSize) {
         const batch = brokers.slice(i, i + batchSize);
+
         const results = await Promise.allSettled(
-            batch.map(code => fetchBrokerActivity(code, activeDays))
+            batch.map(async (code) => {
+                // Fetch all windows in parallel per broker
+                const windowsToFetch = [...new Set([activeDays, ...CVD_WINDOWS])];
+                const fetches = await Promise.allSettled(
+                    windowsToFetch.map(d => fetchBrokerActivity(code, d))
+                );
+                const dataByDays = {};
+                windowsToFetch.forEach((d, idx) => {
+                    if (fetches[idx].status === 'fulfilled' && fetches[idx].value.ok) {
+                        dataByDays[d] = fetches[idx].value;
+                    }
+                });
+                return { code, dataByDays };
+            })
         );
 
-        results.forEach((result, idx) => {
-            const code = batch[idx];
-            if (result.status === 'fulfilled' && result.value.ok) {
-                const data = result.value;
-                for (const s of (data.stocks || [])) {
-                    allRows.push({
-                        broker: code,
-                        stock_code: s.stock_code,
-                        buy_val: Number(s.buy_val) || 0,
-                        sell_val: Number(s.sell_val) || 0,
-                        net_val: Number(s.net_val) || 0,
-                        total_val: Number(s.total_val) || 0,
-                        buy_vol: Number(s.buy_vol) || 0,
-                        sell_vol: Number(s.sell_vol) || 0,
-                        net_vol: Number(s.net_vol) || 0,
-                        buy_freq: Number(s.buy_freq) || 0,
-                        sell_freq: Number(s.sell_freq) || 0,
-                    });
+        results.forEach((result) => {
+            if (result.status !== 'fulfilled') { failed++; return; }
+            const { code, dataByDays } = result.value;
+            const mainData = dataByDays[activeDays];
+            if (!mainData) { failed++; return; }
+
+            // Build CVD lookup: stock → { cvd_2d, cvd_5d, cvd_10d, cvd_20d }
+            const cvdMap = {};
+            for (const w of CVD_WINDOWS) {
+                const wd = dataByDays[w];
+                if (!wd) continue;
+                for (const s of (wd.stocks || [])) {
+                    if (!cvdMap[s.stock_code]) cvdMap[s.stock_code] = {};
+                    cvdMap[s.stock_code][`cvd_${w}d`] = Number(s.net_vol) || 0;
                 }
-                loaded++;
-            } else {
-                failed++;
             }
+
+            for (const s of (mainData.stocks || [])) {
+                const cvd = cvdMap[s.stock_code] || {};
+                allRows.push({
+                    broker: code,
+                    stock_code: s.stock_code,
+                    buy_val: Number(s.buy_val) || 0,
+                    sell_val: Number(s.sell_val) || 0,
+                    net_val: Number(s.net_val) || 0,
+                    total_val: Number(s.total_val) || 0,
+                    buy_vol: Number(s.buy_vol) || 0,
+                    sell_vol: Number(s.sell_vol) || 0,
+                    net_vol: Number(s.net_vol) || 0,
+                    buy_freq: Number(s.buy_freq) || 0,
+                    sell_freq: Number(s.sell_freq) || 0,
+                    cvd_2d: cvd.cvd_2d || 0,
+                    cvd_5d: cvd.cvd_5d || 0,
+                    cvd_10d: cvd.cvd_10d || 0,
+                    cvd_20d: cvd.cvd_20d || 0,
+                });
+            }
+            loaded++;
         });
 
-        // Update progress
         showLoading(`Memuat broker... ${loaded}/${brokers.length} (${failed} gagal)`);
     }
 
@@ -301,13 +331,13 @@ function renderTable() {
 
     if (total === 0 && !isLoading) {
         $tbody.html(
-            '<tr><td colspan="13" class="text-center text-muted py-4">' +
+            '<tr><td colspan="17" class="text-center text-muted py-4">' +
             '<i class="fa-solid fa-inbox me-2"></i>Tidak ada data. Pastikan data sudah di-scrape terlebih dahulu.' +
             '</td></tr>'
         );
     } else if (page.length === 0) {
         $tbody.html(
-            '<tr><td colspan="13" class="text-center text-muted py-4">' +
+            '<tr><td colspan="17" class="text-center text-muted py-4">' +
             '<i class="fa-solid fa-filter me-2"></i>Tidak ada data sesuai filter.' +
             '</td></tr>'
         );
@@ -331,6 +361,10 @@ function renderTable() {
                 <td class="text-end hide-mobile ${netClass(r.net_vol)}">${fmtVol(r.net_vol)}</td>
                 <td class="text-center hide-mobile">${r.buy_freq.toLocaleString('id-ID')}</td>
                 <td class="text-center hide-mobile">${r.sell_freq.toLocaleString('id-ID')}</td>
+                <td class="text-end hide-mobile ${netClass(r.cvd_2d)}">${fmtVol(r.cvd_2d)}</td>
+                <td class="text-end hide-mobile ${netClass(r.cvd_5d)}">${fmtVol(r.cvd_5d)}</td>
+                <td class="text-end hide-mobile ${netClass(r.cvd_10d)}">${fmtVol(r.cvd_10d)}</td>
+                <td class="text-end hide-mobile ${netClass(r.cvd_20d)}">${fmtVol(r.cvd_20d)}</td>
                 <td class="text-center hide-mobile">${fmtPct(r.conviction)}</td>
                 <td class="text-center hide-mobile">${fmtZ(r.z_net)}</td>
                 <td class="text-center hide-mobile">${fmtZ(r.z_ind, r.n_brokers_stock)}</td>
@@ -374,7 +408,7 @@ $(function () {
 
     // Initial placeholder
     $('#tbody-broker').html(
-        '<tr><td colspan="13" class="text-center text-muted py-4">' +
+        '<tr><td colspan="17" class="text-center text-muted py-4">' +
         '<i class="fa-solid fa-spinner fa-spin me-2"></i>Memuat data broker activity...' +
         '</td></tr>'
     );

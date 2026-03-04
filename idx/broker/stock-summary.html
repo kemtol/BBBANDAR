@@ -644,15 +644,29 @@
                 <div class="table-responsive">
                     <table id="broker-table" class="table table-hover mb-0 table-broker align-middle">
                         <thead>
+                            <!-- Row 1: Group Headers -->
                             <tr class="thead-group-row">
-                                <th class="text-center sticky-col sticky-col-no">#</th>
-                                <th class="sticky-col sticky-col-code" data-sort="broker" style="cursor:pointer">
+                                <th rowspan="2" class="text-center sticky-col sticky-col-no">#</th>
+                                <th rowspan="2" class="sticky-col sticky-col-code" data-sort="broker"
+                                    style="cursor:pointer">
                                     Broker <i class="fa-solid fa-sort small text-muted"></i>
                                 </th>
-                                <th data-sort="emiten" style="cursor:pointer">
+                                <th rowspan="2" data-sort="stock_code" style="cursor:pointer">
                                     Emiten <i class="fa-solid fa-sort small text-muted"></i>
                                 </th>
-                                <th class="text-end" data-sort="net_val" style="cursor:pointer"
+                                <!-- Group: Value (4 cols) -->
+                                <th colspan="4" class="text-center thead-group-label">Value</th>
+                                <!-- Group: Volume & Freq (3 cols) -->
+                                <th colspan="3" class="text-center thead-group-label hide-mobile">Volume &amp; Freq</th>
+                                <!-- Group: Cum Volume Delta (4 cols) -->
+                                <th colspan="4" class="text-center thead-group-label hide-mobile">Cum Volume Delta</th>
+                                <!-- Group: Analytics (3 cols) -->
+                                <th colspan="3" class="text-center thead-group-label hide-mobile thead-group-end">Analytics</th>
+                            </tr>
+                            <!-- Row 2: Sub-Headers -->
+                            <tr class="thead-group-row">
+                                <!-- Value -->
+                                <th class="text-end thead-group-label" data-sort="net_val" style="cursor:pointer"
                                     title="Net value (buy − sell)">
                                     Net Val <i class="fa-solid fa-sort small text-muted"></i>
                                 </th>
@@ -666,7 +680,8 @@
                                     title="Total buy + sell value">
                                     Total Val <i class="fa-solid fa-sort small text-muted"></i>
                                 </th>
-                                <th class="text-end hide-mobile" data-sort="net_vol" style="cursor:pointer">
+                                <!-- Volume & Freq -->
+                                <th class="text-end hide-mobile thead-group-label" data-sort="net_vol" style="cursor:pointer">
                                     Net Vol <i class="fa-solid fa-sort small text-muted"></i>
                                 </th>
                                 <th class="text-center hide-mobile" data-sort="buy_freq" style="cursor:pointer"
@@ -677,7 +692,25 @@
                                     title="Sell frequency">
                                     S.Freq <i class="fa-solid fa-sort small text-muted"></i>
                                 </th>
-                                <th class="text-center hide-mobile" data-sort="conviction" style="cursor:pointer"
+                                <!-- Cum Volume Delta -->
+                                <th class="text-end hide-mobile thead-group-label" data-sort="cvd_2d" style="cursor:pointer"
+                                    title="Cumulative Volume Delta 2 hari trading">
+                                    2D <i class="fa-solid fa-sort small text-muted"></i>
+                                </th>
+                                <th class="text-end hide-mobile" data-sort="cvd_5d" style="cursor:pointer"
+                                    title="Cumulative Volume Delta 5 hari trading">
+                                    5D <i class="fa-solid fa-sort small text-muted"></i>
+                                </th>
+                                <th class="text-end hide-mobile" data-sort="cvd_10d" style="cursor:pointer"
+                                    title="Cumulative Volume Delta 10 hari trading">
+                                    10D <i class="fa-solid fa-sort small text-muted"></i>
+                                </th>
+                                <th class="text-end hide-mobile" data-sort="cvd_20d" style="cursor:pointer"
+                                    title="Cumulative Volume Delta 20 hari trading">
+                                    20D <i class="fa-solid fa-sort small text-muted"></i>
+                                </th>
+                                <!-- Analytics -->
+                                <th class="text-center hide-mobile thead-group-label" data-sort="conviction" style="cursor:pointer"
                                     title="Conviction = |Net| / Total × 100% — seberapa directional posisi ini">
                                     CVT% <i class="fa-solid fa-sort small text-muted"></i>
                                 </th>
@@ -685,7 +718,7 @@
                                     title="Z-Score vs portofolio broker ini — outlier detection intra-broker">
                                     Z-Net <i class="fa-solid fa-sort small text-muted"></i>
                                 </th>
-                                <th class="text-center hide-mobile" data-sort="z_ind" style="cursor:pointer"
+                                <th class="text-center hide-mobile thead-group-end" data-sort="z_ind" style="cursor:pointer"
                                     title="Z-Score vs industry (semua broker di saham ini) — butuh ≥3 broker">
                                     Z-Ind <i class="fa-solid fa-sort small text-muted"></i>
                                 </th>
@@ -730,7 +763,7 @@
     <script src="../js/component.js?v=73"></script>
 
     <!-- BROKER ACTIVITY LOGIC -->
-    <script src="../js/broker-activity.js?v=3"></script>
+    <script src="../js/broker-activity.js?v=4"></script>
 
     <script defer
         src="https://static.cloudflareinsights.com/beacon.min.js/vcd15cbe7772f49c399c6a5babf22c1241717689176015"
