@@ -6858,7 +6858,24 @@ export default {
         }
 
         if (broker && /^[A-Z0-9]{2,3}$/.test(broker)) {
-          // Single broker — aggregate N days
+          // Single broker — aggregate N days (with R2 cache)
+          // Cache key: BYBROKER_{CODE}/cache/{days}D_{latestTradingDay}.json
+          // Cache auto-invalidates when a new trading day starts (key changes)
+          const cacheKey = `BYBROKER_${broker}/cache/${days}D_${tradingDays[0]}.json`;
+
+          // 1) Try cache first (days > 1 only; days=1 is already a single file read)
+          if (days > 1) {
+            try {
+              const cached = await env.RAW_BROKSUM.get(cacheKey);
+              if (cached) {
+                const payload = await cached.json();
+                payload._cached = true;
+                return json(payload);
+              }
+            } catch (e) { /* cache miss or corrupt — continue to compute */ }
+          }
+
+          // 2) Compute from daily files
           const allStocks = new Map();
           const loadedDates = [];
 
@@ -6896,12 +6913,23 @@ export default {
           const stocks = Array.from(allStocks.values())
             .sort((a, b) => Math.abs(b.net_val) - Math.abs(a.net_val));
 
-          return json({
+          const payload = {
             ok: true, broker, days,
             dates_loaded: loadedDates,
             breadth: stocks.length,
             stocks
-          });
+          };
+
+          // 3) Write cache (non-blocking, days > 1 only)
+          if (days > 1 && loadedDates.length > 0) {
+            try {
+              await env.RAW_BROKSUM.put(cacheKey, JSON.stringify(payload), {
+                httpMetadata: { contentType: "application/json" }
+              });
+            } catch (e) { console.warn(`[broker-activity] cache write error: ${e.message}`); }
+          }
+
+          return json(payload);
 
         } else {
           // All brokers — list available for first trading day
