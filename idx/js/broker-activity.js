@@ -123,6 +123,43 @@ function fmtPct(c) {
 }
 
 /**
+ * CVD Trend score: apakah broker akselerasi akumulasi?
+ *
+ * Logika:
+ *   1. Normalize per hari: avg2 = cvd_2d/2, avg5 = cvd_5d/5, ...
+ *   2. Bandingkan window pendek vs panjang (3 pairs): +1 jika pendek > panjang, -1 sebaliknya
+ *   3. Arah terkini: cvd_2d > 0 → +1, < 0 → -1
+ *   Score range: -4 (strong distrib) to +4 (strong accum)
+ *
+ * Display:
+ *   ≥3  = ▲▲ Strong Accum (hijau bold)
+ *   1-2 = ▲  Accum (hijau)
+ *   0   = ─  Neutral (abu)
+ *  -1–2 = ▼  Distrib (merah)
+ *  ≤-3  = ▼▼ Strong Distrib (merah bold)
+ */
+function computeCvdTrend(r) {
+    const avg2  = r.cvd_2d  / 2;
+    const avg5  = r.cvd_5d  / 5;
+    const avg10 = r.cvd_10d / 10;
+    const avg20 = r.cvd_20d / 20;
+    let score = 0;
+    score += (avg2 > avg5)   ? 1 : (avg2 < avg5)   ? -1 : 0;
+    score += (avg5 > avg10)  ? 1 : (avg5 < avg10)  ? -1 : 0;
+    score += (avg10 > avg20) ? 1 : (avg10 < avg20) ? -1 : 0;
+    score += r.cvd_2d > 0 ? 1 : r.cvd_2d < 0 ? -1 : 0;
+    return score;
+}
+
+function fmtCvdTrend(score) {
+    if (score >= 3)  return '<span class="text-success fw-bold">▲▲</span>';
+    if (score >= 1)  return '<span class="text-success">▲</span>';
+    if (score === 0) return '<span class="text-muted">─</span>';
+    if (score >= -2) return '<span class="text-danger">▼</span>';
+    return '<span class="text-danger fw-bold">▼▼</span>';
+}
+
+/**
  * Compute z-scores and conviction for all loaded rows.
  *
  * Columns added to each row:
@@ -172,7 +209,12 @@ function computeZScores() {
         rows.forEach(r => { r.z_ind = std > 0 ? (r.net_val - mean) / std : 0; });
     }
 
-    console.log(`[broker-activity] Z-scores computed for ${allRows.length} rows`);
+    // 4. CVD Trend: momentum across CVD windows
+    for (const r of allRows) {
+        r.cvd_trend = computeCvdTrend(r);
+    }
+
+    console.log(`[broker-activity] Z-scores + CVD trends computed for ${allRows.length} rows`);
 }
 
 // ══════════════════════════════════════════════
@@ -331,13 +373,13 @@ function renderTable() {
 
     if (total === 0 && !isLoading) {
         $tbody.html(
-            '<tr><td colspan="17" class="text-center text-muted py-4">' +
+            '<tr><td colspan="18" class="text-center text-muted py-4">' +
             '<i class="fa-solid fa-inbox me-2"></i>Tidak ada data. Pastikan data sudah di-scrape terlebih dahulu.' +
             '</td></tr>'
         );
     } else if (page.length === 0) {
         $tbody.html(
-            '<tr><td colspan="17" class="text-center text-muted py-4">' +
+            '<tr><td colspan="18" class="text-center text-muted py-4">' +
             '<i class="fa-solid fa-filter me-2"></i>Tidak ada data sesuai filter.' +
             '</td></tr>'
         );
@@ -365,6 +407,7 @@ function renderTable() {
                 <td class="text-end hide-mobile ${netClass(r.cvd_5d)}">${fmtVol(r.cvd_5d)}</td>
                 <td class="text-end hide-mobile ${netClass(r.cvd_10d)}">${fmtVol(r.cvd_10d)}</td>
                 <td class="text-end hide-mobile ${netClass(r.cvd_20d)}">${fmtVol(r.cvd_20d)}</td>
+                <td class="text-center hide-mobile">${fmtCvdTrend(r.cvd_trend)}</td>
                 <td class="text-center hide-mobile">${fmtPct(r.conviction)}</td>
                 <td class="text-center hide-mobile">${fmtZ(r.z_net)}</td>
                 <td class="text-center hide-mobile">${fmtZ(r.z_ind, r.n_brokers_stock)}</td>
@@ -408,7 +451,7 @@ $(function () {
 
     // Initial placeholder
     $('#tbody-broker').html(
-        '<tr><td colspan="17" class="text-center text-muted py-4">' +
+        '<tr><td colspan="18" class="text-center text-muted py-4">' +
         '<i class="fa-solid fa-spinner fa-spin me-2"></i>Memuat data broker activity...' +
         '</td></tr>'
     );
