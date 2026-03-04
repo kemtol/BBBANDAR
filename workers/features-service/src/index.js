@@ -125,8 +125,45 @@ export default {
                 this.fetchSectorDigestMap(env, date)
             ]);
             const processedStatsMap     = processedStatsMaps[0]; // D0 = today
-            const prevProcessedStatsMap = processedStatsMaps[1]; // D1 = yesterday
+            let   prevProcessedStatsMap = processedStatsMaps[1]; // D1 = yesterday
             console.log(`Step 2.5: processed-stats maps ${processedStatsMaps.filter(m => m.size > 0).length}/20 loaded; sector digest ${sectorDigestMap.size} symbols`);
+
+            // FALLBACK: If processed/{prevDate}.json is empty (livetrade-taping-agregator
+            // didn't write it), query D1 for previous trading day close prices directly.
+            // This ensures growth_pct (CHG%) is always computed correctly.
+            if (prevProcessedStatsMap.size === 0) {
+                const prevDateStr = this.prevTradingDayUTC(date);
+                const prevStartTs = new Date(`${prevDateStr}T02:00:00Z`).getTime();
+                const prevEndTs   = new Date(`${prevDateStr}T09:00:00Z`).getTime();
+
+                try {
+                    const { results: prevRows } = await env.SSSAHAM_DB.prepare(`
+                        SELECT ticker, close, MAX(time_key) as last_time
+                        FROM temp_footprint_consolidate
+                        WHERE time_key >= ? AND time_key <= ?
+                        GROUP BY ticker
+                    `).bind(prevStartTs, prevEndTs).all();
+
+                    if (prevRows && prevRows.length > 0) {
+                        const d1PrevMap = new Map();
+                        for (const row of prevRows) {
+                            const t = String(row.ticker || "").toUpperCase();
+                            const close = Number(row.close);
+                            if (t && this.isValidTicker(t) && Number.isFinite(close) && close > 0) {
+                                d1PrevMap.set(t, { close, open: null, vol: null, netVol: null, freq: null });
+                            }
+                        }
+                        if (d1PrevMap.size > 0) {
+                            console.log(`[D1-FALLBACK] prevProcessedStats empty, D1 loaded ${d1PrevMap.size} prev-day closes for ${prevDateStr}`);
+                            prevProcessedStatsMap = d1PrevMap;
+                            // Also update the array for CVD window calculations
+                            processedStatsMaps[1] = d1PrevMap;
+                        }
+                    }
+                } catch (e) {
+                    console.warn(`[D1-FALLBACK] prev-day query failed:`, e?.message || e);
+                }
+            }
 
             // Create footprint lookup for quick access
             const footprintMap = new Map();
@@ -202,13 +239,24 @@ export default {
                         // stock app conventions (Google Finance, IPOT, etc.) regardless of candle count.
                         // NOTE: item.p (Mom%) is NOT overridden for ≥30 candle items — it retains
                         // its intraday semantics for technical scoring purposes.
+                        //
+                        // FIX: processed/{today}.json may not exist during intraday (only written
+                        // when livetrade-taping-agregator batch completes, ~hourly). Fallback to
+                        // D1 footprint close (temp_footprint_consolidate) which is always fresh.
                         {
-                            const curClose = Number(processedStatsMap.get(ticker)?.close);
+                            const curCloseFromStats = Number(processedStatsMap.get(ticker)?.close);
+                            const curCloseFromD1 = Number(fp?.close);
+                            const curClose = (Number.isFinite(curCloseFromStats) && curCloseFromStats > 0)
+                                ? curCloseFromStats
+                                : (Number.isFinite(curCloseFromD1) && curCloseFromD1 > 0 ? curCloseFromD1 : NaN);
                             const prevClose = Number(prevProcessedStatsMap.get(ticker)?.close);
                             if (Number.isFinite(curClose) && curClose > 0 && Number.isFinite(prevClose) && prevClose > 0) {
                                 item.open_price = prevClose;
                                 item.recent_price = curClose;
                                 item.growth_pct = Number((((curClose - prevClose) / prevClose) * 100).toFixed(2));
+                                // Mark as close-to-close so sector digest won't override with
+                                // intraday-based (price_last - price_open) / price_open calculation
+                                item.p_src = 'close_to_close';
                             }
                         }
                         item.src = 'FULL';  // Source indicator

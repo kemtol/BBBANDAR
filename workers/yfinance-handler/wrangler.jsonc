@@ -1,0 +1,50 @@
+{
+    "$schema": "node_modules/wrangler/config-schema.json",
+    "name": "yfinance-handler",
+    "main": "src/index.js",
+    "compatibility_date": "2025-01-01",
+    "observability": { "enabled": true },
+
+    "r2_buckets": [
+        {
+            "binding": "TAPE_DATA_SAHAM",
+            "bucket_name": "tape-data-saham",
+            "preview_bucket_name": "tape-data-saham"
+        }
+    ],
+
+    "d1_databases": [
+        {
+            "binding": "SSSAHAM_DB",
+            "database_name": "sssaham-db",
+            "database_id": "98cd91eb-5666-4284-8845-8e8b6d7a1b8f"
+        }
+    ],
+
+    "queues": {
+        "producers": [
+            {
+                "queue": "yfinance-queue",
+                "binding": "YFINANCE_QUEUE"
+            }
+        ],
+        "consumers": [
+            {
+                "queue": "yfinance-queue",
+                "max_batch_size": 5,
+                "max_batch_timeout": 30,
+                "max_concurrency": 3
+            }
+        ]
+    },
+
+    "vars": {
+        "MAX_RETRY": "2"
+    },
+
+    "triggers": {
+        "crons": [
+            "0 11 * * 1-5"
+        ]
+    }
+}

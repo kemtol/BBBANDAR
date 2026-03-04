@@ -475,6 +475,16 @@ async function runSectorJob(env, {
             const levels  = levelMap.get(sym) || [];
             let out = null;
 
+            // Compute CVD from TradedSummary levels: Σ(b_lot - s_lot)
+            let cvd_lot = null;
+            if (levels.length > 0) {
+                cvd_lot = levels.reduce((sum, lv) => {
+                    const bl = Number(lv.b_lot || 0);
+                    const sl = Number(lv.s_lot || 0);
+                    return sum + (Number.isFinite(bl) ? bl : 0) - (Number.isFinite(sl) ? sl : 0);
+                }, 0);
+            }
+
             if (payload) {
                 const parsed = parseSS2DataString(payload.raw);
                 if (parsed && Number.isFinite(parsed.freq_tx) && parsed.freq_tx >= 0) {
@@ -489,6 +499,7 @@ async function runSectorJob(env, {
                         price_high:  parsed.price_high,
                         price_low:   parsed.price_low,
                         freq_tx:     parsed.freq_tx,
+                        cvd_lot,
                         levels,
                         raw:         payload.raw,
                         source:      "ws:ss2"
@@ -513,6 +524,7 @@ async function runSectorJob(env, {
                         const sf = Number(l?.s_freq || 0);
                         return sum + (Number.isFinite(bf) ? bf : 0) + (Number.isFinite(sf) ? sf : 0);
                     }, 0),
+                    cvd_lot,
                     levels,
                     raw:    null,
                     source: "ws:tradedsummary"
@@ -676,6 +688,16 @@ function computeDigest(records) {
         );
     }
 
+    // ── CVD from TradedSummary levels ─────────────────────────────────
+    // cvd_lot: latest snapshot's net buy-sell lots Σ(b_lot - s_lot)
+    // cvd_delta: change in cvd_lot from first to last snapshot (intraday momentum)
+    const cvd_lot   = last.cvd_lot  ?? null;
+    const cvd_first = first.cvd_lot ?? null;
+    let cvd_delta = null;
+    if (cvd_lot !== null && cvd_first !== null) {
+        cvd_delta = cvd_lot - cvd_first;
+    }
+
     return {
         freq_tx,
         freq_source,
@@ -684,6 +706,8 @@ function computeDigest(records) {
         price_high,
         price_low,
         growth_pct,
+        cvd_lot,
+        cvd_delta,
         snapshots_count: sorted.length,
         ts_first: first.ts,
         ts_last:  last.ts,
@@ -985,6 +1009,79 @@ export default {
                     symbols_count: Object.keys(digests).length,
                     digests
                 }), { headers: withCors({ "Content-Type": "application/json" }) });
+            } catch (e) {
+                return new Response(
+                    JSON.stringify({ ok: false, error: e?.message || String(e) }),
+                    { status: 500, headers: withCors({ "Content-Type": "application/json" }) }
+                );
+            }
+        }
+
+        // ── GET /sector/cvd/batch ────────────────────────────────────────
+        // Returns CVD (from TradedSummary levels) for all symbols across all
+        // (or selected) sectors on a given date. Designed for dashboard roster
+        // enrichment — one call replaces N per-symbol lookups.
+        // Query params: sectors (optional, comma-separated, default all),
+        //               date (optional, default today WIB)
+        // Response: { ok, date, symbols: { BBCA: { cvd_lot, cvd_delta, freq_tx, growth_pct, sector }, ... } }
+        if (path === "/sector/cvd/batch") {
+            const sectorsParam = (url.searchParams.get("sectors") || "").trim();
+            const sectors = sectorsParam
+                ? parseSectorList(sectorsParam)
+                : DEFAULT_SECTOR_LIST;
+            const dateParam = url.searchParams.get("date") || getWibDateString();
+            const [yyyy, mm, dd] = dateParam.split("-");
+
+            try {
+                const symbolMap = {}; // symbol → digest + sector
+
+                // Read each sector's aggregate JSONL in parallel
+                const sectorReads = sectors.map(async (sector) => {
+                    const aggKey = `sector/${sector}/${yyyy}/${mm}/${dd}.jsonl`;
+                    const aggObj = await env.FOOTPRINT_BUCKET.get(aggKey);
+                    if (!aggObj) return;
+                    const aggText = await aggObj.text();
+
+                    // Group records by symbol
+                    const bySymbol = new Map();
+                    for (const line of aggText.split("\n").filter(l => l.trim())) {
+                        try {
+                            const rec = JSON.parse(line);
+                            const sym = String(rec.symbol || "").toUpperCase();
+                            if (!sym) continue;
+                            if (!bySymbol.has(sym)) bySymbol.set(sym, []);
+                            bySymbol.get(sym).push(rec);
+                        } catch { /* skip */ }
+                    }
+
+                    for (const [sym, records] of bySymbol) {
+                        // Skip if already seen from another sector (keep first)
+                        if (symbolMap[sym]) continue;
+                        const digest = computeDigest(records);
+                        if (digest) {
+                            symbolMap[sym] = {
+                                sector,
+                                cvd_lot:    digest.cvd_lot,
+                                cvd_delta:  digest.cvd_delta,
+                                freq_tx:    digest.freq_tx,
+                                growth_pct: digest.growth_pct,
+                                price_last: digest.price_last,
+                                price_high: digest.price_high,
+                                price_low:  digest.price_low,
+                            };
+                        }
+                    }
+                });
+
+                await Promise.all(sectorReads);
+
+                return new Response(JSON.stringify({
+                    ok: true,
+                    date: dateParam,
+                    sectors,
+                    symbols_count: Object.keys(symbolMap).length,
+                    symbols: symbolMap
+                }), { headers: withCors({ "Content-Type": "application/json", "Cache-Control": "public, max-age=60" }) });
             } catch (e) {
                 return new Response(
                     JSON.stringify({ ok: false, error: e?.message || String(e) }),

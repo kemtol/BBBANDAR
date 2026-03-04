@@ -969,3 +969,410 @@ Microcopy contoh:
 3. State matrix (LIVE, DEGRADED, STALE, EMPTY).
 4. Mapping field API -> komponen UI.
 5. Checklist QA visual dan interaction.
+
+---
+
+## 43) North Star Vision — Bid/Offer Pressure as Decision Layer
+
+### 43.1 Vision Statement
+> Menyediakan **real-time bid/offer pressure visibility** untuk semua saham yang sedang trending di Most Active roster, sehingga user dapat menilai **continuation vs exhaustion** dalam < 5 detik tanpa perlu membuka detail per emiten.
+
+### 43.2 User Stories
+
+| # | Role | Story | Acceptance |
+|---|------|-------|------------|
+| US-1 | User | Saya ingin melihat tekanan bid/offer pada kondisi market saat ini | Roster table menampilkan BSS/ATS bars yang update setiap 5 detik untuk Top-N |
+| US-2 | System | Saya menyediakan roster emiten paling aktif dengan probabilitas continuation untuk next day | End-of-day summary tersimpan di R2 dengan stage label dan scoring |
+| US-3 | System | Saya menyediakan quick-glance tool agar user mendapat presisi keputusan continuation via bid/offer pressure (Stage 1) sebelum masuk ke microstructure detection | OB2 pressure tersedia segera saat halaman dibuka (cold-start seeding dari R2), bukan menunggu 60s WS data |
+| US-4 | System | Saya menggunakan basic Level 2 data agar user bisa menganalisis saham mana yang trending dengan tekanan bid/offer | Semua simbol di Most Active roster memiliki OB2 snapshot di R2, termasuk simbol non-LQ45 yang dinamis |
+
+### 43.3 Problem Statement — The Coverage Gap
+
+```
+┌─── SAAT INI ──────────────────────────────────────────────────┐
+│                                                                │
+│  Server (livetrade-taping)        Browser Pipeline             │
+│  ┌──────────────────────┐         ┌──────────────────────┐     │
+│  │ Watchlist TETAP:      │         │ Watchlist DINAMIS:    │     │
+│  │ LQ45 + IDX30         │         │ Most Active Top-60   │     │
+│  │ (~45 simbol)          │         │ (berubah setiap 60s) │     │
+│  │                       │         │                       │     │
+│  │ ✅ BBRI, BBCA, TLKM  │         │ ✅ BBRI (overlap)     │     │
+│  │ ✅ ADRO, ASII, BMRI  │         │ ❌ SKBM (NO R2!)     │     │
+│  │ ❌ SKBM not here     │         │ ❌ POLI (NO R2!)     │     │
+│  │ ❌ POLI not here     │         │ ❌ KARW (NO R2!)     │     │
+│  └──────────┬───────────┘         └──────────┬───────────┘     │
+│             │                                │                  │
+│             ▼                                ▼                  │
+│     R2: ob2/snapshot15s/            In-memory only (volatile)  │
+│     ✅ 45 simbol tetap              ❌ Lost on page close      │
+│     ❌ Dynamic symbols              ❌ 50/50 cold start        │
+│        ABSENT                                                   │
+│                                                                │
+└────────────────────────────────────────────────────────────────┘
+```
+
+**Impact:** ~40-60% dari Most Active roster (ARA candidates, saham gorengan, trending stocks) TIDAK punya R2 data karena mereka bukan bagian LQ45/IDX30. Justru inilah saham yang **paling butuh** bid/offer pressure analysis.
+
+### 43.4 Target State
+
+```
+┌─── TARGET ────────────────────────────────────────────────────┐
+│                                                                │
+│  Browser Pipeline              api-saham             R2        │
+│  ┌──────────────┐      POST    ┌──────────┐   KV    ┌──────┐ │
+│  │ Most Active   │─────────────►│ /ma-sync │───────►│ KV:  │ │
+│  │ Top-60 roster │  every 60s  │          │        │ ma:  │ │
+│  └──────┬───────┘              └──────────┘        │ list │ │
+│         │                                           └──┬───┘ │
+│         │                                              │      │
+│         │  GET /ob2-seed        livetrade-taping       │      │
+│         │◄──────────────────┐   ┌──────────────────┐   │      │
+│         │   (cold start)    │   │ READ KV → merge  │◄──┘      │
+│         │                   │   │ watchlist         │          │
+│         │                   │   │ LQ45 + IDX30 +   │          │
+│  ┌──────▼───────┐           │   │ Most Active ═════╪════╗     │
+│  │ Ob2Rolling   │           │   │ Subscribe ALL    │    ║     │
+│  │ Metrics      │           │   └────────┬─────────┘    ║     │
+│  │ BSS/ATS ≠50  │           │            │              ║     │
+│  └──────────────┘           │            ▼              ║     │
+│                             │   R2: ob2/snapshot15s/    ║     │
+│                             │   ✅ LQ45 + IDX30        ║     │
+│                             └───✅ SKBM, POLI, KARW ◄══╝     │
+│                                 ✅ ALL Most Active             │
+│                                                                │
+└────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 44) Phased Implementation Plan
+
+### Phase 0 — Status Quo Assessment
+**Status: COMPLETE**
+
+| Komponen | Status | Catatan |
+|---|---|---|
+| `livetrade-taping` DO | ✅ Running | WS connect, buffer, flush ke R2 |
+| R2 `raw_ob/` | ✅ Flowing | Sub-second raw OB2, per-symbol/jam |
+| R2 `ob2/snapshot15s/` | ✅ Flowing | 15s cadence, watchlist tetap only |
+| `orderbook-taping-agregator` | ⚠️ Partial | `/ob-latest` OK, `/step-ob-hist` TODO |
+| Browser `MostActiveClient` | ✅ Working | HOLD/record-stream parsing |
+| Browser `OrderbookClient` | ✅ Fixed | stream/#publish OB2 handling |
+| Browser `Ob2RollingMetrics` | ✅ Code ready | BSS/ATS computation |
+| Browser `HotScoreEngine` | ✅ Code ready | Stage scoring |
+| UI Roster Table | ✅ Showing | 12 columns, BSS/ATS bars rendered |
+| **R2 coverage gap** | ❌ **BLOCKER** | Non-LQ45 symbols absent |
+| **Cold-start BSS/ATS** | ❌ **BLOCKER** | Always 50/50 on page load |
+
+### Phase 1 — Dynamic Watchlist Sync (P0, ~2 jam)
+**Goal:** Semua simbol Most Active roster memiliki OB2 data di R2.
+
+#### 1A. Browser → POST roster ke `api-saham`
+- Setiap minute cycle, setelah roster diterima, POST top-N symbols ke `api-saham`.
+- Endpoint: `POST /ma-watchlist-sync`
+- Body: `{ "symbols": ["SKBM","POLI","KARW",...], "ts": 1709..., "source": "browser" }`
+
+#### 1B. `api-saham` → store ke KV
+- Store ke Workers KV: key `most-active:watchlist`
+- Value: `{ "symbols": [...], "ts": ..., "ttl_minutes": 5 }`
+- TTL: 5 menit (auto-expire kalau browser disconnect)
+
+#### 1C. `livetrade-taping` → read KV, merge, subscribe
+- Setiap alarm cycle (2s), check KV `most-active:watchlist`
+- Merge: `static_watchlist ∪ dynamic_watchlist` → deduplicated set
+- Subscribe OB2 untuk simbol baru, unsubscribe yang expired
+- Sekarang R2 `ob2/snapshot15s/` ada untuk SEMUA simbol aktif
+
+#### 1D. Wiring Changes Required
+
+| Worker | Change |
+|---|---|
+| `api-saham` | Add `POST /ma-watchlist-sync` endpoint, add KV binding |
+| `livetrade-taping` | Add KV binding, read + merge in alarm(), dynamic subscribe/unsubscribe |
+| Browser `most-active-pipeline.js` | Add POST call in `_handleRoster()` |
+
+### Phase 2 — Cold Start OB2 Seeding (P0, ~4 jam)
+**Goal:** BSS/ATS non-50/50 segera saat halaman dibuka.
+
+#### 2A. `api-saham` → serve OB2 seed endpoint
+- Endpoint: `GET /ob2-seed?symbols=BBRI,SKBM,...&count=60`
+- Reads from R2: `ob2/snapshot15s/v1/symbol={CODE}/date={TODAY}/daily.jsonl`
+- Returns last `count` snapshots per symbol (tail of JSONL)
+- Response:
+```json
+{
+  "seeds": {
+    "BBRI": [
+      { "ts_unix_ms": ..., "bid_l10": [...], "ask_l10": [...] },
+      ...
+    ],
+    "SKBM": [...]
+  },
+  "coverage": { "requested": 10, "found": 8, "missing": ["NEWSTOCK","RARESTOCK"] }
+}
+```
+
+#### 2B. Browser → fetch seed on startup
+- `MostActiveOrchestrator.start()` → immediately fetch `/ob2-seed` with current top-N
+- Feed each snapshot into `Ob2RollingMetrics.push(bid, ask)`
+- BSS/ATS immediately computed from historical data
+- Then live WS takes over for real-time updates
+
+#### 2C. Wiring Changes Required
+
+| Worker | Change |
+|---|---|
+| `api-saham` | Add `GET /ob2-seed` endpoint, add R2 binding `DATA_LAKE` (tape-data-saham) |
+| Browser `most-active-pipeline.js` | Add seed fetch in orchestrator `start()`, feed into scoreEngine |
+
+### Phase 3 — Minute Aggregation & Roster Persistence (P1, ~6 jam)
+**Goal:** Implementasi PRD §17.3–17.5 — roster + OB2 minute summary + manifest.
+
+#### 3A. Roster Snapshot to R2
+- Di `livetrade-taping` atau new dedicated worker
+- Setiap menit, simpan roster query result ke:
+  - `most-active/raw/v1/index=COMPOSITE/date={D}/hour={HH}/minute={mm}/snapshot.json.gz`
+  - `most-active/norm/v1/index=COMPOSITE/date={D}/hour={HH}/minute={mm}/top60.json`
+
+#### 3B. OB2 Minute Summary
+- Di `livetrade-taping`, setiap minute boundary:
+  - Compute dari `ob2/snapshot15s` buffer (4 snapshots per minute)
+  - Write: `ob2/minute/v1/index=COMPOSITE/symbol={CODE}/date={D}/hour={HH}/minute={mm}/summary.json`
+  - Schema: `ob2.minute.v1` (imbalance, spread_bps_avg, depth_ratio, update_count)
+
+#### 3C. Manifest per Minute
+- Write: `manifest/v1/index=COMPOSITE/date={D}/hour={HH}/minute={mm}/manifest.json`
+- Contains pointers, top-N list, flush completeness
+
+### Phase 4 — Next-Day Continuation Signal (P2, ~8 jam)
+**Goal:** End-of-day analysis menghasilkan sinyal continuation candidates untuk trading day berikutnya.
+
+#### 4A. EOD Job (Cron Worker)
+- Trigger: 16:30 WIB daily (after market close)
+- Read: all `most-active/norm/v1/.../top60.json` for today
+- Read: all `ob2/minute/v1/.../summary.json` for today's top-N
+- Compute per symbol:
+  - `total_minutes_in_roster` (persistence)
+  - `avg_stage_score` across day
+  - `avg_bss`, `avg_ats` across day
+  - `rank_trajectory` (improving/stable/deteriorating)
+  - `eod_ob2_state` (last hour average)
+  - `continuation_probability` (composite)
+- Write: `eod/v1/date={YYYY-MM-DD}/continuation_candidates.json`
+
+#### 4B. Schema `eod.continuation.v1`
+```json
+{
+  "schema": "eod.continuation.v1",
+  "market_date": "2026-03-02",
+  "generated_at": "2026-03-02T09:35:00Z",
+  "candidates": [
+    {
+      "code": "SKBM",
+      "total_minutes_in_roster": 285,
+      "avg_stage_score": 72,
+      "avg_bss": 68,
+      "avg_ats": 71,
+      "rank_trajectory": "improving",
+      "eod_ob2_state": "GREEN_GREEN",
+      "continuation_probability": 0.78,
+      "reason_summary": ["high_persistence", "bid_stack_consistent", "rank_improving_steady"]
+    }
+  ],
+  "stats": {
+    "total_symbols_analyzed": 120,
+    "candidates_count": 15,
+    "market_session_quality": "normal"
+  }
+}
+```
+
+#### 4C. Pre-market Morning View
+- User buka halaman sebelum market open
+- Browser fetch `eod/v1/date={YESTERDAY}/continuation_candidates.json`
+- Display: "Kandidat Continuation Hari Ini" card
+- Saat market open, transition ke live pipeline
+
+---
+
+## 45) Infrastructure Changes Required
+
+### 45.1 New KV Namespace
+```
+Name: MOST_ACTIVE_KV
+Purpose: Bridge browser→server dynamic watchlist
+Keys:
+  - "most-active:watchlist" → { symbols: string[], ts: number }
+  - "most-active:eod:{date}" → pointer to R2 EOD file
+TTL: 5 minutes for watchlist, 24h for EOD
+```
+
+### 45.2 Binding Changes
+
+#### `api-saham/wrangler.jsonc` — ADD:
+```jsonc
+"kv_namespaces": [
+  { "binding": "MOST_ACTIVE_KV", "id": "<KV_ID>" }
+],
+"r2_buckets": [
+  // existing...
+  { "binding": "DATA_LAKE", "bucket_name": "tape-data-saham" }  // NEW
+]
+```
+
+#### `livetrade-taping/wrangler.jsonc` — ADD:
+```jsonc
+"kv_namespaces": [
+  { "binding": "MOST_ACTIVE_KV", "id": "<KV_ID>" }
+]
+```
+
+### 45.3 New Endpoints Summary
+
+| Endpoint | Worker | Method | Purpose | Phase |
+|---|---|---|---|---|
+| `POST /ma-watchlist-sync` | api-saham | POST | Browser posts dynamic watchlist | 1 |
+| `GET /ob2-seed` | api-saham | GET | Cold-start OB2 snapshots | 2 |
+| `GET /ob2-pressure` | api-saham | GET | Quick-glance pressure summary | 2 |
+| `GET /eod-continuation` | api-saham | GET | Next-day candidates | 4 |
+
+---
+
+## 46) Data Flow per Phase — Sequence Diagrams
+
+### 46.1 Phase 1: Dynamic Watchlist Sync
+
+```text
+Browser                    api-saham                  KV                livetrade-taping        R2
+  │                           │                        │                      │                  │
+  │─── POST /ma-watchlist ───►│                        │                      │                  │
+  │    {symbols:[SKBM,POLI]}  │─── PUT ──────────────►│                      │                  │
+  │◄── 200 OK ────────────────│  "most-active:         │                      │                  │
+  │                           │   watchlist"            │                      │                  │
+  │                           │                        │                      │                  │
+  │                           │                        │  ◄── GET (alarm) ───│                  │
+  │                           │                        │─── {symbols} ──────►│                  │
+  │                           │                        │                      │─ subscribe OB2 ─►│
+  │                           │                        │                      │  SKBM, POLI      │
+  │                           │                        │                      │                  │
+  │                           │                        │                      │── flush 15s ────►│
+  │                           │                        │                      │  ob2/snapshot15s/ │
+  │                           │                        │                      │  symbol=SKBM/    │
+  │                           │                        │                      │  ✅ NOW IN R2     │
+```
+
+### 46.2 Phase 2: Cold Start Seeding
+
+```text
+Browser opens page                   api-saham                         R2
+  │                                       │                              │
+  │── GET /ob2-seed?symbols=SKBM,BBRI ──►│                              │
+  │                                       │── GET ob2/snapshot15s/      │
+  │                                       │   symbol=SKBM/date=today/  │
+  │                                       │   daily.jsonl              │
+  │                                       │◄── last 60 lines ──────────│
+  │◄── {seeds:{SKBM:[...],BBRI:[...]}} ──│                              │
+  │                                       │                              │
+  │ Feed into Ob2RollingMetrics           │                              │
+  │ BSS=72, ATS=68 (not 50/50!)          │                              │
+  │                                       │                              │
+  │ Connect WS → live OB2 continues       │                              │
+```
+
+---
+
+## 47) Cost & Performance Analysis
+
+### 47.1 KV Operations
+- Writes: 1 per minute (browser POST) × market hours (6.5h) = ~390 writes/day
+- Reads: 1 per alarm cycle (2s) × 6.5h = ~11,700 reads/day
+- **Cost: FREE tier** (KV free tier: 100K reads, 1K writes/day)
+
+### 47.2 Additional R2 Storage
+- Current: ~45 symbols × 811KB/day = ~36MB/day
+- After Phase 1: ~100 symbols × 811KB/day = ~81MB/day
+- **Delta: +45MB/day, ~1.35GB/month → negligible** (R2 free: 10GB)
+
+### 47.3 OB2 Seed Endpoint Latency
+- Read 1 JSONL file (~800KB), parse last 60 lines: ~50ms
+- 10 symbols parallel: ~100ms (R2 is fast for same-region)
+- Total cold-start: < 500ms including network
+
+---
+
+## 48) Risk & Mitigation
+
+| Risk | Impact | Mitigation |
+|---|---|---|
+| KV stale (browser disconnects) | livetrade-taping subscribes to stale list | TTL 5 menit auto-expire |
+| Too many dynamic symbols (>100) | OB2 subscribe overload | Cap at 60, prioritize by rank |
+| R2 JSONL file grows huge | Slow seed reads | Daily files auto-partition; tail-read only |
+| IPOT rate limit on OB2 subscribes | Connection dropped | Batch subscribe with 100ms delay between |
+| livetrade-taping alarm miss KV | Gap in coverage | Fallback: static watchlist always active |
+
+---
+
+## 49) Implementation Task Breakdown (Execution Order)
+
+### Sprint 1: Phase 1 — Dynamic Watchlist Sync (Target: 1 hari)
+
+| Task | File | Est. | Dependency |
+|---|---|---|---|
+| T1.1 Create KV namespace `MOST_ACTIVE_KV` | Cloudflare Dashboard | 5m | — |
+| T1.2 Add KV binding to `api-saham/wrangler.jsonc` | wrangler.jsonc | 5m | T1.1 |
+| T1.3 Add KV binding to `livetrade-taping/wrangler.jsonc` | wrangler.jsonc | 5m | T1.1 |
+| T1.4 Implement `POST /ma-watchlist-sync` in `api-saham` | api-saham/src/index.js | 30m | T1.2 |
+| T1.5 Add dynamic watchlist merge in `livetrade-taping` alarm | livetrade-taping/src/index.js | 1h | T1.3 |
+| T1.6 Add dynamic OB2 subscribe/unsubscribe in `livetrade-taping` | livetrade-taping/src/index.js | 30m | T1.5 |
+| T1.7 Add POST call in browser `MostActiveOrchestrator._handleRoster()` | most-active-pipeline.js | 20m | T1.4 |
+| T1.8 Deploy `api-saham` + `livetrade-taping` | CLI | 10m | T1.4-T1.6 |
+| T1.9 Verify: SKBM appears in `ob2/snapshot15s/` R2 | Dashboard check | 10m | T1.8 |
+
+### Sprint 2: Phase 2 — Cold Start Seeding (Target: 1 hari)
+
+| Task | File | Est. | Dependency |
+|---|---|---|---|
+| T2.1 Add R2 `DATA_LAKE` binding to `api-saham` | wrangler.jsonc | 5m | — |
+| T2.2 Implement `GET /ob2-seed` in `api-saham` | api-saham/src/index.js | 1h | T2.1 |
+| T2.3 Implement `GET /ob2-pressure` summary endpoint | api-saham/src/index.js | 45m | T2.1 |
+| T2.4 Add seed fetch in `MostActiveOrchestrator.start()` | most-active-pipeline.js | 30m | T2.2 |
+| T2.5 Feed seed data into `Ob2RollingMetrics` | most-active-pipeline.js | 30m | T2.4 |
+| T2.6 Add quick-glance pressure indicator in UI | idx/index.html | 45m | T2.3 |
+| T2.7 Verify: BSS/ATS ≠ 50/50 on cold page load | Browser test | 15m | T2.5 |
+
+### Sprint 3: Phase 3 — Minute Aggregation (Target: 2 hari)
+
+| Task | File | Est. | Dependency |
+|---|---|---|---|
+| T3.1 Implement minute boundary detection in `livetrade-taping` | livetrade-taping/src/index.js | 1h | Phase 1 complete |
+| T3.2 Implement OB2 minute summary builder | livetrade-taping/src/index.js | 2h | T3.1 |
+| T3.3 Implement roster snapshot persistence | livetrade-taping or new worker | 2h | Phase 1 complete |
+| T3.4 Implement manifest writer | livetrade-taping | 1h | T3.2, T3.3 |
+| T3.5 Implement repair job for incomplete manifests | cron-housekeeping | 2h | T3.4 |
+| T3.6 Verify: manifest.complete=true for 99% minutes | R2 inspection | 30m | T3.5 |
+
+### Sprint 4: Phase 4 — EOD Continuation (Target: 2 hari)
+
+| Task | File | Est. | Dependency |
+|---|---|---|---|
+| T4.1 Implement EOD cron job | New worker or cron-checker | 3h | Phase 3 complete |
+| T4.2 Implement continuation scoring algorithm | EOD worker | 2h | T4.1 |
+| T4.3 Implement `GET /eod-continuation` in `api-saham` | api-saham/src/index.js | 1h | T4.2 |
+| T4.4 Implement pre-market morning view UI | idx/index.html | 2h | T4.3 |
+| T4.5 Verify: EOD file generated at 16:30 WIB | R2 + cron logs | 30m | T4.2 |
+
+---
+
+## 50) Success Metrics per Phase
+
+| Phase | Metric | Target | Measurement |
+|---|---|---|---|
+| Phase 1 | R2 symbol coverage vs Most Active roster | ≥ 90% overlap | Compare KV watchlist vs R2 ls |
+| Phase 1 | Dynamic subscribe latency | < 5s from roster → R2 data flowing | Log timestamps |
+| Phase 2 | Cold-start BSS/ATS accuracy | BSS/ATS ≠ 50 within 500ms of page load | Console timing |
+| Phase 2 | Seed data freshness | Latest snapshot < 30s old | Seed response ts check |
+| Phase 3 | Manifest completeness | ≥ 99% per trading day | Daily count check |
+| Phase 3 | OB2 minute summary coverage for top-N | 100% for subscribed symbols | Manifest audit |
+| Phase 4 | Continuation signal precision | ≥ 0.62 (per PRD §33) | Backtest after 20 days |
+| Phase 4 | Pre-market view load time | < 1s | Browser performance |

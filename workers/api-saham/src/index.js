@@ -1426,9 +1426,45 @@ async function calculateFootprintRange(env, fromDateStr, toDateStr) {
   const processedStatsMap = fromDateStr === toDateStr
     ? await fetchProcessedDailyStatsMap(env, fromDateStr)
     : new Map();
-  const prevProcessedStatsMap = fromDateStr === toDateStr
+  let prevProcessedStatsMap = fromDateStr === toDateStr
     ? await fetchProcessedDailyStatsMap(env, prevTradingDayUTC(fromDateStr))
     : new Map();
+
+  // FALLBACK: If processed/{prevDate}.json is empty (livetrade-taping-agregator
+  // didn't write it), query D1 for previous trading day close prices directly.
+  // This is the most reliable source — always available if footprint was taped.
+  if (fromDateStr === toDateStr && prevProcessedStatsMap.size === 0) {
+    const prevDateStr = prevTradingDayUTC(fromDateStr);
+    const prevStartTs = new Date(`${prevDateStr}T02:00:00Z`).getTime();
+    const prevEndTs   = new Date(`${prevDateStr}T09:00:00Z`).getTime();
+
+    try {
+      // Get the last close for each ticker on the previous trading day
+      const { results: prevRows } = await env.SSSAHAM_DB.prepare(`
+        SELECT ticker, close, MAX(time_key) as last_time
+        FROM temp_footprint_consolidate
+        WHERE time_key >= ? AND time_key <= ?
+        GROUP BY ticker
+      `).bind(prevStartTs, prevEndTs).all();
+
+      if (prevRows && prevRows.length > 0) {
+        const d1PrevMap = new Map();
+        for (const row of prevRows) {
+          const t = String(row.ticker || "").toUpperCase();
+          const close = Number(row.close);
+          if (t && Number.isFinite(close) && close > 0) {
+            d1PrevMap.set(t, { close, open: null, vol: null, netVol: null, freq: null });
+          }
+        }
+        if (d1PrevMap.size > 0) {
+          console.log(`[RANGE] prevProcessedStats empty, D1 fallback loaded ${d1PrevMap.size} prev-day closes`);
+          prevProcessedStatsMap = d1PrevMap;
+        }
+      }
+    } catch (e) {
+      console.warn(`[RANGE] D1 prev-day fallback failed:`, e?.message || e);
+    }
+  }
 
   // 5. Calculate Hybrid Scores
   const items = enriched.map(fp => {
@@ -1447,7 +1483,13 @@ async function calculateFootprintRange(env, fromDateStr, toDateStr) {
       const candleCount = Number(fp?.candle_count || 0);
       const vol = Number(stats?.vol);
       const netVol = Number(stats?.netVol);
-      const curClose = Number(stats?.close);
+      // FIX: processed/{today}.json may not exist during intraday (written ~hourly
+      // by livetrade-taping-agregator). Fall back to D1 footprint close which is always fresh.
+      const curCloseFromStats = Number(stats?.close);
+      const curCloseFromD1 = Number(fp?.close);
+      const curClose = (Number.isFinite(curCloseFromStats) && curCloseFromStats > 0)
+        ? curCloseFromStats
+        : (Number.isFinite(curCloseFromD1) && curCloseFromD1 > 0 ? curCloseFromD1 : NaN);
       const prevClose = Number(prevStats?.close);
 
       if (candleCount < 30 && Number.isFinite(vol) && vol > 0 && Number.isFinite(netVol)) {
@@ -2792,6 +2834,263 @@ export default {
         }
       }
 
+      // ── Phase 1: POST /ma-watchlist-sync ──
+      // Browser pipeline posts dynamic Most Active roster for livetrade-taping to subscribe OB2.
+      // Stored in KV with 5-minute TTL so stale watchlists auto-expire.
+      if (url.pathname === "/ma-watchlist-sync" && req.method === "POST") {
+        try {
+          const body = await req.json();
+          const symbols = Array.isArray(body?.symbols) ? body.symbols : [];
+          const cleaned = [...new Set(
+            symbols.map(s => String(s).trim().toUpperCase()).filter(s => /^[A-Z]{2,6}$/.test(s))
+          )].slice(0, 60); // Cap at 60
+
+          if (!cleaned.length) {
+            return json({ ok: false, error: "No valid symbols provided" }, 400);
+          }
+
+          const payload = {
+            symbols: cleaned,
+            ts: Date.now(),
+            source: String(body?.source || "browser"),
+          };
+
+          // KV write with 5 minute TTL (auto-expire if browser disconnects)
+          if (env.MOST_ACTIVE_KV) {
+            await env.MOST_ACTIVE_KV.put(
+              "most-active:watchlist",
+              JSON.stringify(payload),
+              { expirationTtl: 300 } // 5 minutes
+            );
+          } else {
+            console.warn("[/ma-watchlist-sync] MOST_ACTIVE_KV binding not found");
+          }
+
+          return json({
+            ok: true,
+            symbols_count: cleaned.length,
+            ttl_seconds: 300,
+            ts: payload.ts,
+          });
+        } catch (err) {
+          console.error("[/ma-watchlist-sync] failed", err);
+          return json({ ok: false, error: err?.message || "sync_failed" }, 500);
+        }
+      }
+
+      // ── GET /prev-close ──
+      // Returns current close + previous trading day close prices from yfinance R2 / D1.
+      // Query: ?symbols=BBRI,TLKM,...  (comma-separated, max 60)
+      // Returns per symbol: { close, close_date, prev_close, prev_date }
+      // Used by frontend for LAST price display and accurate CHG% computation.
+      if (url.pathname === "/prev-close" && req.method === "GET") {
+        try {
+          const symbolsRaw = String(url.searchParams.get("symbols") || "").trim().toUpperCase();
+          if (!symbolsRaw) {
+            return json({ ok: false, error: "symbols query param required (comma-separated)" }, 400);
+          }
+          const symbols = [...new Set(
+            symbolsRaw.split(",").map(s => s.trim()).filter(s => /^[A-Z]{2,6}$/.test(s))
+          )].slice(0, 60);
+
+          // Determine recent dates (WIB) — up to 7 days back for weekends/holidays
+          const datesToTry = getRecentWibDates(7);
+          const result = {};
+          const missing = [];
+
+          // Phase 1: yfinance R2 — find TWO distinct dates per symbol (close + prev_close)
+          await Promise.all(symbols.map(async (symbol) => {
+            const entry = { close: null, close_date: null, prev_close: null, prev_date: null };
+            for (const date of datesToTry) {
+              // Skip non-trading days for cleaner results
+              if (isNonTradingDayUTC(date)) continue;
+              const key = `yfinance/${symbol}/1d/${date}.json`;
+              const obj = await env.FOOTPRINT_BUCKET.get(key);
+              if (!obj) continue;
+
+              try {
+                const data = JSON.parse(await obj.text());
+                const candles = data?.candles || [];
+                if (candles.length > 0) {
+                  const lastCandle = candles[candles.length - 1];
+                  const price = Number(lastCandle.close);
+                  if (!Number.isFinite(price) || price <= 0) continue;
+
+                  if (entry.close === null) {
+                    // First date found = most recent close (today or last trading day)
+                    entry.close = price;
+                    entry.close_date = date;
+                  } else if (entry.prev_close === null && date !== entry.close_date) {
+                    // Second date found = previous close
+                    entry.prev_close = price;
+                    entry.prev_date = date;
+                    break; // got both, done
+                  }
+                }
+              } catch { /* skip bad file */ }
+            }
+
+            if (entry.close !== null || entry.prev_close !== null) {
+              result[symbol] = entry;
+              // Backward-compat: also include prev_close at top level
+              if (!entry.prev_close && entry.close) {
+                // Only found one date — treat as prev_close for backward compat
+                entry.prev_close = entry.close;
+                entry.prev_date = entry.close_date;
+                entry.close = null;
+                entry.close_date = null;
+              }
+            } else {
+              missing.push(symbol);
+            }
+          }));
+
+          // Phase 2: D1 FALLBACK for symbols missing from yfinance R2
+          // Also enriches symbols that only got one of the two prices from yfinance
+          if (missing.length > 0 || Object.values(result).some(e => !e.close || !e.prev_close)) {
+            try {
+              const tradingDates = getRecentWibDates(7).filter(d => !isNonTradingDayUTC(d));
+
+              for (const tryDate of tradingDates) {
+                // Determine which symbols need data for this date
+                const needClose = [];
+                const needPrev = [];
+                for (const sym of symbols) {
+                  const e = result[sym];
+                  if (!e) { needClose.push(sym); needPrev.push(sym); continue; }
+                  if (!e.close) needClose.push(sym);
+                  if (!e.prev_close) needPrev.push(sym);
+                }
+                const needSymbols = [...new Set([...needClose, ...needPrev])];
+                if (needSymbols.length === 0) break;
+
+                const startTs = new Date(`${tryDate}T02:00:00Z`).getTime();
+                const endTs   = new Date(`${tryDate}T09:00:00Z`).getTime();
+
+                const { results: d1Rows } = await env.SSSAHAM_DB.prepare(`
+                  SELECT ticker, close, open, MAX(close) as high, MIN(close) as low
+                  FROM temp_footprint_consolidate
+                  WHERE time_key >= ? AND time_key <= ?
+                  GROUP BY ticker
+                `).bind(startTs, endTs).all();
+
+                if (d1Rows && d1Rows.length > 0) {
+                  const d1Map = new Map(d1Rows.map(r => [String(r.ticker || '').toUpperCase(), r]));
+                  for (const sym of needSymbols) {
+                    const row = d1Map.get(sym);
+                    if (!row || !(Number(row.close) > 0)) continue;
+                    const price = Number(row.close);
+
+                    if (!result[sym]) {
+                      result[sym] = { close: price, close_date: tryDate, prev_close: null, prev_date: null, source: 'd1_fallback' };
+                    } else {
+                      const e = result[sym];
+                      if (!e.close) {
+                        e.close = price;
+                        e.close_date = tryDate;
+                        if (!e.source) e.source = 'd1_partial';
+                      } else if (!e.prev_close && tryDate !== e.close_date) {
+                        e.prev_close = price;
+                        e.prev_date = tryDate;
+                        if (!e.source) e.source = 'd1_partial';
+                      }
+                    }
+                  }
+                }
+              }
+              // Update missing list
+              missing.length = 0;
+              for (const s of symbols) { if (!result[s]) missing.push(s); }
+            } catch (e) {
+              console.warn('[/prev-close] D1 fallback failed:', e?.message || e);
+            }
+          }
+
+          return json({
+            ok: true,
+            data: result,
+            coverage: { requested: symbols.length, found: Object.keys(result).length, missing },
+            ts: Date.now(),
+          });
+        } catch (err) {
+          console.error("[/prev-close] failed", err);
+          return json({ ok: false, error: err?.message || "prev_close_failed" }, 500);
+        }
+      }
+
+      // ── Phase 2: GET /ob2-seed ──
+      // Returns recent OB2 snapshots from R2 for cold-start seeding of BSS/ATS.
+      // Query: ?symbols=BBRI,SKBM,...&count=60 (snapshots per symbol, default 60)
+      if (url.pathname === "/ob2-seed" && req.method === "GET") {
+        try {
+          const symbolsRaw = String(url.searchParams.get("symbols") || "").trim().toUpperCase();
+          if (!symbolsRaw) {
+            return json({ ok: false, error: "symbols query param required (comma-separated)" }, 400);
+          }
+          const symbols = [...new Set(
+            symbolsRaw.split(",").map(s => s.trim()).filter(s => /^[A-Z]{2,6}$/.test(s))
+          )].slice(0, 30); // Cap at 30 symbols per batch to limit R2 reads
+
+          const count = Math.max(1, Math.min(120, Number(url.searchParams.get("count") || "60") || 60));
+
+          // Determine today's date in WIB
+          const datesToTry = getRecentWibDates(2); // today + yesterday fallback
+          const seeds = {};
+          let found = 0;
+          const missing = [];
+
+          await Promise.all(symbols.map(async (symbol) => {
+            for (const date of datesToTry) {
+              const key = `ob2/snapshot15s/v1/symbol=${symbol}/date=${date}/daily.jsonl`;
+              const obj = await env.FOOTPRINT_BUCKET.get(key);
+              if (!obj) continue;
+
+              const text = await obj.text();
+              const lines = text.trim().split("\n").filter(Boolean);
+              // Tail: take last `count` lines
+              const tail = lines.slice(-count);
+              const snapshots = [];
+              for (const line of tail) {
+                try {
+                  const snap = JSON.parse(line);
+                  // Only send essential fields to minimize payload
+                  snapshots.push({
+                    ts: snap.ts_unix_ms,
+                    bid: snap.bid_l10 || [],
+                    ask: snap.ask_l10 || [],
+                    best_bid: snap.best_bid,
+                    best_ask: snap.best_ask,
+                    spread_bps: snap.spread_bps,
+                    imbalance: snap.imbalance,
+                  });
+                } catch { /* skip bad line */ }
+              }
+
+              if (snapshots.length) {
+                seeds[symbol] = snapshots;
+                found++;
+                return; // got data for this symbol, skip older dates
+              }
+            }
+            missing.push(symbol);
+          }));
+
+          return json({
+            ok: true,
+            seeds,
+            coverage: {
+              requested: symbols.length,
+              found,
+              missing,
+            },
+            ts: Date.now(),
+          });
+        } catch (err) {
+          console.error("[/ob2-seed] failed", err);
+          return json({ ok: false, error: err?.message || "ob2_seed_failed" }, 500);
+        }
+      }
+
       // 0.a GET /ws-token
       // Expose cached IPOT appsession token for frontend/edge producers.
       // Cache behavior (inside fetchIpotAppSession):
@@ -2923,6 +3222,83 @@ export default {
         } catch (err) {
           console.error("[/internal/e2e-most-active-check] failed", err);
           return json({ ok: false, error: err?.message || "e2e_check_failed" }, 500);
+        }
+      }
+
+      // ── GET /sector/cvd ────────────────────────────────────────────────
+      // Returns CVD (from sector-scrapper TradedSummary levels) for all
+      // symbols across all IDX sectors. Reads sector aggregate JONLs from
+      // the shared FOOTPRINT_BUCKET (R2). One call enriches the entire roster.
+      // CVD = Σ(b_lot - s_lot) from TradedSummary price levels.
+      if (url.pathname === "/sector/cvd" && req.method === "GET") {
+        const SECTOR_LIST = [
+          "IDXBASIC","IDXENERGY","IDXINDUST","IDXNONCYC","IDXCYCLIC",
+          "IDXHEALTH","IDXFINANCE","IDXPROPERT","IDXTECHNO","IDXINFRA","IDXTRANS"
+        ];
+        // Use WIB date
+        const _now = new Date();
+        const _wib = new Date(_now.getTime() + 7 * 60 * 60 * 1000);
+        const wibDate = url.searchParams.get("date") ||
+          `${_wib.getUTCFullYear()}-${String(_wib.getUTCMonth()+1).padStart(2,"0")}-${String(_wib.getUTCDate()).padStart(2,"0")}`;
+        const [yyyy, mm, dd] = wibDate.split("-");
+
+        try {
+          const symbolMap = {};
+
+          // Read all sector aggregates in parallel
+          await Promise.all(SECTOR_LIST.map(async (sector) => {
+            const aggKey = `sector/${sector}/${yyyy}/${mm}/${dd}.jsonl`;
+            const aggObj = await env.FOOTPRINT_BUCKET.get(aggKey);
+            if (!aggObj) return;
+            const aggText = await aggObj.text();
+
+            // Group records by symbol, take latest per symbol
+            const bySymbol = new Map();
+            for (const line of aggText.split("\n")) {
+              if (!line.trim()) continue;
+              try {
+                const rec = JSON.parse(line);
+                const sym = String(rec.symbol || "").toUpperCase();
+                if (!sym) continue;
+                if (!bySymbol.has(sym)) bySymbol.set(sym, []);
+                bySymbol.get(sym).push(rec);
+              } catch { /* skip */ }
+            }
+
+            for (const [sym, records] of bySymbol) {
+              if (symbolMap[sym]) continue; // first sector wins
+              // Sort by ts, take latest
+              records.sort((a, b) => new Date(a.ts || 0).getTime() - new Date(b.ts || 0).getTime());
+              const last = records[records.length - 1];
+              const first = records[0];
+
+              // CVD from levels or pre-computed cvd_lot
+              let cvd_lot = last.cvd_lot ?? null;
+              if (cvd_lot === null && Array.isArray(last.levels) && last.levels.length > 0) {
+                cvd_lot = last.levels.reduce((sum, lv) => {
+                  const bl = Number(lv.b_lot || 0);
+                  const sl = Number(lv.s_lot || 0);
+                  return sum + (Number.isFinite(bl) ? bl : 0) - (Number.isFinite(sl) ? sl : 0);
+                }, 0);
+              }
+
+              symbolMap[sym] = {
+                sector,
+                cvd_lot,
+                freq_tx: last.freq_tx ?? null,
+                price_last: last.price_last ?? null,
+              };
+            }
+          }));
+
+          return json({
+            ok: true,
+            date: wibDate,
+            count: Object.keys(symbolMap).length,
+            symbols: symbolMap
+          }, 200, { "Cache-Control": "public, max-age=60" });
+        } catch (e) {
+          return json({ ok: false, error: e?.message || String(e) }, 500);
         }
       }
 

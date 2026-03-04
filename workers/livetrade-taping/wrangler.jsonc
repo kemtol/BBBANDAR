@@ -29,7 +29,12 @@
             ]
         }
     ],
-    // ⭐ Tambah di sini:
+    "kv_namespaces": [
+        {
+            "binding": "MOST_ACTIVE_KV",
+            "id": "afe0db36ad90410e98bedd89b20d368e"
+        }
+    ],
     "vars": {
         "WATCHLIST_LQ45": "AADI,ACES,ADMR,ADRO,AKRA,AMMN,AMRT,ANTM,ASII,BBCA,BBNI,BBRI,BBTN,BMRI,BRPT,BUMI,CPIN,CTRA,DSSA,EMTK,EXCL,GOTO,HEAL,ICBP,INCO,INDF,INKP,ISAT,ITMG,JPFA,KLBF,MAPI,MBMA,MDKA,MEDC,NCKL,PGAS,PGEO,PTBA,SCMA,SMGR,TLKM,TOWR,UNTR,UNVR",
         "WATCHLIST_IDX30": "BBRI,BBCA,BMRI,ASII,ADRO,GOTO,TLKM",

@@ -26,6 +26,12 @@
             "database_id": "98cd91eb-5666-4284-8845-8e8b6d7a1b8f"
         }
     ],
+    "kv_namespaces": [
+        {
+            "binding": "MOST_ACTIVE_KV",
+            "id": "afe0db36ad90410e98bedd89b20d368e"
+        }
+    ],
     "services": [
         {
             "binding": "BROKSUM_SERVICE",

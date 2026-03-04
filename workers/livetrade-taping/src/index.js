@@ -91,6 +91,13 @@ export class TradeIngestor extends DurableObject {
     this.lastSnapshotBucketByKode = new Map(); // kode -> bucket integer
     this.isFlushingOB15s = false;
 
+    // Phase 1: Dynamic watchlist from browser Most Active pipeline
+    this.dynamicWatchlist = [];          // symbols from KV
+    this.lastKvCheckTs = 0;
+    this.KV_CHECK_INTERVAL_MS = 30000;   // check KV every 30s
+    this.dynamicSubscribed = new Set();  // currently subscribed dynamic symbols
+    this.dynamicCidBase = 5000;          // cid offset for dynamic subscribes
+
     this.ws = null;
     this.lastFlushLT = Date.now();
     this.lastFlushOB = Date.now();
@@ -371,6 +378,13 @@ export class TradeIngestor extends DurableObject {
       if (timeTriggerWithBackoff || countTrigger || sizeTrigger) {
         this.ctx.waitUntil(this.flushToStateEngineV2());
       }
+    }
+
+    // Phase 1: Dynamic watchlist sync from KV (PRD 0012 §44)
+    if (this.ws && this.ws.readyState === WebSocket.OPEN &&
+        (now - this.lastKvCheckTs) > this.KV_CHECK_INTERVAL_MS) {
+      this.ctx.waitUntil(this.syncDynamicWatchlist());
+      this.lastKvCheckTs = now;
     }
 
     // Req A: Always verify alarm existence/reschedule
@@ -797,6 +811,108 @@ export class TradeIngestor extends DurableObject {
     } finally {
       this.isFlushingOB15s = false;
     }
+  }
+
+  // ── Phase 1: Dynamic Watchlist Sync (PRD 0012 §44) ──
+  // Reads browser-posted Most Active symbols from KV and subscribes OB2.
+  async syncDynamicWatchlist() {
+    try {
+      if (!this.env.MOST_ACTIVE_KV) return;
+
+      const raw = await this.env.MOST_ACTIVE_KV.get("most-active:watchlist");
+      if (!raw) {
+        // KV expired or empty — unsubscribe all dynamic symbols
+        if (this.dynamicSubscribed.size > 0) {
+          console.log(`[DynWL] KV empty, unsubscribing ${this.dynamicSubscribed.size} dynamic symbols`);
+          for (const kode of this.dynamicSubscribed) {
+            this._unsubscribeDynamic(kode);
+          }
+          this.dynamicSubscribed.clear();
+        }
+        return;
+      }
+
+      const data = JSON.parse(raw);
+      const kvSymbols = Array.isArray(data?.symbols) ? data.symbols : [];
+      const kvTs = data?.ts || 0;
+
+      // Skip if older than 5 minutes (stale safety)
+      if (Date.now() - kvTs > 5 * 60 * 1000) {
+        console.log("[DynWL] KV data stale (>5m), ignoring");
+        return;
+      }
+
+      // Build target set: KV symbols NOT already in static watchlist
+      const staticSet = new Set(this.watchList);
+      const targetDynamic = new Set(
+        kvSymbols.filter(s => !staticSet.has(s)).slice(0, 60)
+      );
+
+      // Subscribe new entrants
+      for (const kode of targetDynamic) {
+        if (!this.dynamicSubscribed.has(kode)) {
+          this._subscribeDynamic(kode);
+        }
+      }
+
+      // Unsubscribe symbols no longer in KV
+      for (const kode of this.dynamicSubscribed) {
+        if (!targetDynamic.has(kode)) {
+          this._unsubscribeDynamic(kode);
+          this.dynamicSubscribed.delete(kode);
+        }
+      }
+
+      if (targetDynamic.size !== this.dynamicWatchlist.length) {
+        console.log(`[DynWL] synced: ${targetDynamic.size} dynamic symbols (static: ${staticSet.size}, total: ${staticSet.size + targetDynamic.size})`);
+      }
+      this.dynamicWatchlist = [...targetDynamic];
+    } catch (err) {
+      console.error("[DynWL] sync failed:", err);
+    }
+  }
+
+  _subscribeDynamic(kode) {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    const cid = this.dynamicCidBase++;
+    const subOB = {
+      event: "cmd",
+      data: {
+        cmdid: cid,
+        param: {
+          cmd: "subscribe",
+          service: "mi",
+          rtype: "OB2",
+          code: kode,
+          subsid: `dyn_ob_${kode}`,
+        },
+      },
+      cid,
+    };
+    this.ws.send(JSON.stringify(subOB));
+    this.dynamicSubscribed.add(kode);
+    console.log(`[DynWL] subscribed OB2: ${kode}`);
+  }
+
+  _unsubscribeDynamic(kode) {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    const cid = this.dynamicCidBase++;
+    const unsubOB = {
+      event: "cmd",
+      data: {
+        cmdid: cid,
+        param: {
+          cmd: "unsubscribe",
+          service: "mi",
+          rtype: "OB2",
+          code: kode,
+          subsid: `dyn_ob_${kode}`,
+        },
+      },
+      cid,
+    };
+    this.ws.send(JSON.stringify(unsubOB));
+    console.log(`[DynWL] unsubscribed OB2: ${kode}`);
   }
 
   // Part 1.4: Flush WS
