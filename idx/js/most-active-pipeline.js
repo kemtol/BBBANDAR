@@ -1885,6 +1885,7 @@ class MostActiveOrchestrator {
 
     // ---- Roster snapshot localStorage cache (instant render on page load) ----
     static _ROSTER_LS_KEY = 'ma_roster_snapshot_v1';
+    static _ROSTER_TTL = 5 * 60 * 1000; // 5 min — short TTL
 
     _saveRosterToLocalStorage() {
         if (!this._currentRoster.length) return;
@@ -1918,6 +1919,12 @@ class MostActiveOrchestrator {
             if (obj.date !== today) {
                 localStorage.removeItem(MostActiveOrchestrator._ROSTER_LS_KEY);
                 console.log('[Orchestrator] discarding stale roster cache from', obj.date);
+                return;
+            }
+            // TTL check — don't show very old cache
+            if (Date.now() - (obj.ts || 0) > MostActiveOrchestrator._ROSTER_TTL) {
+                localStorage.removeItem(MostActiveOrchestrator._ROSTER_LS_KEY);
+                console.log('[Orchestrator] roster cache expired (TTL)');
                 return;
             }
             // Rebuild full snapshot rows from slim cache + restored trails

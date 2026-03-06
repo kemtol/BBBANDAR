@@ -608,10 +608,52 @@
             `;
         }
 
+        // ===== Dashboard Cache (Feed + Catalyst) =====
+        const _FEED_LS_KEY     = 'dashboard_feed_v1';
+        const _CATALYST_LS_KEY = 'dashboard_catalyst_v1';
+        const _DASHBOARD_TTL   = 5 * 60 * 1000; // 5 min — short TTL
+
+        function _saveDashboardCache(key, items) {
+            try {
+                localStorage.setItem(key, JSON.stringify({ ts: Date.now(), items }));
+            } catch (e) { /* quota — non-fatal */ }
+        }
+
+        function _loadDashboardCache(key) {
+            try {
+                const raw = localStorage.getItem(key);
+                if (!raw) return null;
+                const obj = JSON.parse(raw);
+                if (!obj?.ts || !Array.isArray(obj.items)) return null;
+                if (Date.now() - obj.ts > _DASHBOARD_TTL) {
+                    localStorage.removeItem(key);
+                    return null; // expired
+                }
+                return obj;
+            } catch (e) { return null; }
+        }
+
         async function loadDashboardData() {
             setFeedDetailMode(false);
-            renderTimelineLoading('feed-timeline', 'Memuat Feed');
-            renderTimelineLoading('catalyst-timeline', 'Memuat Catalyst');
+
+            // --- instant render from cache (stale-while-revalidate) ---
+            const feedCache = _loadDashboardCache(_FEED_LS_KEY);
+            const catCache  = _loadDashboardCache(_CATALYST_LS_KEY);
+
+            if (feedCache) {
+                renderFeed(feedCache.items);
+                console.log(`[dashboard] feed from cache (${Math.round((Date.now() - feedCache.ts) / 1000)}s old)`);
+            } else {
+                renderTimelineLoading('feed-timeline', 'Memuat Feed');
+            }
+            if (catCache) {
+                renderCatalyst(catCache.items);
+                console.log(`[dashboard] catalyst from cache (${Math.round((Date.now() - catCache.ts) / 1000)}s old)`);
+            } else {
+                renderTimelineLoading('catalyst-timeline', 'Memuat Catalyst');
+            }
+
+            // --- fetch fresh data in background → re-render + update cache ---
             try {
                 const [feedResp, catalystResp] = await Promise.all([
                     fetch(`${WORKER_BASE_URL}/dashboard/feed?limit=30`),
@@ -619,15 +661,23 @@
                 ]);
 
                 const feedJson = await feedResp.json().catch(() => ({ items: [] }));
-                const catJson = await catalystResp.json().catch(() => ({ items: [] }));
+                const catJson  = await catalystResp.json().catch(() => ({ items: [] }));
+
+                const feedItems = feedJson?.items || [];
                 const filteredCatalyst = filterCatalystCurrentMonthUpcoming(catJson?.items || []);
 
-                renderFeed(feedJson?.items || []);
+                renderFeed(feedItems);
                 renderCatalyst(filteredCatalyst);
+
+                // Update cache
+                _saveDashboardCache(_FEED_LS_KEY, feedItems);
+                _saveDashboardCache(_CATALYST_LS_KEY, filteredCatalyst);
+                console.log('[dashboard] fresh data cached');
             } catch (e) {
                 console.error('[dashboard] load failed', e);
-                renderFeed([]);
-                renderCatalyst([]);
+                // If no cache was shown, render empty
+                if (!feedCache) renderFeed([]);
+                if (!catCache)  renderCatalyst([]);
             }
         }
 
