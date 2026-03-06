@@ -27,6 +27,37 @@ const ScoreMath = {
         const range = hi - lo;
         if (!range) return 0;
         return 100 * (this.clip(x, lo, hi) - lo) / range;
+    },
+    /**
+     * Cross-sectional percentile rank.
+     * Returns 0.0–1.0 where 1.0 = highest in cohort.
+     * Handles ties by averaging (standard competition ranking).
+     */
+    percentileRank(value, allValues) {
+        if (!allValues.length) return 0.5;
+        if (allValues.length === 1) return 0.5;
+        let below = 0, equal = 0;
+        for (const v of allValues) {
+            if (v < value) below++;
+            else if (v === value) equal++;
+        }
+        return (below + 0.5 * equal) / allValues.length;
+    },
+    /**
+     * Linear regression slope over an array of values.
+     * Returns slope in units-per-index (positive = rising).
+     */
+    linearSlope(arr) {
+        const n = arr.length;
+        if (n < 3) return 0;
+        const xMean = (n - 1) / 2;
+        const yMean = arr.reduce((s, v) => s + v, 0) / n;
+        let num = 0, den = 0;
+        for (let i = 0; i < n; i++) {
+            num += (i - xMean) * (arr[i] - yMean);
+            den += (i - xMean) * (i - xMean);
+        }
+        return den > 0 ? num / den : 0;
     }
 };
 
@@ -107,6 +138,54 @@ class RankTrailStore {
     }
 
     allKnownCodes() { return [...this._store.keys()]; }
+
+    // ---- localStorage persistence (intraday) ----
+    static _LS_KEY = 'ma_rank_trail_v1';
+
+    /** Serialize to JSON-safe object */
+    toJSON() {
+        const entries = {};
+        for (const [code, e] of this._store) {
+            entries[code] = { trail: e.trail, consecutive: e.consecutive, lastMinuteKey: e.lastMinuteKey };
+        }
+        return { ts: Date.now(), date: new Date().toISOString().slice(0, 10), max: this._max, entries };
+    }
+
+    /** Restore from JSON object (same trading day only) */
+    restoreFromJSON(obj) {
+        if (!obj?.entries || !obj.date) return 0;
+        const today = new Date().toISOString().slice(0, 10);
+        if (obj.date !== today) {
+            console.log('[RankTrailStore] discarding stale cache from', obj.date);
+            return 0;
+        }
+        let count = 0;
+        for (const [code, e] of Object.entries(obj.entries)) {
+            if (!this._store.has(code)) {
+                this._store.set(code, {
+                    trail: (e.trail ?? []).slice(-(this._max)),
+                    consecutive: e.consecutive ?? 0,
+                    lastMinuteKey: e.lastMinuteKey ?? null
+                });
+                count++;
+            }
+        }
+        return count;
+    }
+
+    saveToLocalStorage() {
+        try {
+            localStorage.setItem(RankTrailStore._LS_KEY, JSON.stringify(this.toJSON()));
+        } catch (e) { /* quota exceeded — non-fatal */ }
+    }
+
+    restoreFromLocalStorage() {
+        try {
+            const raw = localStorage.getItem(RankTrailStore._LS_KEY);
+            if (!raw) return 0;
+            return this.restoreFromJSON(JSON.parse(raw));
+        } catch (e) { return 0; }
+    }
 }
 
 // ============================================================
@@ -244,10 +323,14 @@ class HotScoreEngine {
         this._ob2 = new Map();    // code → Ob2RollingMetrics
         this._valueBuf = new Map(); // code → number[] (last 5 min)
         this._volBuf = new Map();   // code → number[] (last 5 min)
-        // Pressure Index trail — aggregated into 15-min buckets
+        // Pressure Index trail — aggregated into 1-min buckets (full trading day)
         this._pressureTrail = new Map();   // code → { buckets: number[], accum: number[], bucketStart: number|null }
-        this._PI_BUCKET_MS = 15 * 60 * 1000; // 15 minutes
-        this._MAX_PI_BUCKETS = 30;          // ~7.5 hours covers full trading day
+        this._PI_BUCKET_MS = 1 * 60 * 1000; // 1 minute
+        this._MAX_PI_BUCKETS = 360;         // full trading day (09:00-15:00 = 360 minutes)
+        // CVD trail — 1-min buckets (full trading day), mirrors pressure trail structure
+        this._cvdTrail = new Map();   // code → { buckets: number[], lastValue: number|null, bucketStart: number|null }
+        // External data injection (set by orchestrator from _footprintMap / _sectorCvdMap)
+        this._externalData = new Map(); // code → { cvd, div_detected, div_score, div_type, chg_pct }
     }
 
     ensureOb2(code) {
@@ -268,135 +351,6 @@ class HotScoreEngine {
         if (ob.length > 5) ob.shift();
         this._valueBuf.set(code, vb);
         this._volBuf.set(code, ob);
-    }
-
-    _activityScore(code, rankNow, maxRank) {
-        const rank_score = ScoreMath.norm((maxRank + 1 - rankNow), 1, maxRank);
-        const vb = this._valueBuf.get(code) ?? [];
-        const ob = this._volBuf.get(code) ?? [];
-        const value_1m = vb[vb.length - 1] ?? 0;
-        const vol_1m = ob[ob.length - 1] ?? 0;
-        const value_5m_avg = vb.length > 1
-            ? vb.slice(0, -1).reduce((s, v) => s + v, 0) / (vb.length - 1)
-            : value_1m;
-        const vol_5m_avg = ob.length > 1
-            ? ob.slice(0, -1).reduce((s, v) => s + v, 0) / (ob.length - 1)
-            : vol_1m;
-        const value_accel = ScoreMath.norm(value_1m / Math.max(value_5m_avg, 1), 0.7, 2.5);
-        const volume_accel = ScoreMath.norm(vol_1m / Math.max(vol_5m_avg, 1), 0.7, 2.5);
-        return 0.45 * rank_score + 0.30 * value_accel + 0.25 * volume_accel;
-    }
-
-    _microScore(code) {
-        const ob2 = this._ob2.get(code);
-        if (!ob2 || ob2.updateCount < 2) return 50;
-        const spread_health = 100 - ScoreMath.norm(ob2.spreadBpsAvg, 10, 80);
-        return ScoreMath.clip(0.50 * ob2.bss + 0.40 * ob2.ats + 0.10 * spread_health, 0, 100);
-    }
-
-    _persistenceScore(code) {
-        return ScoreMath.norm(this._trail.getConsecutive(code), 0, 10);
-    }
-
-    _trendQuality(code) {
-        const slope = this._trail.getRankSlope10m(code);
-        // Negative slope = rank improving → good
-        const rank_slope_score = ScoreMath.norm(-slope, -1.0, 1.0);
-        return 0.70 * rank_slope_score + 0.30 * 100; // volatility_penalty = 0 for now
-    }
-
-    _getSessionThreshold() {
-        const now = new Date();
-        const wibHour = parseInt(
-            new Intl.DateTimeFormat('en', {
-                timeZone: 'Asia/Jakarta', hour: '2-digit', hour12: false
-            }).format(now),
-            10
-        );
-        if (wibHour < 9 || wibHour >= 16) return 100; // outside market
-        if (wibHour === 9) return 75;    // pre-open / open
-        if (wibHour >= 15) return 73;   // late session
-        return 70;                       // regular session
-    }
-
-    compute(code, rankNow, maxRank, riskMemory = null) {
-        const activity = this._activityScore(code, rankNow, maxRank);
-        const micro = this._microScore(code);
-        const persistence = this._persistenceScore(code);
-        const trend = this._trendQuality(code);
-
-        const base = 0.35 * activity + 0.30 * micro + 0.20 * persistence + 0.15 * trend;
-
-        let governance_penalty = 0;
-        const risk_memory_missing = !riskMemory;
-        if (riskMemory) {
-            let p = 0;
-            if (riskMemory.ever_fca) p += 12;
-            const daysSinceFca = riskMemory.days_since_fca ?? 999;
-            if (daysSinceFca <= 90) p += 10;
-            p += Math.min(36, 18 * (Number(riskMemory.suspend_count_1y) || 0));
-            if ((Number(riskMemory.uma_count_90d) || 0) >= 1) p += 8;
-            governance_penalty = ScoreMath.clip(p, 0, 45);
-        }
-
-        const stage_score = ScoreMath.clip(base - governance_penalty, 0, 100);
-        const ob2 = this._ob2.get(code);
-        const bss = ob2?.bss ?? 50;
-        const ats = ob2?.ats ?? 50;
-
-        const threshold = this._getSessionThreshold();
-        let stage_label;
-        if (stage_score >= threshold && bss >= 65 && ats >= 65) {
-            stage_label = 'On Stage';
-        } else if (stage_score >= 50) {
-            stage_label = 'Watch';
-        } else {
-            stage_label = 'Cooling';
-        }
-
-        const reason_codes = this._buildReasonCodes(code, {
-            activity, micro, persistence, bss, ats, governance_penalty,
-            risk_memory_missing, stage_score
-        });
-
-        return {
-            stage_score: Math.round(stage_score),
-            stage_label,
-            reason_codes,
-            risk_memory_missing,
-            governance_penalty: Math.round(governance_penalty)
-        };
-    }
-
-    _buildReasonCodes(code, { activity, micro, persistence, bss, ats, governance_penalty }) {
-        const delta5  = this._trail.getRankDelta(code, 5);
-        const delta15 = this._trail.getRankDelta(code, 15);
-        const scored = [];
-
-        if (delta15 < -3)  scored.push({ code: 'rank_improving_15m',      w: Math.abs(delta15) });
-        if (delta5  < -2)  scored.push({ code: 'rank_improving_5m',       w: Math.abs(delta5) });
-        if (delta5  >  2)  scored.push({ code: 'rank_deteriorating_5m',   w: delta5 });
-        if (persistence >= 60) scored.push({ code: 'high_persistence_topN', w: persistence });
-        if (bss >= 65)     scored.push({ code: 'bid_stack_persistent',    w: bss });
-        else if (bss < 45) scored.push({ code: 'bid_pullback_fast',       w: 100 - bss });
-        if (ats >= 65)     scored.push({ code: 'ask_thinning_consistent', w: ats });
-        else if (ats < 45) scored.push({ code: 'ask_wall_reappearing',    w: 100 - ats });
-        if (micro  >= 70)  scored.push({ code: 'tight_spread',            w: micro });
-        else if (micro < 45) scored.push({ code: 'spread_widening',       w: 100 - micro });
-        else               scored.push({ code: 'spread_normal',           w: 50 });
-        if (bss >= 45 && bss < 65 && ats >= 45 && ats < 65)
-                           scored.push({ code: 'mixed_microstructure',    w: 50 });
-        if (delta5 === 0 && delta15 === 0)
-                           scored.push({ code: 'rank_flat',               w: 30 });
-        if (governance_penalty > 0)
-                           scored.push({ code: 'fca_penalty_applied',     w: governance_penalty });
-
-        const sorted = [...new Set(
-            scored.sort((a, b) => b.w - a.w).map(c => c.code)
-        )];
-        const result = sorted.slice(0, 6);
-        while (result.length < 3) result.push('spread_normal');
-        return result;
     }
 
     getOb2Indicator(code) {
@@ -422,7 +376,7 @@ class HotScoreEngine {
     }
 
     /** Push one pressure tick for a symbol (call every micro cycle = 5s).
-     *  Aggregates into 15-min bucket averages automatically. */
+     *  Aggregates into 1-min bucket averages automatically (rolling 60 minutes). */
     pushPressureTick(code) {
         const pi = this.getPressureIndex(code);
         if (pi === null) return; // don't push null — wait for OB2 data
@@ -432,21 +386,27 @@ class HotScoreEngine {
             state = { buckets: [], accum: [], bucketStart: now };
             this._pressureTrail.set(code, state);
         }
-        // Check if we need to close the current bucket
-        const elapsed = now - state.bucketStart;
-        if (elapsed >= this._PI_BUCKET_MS && state.accum.length > 0) {
-            // Close current bucket: compute average
-            const avg = state.accum.reduce((s, v) => s + v, 0) / state.accum.length;
-            state.buckets.push(Math.round(avg * 10) / 10);
+        // Close as many elapsed buckets as needed (handles multi-minute gaps)
+        let elapsed = now - state.bucketStart;
+        while (elapsed >= this._PI_BUCKET_MS) {
+            if (state.accum.length > 0) {
+                // Close current bucket: compute average
+                const avg = state.accum.reduce((s, v) => s + v, 0) / state.accum.length;
+                state.buckets.push(Math.round(avg * 10) / 10);
+                state.accum = [];
+            } else if (state.buckets.length > 0) {
+                // No data in this minute — carry forward last known value
+                state.buckets.push(state.buckets[state.buckets.length - 1]);
+            }
             if (state.buckets.length > this._MAX_PI_BUCKETS) state.buckets.shift();
-            state.accum = [];
-            state.bucketStart = now;
+            state.bucketStart += this._PI_BUCKET_MS;
+            elapsed = now - state.bucketStart;
         }
         state.accum.push(pi);
     }
 
     /** Get the pressure trail array for sparkline rendering.
-     *  Returns array of 15-min bucket averages + current partial bucket. */
+     *  Returns array of 1-min bucket averages + current partial bucket (max 60). */
     getPressureTrail(code) {
         const state = this._pressureTrail.get(code);
         if (!state) return [];
@@ -456,6 +416,343 @@ class HotScoreEngine {
             const avg = state.accum.reduce((s, v) => s + v, 0) / state.accum.length;
             result.push(Math.round(avg * 10) / 10);
         }
+        return result;
+    }
+
+    // ---- localStorage persistence (intraday) ----
+    static _LS_KEY = 'ma_pressure_trail_v1';
+
+    /** Serialize pressure trail to JSON-safe object */
+    pressureTrailToJSON() {
+        const entries = {};
+        for (const [code, state] of this._pressureTrail) {
+            // Flush current accum into buckets snapshot
+            const finalBuckets = [...state.buckets];
+            if (state.accum.length > 0) {
+                const avg = state.accum.reduce((s, v) => s + v, 0) / state.accum.length;
+                finalBuckets.push(Math.round(avg * 10) / 10);
+            }
+            entries[code] = finalBuckets;
+        }
+        return { ts: Date.now(), date: new Date().toISOString().slice(0, 10), entries };
+    }
+
+    /** Restore pressure trail from JSON (same trading day only) */
+    restorePressureTrailFromJSON(obj) {
+        if (!obj?.entries || !obj.date) return 0;
+        const today = new Date().toISOString().slice(0, 10);
+        if (obj.date !== today) {
+            console.log('[HotScoreEngine] discarding stale pressure cache from', obj.date);
+            return 0;
+        }
+        let count = 0;
+        for (const [code, buckets] of Object.entries(obj.entries)) {
+            if (!Array.isArray(buckets) || !buckets.length) continue;
+            if (!this._pressureTrail.has(code)) {
+                this._pressureTrail.set(code, {
+                    buckets: buckets.slice(-(this._MAX_PI_BUCKETS)),
+                    accum: [],
+                    bucketStart: Date.now()
+                });
+                count++;
+            }
+        }
+        return count;
+    }
+
+    savePressureTrailToLocalStorage() {
+        try {
+            localStorage.setItem(HotScoreEngine._LS_KEY, JSON.stringify(this.pressureTrailToJSON()));
+        } catch (e) { /* quota exceeded — non-fatal */ }
+    }
+
+    restorePressureTrailFromLocalStorage() {
+        try {
+            const raw = localStorage.getItem(HotScoreEngine._LS_KEY);
+            if (!raw) return 0;
+            return this.restorePressureTrailFromJSON(JSON.parse(raw));
+        } catch (e) { return 0; }
+    }
+
+    // ---- CVD Trail (1-min buckets, full trading day) ----
+
+    /** Push CVD value for a symbol. Call every minute tick from orchestrator. */
+    pushCvdTick(code, cvdValue) {
+        if (cvdValue == null || !Number.isFinite(cvdValue)) return;
+        const now = Date.now();
+        let state = this._cvdTrail.get(code);
+        if (!state) {
+            state = { buckets: [], lastValue: null, bucketStart: now };
+            this._cvdTrail.set(code, state);
+        }
+        // Close elapsed buckets (carry-forward for gaps)
+        let elapsed = now - state.bucketStart;
+        while (elapsed >= this._PI_BUCKET_MS) {
+            if (state.lastValue != null) {
+                state.buckets.push(state.lastValue);
+            } else if (state.buckets.length > 0) {
+                state.buckets.push(state.buckets[state.buckets.length - 1]);
+            }
+            if (state.buckets.length > this._MAX_PI_BUCKETS) state.buckets.shift();
+            state.bucketStart += this._PI_BUCKET_MS;
+            elapsed = now - state.bucketStart;
+        }
+        state.lastValue = cvdValue;
+    }
+
+    /** Get CVD trail array for slope computation (max 360 values, full day). */
+    getCvdTrail(code) {
+        const state = this._cvdTrail.get(code);
+        if (!state) return [];
+        const result = [...state.buckets];
+        if (state.lastValue != null) result.push(state.lastValue);
+        return result;
+    }
+
+    /** Inject external data (footprint, sector CVD) for use in computeV2. */
+    setExternalData(code, data) {
+        this._externalData.set(code, data);
+    }
+
+    // ---- CVD Trail localStorage persistence ----
+    static _CVD_LS_KEY = 'ma_cvd_trail_v1';
+
+    cvdTrailToJSON() {
+        const entries = {};
+        for (const [code, state] of this._cvdTrail) {
+            const final = [...state.buckets];
+            if (state.lastValue != null) final.push(state.lastValue);
+            entries[code] = final;
+        }
+        return { ts: Date.now(), date: new Date().toISOString().slice(0, 10), entries };
+    }
+
+    restoreCvdTrailFromJSON(obj) {
+        if (!obj?.entries || !obj.date) return 0;
+        const today = new Date().toISOString().slice(0, 10);
+        if (obj.date !== today) return 0;
+        let count = 0;
+        for (const [code, buckets] of Object.entries(obj.entries)) {
+            if (!Array.isArray(buckets) || !buckets.length) continue;
+            if (!this._cvdTrail.has(code)) {
+                this._cvdTrail.set(code, {
+                    buckets: buckets.slice(-(this._MAX_PI_BUCKETS)),
+                    lastValue: buckets[buckets.length - 1] ?? null,
+                    bucketStart: Date.now()
+                });
+                count++;
+            }
+        }
+        return count;
+    }
+
+    saveCvdTrailToLocalStorage() {
+        try {
+            localStorage.setItem(HotScoreEngine._CVD_LS_KEY, JSON.stringify(this.cvdTrailToJSON()));
+        } catch (e) { /* quota exceeded — non-fatal */ }
+    }
+
+    restoreCvdTrailFromLocalStorage() {
+        try {
+            const raw = localStorage.getItem(HotScoreEngine._CVD_LS_KEY);
+            if (!raw) return 0;
+            return this.restoreCvdTrailFromJSON(JSON.parse(raw));
+        } catch (e) { return 0; }
+    }
+
+    // ============================================================
+    //  CONTINUATION SCORE v2.0  — Cross-sectional percentile model
+    //  Replaces v1 compute() for next-day continuation prediction.
+    // ============================================================
+
+    /**
+     * Batch-compute v2 scores for the entire roster cohort.
+     * Must be called with ALL roster rows so percentiles are meaningful.
+     *
+     * @param {Array<{code,rank,maxRank,chg_pct,value}>} rosterContext
+     * @returns {Map<string, {stage_score, stage_label, reason_codes, components}>}
+     */
+    batchComputeV2(rosterContext) {
+        if (!rosterContext.length) return new Map();
+
+        // ── 1. Collect raw signal arrays for percentile computation ──
+        const codes   = rosterContext.map(r => r.code);
+        const chgArr  = rosterContext.map(r => r.chg_pct ?? 0);
+        const valArr  = rosterContext.map(r => r.value ?? 0);
+        const piArr   = rosterContext.map(r => this.getPressureIndex(r.code) ?? 50);
+        const cvdArr  = rosterContext.map(r => {
+            const ext = this._externalData.get(r.code);
+            return ext?.cvd ?? 0;
+        });
+
+        // Pre-compute ExtremeMove stats once (mean + 2σ of |CHG%|) — avoids O(n²)
+        const absCHGs = rosterContext.map(r => Math.abs(r.chg_pct ?? 0));
+        const chgMean = absCHGs.reduce((s, v) => s + v, 0) / absCHGs.length;
+        const chgStd  = Math.sqrt(absCHGs.reduce((s, v) => s + (v - chgMean) ** 2, 0) / absCHGs.length) || 1;
+        const extremeThreshold = chgMean + 2 * chgStd;
+
+        const results = new Map();
+
+        for (let idx = 0; idx < rosterContext.length; idx++) {
+            const r = rosterContext[idx];
+            const code = r.code;
+            const ext = this._externalData.get(code) || {};
+            const ob2 = this._ob2.get(code);
+
+            // ── 2. Cross-sectional percentiles (0–1) ──
+            const M = ScoreMath.percentileRank(chgArr[idx], chgArr);
+            const V = ScoreMath.percentileRank(valArr[idx], valArr);
+            const P = ScoreMath.percentileRank(piArr[idx],  piArr);
+            const C = ScoreMath.percentileRank(cvdArr[idx], cvdArr);
+
+            // ── 3. Slope signals (0–1 normalized) ──
+            const pTrail = this.getPressureTrail(code);
+            const pSlice = pTrail.slice(-30); // last 30 minutes
+            const pSlope = ScoreMath.linearSlope(pSlice);
+            const Ps = ScoreMath.clip((pSlope + 2) / 4, 0, 1); // [-2,+2] → [0,1]
+
+            const cTrail = this.getCvdTrail(code);
+            const cSlice = cTrail.slice(-30);
+            const cSlope = ScoreMath.linearSlope(cSlice);
+            const Cs = ScoreMath.clip((cSlope + 2) / 4, 0, 1);
+
+            // ── 4. Microstructure signals (0–1) ──
+            const B = (ob2 && ob2.updateCount >= 2) ? ob2.bss / 100 : 0.5;
+            const O = (ob2 && ob2.updateCount >= 2) ? ob2.ats / 100 : 0.5;
+
+            // ── 5. Penalties (0 or 1) ──
+            let Div = 0;
+            if (ext.div_detected && Math.abs(ext.div_score ?? 0) > 1.5) {
+                Div = 1;
+            } else {
+                // Heuristic divergence: CHG% positive but CVD negative (or vice versa)
+                const chg = r.chg_pct ?? 0;
+                const cvd = ext.cvd ?? 0;
+                if (Math.abs(chg) > 1.5 && Math.abs(cvd) > 50) {
+                    if ((chg > 0 && cvd < 0) || (chg < 0 && cvd > 0)) Div = 1;
+                }
+            }
+
+            // ExtremeMove: |CHG%| > mean + 2σ of roster (pre-computed above loop)
+            const Extreme = Math.abs(r.chg_pct ?? 0) > extremeThreshold ? 1 : 0;
+
+            // ── 6. Weighted formula ──
+            let raw = 0.10 * M
+                    + 0.10 * V
+                    + 0.20 * P
+                    + 0.10 * Ps
+                    + 0.20 * C
+                    + 0.10 * Cs
+                    + 0.10 * B
+                    + 0.10 * O
+                    - 0.25 * Div
+                    - 0.10 * Extreme;
+
+            const score = Math.round(100 * ScoreMath.clip(raw, 0, 1));
+
+            // ── 7. Gating: score > 70 requires strong microstructure ──
+            let gatedScore = score;
+            if (score > 70) {
+                const gatePass = P > 0.6
+                              && (B > 0.6 || O > 0.6)
+                              && Div === 0;
+                if (!gatePass) gatedScore = Math.min(score, 69);
+            }
+
+            // ── 8. Stage label ──
+            let stage_label;
+            if (gatedScore >= 70)      stage_label = 'Strong Continuation';
+            else if (gatedScore >= 50) stage_label = 'Watch';
+            else                       stage_label = 'Cooling';
+
+            // ── 9. Reason codes ──
+            const reason_codes = this._buildReasonCodesV2(code, {
+                M, V, P, Ps, C, Cs, B, O, Div, Extreme, gatedScore,
+                pSlope, cSlope
+            });
+
+            // ── 10. Component breakdown (for tooltip/debug) ──
+            const components = {
+                M: Math.round(M * 100),
+                V: Math.round(V * 100),
+                P: Math.round(P * 100),
+                Ps: Math.round(Ps * 100),
+                C: Math.round(C * 100),
+                Cs: Math.round(Cs * 100),
+                B: Math.round(B * 100),
+                O: Math.round(O * 100),
+                Div, Extreme,
+                raw: Math.round(raw * 100),
+                gated: gatedScore !== score
+            };
+
+            results.set(code, {
+                stage_score: gatedScore,
+                stage_label,
+                reason_codes,
+                components,
+                risk_memory_missing: true // FR-9 deferred
+            });
+        }
+
+        return results;
+    }
+
+    /**
+     * Single-symbol compute (backward compat). Delegates to batchComputeV2
+     * with a 1-element roster. Percentiles are meaningless with N=1;
+     * only use for OB2 micro-tick updates between minute cycles.
+     */
+    compute(code, rankNow, maxRank, riskMemory = null) {
+        const r = { code, rank: rankNow, maxRank,
+            chg_pct: this._externalData.get(code)?.chg_pct ?? 0,
+            value:   (this._valueBuf.get(code) ?? [])[0] ?? 0
+        };
+        const results = this.batchComputeV2([r]);
+        return results.get(code) ?? {
+            stage_score: 0, stage_label: 'Cooling',
+            reason_codes: ['insufficient_data'], components: {}
+        };
+    }
+
+    _buildReasonCodesV2(code, { M, V, P, Ps, C, Cs, B, O, Div, Extreme, gatedScore, pSlope, cSlope }) {
+        const scored = [];
+
+        // Positive signals
+        if (P > 0.75)  scored.push({ code: 'pressure_dominant',        w: P });
+        if (Ps > 0.7)  scored.push({ code: 'pressure_rising',          w: Ps });
+        if (C > 0.75)  scored.push({ code: 'cvd_dominant',             w: C });
+        if (Cs > 0.7)  scored.push({ code: 'cvd_accelerating',         w: Cs });
+        if (B > 0.65)  scored.push({ code: 'bid_stack_persistent',     w: B });
+        if (O > 0.65)  scored.push({ code: 'ask_thinning_consistent',  w: O });
+        if (V > 0.8)   scored.push({ code: 'high_value_institutional', w: V });
+        if (M > 0.75)  scored.push({ code: 'strong_momentum',          w: M });
+
+        // Negative signals
+        if (Div)        scored.push({ code: 'divergence_detected',     w: 0.95 });
+        if (Extreme)    scored.push({ code: 'extreme_move_caution',    w: 0.90 });
+        if (P < 0.3)    scored.push({ code: 'pressure_weak',           w: 1 - P });
+        if (Ps < 0.3)   scored.push({ code: 'pressure_fading',         w: 1 - Ps });
+        if (C < 0.3)    scored.push({ code: 'cvd_weak',                w: 1 - C });
+        if (Cs < 0.3)   scored.push({ code: 'cvd_decelerating',        w: 1 - Cs });
+        if (B < 0.35)   scored.push({ code: 'bid_pullback_fast',       w: 1 - B });
+        if (O < 0.35)   scored.push({ code: 'ask_wall_reappearing',    w: 1 - O });
+
+        // Neutral
+        if (gatedScore > 70 && gatedScore < 100)
+            scored.push({ code: 'continuation_candidate', w: 0.5 });
+
+        // Rank trail context (kept from v1 for UX)
+        const delta5  = this._trail.getRankDelta(code, 5);
+        const delta15 = this._trail.getRankDelta(code, 15);
+        if (delta15 < -3) scored.push({ code: 'rank_improving_15m', w: Math.abs(delta15) / 10 });
+        if (delta5  >  2) scored.push({ code: 'rank_deteriorating_5m', w: delta5 / 10 });
+
+        const sorted = [...new Set(
+            scored.sort((a, b) => b.w - a.w).map(c => c.code)
+        )];
+        const result = sorted.slice(0, 6);
+        while (result.length < 2) result.push('neutral');
         return result;
     }
 }
@@ -1276,34 +1573,17 @@ class OrderbookClient {
     }
 
     /**
-     * Reconcile subscriptions with current top-N list.
-     * Call once per minute cycle.
+     * Reconcile subscriptions with current roster list.
+     * ACCUMULATE-ONLY: never unsubscribes during the session.
+     * All symbols that ever appeared in the roster stay subscribed
+     * so BSS/ATS data keeps flowing for the full trading day.
+     * Subscriptions naturally reset on page reload / WS reconnect.
      */
     reconcile(topNCodes, sendFn) {
-        const topSet = new Set(topNCodes);
-
-        // Subscribe new entrants
-        for (const code of topSet) {
+        // Subscribe new entrants only — never unsubscribe
+        for (const code of topNCodes) {
             if (!this._subscriptions.has(code)) {
                 this._subscribeSymbol(code, sendFn);
-            } else {
-                // Still in top-N → clear any grace period
-                this._subscriptions.get(code).gracePeriodExpiry = null;
-            }
-        }
-
-        // Mark exiting symbols with grace period
-        for (const [code, entry] of this._subscriptions) {
-            if (!topSet.has(code) && !entry.gracePeriodExpiry) {
-                entry.gracePeriodExpiry = Date.now() + this._gracePeriodMs;
-                console.log(`[OrderbookClient] ${code} grace period started`);
-            }
-        }
-
-        // Unsubscribe expired
-        for (const [code, entry] of this._subscriptions) {
-            if (entry.gracePeriodExpiry && Date.now() >= entry.gracePeriodExpiry) {
-                this._unsubscribeSymbol(code, sendFn);
             }
         }
     }
@@ -1524,6 +1804,22 @@ class MostActiveOrchestrator {
         this._lastSuccessTs = 0;
         this._seedDone = false; // Phase 2: track if OB2 seed has been fetched
 
+        // External data provider — set by host page (idx/index.html) to supply
+        // footprint + sector CVD data that lives outside the pipeline module.
+        // Signature: (code) => { cvd, div_detected, div_score, div_type, chg_pct } | null
+        this._externalDataProvider = null;
+
+        // Restore intraday trails from localStorage (survives page refresh)
+        const restoredRank = this._trailStore.restoreFromLocalStorage();
+        const restoredPI   = this._scoreEngine.restorePressureTrailFromLocalStorage();
+        const restoredCVD  = this._scoreEngine.restoreCvdTrailFromLocalStorage();
+        if (restoredRank || restoredPI || restoredCVD) {
+            console.log(`[Orchestrator] restored from cache: ${restoredRank} rank, ${restoredPI} pressure, ${restoredCVD} CVD trails`);
+        }
+
+        // Restore cached roster snapshot for instant render (before WS connects)
+        this._restoreRosterFromLocalStorage();
+
         this._obClient = new OrderbookClient({
             onOb2Update: (code, indicator) => this._handleOb2Update(code, indicator)
         });
@@ -1559,14 +1855,100 @@ class MostActiveOrchestrator {
                 this._onStatus('STALE');
             }
         }, 10000);
+
+        // Persist trails to localStorage every 30s (intraday survival)
+        this._persistTimer = setInterval(() => this._saveTrailsToLocalStorage(), 30000);
+
+        // Also save before page unload
+        this._beforeUnloadHandler = () => this._saveTrailsToLocalStorage();
+        window.addEventListener('beforeunload', this._beforeUnloadHandler);
     }
 
     stop() {
         clearInterval(this._minuteTimer);
         clearInterval(this._microTimer);
         clearInterval(this._staleTimer);
+        clearInterval(this._persistTimer);
+        window.removeEventListener('beforeunload', this._beforeUnloadHandler);
+        this._saveTrailsToLocalStorage();
         this._obClient.unsubscribeAll((msg) => this._client.send(msg));
         this._client.destroy();
+    }
+
+    /** Persist rank trail + pressure trail + CVD trail + roster snapshot to localStorage */
+    _saveTrailsToLocalStorage() {
+        this._trailStore.saveToLocalStorage();
+        this._scoreEngine.savePressureTrailToLocalStorage();
+        this._scoreEngine.saveCvdTrailToLocalStorage();
+        this._saveRosterToLocalStorage();
+    }
+
+    // ---- Roster snapshot localStorage cache (instant render on page load) ----
+    static _ROSTER_LS_KEY = 'ma_roster_snapshot_v1';
+
+    _saveRosterToLocalStorage() {
+        if (!this._currentRoster.length) return;
+        try {
+            const slim = this._currentRoster.map(r => ({
+                code: r.code,
+                rank_now: r.rank_now,
+                last_price: r.last_price,
+                value: r.value,
+                volume: r.volume,
+                change_pct: r.change_pct,
+                freq: r.freq,
+                stage_score: r.stage_score,
+                stage_label: r.stage_label,
+            }));
+            localStorage.setItem(MostActiveOrchestrator._ROSTER_LS_KEY, JSON.stringify({
+                ts: Date.now(),
+                date: new Date().toISOString().slice(0, 10),
+                rows: slim,
+            }));
+        } catch (e) { /* quota exceeded — non-fatal */ }
+    }
+
+    _restoreRosterFromLocalStorage() {
+        try {
+            const raw = localStorage.getItem(MostActiveOrchestrator._ROSTER_LS_KEY);
+            if (!raw) return;
+            const obj = JSON.parse(raw);
+            if (!obj?.rows?.length || !obj.date) return;
+            const today = new Date().toISOString().slice(0, 10);
+            if (obj.date !== today) {
+                localStorage.removeItem(MostActiveOrchestrator._ROSTER_LS_KEY);
+                console.log('[Orchestrator] discarding stale roster cache from', obj.date);
+                return;
+            }
+            // Rebuild full snapshot rows from slim cache + restored trails
+            const maxRank = obj.rows.length;
+            this._currentRoster = obj.rows.map(r => ({
+                code: r.code,
+                rank_now: r.rank_now,
+                rank_delta_5m: this._trailStore.getRankDelta(r.code, 5),
+                rank_delta_15m: this._trailStore.getRankDelta(r.code, 15),
+                rank_trail: [...this._trailStore.getTrail(r.code)],
+                pressure_trail: this._scoreEngine.getPressureTrail(r.code),
+                ob2_indicator: this._scoreEngine.getOb2Indicator(r.code),
+                stage_score: r.stage_score ?? 0,
+                stage_label: r.stage_label ?? 'Cooling',
+                reason_codes: [],
+                components: {},
+                risk_memory_missing: true,
+                last_price: r.last_price,
+                value: r.value,
+                volume: r.volume,
+                change_pct: r.change_pct,
+                freq: r.freq,
+            }));
+            this._lastSuccessTs = obj.ts;
+            this._topNCodes = this._currentRoster.slice(0, this._topN).map(r => r.code);
+            console.log(`[Orchestrator] restored ${this._currentRoster.length} roster rows from cache (${Math.round((Date.now() - obj.ts) / 1000)}s old)`);
+            // Emit immediately so table renders before WS connects
+            this._onUpdate({ type: 'minute', rows: this._currentRoster, ts: obj.ts });
+        } catch (e) {
+            console.warn('[Orchestrator] roster cache restore failed:', e);
+        }
     }
 
     getCurrentRoster() { return [...this._currentRoster]; }
@@ -1624,6 +2006,9 @@ class MostActiveOrchestrator {
             this._scoreEngine.pushRosterRow(r.code, r.value, r.volume);
         });
 
+        // Inject external data (footprint, sector CVD) into engine
+        this._injectExternalData(rawRows);
+
         // Reconcile OB2 for ALL roster symbols (live WS subscriptions)
         const allCodes = rawRows.map(r => r.code);
         this._topNCodes = rawRows.slice(0, this._topN).map(r => r.code);
@@ -1635,27 +2020,23 @@ class MostActiveOrchestrator {
             this._seedOb2FromR2(rawRows.map(r => r.code)).then(() => {
                 // Re-build snapshots with seeded OB2 data and trigger re-render
                 if (this._currentRoster.length) {
-                    this._currentRoster.forEach(row => {
-                        row.ob2_indicator = this._scoreEngine.getOb2Indicator(row.code);
-                        this._scoreEngine.pushPressureTick(row.code);
-                        row.pressure_trail = this._scoreEngine.getPressureTrail(row.code);
-                        const s = this._scoreEngine.compute(row.code, row.rank_now, this._currentRoster.length);
-                        row.stage_score = s.stage_score;
-                        row.stage_label = s.stage_label;
-                        row.reason_codes = s.reason_codes;
-                    });
+                    this._rebatchScore();
                     console.log('[Orchestrator] re-rendering after OB2 seed');
                     this._onUpdate({ type: 'minute', rows: this._currentRoster, ts: this._lastSuccessTs });
                 }
             });
         }
 
-        // Build snapshot
+        // Build snapshot with batch scoring
         this._currentRoster = rawRows.map(r => this._buildSnapshot(r, maxRank));
+        this._rebatchScore();
         this._onUpdate({ type: 'minute', rows: this._currentRoster, ts: this._lastSuccessTs });
 
         // Phase 1: Sync roster symbols to server for R2 OB2 coverage
         this._syncWatchlistToServer(rawRows.map(r => r.code));
+
+        // Persist trails after each minute tick
+        this._saveTrailsToLocalStorage();
 
         console.log(`[Orchestrator] minute tick: ${rawRows.length} rows, topN: [${this._topNCodes.join(',')}]`);
     }
@@ -1664,19 +2045,76 @@ class MostActiveOrchestrator {
         const row = this._currentRoster.find(r => r.code === code);
         if (!row) return;
         row.ob2_indicator = indicator;
-        // Recompute stage with fresh micro score
-        const maxRank = this._currentRoster.length;
-        const s = this._scoreEngine.compute(code, row.rank_now, maxRank);
-        row.stage_score = s.stage_score;
-        row.stage_label = s.stage_label;
-        row.reason_codes = s.reason_codes;
+        // Debounce re-batch score — during OB2 seed many symbols update in quick
+        // succession; coalesce into a single batch recompute after 200ms of quiet
+        if (this._ob2ScoreDebounce) clearTimeout(this._ob2ScoreDebounce);
+        this._ob2ScoreDebounce = setTimeout(() => {
+            this._ob2ScoreDebounce = null;
+            this._rebatchScore();
+        }, 200);
+    }
+
+    /**
+     * Re-compute v2 scores for the full current roster (batch).
+     * Called on minute tick, OB2 update, and OB2 seed completion.
+     */
+    _rebatchScore() {
+        if (!this._currentRoster.length) return;
+        const ctx = this._currentRoster.map(r => {
+            // Use IPOT chg_pct if available; fall back to external data provider
+            // so M percentile matches the displayed CHG% column
+            let chg = r.change_pct ?? 0;
+            if (chg === 0) {
+                const ext = this._scoreEngine._externalData.get(r.code);
+                if (ext?.chg_pct) chg = ext.chg_pct;
+            }
+            return {
+                code: r.code,
+                rank: r.rank_now,
+                maxRank: this._currentRoster.length,
+                chg_pct: chg,
+                value: r.value ?? 0
+            };
+        });
+        const results = this._scoreEngine.batchComputeV2(ctx);
+        for (const row of this._currentRoster) {
+            const s = results.get(row.code);
+            if (!s) continue;
+            row.stage_score  = s.stage_score;
+            row.stage_label  = s.stage_label;
+            row.reason_codes = s.reason_codes;
+            row.components   = s.components;
+        }
+    }
+
+    /**
+     * Inject external data (footprint, sector CVD) into engine.
+     * Called from host page via setExternalDataProvider().
+     */
+    _injectExternalData(rawRows) {
+        if (!this._externalDataProvider) return;
+        for (const r of rawRows) {
+            const ext = this._externalDataProvider(r.code);
+            if (ext) {
+                this._scoreEngine.setExternalData(r.code, ext);
+                // Push CVD into trail for slope computation
+                if (ext.cvd != null) {
+                    this._scoreEngine.pushCvdTick(r.code, ext.cvd);
+                }
+            }
+        }
+    }
+
+    /** Set external data provider — called by host page (idx/index.html). */
+    setExternalDataProvider(fn) {
+        this._externalDataProvider = fn;
     }
 
     _buildSnapshot(rosterRow, maxRank) {
         const code = rosterRow.code;
         const trail = this._trailStore.getTrail(code);
         const ob2   = this._scoreEngine.getOb2Indicator(code);
-        const s     = this._scoreEngine.compute(code, rosterRow.rank, maxRank);
+        // Score is computed in batch by _rebatchScore(); populated after build
         return {
             code,
             rank_now:      rosterRow.rank,
@@ -1685,9 +2123,10 @@ class MostActiveOrchestrator {
             rank_trail:    [...trail],
             pressure_trail: this._scoreEngine.getPressureTrail(code),
             ob2_indicator: ob2,
-            stage_score:   s.stage_score,
-            stage_label:   s.stage_label,
-            reason_codes:  s.reason_codes,
+            stage_score:   0,   // filled by _rebatchScore()
+            stage_label:   'Cooling',
+            reason_codes:  [],
+            components:    {},
             risk_memory_missing: true,   // FR-9 deferred
             // From roster
             last_price:  rosterRow.last_price,
@@ -1706,6 +2145,8 @@ class MostActiveOrchestrator {
             this._scoreEngine.pushPressureTick(row.code);
             row.pressure_trail = this._scoreEngine.getPressureTrail(row.code);
         });
+        // Re-batch score with updated pressure data
+        this._rebatchScore();
         this._onUpdate({ type: 'micro', rows: this._currentRoster, ts: Date.now() });
     }
 
