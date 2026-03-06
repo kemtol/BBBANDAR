@@ -2836,22 +2836,46 @@ export default {
 
       // ── Phase 1: POST /ma-watchlist-sync ──
       // Browser pipeline posts dynamic Most Active roster for livetrade-taping to subscribe OB2.
+      // UNION MERGE: accumulates all symbols seen today so dropped roster members
+      // keep their OB2 subscriptions alive for the full trading day.
       // Stored in KV with 5-minute TTL so stale watchlists auto-expire.
       if (url.pathname === "/ma-watchlist-sync" && req.method === "POST") {
         try {
           const body = await req.json();
           const symbols = Array.isArray(body?.symbols) ? body.symbols : [];
-          const cleaned = [...new Set(
+          const incoming = [...new Set(
             symbols.map(s => String(s).trim().toUpperCase()).filter(s => /^[A-Z]{2,6}$/.test(s))
-          )].slice(0, 60); // Cap at 60
+          )];
 
-          if (!cleaned.length) {
+          if (!incoming.length) {
             return json({ ok: false, error: "No valid symbols provided" }, 400);
           }
 
+          // Determine today's WIB date for day-boundary reset
+          const todayWib = getRecentWibDates(1)[0];
+
+          // Read existing KV and merge (union) if same trading day
+          let unionSet = new Set(incoming);
+          let mergedCount = 0;
+          if (env.MOST_ACTIVE_KV) {
+            try {
+              const existing = await env.MOST_ACTIVE_KV.get("most-active:watchlist");
+              if (existing) {
+                const data = JSON.parse(existing);
+                if (data.date === todayWib && Array.isArray(data.symbols)) {
+                  for (const s of data.symbols) {
+                    if (/^[A-Z]{2,6}$/.test(s)) unionSet.add(s);
+                  }
+                  mergedCount = unionSet.size - incoming.length;
+                }
+              }
+            } catch { /* ignore parse errors, start fresh */ }
+          }
+
           const payload = {
-            symbols: cleaned,
+            symbols: [...unionSet].slice(0, 200), // Higher cap for union accumulation
             ts: Date.now(),
+            date: todayWib,
             source: String(body?.source || "browser"),
           };
 
@@ -2868,8 +2892,11 @@ export default {
 
           return json({
             ok: true,
-            symbols_count: cleaned.length,
+            symbols_count: payload.symbols.length,
+            incoming_count: incoming.length,
+            merged_historical: mergedCount,
             ttl_seconds: 300,
+            date: todayWib,
             ts: payload.ts,
           });
         } catch (err) {
@@ -2898,43 +2925,63 @@ export default {
           const result = {};
           const missing = [];
 
-          // Phase 1: yfinance R2 — find TWO distinct dates per symbol (close + prev_close)
+          // Phase 1: yfinance R2 — read monthly files (1-2 GETs per symbol instead of 3-7)
+          // Monthly key: yfinance/{CODE}/1d/{YYYY-MM}.json contains all daily candles for that month
+          const tradingDatesToTry = datesToTry.filter(d => !isNonTradingDayUTC(d));
+          const monthsNeeded = [...new Set(tradingDatesToTry.map(d => d.slice(0, 7)))]; // e.g. ["2026-03","2026-02"]
+
           await Promise.all(symbols.map(async (symbol) => {
             const entry = { close: null, close_date: null, prev_close: null, prev_date: null };
-            for (const date of datesToTry) {
-              // Skip non-trading days for cleaner results
-              if (isNonTradingDayUTC(date)) continue;
-              const key = `yfinance/${symbol}/1d/${date}.json`;
-              const obj = await env.FOOTPRINT_BUCKET.get(key);
-              if (!obj) continue;
 
+            // Collect all candles from relevant monthly files (usually 1-2 months)
+            const allCandles = new Map(); // date → candle
+            for (const month of monthsNeeded) {
+              if (entry.close !== null && entry.prev_close !== null) break;
               try {
-                const data = JSON.parse(await obj.text());
-                const candles = data?.candles || [];
-                if (candles.length > 0) {
-                  const lastCandle = candles[candles.length - 1];
-                  const price = Number(lastCandle.close);
-                  if (!Number.isFinite(price) || price <= 0) continue;
-
-                  if (entry.close === null) {
-                    // First date found = most recent close (today or last trading day)
-                    entry.close = price;
-                    entry.close_date = date;
-                  } else if (entry.prev_close === null && date !== entry.close_date) {
-                    // Second date found = previous close
-                    entry.prev_close = price;
-                    entry.prev_date = date;
-                    break; // got both, done
+                const key = `yfinance/${symbol}/1d/${month}.json`;
+                const obj = await env.FOOTPRINT_BUCKET.get(key);
+                if (!obj) {
+                  // Fallback: try legacy daily files for this month's dates
+                  for (const date of tradingDatesToTry.filter(d => d.startsWith(month))) {
+                    const legacyKey = `yfinance/${symbol}/1d/${date}.json`;
+                    const legacyObj = await env.FOOTPRINT_BUCKET.get(legacyKey);
+                    if (!legacyObj) continue;
+                    try {
+                      const ld = JSON.parse(await legacyObj.text());
+                      for (const c of (ld?.candles || [])) {
+                        if (c?.date && !allCandles.has(c.date)) allCandles.set(c.date, c);
+                      }
+                    } catch { /* skip */ }
                   }
+                  continue;
                 }
-              } catch { /* skip bad file */ }
+                const data = JSON.parse(await obj.text());
+                for (const c of (data?.candles || [])) {
+                  if (c?.date && !allCandles.has(c.date)) allCandles.set(c.date, c);
+                }
+              } catch { /* skip */ }
+            }
+
+            // Walk through dates newest-first, find close + prev_close
+            for (const date of tradingDatesToTry) {
+              const candle = allCandles.get(date);
+              if (!candle) continue;
+              const price = Number(candle.close);
+              if (!Number.isFinite(price) || price <= 0) continue;
+
+              if (entry.close === null) {
+                entry.close = price;
+                entry.close_date = date;
+              } else if (entry.prev_close === null && date !== entry.close_date) {
+                entry.prev_close = price;
+                entry.prev_date = date;
+                break;
+              }
             }
 
             if (entry.close !== null || entry.prev_close !== null) {
               result[symbol] = entry;
-              // Backward-compat: also include prev_close at top level
               if (!entry.prev_close && entry.close) {
-                // Only found one date — treat as prev_close for backward compat
                 entry.prev_close = entry.close;
                 entry.prev_date = entry.close_date;
                 entry.close = null;
@@ -3019,8 +3066,8 @@ export default {
       }
 
       // ── Phase 2: GET /ob2-seed ──
-      // Returns recent OB2 snapshots from R2 for cold-start seeding of BSS/ATS.
-      // Query: ?symbols=BBRI,SKBM,...&count=60 (snapshots per symbol, default 60)
+      // Returns recent OB2 snapshots from single R2 snapshot file for cold-start seeding of BSS/ATS.
+      // Query: ?symbols=BBRI,SKBM,...
       if (url.pathname === "/ob2-seed" && req.method === "GET") {
         try {
           const symbolsRaw = String(url.searchParams.get("symbols") || "").trim().toUpperCase();
@@ -3029,61 +3076,44 @@ export default {
           }
           const symbols = [...new Set(
             symbolsRaw.split(",").map(s => s.trim()).filter(s => /^[A-Z]{2,6}$/.test(s))
-          )].slice(0, 30); // Cap at 30 symbols per batch to limit R2 reads
+          )].slice(0, 50); // Increased cap since it's a single R2 read now
 
-          const count = Math.max(1, Math.min(120, Number(url.searchParams.get("count") || "60") || 60));
+          // Single R2 GET — snapshot contains all symbols with last 3 snapshots each
+          const obj = await env.FOOTPRINT_BUCKET.get('ob2/snapshot/latest.json');
+          if (!obj) {
+            return json({
+              ok: true,
+              seeds: {},
+              coverage: { requested: symbols.length, found: 0, missing: symbols },
+              ts: Date.now(),
+              source: 'snapshot_v2',
+            });
+          }
 
-          // Determine today's date in WIB
-          const datesToTry = getRecentWibDates(2); // today + yesterday fallback
+          const data = await obj.json();
+          const allSymbols = data?.symbols || {};
           const seeds = {};
-          let found = 0;
           const missing = [];
 
-          await Promise.all(symbols.map(async (symbol) => {
-            for (const date of datesToTry) {
-              const key = `ob2/snapshot15s/v1/symbol=${symbol}/date=${date}/daily.jsonl`;
-              const obj = await env.FOOTPRINT_BUCKET.get(key);
-              if (!obj) continue;
-
-              const text = await obj.text();
-              const lines = text.trim().split("\n").filter(Boolean);
-              // Tail: take last `count` lines
-              const tail = lines.slice(-count);
-              const snapshots = [];
-              for (const line of tail) {
-                try {
-                  const snap = JSON.parse(line);
-                  // Only send essential fields to minimize payload
-                  snapshots.push({
-                    ts: snap.ts_unix_ms,
-                    bid: snap.bid_l10 || [],
-                    ask: snap.ask_l10 || [],
-                    best_bid: snap.best_bid,
-                    best_ask: snap.best_ask,
-                    spread_bps: snap.spread_bps,
-                    imbalance: snap.imbalance,
-                  });
-                } catch { /* skip bad line */ }
-              }
-
-              if (snapshots.length) {
-                seeds[symbol] = snapshots;
-                found++;
-                return; // got data for this symbol, skip older dates
-              }
+          for (const sym of symbols) {
+            const snaps = allSymbols[sym];
+            if (Array.isArray(snaps) && snaps.length > 0) {
+              seeds[sym] = snaps;
+            } else {
+              missing.push(sym);
             }
-            missing.push(symbol);
-          }));
+          }
 
           return json({
             ok: true,
             seeds,
             coverage: {
               requested: symbols.length,
-              found,
+              found: Object.keys(seeds).length,
               missing,
             },
-            ts: Date.now(),
+            ts: data?.ts || Date.now(),
+            source: 'snapshot_v2',
           });
         } catch (err) {
           console.error("[/ob2-seed] failed", err);
@@ -3123,11 +3153,10 @@ export default {
       }
 
       // 0.b GET /ob2/snapshot15s/latest
-      // Read latest 15s OB2 snapshot line from daily JSONL file.
+      // Read latest OB2 snapshot for a single symbol from unified snapshot file.
       // Query:
       // - symbol=BBRI (required)
-      // - date=YYYY-MM-DD (optional, defaults search recent WIB dates)
-      // - tail=1..20 (optional)
+      // - tail=1..3 (optional, max 3 since ring buffer keeps last 3)
       if (url.pathname === "/ob2/snapshot15s/latest" && req.method === "GET") {
         try {
           const symbol = String(url.searchParams.get("symbol") || "").trim().toUpperCase();
@@ -3135,44 +3164,28 @@ export default {
             return json({ ok: false, error: "symbol is required" }, 400);
           }
 
-          const dateQ = String(url.searchParams.get("date") || "").trim();
-          const tail = Math.max(1, Math.min(20, Number(url.searchParams.get("tail") || "1") || 1));
-          const datesToTry = /^\d{4}-\d{2}-\d{2}$/.test(dateQ)
-            ? [dateQ]
-            : getRecentWibDates(5);
+          const tail = Math.max(1, Math.min(3, Number(url.searchParams.get("tail") || "1") || 1));
 
-          let foundKey = null;
-          let foundDate = null;
-          let rows = [];
-
-          for (const d of datesToTry) {
-            const key = `ob2/snapshot15s/v1/symbol=${symbol}/date=${d}/daily.jsonl`;
-            rows = await readJsonlTailFromR2(env.FOOTPRINT_BUCKET, key, tail);
-            if (rows.length) {
-              foundKey = key;
-              foundDate = d;
-              break;
-            }
+          const obj = await env.FOOTPRINT_BUCKET.get('ob2/snapshot/latest.json');
+          if (!obj) {
+            return json({ ok: true, symbol, found: false, message: "no snapshot file found" });
           }
 
-          if (!rows.length) {
-            return json({
-              ok: true,
-              symbol,
-              found: false,
-              message: "no snapshot found for recent days",
-              tried_dates: datesToTry,
-            });
+          const data = await obj.json();
+          const snaps = data?.symbols?.[symbol];
+
+          if (!Array.isArray(snaps) || !snaps.length) {
+            return json({ ok: true, symbol, found: false, message: "symbol not in snapshot" });
           }
 
           return json({
             ok: true,
             symbol,
             found: true,
-            date: foundDate,
-            key: foundKey,
-            count: rows.length,
-            items: rows,
+            count: Math.min(tail, snaps.length),
+            items: snaps.slice(-tail),
+            snapshot_ts: data?.ts,
+            source: 'snapshot_v2',
           });
         } catch (err) {
           console.error("[/ob2/snapshot15s/latest] failed", err);
@@ -3195,17 +3208,20 @@ export default {
             tokenErr = e?.message || String(e);
           }
 
-          const datesToTry = getRecentWibDates(3);
+          // Check unified snapshot file
           let obFound = false;
-          let obKey = null;
-          for (const d of datesToTry) {
-            const key = `ob2/snapshot15s/v1/symbol=${symbol}/date=${d}/daily.jsonl`;
-            const head = await env.FOOTPRINT_BUCKET.head(key);
-            if (head) {
-              obFound = true;
-              obKey = key;
-              break;
-            }
+          let obSymbolFound = false;
+          const head = await env.FOOTPRINT_BUCKET.head('ob2/snapshot/latest.json');
+          if (head) {
+            obFound = true;
+            // Optionally check if symbol is in the snapshot
+            try {
+              const obj = await env.FOOTPRINT_BUCKET.get('ob2/snapshot/latest.json');
+              if (obj) {
+                const data = await obj.json();
+                obSymbolFound = Boolean(data?.symbols?.[symbol]?.length);
+              }
+            } catch { /* ignore */ }
           }
 
           return json({
@@ -3213,8 +3229,8 @@ export default {
             checklist: {
               ws_token_available: tokenOk,
               ws_token_error: tokenErr,
-              ob2_snapshot15s_available: obFound,
-              ob2_snapshot15s_key: obKey,
+              ob2_snapshot_available: obFound,
+              ob2_symbol_found: obSymbolFound,
             },
             symbol,
             ts_unix_ms: Date.now(),
@@ -3227,9 +3243,12 @@ export default {
 
       // ── GET /sector/cvd ────────────────────────────────────────────────
       // Returns CVD (from sector-scrapper TradedSummary levels) for all
-      // symbols across all IDX sectors. Reads sector aggregate JONLs from
+      // symbols across all IDX sectors. Reads sector snapshot JONLs from
       // the shared FOOTPRINT_BUCKET (R2). One call enriches the entire roster.
       // CVD = Σ(b_lot - s_lot) from TradedSummary price levels.
+      //
+      // R2 path: sector/{SECTOR}/{YYYY}/{MM}/{DD}/latest.jsonl  (new snapshot)
+      // Fallback: sector/{SECTOR}/{YYYY}/{MM}/{DD}.jsonl         (legacy aggregate)
       if (url.pathname === "/sector/cvd" && req.method === "GET") {
         const SECTOR_LIST = [
           "IDXBASIC","IDXENERGY","IDXINDUST","IDXNONCYC","IDXCYCLIC",
@@ -3245,49 +3264,45 @@ export default {
         try {
           const symbolMap = {};
 
-          // Read all sector aggregates in parallel
+          // Read all sector snapshots in parallel (new path first, fallback to legacy)
           await Promise.all(SECTOR_LIST.map(async (sector) => {
-            const aggKey = `sector/${sector}/${yyyy}/${mm}/${dd}.jsonl`;
-            const aggObj = await env.FOOTPRINT_BUCKET.get(aggKey);
-            if (!aggObj) return;
-            const aggText = await aggObj.text();
+            const newKey    = `sector/${sector}/${yyyy}/${mm}/${dd}/latest.jsonl`;
+            const legacyKey = `sector/${sector}/${yyyy}/${mm}/${dd}.jsonl`;
 
-            // Group records by symbol, take latest per symbol
-            const bySymbol = new Map();
-            for (const line of aggText.split("\n")) {
+            let text = null;
+            for (const key of [newKey, legacyKey]) {
+              try {
+                const obj = await env.FOOTPRINT_BUCKET.get(key);
+                if (obj) { text = await obj.text(); break; }
+              } catch { /* try next */ }
+            }
+            if (!text) return;
+
+            // Parse records — in new snapshot format each line IS the latest record per symbol
+            for (const line of text.split("\n")) {
               if (!line.trim()) continue;
               try {
                 const rec = JSON.parse(line);
                 const sym = String(rec.symbol || "").toUpperCase();
-                if (!sym) continue;
-                if (!bySymbol.has(sym)) bySymbol.set(sym, []);
-                bySymbol.get(sym).push(rec);
+                if (!sym || symbolMap[sym]) continue; // first sector wins
+
+                // CVD from pre-computed field or levels fallback
+                let cvd_lot = rec.cvd_lot ?? null;
+                if (cvd_lot === null && Array.isArray(rec.levels) && rec.levels.length > 0) {
+                  cvd_lot = rec.levels.reduce((sum, lv) => {
+                    const bl = Number(lv.b_lot || 0);
+                    const sl = Number(lv.s_lot || 0);
+                    return sum + (Number.isFinite(bl) ? bl : 0) - (Number.isFinite(sl) ? sl : 0);
+                  }, 0);
+                }
+
+                symbolMap[sym] = {
+                  sector,
+                  cvd_lot,
+                  freq_tx: rec.freq_tx ?? null,
+                  price_last: rec.price_last ?? null,
+                };
               } catch { /* skip */ }
-            }
-
-            for (const [sym, records] of bySymbol) {
-              if (symbolMap[sym]) continue; // first sector wins
-              // Sort by ts, take latest
-              records.sort((a, b) => new Date(a.ts || 0).getTime() - new Date(b.ts || 0).getTime());
-              const last = records[records.length - 1];
-              const first = records[0];
-
-              // CVD from levels or pre-computed cvd_lot
-              let cvd_lot = last.cvd_lot ?? null;
-              if (cvd_lot === null && Array.isArray(last.levels) && last.levels.length > 0) {
-                cvd_lot = last.levels.reduce((sum, lv) => {
-                  const bl = Number(lv.b_lot || 0);
-                  const sl = Number(lv.s_lot || 0);
-                  return sum + (Number.isFinite(bl) ? bl : 0) - (Number.isFinite(sl) ? sl : 0);
-                }, 0);
-              }
-
-              symbolMap[sym] = {
-                sector,
-                cvd_lot,
-                freq_tx: last.freq_tx ?? null,
-                price_last: last.price_last ?? null,
-              };
             }
           }));
 

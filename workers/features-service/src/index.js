@@ -128,6 +128,16 @@ export default {
             let   prevProcessedStatsMap = processedStatsMaps[1]; // D1 = yesterday
             console.log(`Step 2.5: processed-stats maps ${processedStatsMaps.filter(m => m.size > 0).length}/20 loaded; sector digest ${sectorDigestMap.size} symbols`);
 
+            // Fetch yfinance D1 close map — official EOD prices from Yahoo Finance.
+            // More accurate than processed-stats for close prices. Used as primary
+            // source for growth_pct (close-to-close) calculation.
+            const allTickerSet = new Set([
+                ...footprintData.map(fp => fp.ticker),
+                ...contextData.map(c => c.ticker).filter(t => this.isValidTicker(t))
+            ]);
+            const yfinancePrevCloseMap = await this.fetchYfinanceCloseMap(env, prevDate, allTickerSet);
+            console.log(`Step 2.6: yfinance H-1 close map loaded: ${yfinancePrevCloseMap.size} tickers for ${prevDate}`);
+
             // FALLBACK: If processed/{prevDate}.json is empty (livetrade-taping-agregator
             // didn't write it), query D1 for previous trading day close prices directly.
             // This ensures growth_pct (CHG%) is always computed correctly.
@@ -240,6 +250,7 @@ export default {
                         // NOTE: item.p (Mom%) is NOT overridden for ≥30 candle items — it retains
                         // its intraday semantics for technical scoring purposes.
                         //
+                        // Priority for prevClose: yfinance (official EOD) > processed-stats.
                         // FIX: processed/{today}.json may not exist during intraday (only written
                         // when livetrade-taping-agregator batch completes, ~hourly). Fallback to
                         // D1 footprint close (temp_footprint_consolidate) which is always fresh.
@@ -249,7 +260,11 @@ export default {
                             const curClose = (Number.isFinite(curCloseFromStats) && curCloseFromStats > 0)
                                 ? curCloseFromStats
                                 : (Number.isFinite(curCloseFromD1) && curCloseFromD1 > 0 ? curCloseFromD1 : NaN);
-                            const prevClose = Number(prevProcessedStatsMap.get(ticker)?.close);
+                            // Prefer yfinance for prev close (official EOD), fallback to processed-stats
+                            const yfPrevClose = Number(yfinancePrevCloseMap.get(ticker)?.close);
+                            const psPrevClose = Number(prevProcessedStatsMap.get(ticker)?.close);
+                            const prevClose = (Number.isFinite(yfPrevClose) && yfPrevClose > 0) ? yfPrevClose
+                                            : (Number.isFinite(psPrevClose) && psPrevClose > 0) ? psPrevClose : NaN;
                             if (Number.isFinite(curClose) && curClose > 0 && Number.isFinite(prevClose) && prevClose > 0) {
                                 item.open_price = prevClose;
                                 item.recent_price = curClose;
@@ -282,20 +297,43 @@ export default {
 
                 // Sector digest: overwrite freq_tx and growth_pct with scraper values.
                 // freq_tx: sector scraper levels_sum is the most accurate tx count — always override.
-                // growth_pct: sector scraper = (price_last_now - price_open_first_snapshot) / price_open.
-                //   Only override when item.p_src is 'intraday' or growth_pct is still null.
-                //   Do NOT override 'overnight' path — that uses processed-stats close-to-close which
-                //   is more meaningful than a sparse single-snapshot growth from sector scraper.
+                // growth_pct: PREFER close-to-close (price_last_today vs close_H-1).
+                //   Priority: yfinance H-1 close (official Yahoo Finance EOD) > processed-stats close.
+                //   Snapshot growth can be 0% when sector-scrapper starts late (same open/last).
+                //   Close-to-close matches standard stock app convention (Google Finance, IPOT).
                 const digest = sectorDigestMap.get(ticker);
                 if (digest) {
                     if (Number.isFinite(digest.freq_tx) && digest.freq_tx > 0) {
                         item.freq_tx  = Math.round(digest.freq_tx);
                         item.freq_src = 'sector_digest';
                     }
+
+                    // Growth: price_last (today, from sector) vs close_H-1
+                    // Priority: yfinance (official EOD) > processed-stats > sector digest snapshot
+                    const priceLast = digest.price_last;
+                    const yfClose   = yfinancePrevCloseMap.get(ticker)?.close;
+                    const psClose   = prevProcessedStatsMap.get(ticker)?.close;
+                    // Prefer yfinance (official EOD), fallback to processed-stats
+                    const prevClose = (Number.isFinite(yfClose) && yfClose > 0) ? yfClose
+                                    : (Number.isFinite(psClose) && psClose > 0) ? psClose
+                                    : null;
+                    const hasCloseToClose = Number.isFinite(priceLast) && priceLast > 0
+                        && prevClose != null;
+
                     const canOverrideGrowth = item.growth_pct == null
+                        || item.growth_pct === 0
                         || item.p_src === 'intraday'
-                        || item.p_src === 'intraday_sparse';
-                    if (canOverrideGrowth && Number.isFinite(digest.growth_pct)) {
+                        || item.p_src === 'intraday_sparse'
+                        || item.p_src == null;
+
+                    if (canOverrideGrowth && hasCloseToClose) {
+                        // Close-to-close: price_last_today vs close_yesterday (yfinance preferred)
+                        item.growth_pct   = parseFloat((((priceLast - prevClose) / prevClose) * 100).toFixed(2));
+                        item.open_price   = prevClose;
+                        item.recent_price = priceLast;
+                        item.p_src        = item.p_src || (yfClose ? 'yfinance_close_to_close' : 'sector_close_to_close');
+                    } else if (canOverrideGrowth && Number.isFinite(digest.growth_pct) && digest.growth_pct !== 0) {
+                        // Fallback: sector digest snapshot-based growth (only if non-zero)
                         item.growth_pct   = parseFloat(digest.growth_pct.toFixed(2));
                         item.open_price   = digest.price_open   ?? item.open_price;
                         item.recent_price = digest.price_last   ?? item.recent_price;
@@ -501,6 +539,66 @@ export default {
     },
 
     /**
+     * Fetch official EOD close prices from yfinance D1 candles in R2.
+     * Path pattern: yfinance/{TICKER}/1d/{YYYY-MM}.json (monthly consolidated)
+     * Fallback: yfinance/{TICKER}/1d/{YYYY-MM-DD}.json (legacy daily)
+     * Each monthly file has { candles: [{ date, close, ... }, ...] }.
+     *
+     * Strategy: Read monthly file for the target month, extract candle for dateStr.
+     * Falls back to legacy daily file if monthly not found.
+     * Returns Map<ticker, { close, open, high, low, volume }>.
+     */
+    async fetchYfinanceCloseMap(env, dateStr, tickers) {
+        const out = new Map();
+        if (!env?.TAPE_DATA_SAHAM || !dateStr || !tickers || tickers.length === 0) return out;
+
+        const BATCH_SIZE = 50;
+        const tickerArr = Array.isArray(tickers) ? tickers : Array.from(tickers);
+        const month = dateStr.slice(0, 7); // "2026-03-04" → "2026-03"
+
+        for (let i = 0; i < tickerArr.length; i += BATCH_SIZE) {
+            const batch = tickerArr.slice(i, i + BATCH_SIZE);
+            await Promise.allSettled(batch.map(async (ticker) => {
+                try {
+                    // Try monthly file first
+                    const monthlyKey = `yfinance/${ticker}/1d/${month}.json`;
+                    let obj = await env.TAPE_DATA_SAHAM.get(monthlyKey);
+                    let candles = null;
+
+                    if (obj) {
+                        const data = await obj.json();
+                        candles = data?.candles;
+                    } else {
+                        // Fallback to legacy daily file
+                        const dailyKey = `yfinance/${ticker}/1d/${dateStr}.json`;
+                        obj = await env.TAPE_DATA_SAHAM.get(dailyKey);
+                        if (obj) {
+                            const data = await obj.json();
+                            candles = data?.candles;
+                        }
+                    }
+
+                    if (!Array.isArray(candles) || candles.length === 0) return;
+
+                    // Find candle for exact date (monthly file has many dates)
+                    const c = candles.find(c => c.date === dateStr) || candles[candles.length - 1];
+                    const close = Number(c?.close);
+                    if (!Number.isFinite(close) || close <= 0) return;
+                    out.set(ticker, {
+                        close,
+                        open:   Number.isFinite(Number(c?.open))   ? Number(c.open)   : null,
+                        high:   Number.isFinite(Number(c?.high))   ? Number(c.high)   : null,
+                        low:    Number.isFinite(Number(c?.low))    ? Number(c.low)    : null,
+                        volume: Number.isFinite(Number(c?.volume)) ? Number(c.volume) : null,
+                    });
+                } catch { /* skip */ }
+            }));
+        }
+
+        return out;
+    },
+
+    /**
      * Fetch processed daily stats for N consecutive trading days in parallel.
      * Returns array where [0]=date (today), [1]=prev day, ..., [N-1]=oldest.
      */
@@ -580,12 +678,22 @@ export default {
 
         await Promise.allSettled(ALL_SECTORS.map(async (sector) => {
             try {
-                const key = `sector/${sector}/${yyyy}/${mm}/${dd}.jsonl`;
-                const obj = await env.TAPE_DATA_SAHAM.get(key);
-                if (!obj) return;
-                const text = await obj.text();
+                // Try new snapshot path first, fallback to legacy aggregate
+                const newKey    = `sector/${sector}/${yyyy}/${mm}/${dd}/latest.jsonl`;
+                const legacyKey = `sector/${sector}/${yyyy}/${mm}/${dd}.jsonl`;
 
-                // Group records by symbol within this sector file
+                let text = null;
+                for (const key of [newKey, legacyKey]) {
+                    try {
+                        const obj = await env.TAPE_DATA_SAHAM.get(key);
+                        if (obj) { text = await obj.text(); break; }
+                    } catch { /* try next */ }
+                }
+                if (!text) return;
+
+                // In new snapshot format, each line IS the latest record per symbol
+                // with pre-computed digest fields (growth_pct, price_open, etc.)
+                // For legacy format, group by symbol and compute digest
                 const bySymbol = new Map();
                 for (const line of text.split('\n')) {
                     if (!line.trim()) continue;
@@ -599,8 +707,32 @@ export default {
                 }
 
                 for (const [sym, records] of bySymbol.entries()) {
-                    const digest = this.computeSectorDigest(records);
-                    if (digest) out.set(sym, { ...digest, sector });
+                    // If record already has pre-computed digest fields (new snapshot),
+                    // use them directly instead of re-computing from full history
+                    const last = records[records.length - 1];
+                    if (last.price_open != null && last.growth_pct != null) {
+                        // New snapshot format — digest is pre-computed by writer
+                        const freq_tx = (Array.isArray(last.levels) && last.levels.length > 0)
+                            ? last.levels.reduce((sum, lv) =>
+                                sum + (Number(lv.b_freq) || 0) + (Number(lv.s_freq) || 0), 0)
+                            : (last.freq_tx ?? null);
+                        out.set(sym, {
+                            freq_tx,
+                            price_open:   last.price_open,
+                            price_last:   last.price_last ?? null,
+                            price_high:   last.price_high ?? null,
+                            price_low:    last.price_low ?? null,
+                            growth_pct:   last.growth_pct,
+                            snapshots_count: 1,
+                            ts_first:     last.ts,
+                            ts_last:      last.ts,
+                            sector
+                        });
+                    } else {
+                        // Legacy format — compute digest from full history
+                        const digest = this.computeSectorDigest(records);
+                        if (digest) out.set(sym, { ...digest, sector });
+                    }
                 }
             } catch (e) {
                 console.warn(`[SECTOR-DIGEST] Failed to read sector ${sector} for ${date}:`, e?.message || e);
@@ -842,25 +974,27 @@ export default {
             }
         }
 
+        // [DISABLED] R2 cost optimization — R2 LIST is expensive (Class B) and D1 emiten is the primary source
         // Fallback: R2 list only if emiten query fails
         if (!isTargetedMode && targetTickers.length === 0 && excludeSet.size === 0) {
-            try {
-                let allPrefixes = [];
-                let cursor = undefined;
-                let pages = 0;
-                do {
-                    const opts = { prefix: "footprint/", delimiter: "/", limit: 1000 };
-                    if (cursor) opts.cursor = cursor;
-                    const listed = await env.TAPE_DATA_SAHAM.list(opts);
-                    allPrefixes.push(...(listed.delimitedPrefixes || []));
-                    cursor = listed.truncated ? listed.cursor : undefined;
-                    pages++;
-                } while (cursor && pages < 10);
-                targetTickers = allPrefixes.map(p => p.split("/")[1]).filter(t => this.isValidTicker(t));
-                console.log(`[R2-FALLBACK] Fallback: Listed ${targetTickers.length} tickers from R2`);
-            } catch (e) {
-                console.warn("[R2-FALLBACK] R2 list also failed");
-            }
+            console.warn("[R2-FALLBACK] D1 emiten query returned 0 tickers — skipping R2 LIST (hard-guarded)");
+            // try {
+            //     let allPrefixes = [];
+            //     let cursor = undefined;
+            //     let pages = 0;
+            //     do {
+            //         const opts = { prefix: "footprint/", delimiter: "/", limit: 1000 };
+            //         if (cursor) opts.cursor = cursor;
+            //         const listed = await env.TAPE_DATA_SAHAM.list(opts);
+            //         allPrefixes.push(...(listed.delimitedPrefixes || []));
+            //         cursor = listed.truncated ? listed.cursor : undefined;
+            //         pages++;
+            //     } while (cursor && pages < 10);
+            //     targetTickers = allPrefixes.map(p => p.split("/")[1]).filter(t => this.isValidTicker(t));
+            //     console.log(`[R2-FALLBACK] Fallback: Listed ${targetTickers.length} tickers from R2`);
+            // } catch (e) {
+            //     console.warn("[R2-FALLBACK] R2 list also failed");
+            // }
         }
 
         // If no tickers to probe (all excluded), return empty

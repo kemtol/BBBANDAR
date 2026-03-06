@@ -6,7 +6,7 @@
  *   Consumer (queue handler) → fetch Yahoo Finance → simpan R2
  *
  * R2 path:
- *   yfinance/{CODE}/1d/{YYYY-MM-DD}.json   → daily OHLCV
+ *   yfinance/{CODE}/1d/{YYYY-MM}.json      → monthly consolidated daily OHLCV (~22 candles)
  *   yfinance/{CODE}/15m/{YYYY-MM-DD}.json  → intraday 15-min OHLCV
  *
  * Queue message format:
@@ -127,13 +127,86 @@ async function fetchYahooChart(symbol, interval, range) {
 
 // ─── R2 Storage ──────────────────────────────────────────────────────────
 
+/** Extract YYYY-MM from a YYYY-MM-DD string */
+function monthKey(dateStr) {
+  return dateStr.slice(0, 7); // "2026-03-04" → "2026-03"
+}
+
 /**
- * Group rows berdasarkan tanggal, lalu simpan ke R2.
- * Path: yfinance/{CODE}/{interval}/{YYYY-MM-DD}.json
+ * Store rows to R2.
+ *
+ * For 1d interval → monthly consolidation:
+ *   Key: yfinance/{CODE}/1d/{YYYY-MM}.json
+ *   Merge new candles into existing monthly file (GET → merge → PUT).
+ *   One file per month ≈ 22 candles ≈ 5KB.
+ *
+ * For 15m interval → daily files (unchanged):
+ *   Key: yfinance/{CODE}/15m/{YYYY-MM-DD}.json
  */
 async function storeToR2(env, symbol, interval, rows) {
   if (!rows || rows.length === 0) return 0;
 
+  const code = bareCode(symbol);
+
+  if (interval === '1d') {
+    return await storeMonthly(env, code, rows);
+  }
+  return await storeDaily(env, code, interval, rows);
+}
+
+/** Monthly merge-write for 1d candles */
+async function storeMonthly(env, code, rows) {
+  // Group incoming rows by month
+  const byMonth = {};
+  for (const row of rows) {
+    const mk = monthKey(row.date);
+    if (!byMonth[mk]) byMonth[mk] = [];
+    byMonth[mk].push(row);
+  }
+
+  let count = 0;
+
+  for (const [month, newCandles] of Object.entries(byMonth)) {
+    const r2Key = `yfinance/${code}/1d/${month}.json`;
+
+    // GET existing monthly file
+    let existing = [];
+    try {
+      const obj = await env.TAPE_DATA_SAHAM.get(r2Key);
+      if (obj) {
+        const data = JSON.parse(await obj.text());
+        existing = Array.isArray(data?.candles) ? data.candles : [];
+      }
+    } catch { /* first write for this month */ }
+
+    // Merge: index existing by date, overwrite with new
+    const byDate = new Map();
+    for (const c of existing) byDate.set(c.date, c);
+    for (const c of newCandles) byDate.set(c.date, c);
+
+    // Sort chronologically
+    const merged = [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
+
+    const payload = {
+      symbol: code,
+      interval: '1d',
+      month,
+      count: merged.length,
+      candles: merged,
+      updated_at: new Date().toISOString(),
+    };
+
+    await env.TAPE_DATA_SAHAM.put(r2Key, JSON.stringify(payload), {
+      httpMetadata: { contentType: "application/json" },
+    });
+    count++;
+  }
+
+  return count;
+}
+
+/** Daily file storage for 15m (unchanged legacy format) */
+async function storeDaily(env, code, interval, rows) {
   const byDate = {};
   for (const row of rows) {
     const key = row.date;
@@ -141,7 +214,6 @@ async function storeToR2(env, symbol, interval, rows) {
     byDate[key].push(row);
   }
 
-  const code = bareCode(symbol);
   let count = 0;
 
   for (const [date, candles] of Object.entries(byDate)) {
@@ -336,24 +408,55 @@ async function handleRequest(req, env) {
   }
 
   // ── GET /read?symbol=BBRI&interval=1d&date=2026-03-04 ──
+  // ── GET /read?symbol=BBRI&interval=1d&month=2026-03  (whole month) ──
   if (url.pathname === "/read" && method === "GET") {
     const symbol = url.searchParams.get("symbol");
     const interval = url.searchParams.get("interval") || "1d";
-    const date = url.searchParams.get("date") || fmtDate(new Date());
+    const monthParam = url.searchParams.get("month");
+    const date = url.searchParams.get("date") || (monthParam ? null : fmtDate(new Date()));
 
     if (!symbol) return json({ error: "symbol required" }, 400);
-
     const code = bareCode(symbol);
+
+    // For 1d: read from monthly file
+    if (interval === "1d") {
+      const mk = monthParam || (date ? date.slice(0, 7) : fmtDate(new Date()).slice(0, 7));
+      const r2Key = `yfinance/${code}/1d/${mk}.json`;
+      const obj = await env.TAPE_DATA_SAHAM.get(r2Key);
+
+      // Fallback to legacy daily file
+      if (!obj && date) {
+        const legacyKey = `yfinance/${code}/1d/${date}.json`;
+        const legacyObj = await env.TAPE_DATA_SAHAM.get(legacyKey);
+        if (legacyObj) {
+          return new Response(await legacyObj.text(), {
+            headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
+          });
+        }
+      }
+
+      if (!obj) return json({ error: "not found", key: r2Key }, 404);
+
+      // If specific date requested, filter candles to that date only
+      if (date && !monthParam) {
+        const data = JSON.parse(await obj.text());
+        const filtered = (data?.candles || []).filter(c => c.date === date);
+        if (filtered.length === 0) return json({ error: "date not found in month", key: r2Key, date }, 404);
+        return json({ ...data, candles: filtered, count: filtered.length, date });
+      }
+
+      return new Response(await obj.text(), {
+        headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
+      });
+    }
+
+    // For 15m: read daily file (unchanged)
     const r2Key = `yfinance/${code}/${interval}/${date}.json`;
     const obj = await env.TAPE_DATA_SAHAM.get(r2Key);
-
     if (!obj) return json({ error: "not found", key: r2Key }, 404);
 
     return new Response(await obj.text(), {
-      headers: {
-        "Content-Type": "application/json",
-        "Access-Control-Allow-Origin": "*",
-      },
+      headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
     });
   }
 
@@ -368,11 +471,13 @@ async function handleRequest(req, env) {
     const prefix = `yfinance/${code}/${interval}/`;
     const listed = await env.TAPE_DATA_SAHAM.list({ prefix, limit: 1000 });
 
-    const dates = listed.objects.map((o) =>
+    const keys = listed.objects.map((o) =>
       o.key.replace(prefix, "").replace(".json", "")
     );
 
-    return json({ symbol: code, interval, dates, count: dates.length });
+    // For 1d: keys are YYYY-MM (months); for 15m: keys are YYYY-MM-DD (dates)
+    const label = interval === '1d' ? 'months' : 'dates';
+    return json({ symbol: code, interval, [label]: keys, count: keys.length });
   }
 
   // ── POST /sync ──  (enqueue, return 202 immediately)
