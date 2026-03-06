@@ -380,6 +380,33 @@ export default {
                 }
             }
 
+            // 4.7: Compute hybrid CVD (footprint ratio × yfinance volume) → D1
+            try {
+                await this.storeCvdDaily(env, processedStatsMaps, allTickerSet);
+            } catch (e) {
+                console.warn('[CVD-D1] storeCvdDaily failed (non-fatal):', e?.message);
+            }
+
+            // 4.8: Enrich items with CVD% windows from D1
+            try {
+                const cvdPctMap = await this.queryCvdPctWindows(env, date);
+                for (const item of items) {
+                    const entry = cvdPctMap.get(String(item.t).toUpperCase());
+                    if (!entry) continue;
+                    item.cvd_pct_2d   = entry.cvd_pct_2d   ?? null;
+                    item.cvd_pct_5d   = entry.cvd_pct_5d   ?? null;
+                    item.cvd_pct_10d  = entry.cvd_pct_10d  ?? null;
+                    item.cvd_pct_20d  = entry.cvd_pct_20d  ?? null;
+                    item.est_delta_2d  = entry.est_delta_2d  ?? null;
+                    item.est_delta_5d  = entry.est_delta_5d  ?? null;
+                    item.est_delta_10d = entry.est_delta_10d ?? null;
+                    item.est_delta_20d = entry.est_delta_20d ?? null;
+                }
+                console.log(`[CVD-D1] enriched ${cvdPctMap.size} tickers with CVD% windows`);
+            } catch (e) {
+                console.warn('[CVD-D1] queryCvdPctWindows failed (non-fatal):', e?.message);
+            }
+
             // 5. Sort by Score Descending
             items.sort((a, b) => (b.sc || 0) - (a.sc || 0));
 
@@ -602,10 +629,11 @@ export default {
      * Fetch processed daily stats for N consecutive trading days in parallel.
      * Returns array where [0]=date (today), [1]=prev day, ..., [N-1]=oldest.
      */
-    async fetchProcessedDailyStatsMaps(env, date, n = 20) {
-        // Ensure dates[0] is always the most recent TRADING day, not a weekend/holiday.
-        // This prevents processedStatsMaps[0] from being empty on non-trading days,
-        // which would break RVOL calculation (todayVol = 0) and shift CVD windows.
+    /**
+     * Build array of N trading dates ending at `date`.
+     * Skips weekends & IDX holidays.
+     */
+    getTradingDates(date, n = 20) {
         let startDate = date;
         {
             let sd = new Date(`${date}T12:00:00Z`);
@@ -623,7 +651,152 @@ export default {
                 dates.push(ds);
             }
         }
-        return Promise.all(dates.map(dt => this.fetchProcessedDailyStatsMap(env, dt)));
+        return dates;
+    },
+
+    async fetchProcessedDailyStatsMaps(env, date, n = 20) {
+        const dates = this.getTradingDates(date, n);
+        const maps = await Promise.all(dates.map(dt => this.fetchProcessedDailyStatsMap(env, dt)));
+        // Attach dates array for CVD computation
+        maps._dates = dates;
+        return maps;
+    },
+
+    /**
+     * Fetch yfinance daily volumes for all tickers across a set of dates.
+     * Reads monthly files (1 GET per ticker per month) and returns:
+     *   Map<ticker, Map<date, volume>>
+     */
+    async fetchYfinanceVolumeMap(env, tickers, dates) {
+        const result = new Map(); // ticker → Map(date → vol)
+        if (!env?.TAPE_DATA_SAHAM || !dates?.length || !tickers?.length) return result;
+
+        const months = [...new Set(dates.map(d => d.slice(0, 7)))];
+        const tickerArr = Array.isArray(tickers) ? tickers : Array.from(tickers);
+        const BATCH = 50;
+
+        for (let i = 0; i < tickerArr.length; i += BATCH) {
+            const batch = tickerArr.slice(i, i + BATCH);
+            await Promise.allSettled(batch.map(async (ticker) => {
+                const dateVol = new Map();
+                for (const month of months) {
+                    try {
+                        const key = `yfinance/${ticker}/1d/${month}.json`;
+                        const obj = await env.TAPE_DATA_SAHAM.get(key);
+                        if (!obj) continue;
+                        const data = await obj.json();
+                        for (const c of (data?.candles || [])) {
+                            if (c?.date && Number.isFinite(Number(c.volume)) && c.volume > 0) {
+                                dateVol.set(c.date, Number(c.volume));
+                            }
+                        }
+                    } catch { /* skip */ }
+                }
+                if (dateVol.size > 0) result.set(ticker, dateVol);
+            }));
+        }
+        return result;
+    },
+
+    /**
+     * Compute hybrid CVD per ticker per day and upsert into D1 `cvd_daily`.
+     * ratio = fp_net / fp_vol (directional signal from broksum footprint)
+     * est_delta = yf_vol × ratio (calibrated with Yahoo Finance official volume)
+     *
+     * Called once per cron cycle. Only writes days that have BOTH sources.
+     */
+    async storeCvdDaily(env, processedStatsMaps, allTickers) {
+        const dates = processedStatsMaps._dates;
+        if (!dates?.length || !allTickers?.size) return 0;
+
+        // 1. Fetch yfinance volumes for all tickers & dates (monthly files = cheap)
+        const yfVolMap = await this.fetchYfinanceVolumeMap(env, [...allTickers], dates);
+        console.log(`[CVD-D1] yfinance volumes loaded for ${yfVolMap.size} tickers across ${dates.length} dates`);
+
+        // 2. Build rows to upsert
+        const rows = [];
+        for (let i = 0; i < dates.length; i++) {
+            const dt = dates[i];
+            const statsMap = processedStatsMaps[i];
+            if (!statsMap || statsMap.size === 0) continue;
+
+            for (const [ticker, stats] of statsMap) {
+                const fpVol = Number(stats.vol);
+                const fpNet = Number(stats.netVol);
+                if (!Number.isFinite(fpVol) || fpVol <= 0 || !Number.isFinite(fpNet)) continue;
+
+                const ratio = fpNet / fpVol;
+                const yfVol = yfVolMap.get(ticker)?.get(dt);
+                const estDelta = Number.isFinite(yfVol) && yfVol > 0 ? yfVol * ratio : fpNet;
+                const finalYfVol = Number.isFinite(yfVol) && yfVol > 0 ? yfVol : fpVol;
+
+                rows.push({ ticker, date: dt, fpVol, fpNet, yfVol: finalYfVol, ratio, estDelta });
+            }
+        }
+
+        if (rows.length === 0) return 0;
+
+        // 3. Batch upsert to D1 (chunks of 50 for Cloudflare D1 batch limit)
+        const CHUNK = 50;
+        let written = 0;
+        for (let i = 0; i < rows.length; i += CHUNK) {
+            const chunk = rows.slice(i, i + CHUNK);
+            const stmts = chunk.map(r =>
+                env.SSSAHAM_DB.prepare(
+                    `INSERT OR REPLACE INTO cvd_daily (ticker, date, fp_vol, fp_net, yf_vol, ratio, est_delta)
+                     VALUES (?, ?, ?, ?, ?, ?, ?)`
+                ).bind(r.ticker, r.date, r.fpVol, r.fpNet, r.yfVol,
+                       parseFloat(r.ratio.toFixed(6)), parseFloat(r.estDelta.toFixed(2)))
+            );
+            await env.SSSAHAM_DB.batch(stmts);
+            written += chunk.length;
+        }
+        console.log(`[CVD-D1] upserted ${written} rows`);
+        return written;
+    },
+
+    /**
+     * Query CVD% windows from D1 for all tickers.
+     * Returns Map<ticker, { cvd_pct_2d, cvd_pct_5d, cvd_pct_10d, cvd_pct_20d,
+     *                        est_delta_2d, est_delta_5d, est_delta_10d, est_delta_20d }>
+     */
+    async queryCvdPctWindows(env, date) {
+        const dates = this.getTradingDates(date, 20);
+        const d2  = dates.slice(0, 2);
+        const d5  = dates.slice(0, 5);
+        const d10 = dates.slice(0, 10);
+        const d20 = dates;
+
+        const result = new Map();
+        const queryWindow = async (windowDates, suffix) => {
+            const placeholders = windowDates.map(() => '?').join(',');
+            const { results } = await env.SSSAHAM_DB.prepare(
+                `SELECT ticker,
+                        SUM(est_delta) as sum_delta,
+                        SUM(yf_vol)    as sum_vol
+                 FROM cvd_daily
+                 WHERE date IN (${placeholders})
+                 GROUP BY ticker`
+            ).bind(...windowDates).all();
+
+            for (const r of (results || [])) {
+                const t = String(r.ticker).toUpperCase();
+                if (!result.has(t)) result.set(t, {});
+                const entry = result.get(t);
+                const sumD = Number(r.sum_delta) || 0;
+                const sumV = Number(r.sum_vol) || 0;
+                entry[`cvd_pct_${suffix}`]   = sumV > 0 ? parseFloat(((sumD / sumV) * 100).toFixed(2)) : null;
+                entry[`est_delta_${suffix}`] = parseFloat(sumD.toFixed(0));
+            }
+        };
+
+        await Promise.all([
+            queryWindow(d2,  '2d'),
+            queryWindow(d5,  '5d'),
+            queryWindow(d10, '10d'),
+            queryWindow(d20, '20d'),
+        ]);
+        return result;
     },
 
     /**

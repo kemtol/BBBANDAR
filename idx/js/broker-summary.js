@@ -419,6 +419,10 @@ async function loadScreenerData() {
             const flow20 = calcFlow(effort20, ngr20);
 
             const orderflow = i.orderflow || null;
+            // When embedded orderflow is a stale fallback (yesterday's data),
+            // block price/growth fields — let footprint/sector-digest provide today's values.
+            // But KEEP delta/mom/absorb/cvd as useful seed (better than showing 0).
+            const _ofStale = orderflow?.is_fallback_day === true;
 
             return {
                 symbol: i.t,
@@ -447,17 +451,19 @@ async function loadScreenerData() {
                 ln10: i.accum?.["10"]?.ln || 0,
                 ln20: i.accum?.["20"]?.ln || 0,
                 orderflow,
-                order_open_price: (typeof orderflow?.open_price === 'number') ? orderflow.open_price : null,
-                order_recent_price: (typeof orderflow?.recent_price === 'number')
+                // Price/growth: block stale fallback — sector-digest/footprint will fill today's
+                order_open_price: (!_ofStale && typeof orderflow?.open_price === 'number') ? orderflow.open_price : null,
+                order_recent_price: (!_ofStale && typeof orderflow?.recent_price === 'number')
                     ? orderflow.recent_price
-                    : ((typeof orderflow?.price === 'number') ? orderflow.price : null),
-                order_growth_pct: (typeof orderflow?.growth_pct === 'number')
+                    : ((!_ofStale && typeof orderflow?.price === 'number') ? orderflow.price : null),
+                order_growth_pct: (!_ofStale && typeof orderflow?.growth_pct === 'number')
                     ? orderflow.growth_pct
-                    : ((typeof orderflow?.open_price === 'number' && typeof orderflow?.recent_price === 'number' && orderflow.open_price > 0)
+                    : ((!_ofStale && typeof orderflow?.open_price === 'number' && typeof orderflow?.recent_price === 'number' && orderflow.open_price > 0)
                         ? (((orderflow.recent_price - orderflow.open_price) / orderflow.open_price) * 100)
                         : null),
                 // Keep freq blank until per-symbol hydration to avoid source-mismatch flipping.
                 order_freq_tx: null,
+                // Intraday metrics: allow stale seed (better than 0 from NO_INTRADAY footprint)
                 order_delta_pct: (typeof orderflow?.delta_pct === 'number') ? orderflow.delta_pct : null,
                 order_mom_pct: (typeof orderflow?.mom_pct === 'number') ? orderflow.mom_pct : null,
                 order_absorb: (typeof orderflow?.absorb === 'number') ? orderflow.absorb : null,
@@ -594,10 +600,10 @@ function buildPercentiles(cands) {
         delta: buildPercentileMap(cands, c => c.order_delta_pct),
         absorb: buildPercentileMap(cands, c => c.order_absorb),
         cvd: buildPercentileMap(cands, c => c.order_cvd),
-        cvd_2d:  buildPercentileMap(cands, c => c.order_cvd_2d),
-        cvd_5d:  buildPercentileMap(cands, c => c.order_cvd_5d),
-        cvd_10d: buildPercentileMap(cands, c => c.order_cvd_10d),
-        cvd_20d: buildPercentileMap(cands, c => c.order_cvd_20d),
+        cvd_2d:  buildPercentileMap(cands, c => c.cvd_pct_2d  ?? c.order_cvd_2d),
+        cvd_5d:  buildPercentileMap(cands, c => c.cvd_pct_5d  ?? c.order_cvd_5d),
+        cvd_10d: buildPercentileMap(cands, c => c.cvd_pct_10d ?? c.order_cvd_10d),
+        cvd_20d: buildPercentileMap(cands, c => c.cvd_pct_20d ?? c.order_cvd_20d),
         netv: buildPercentileMap(cands, c => c.order_net_value),
     };
 }
@@ -717,8 +723,8 @@ function calcSWG5(item, P) {
     const VWAP = (0.7 * cpVwap5) + (0.3 * cpVwap10);
 
     // CVD multi-day momentum: confirms volume-delta trend over swing horizon
-    const cpCvd5d = signGate(item.order_cvd_5d, centeredPct(getP(P, 'cvd_5d', s, 0.5)));
-    const cpCvd10d = signGate(item.order_cvd_10d, centeredPct(getP(P, 'cvd_10d', s, 0.5)));
+    const cpCvd5d = signGate(item.cvd_pct_5d ?? item.order_cvd_5d, centeredPct(getP(P, 'cvd_5d', s, 0.5)));
+    const cpCvd10d = signGate(item.cvd_pct_10d ?? item.order_cvd_10d, centeredPct(getP(P, 'cvd_10d', s, 0.5)));
     const CVD_MOM = (0.6 * cpCvd5d) + (0.4 * cpCvd10d);
 
     const trendBonus = item.trend?.vwapUp ? 0.05 : 0;
@@ -838,6 +844,7 @@ function collectClaudeScoringData() {
             ngr: [m.ngr2 ?? null, m.ngr5 ?? null, m.ngr10 ?? null, m.ngr20 ?? null],
             rvol: [c.rvol_2d ?? null, c.rvol_5d ?? null, c.rvol_10d ?? null, c.rvol_20d ?? null],
             cvd_multi: [c.order_cvd_2d ?? null, c.order_cvd_5d ?? null, c.order_cvd_10d ?? null, c.order_cvd_20d ?? null],
+            cvd_pct_multi: [c.cvd_pct_2d ?? null, c.cvd_pct_5d ?? null, c.cvd_pct_10d ?? null, c.cvd_pct_20d ?? null],
             orderflow: {
                 delta_pct: c.order_delta_pct ?? null,
                 mom_pct: c.order_mom_pct ?? null,
@@ -2063,10 +2070,10 @@ function sortCandidates(key, desc) {
         else if (key === 'order_mom_pct') { valA = (typeof a.order_mom_pct === 'number') ? a.order_mom_pct : -Infinity; valB = (typeof b.order_mom_pct === 'number') ? b.order_mom_pct : -Infinity; }
         else if (key === 'order_absorb') { valA = (typeof a.order_absorb === 'number') ? a.order_absorb : -Infinity; valB = (typeof b.order_absorb === 'number') ? b.order_absorb : -Infinity; }
         else if (key === 'order_cvd') { valA = (typeof a.order_cvd === 'number') ? a.order_cvd : -Infinity; valB = (typeof b.order_cvd === 'number') ? b.order_cvd : -Infinity; }
-        else if (key === 'order_cvd_2d')  { valA = (typeof a.order_cvd_2d  === 'number') ? a.order_cvd_2d  : -Infinity; valB = (typeof b.order_cvd_2d  === 'number') ? b.order_cvd_2d  : -Infinity; }
-        else if (key === 'order_cvd_5d')  { valA = (typeof a.order_cvd_5d  === 'number') ? a.order_cvd_5d  : -Infinity; valB = (typeof b.order_cvd_5d  === 'number') ? b.order_cvd_5d  : -Infinity; }
-        else if (key === 'order_cvd_10d') { valA = (typeof a.order_cvd_10d === 'number') ? a.order_cvd_10d : -Infinity; valB = (typeof b.order_cvd_10d === 'number') ? b.order_cvd_10d : -Infinity; }
-        else if (key === 'order_cvd_20d') { valA = (typeof a.order_cvd_20d === 'number') ? a.order_cvd_20d : -Infinity; valB = (typeof b.order_cvd_20d === 'number') ? b.order_cvd_20d : -Infinity; }
+        else if (key === 'order_cvd_2d')  { valA = (typeof a.cvd_pct_2d  === 'number') ? a.cvd_pct_2d  : (typeof a.order_cvd_2d  === 'number') ? a.order_cvd_2d  : -Infinity; valB = (typeof b.cvd_pct_2d  === 'number') ? b.cvd_pct_2d  : (typeof b.order_cvd_2d  === 'number') ? b.order_cvd_2d  : -Infinity; }
+        else if (key === 'order_cvd_5d')  { valA = (typeof a.cvd_pct_5d  === 'number') ? a.cvd_pct_5d  : (typeof a.order_cvd_5d  === 'number') ? a.order_cvd_5d  : -Infinity; valB = (typeof b.cvd_pct_5d  === 'number') ? b.cvd_pct_5d  : (typeof b.order_cvd_5d  === 'number') ? b.order_cvd_5d  : -Infinity; }
+        else if (key === 'order_cvd_10d') { valA = (typeof a.cvd_pct_10d === 'number') ? a.cvd_pct_10d : (typeof a.order_cvd_10d === 'number') ? a.order_cvd_10d : -Infinity; valB = (typeof b.cvd_pct_10d === 'number') ? b.cvd_pct_10d : (typeof b.order_cvd_10d === 'number') ? b.order_cvd_10d : -Infinity; }
+        else if (key === 'order_cvd_20d') { valA = (typeof a.cvd_pct_20d === 'number') ? a.cvd_pct_20d : (typeof a.order_cvd_20d === 'number') ? a.order_cvd_20d : -Infinity; valB = (typeof b.cvd_pct_20d === 'number') ? b.cvd_pct_20d : (typeof b.order_cvd_20d === 'number') ? b.order_cvd_20d : -Infinity; }
         else if (key === 'rvol_2d')  { valA = (typeof a.rvol_2d  === 'number') ? a.rvol_2d  : -Infinity; valB = (typeof b.rvol_2d  === 'number') ? b.rvol_2d  : -Infinity; }
         else if (key === 'rvol_5d')  { valA = (typeof a.rvol_5d  === 'number') ? a.rvol_5d  : -Infinity; valB = (typeof b.rvol_5d  === 'number') ? b.rvol_5d  : -Infinity; }
         else if (key === 'rvol_10d') { valA = (typeof a.rvol_10d === 'number') ? a.rvol_10d : -Infinity; valB = (typeof b.rvol_10d === 'number') ? b.rvol_10d : -Infinity; }
@@ -2315,6 +2322,15 @@ function renderScreenerTable(candidates) {
         return `<span class="${cls}">${v.toLocaleString('id-ID')}</span>`;
     };
 
+    const fmtCvdPct = (pct, rawLots) => {
+        if (typeof pct !== 'number' || !Number.isFinite(pct)) return '<span class="text-muted">-</span>';
+        const cls = pct > 0 ? 'text-success fw-bold' : (pct < 0 ? 'text-danger fw-bold' : 'text-secondary');
+        const sign = pct > 0 ? '+' : '';
+        const tip = (typeof rawLots === 'number' && Number.isFinite(rawLots))
+            ? ` title="Raw CVD: ${rawLots.toLocaleString('id-ID')} lot"` : '';
+        return `<span class="${cls}"${tip}>${sign}${pct.toFixed(2)}%</span>`;
+    };
+
     const fmtValue = (v) => {
         if (typeof v !== 'number' || !Number.isFinite(v)) return '<span class="text-muted">-</span>';
         const cls = v > 0 ? 'text-success fw-bold' : v < 0 ? 'text-danger fw-bold' : 'fw-bold';
@@ -2360,10 +2376,10 @@ function renderScreenerTable(candidates) {
                 <td class="text-center of-mom">${fmtPct(item.order_mom_pct)}</td>
                 <td class="text-center of-absorb">${fmtAbsorb(item.order_absorb)}</td>
                 <td class="text-center of-cvd">${fmtCvd(item.order_cvd)}</td>
-                <td class="text-center hide-mobile col-h2 col-cvdm of-cvd-2d">${fmtCvd(item.order_cvd_2d)}</td>
-                <td class="text-center hide-mobile col-h5 col-cvdm of-cvd-5d">${fmtCvd(item.order_cvd_5d)}</td>
-                <td class="text-center hide-mobile col-h10 col-cvdm of-cvd-10d">${fmtCvd(item.order_cvd_10d)}</td>
-                <td class="text-center hide-mobile col-h20 col-cvdm of-cvd-20d">${fmtCvd(item.order_cvd_20d)}</td>
+                <td class="text-center hide-mobile col-h2 col-cvdm of-cvd-2d">${fmtCvdPct(item.cvd_pct_2d, item.order_cvd_2d)}</td>
+                <td class="text-center hide-mobile col-h5 col-cvdm of-cvd-5d">${fmtCvdPct(item.cvd_pct_5d, item.order_cvd_5d)}</td>
+                <td class="text-center hide-mobile col-h10 col-cvdm of-cvd-10d">${fmtCvdPct(item.cvd_pct_10d, item.order_cvd_10d)}</td>
+                <td class="text-center hide-mobile col-h20 col-cvdm of-cvd-20d">${fmtCvdPct(item.cvd_pct_20d, item.order_cvd_20d)}</td>
                 <td class="text-center col-h2 col-fflw">${fmtFflw(item.w2)}</td>
                 <td class="text-center col-h5 col-fflw">${fmtFflw(item.w5)}</td>
                 <td class="text-center hide-mobile col-h10 col-fflw">${fmtFflw(item.w10)}</td>
@@ -2440,32 +2456,60 @@ async function fetchOrderflowSnapshotForSymbol(symbol) {
 
 function applyOrderflowSnapshotToCandidate(item, snapshot) {
     if (!item || !snapshot) return;
+
+    // When snapshot is a fallback-day (yesterday's stale data) and market is open,
+    // do NOT overwrite intraday fields that may already have today's data from
+    // footprint-summary or sector-digest. Still set _orderflowFetchedAt to prevent
+    // re-fetching, but preserve fresher intraday values.
+    const isStaleFallback = snapshot.is_fallback_day === true && _isMarketLikelyOpen();
+
     item.orderflow = snapshot;
     item._orderflowFetchedAt = Date.now();
+    item._orderflowIsStaleFallback = isStaleFallback;
 
-    // Hydration (/cache-summary) is the authoritative source for ALL orderflow fields.
-    // It always wins over footprint-bulk and sector-digest.
-    item.order_open_price = typeof snapshot.open_price === 'number' ? snapshot.open_price : item.order_open_price;
-    item.order_recent_price = typeof snapshot.recent_price === 'number'
-        ? snapshot.recent_price
-        : ((typeof snapshot.price === 'number') ? snapshot.price : item.order_recent_price);
-    item.order_growth_pct = typeof snapshot.growth_pct === 'number'
-        ? snapshot.growth_pct
-        : ((typeof item.order_open_price === 'number' && typeof item.order_recent_price === 'number' && item.order_open_price > 0)
-            ? (((item.order_recent_price - item.order_open_price) / item.order_open_price) * 100)
-            : item.order_growth_pct);
-    const snapshotFreq = (typeof snapshot.freq_tx === 'number' && Number.isFinite(snapshot.freq_tx)) ? snapshot.freq_tx : null;
-    const currentFreq = (typeof item.order_freq_tx === 'number' && Number.isFinite(item.order_freq_tx)) ? item.order_freq_tx : null;
-    if (snapshotFreq !== null) {
-        item.order_freq_tx = currentFreq !== null ? Math.max(currentFreq, snapshotFreq) : snapshotFreq;
+    if (!isStaleFallback) {
+        // Fresh today's data — hydration is authoritative for ALL orderflow fields.
+        item.order_open_price = typeof snapshot.open_price === 'number' ? snapshot.open_price : item.order_open_price;
+        item.order_recent_price = typeof snapshot.recent_price === 'number'
+            ? snapshot.recent_price
+            : ((typeof snapshot.price === 'number') ? snapshot.price : item.order_recent_price);
+        item.order_growth_pct = typeof snapshot.growth_pct === 'number'
+            ? snapshot.growth_pct
+            : ((typeof item.order_open_price === 'number' && typeof item.order_recent_price === 'number' && item.order_open_price > 0)
+                ? (((item.order_recent_price - item.order_open_price) / item.order_open_price) * 100)
+                : item.order_growth_pct);
+        const snapshotFreq = (typeof snapshot.freq_tx === 'number' && Number.isFinite(snapshot.freq_tx)) ? snapshot.freq_tx : null;
+        const currentFreq = (typeof item.order_freq_tx === 'number' && Number.isFinite(item.order_freq_tx)) ? item.order_freq_tx : null;
+        if (snapshotFreq !== null) {
+            item.order_freq_tx = currentFreq !== null ? Math.max(currentFreq, snapshotFreq) : snapshotFreq;
+        }
+        item.order_delta_pct = typeof snapshot.delta_pct === 'number' ? snapshot.delta_pct : item.order_delta_pct;
+        item.order_mom_pct = typeof snapshot.mom_pct === 'number' ? snapshot.mom_pct : item.order_mom_pct;
+        item.order_absorb = typeof snapshot.absorb === 'number' ? snapshot.absorb : item.order_absorb;
+        item.order_cvd = typeof snapshot.cvd === 'number' ? snapshot.cvd : item.order_cvd;
+        item.order_net_value = typeof snapshot.net_value === 'number' ? snapshot.net_value : item.order_net_value;
+        item.order_quadrant = snapshot.quadrant || item.order_quadrant;
+    } else {
+        // Stale fallback — do NOT overwrite price/growth with yesterday's values.
+        // Only fill price/growth if still null (as seed). 
+        // Delta/mom/absorb/cvd: overwrite freely (stale is better than NO_INTRADAY zeros).
+        if (item.order_open_price == null && typeof snapshot.open_price === 'number') item.order_open_price = snapshot.open_price;
+        if (item.order_recent_price == null) {
+            item.order_recent_price = typeof snapshot.recent_price === 'number'
+                ? snapshot.recent_price
+                : ((typeof snapshot.price === 'number') ? snapshot.price : null);
+        }
+        if (item.order_growth_pct == null && typeof snapshot.growth_pct === 'number') item.order_growth_pct = snapshot.growth_pct;
+        if (item.order_freq_tx == null && typeof snapshot.freq_tx === 'number') item.order_freq_tx = snapshot.freq_tx;
+        // Intraday metrics: stale data is more useful than 0 from NO_INTRADAY footprint
+        if (typeof snapshot.delta_pct === 'number') item.order_delta_pct = snapshot.delta_pct;
+        if (typeof snapshot.mom_pct === 'number') item.order_mom_pct = snapshot.mom_pct;
+        if (typeof snapshot.absorb === 'number') item.order_absorb = snapshot.absorb;
+        if (typeof snapshot.cvd === 'number') item.order_cvd = snapshot.cvd;
+        if (typeof snapshot.net_value === 'number') item.order_net_value = snapshot.net_value;
+        if (snapshot.quadrant) item.order_quadrant = snapshot.quadrant;
+        console.log(`[orderflow-hydrate] ${item.symbol}: stale fallback (${snapshot.trading_date}) — kept price/growth, applied metrics`);
     }
-    // Preserve existing values when snapshot doesn't have the field
-    item.order_delta_pct = typeof snapshot.delta_pct === 'number' ? snapshot.delta_pct : item.order_delta_pct;
-    item.order_mom_pct = typeof snapshot.mom_pct === 'number' ? snapshot.mom_pct : item.order_mom_pct;
-    item.order_absorb = typeof snapshot.absorb === 'number' ? snapshot.absorb : item.order_absorb;
-    item.order_cvd = typeof snapshot.cvd === 'number' ? snapshot.cvd : item.order_cvd;
-    item.order_net_value = typeof snapshot.net_value === 'number' ? snapshot.net_value : item.order_net_value;
-    item.order_quadrant = snapshot.quadrant || item.order_quadrant;
     scheduleProbRefreshAfterOrderflow();
 }
 
@@ -2506,21 +2550,25 @@ function applyFootprintRowToCandidate(item, row, opts = {}) {
     const cvd_20d = numOrNaN(row.cvd_20d);
 
     // During market hours, if per-symbol hydration (/cache-summary) has already
-    // populated this item recently, do NOT overwrite core orderflow fields.
-    // Per-symbol data is authoritative — footprint bulk is less accurate.
-    // Only fill CVD multi-window & RVOL (footprint-exclusive fields).
+    // populated this item recently with FRESH data, do NOT overwrite core orderflow fields.
+    // But if hydration returned stale fallback data, allow footprint to overwrite.
     const perSymbolFresh = (typeof item._orderflowFetchedAt === 'number')
         && item._orderflowFetchedAt > 0
-        && (Date.now() - item._orderflowFetchedAt) < ORDERFLOW_CACHE_TTL_MS;
+        && (Date.now() - item._orderflowFetchedAt) < ORDERFLOW_CACHE_TTL_MS
+        && !item._orderflowIsStaleFallback;
     const skipCoreFields = perSymbolFresh && _isMarketLikelyOpen();
+
+    // When footprint signal is NO_INTRADAY, d/p/div are placeholder zeros.
+    // Don't overwrite existing values (from embedded orderflow seed) with meaningless 0.
+    const hasIntradayData = row.sig !== 'NO_INTRADAY';
 
     let touched = false;
     if (!skipCoreFields) {
-        if (Number.isFinite(d)) { item.order_delta_pct = d; touched = true; }
-        if (Number.isFinite(p)) { item.order_mom_pct = p; touched = true; }
-        if (Number.isFinite(div)) { item.order_absorb = div; touched = true; }
-        if (Number.isFinite(net_delta)) { item.order_cvd = net_delta; touched = true; }
-        if (Number.isFinite(notional_val)) { item.order_net_value = notional_val; touched = true; }
+        if (hasIntradayData && Number.isFinite(d)) { item.order_delta_pct = d; touched = true; }
+        if (hasIntradayData && Number.isFinite(p)) { item.order_mom_pct = p; touched = true; }
+        if (hasIntradayData && Number.isFinite(div)) { item.order_absorb = div; touched = true; }
+        if (hasIntradayData && Number.isFinite(net_delta)) { item.order_cvd = net_delta; touched = true; }
+        if (hasIntradayData && Number.isFinite(notional_val)) { item.order_net_value = notional_val; touched = true; }
         if (Number.isFinite(open)) { item.order_open_price = open; touched = true; }
         if (Number.isFinite(recent)) { item.order_recent_price = recent; touched = true; }
         if (Number.isFinite(growth)) { item.order_growth_pct = growth; touched = true; }
@@ -2531,6 +2579,15 @@ function applyFootprintRowToCandidate(item, row, opts = {}) {
     if (Number.isFinite(cvd_5d))  { item.order_cvd_5d  = cvd_5d;  touched = true; }
     if (Number.isFinite(cvd_10d)) { item.order_cvd_10d = cvd_10d; touched = true; }
     if (Number.isFinite(cvd_20d)) { item.order_cvd_20d = cvd_20d; touched = true; }
+    // CVD% (hybrid: footprint ratio × yfinance volume, normalised)
+    const cvdp2  = numOrNaN(row.cvd_pct_2d);
+    const cvdp5  = numOrNaN(row.cvd_pct_5d);
+    const cvdp10 = numOrNaN(row.cvd_pct_10d);
+    const cvdp20 = numOrNaN(row.cvd_pct_20d);
+    if (Number.isFinite(cvdp2))  { item.cvd_pct_2d  = cvdp2;  touched = true; }
+    if (Number.isFinite(cvdp5))  { item.cvd_pct_5d  = cvdp5;  touched = true; }
+    if (Number.isFinite(cvdp10)) { item.cvd_pct_10d = cvdp10; touched = true; }
+    if (Number.isFinite(cvdp20)) { item.cvd_pct_20d = cvdp20; touched = true; }
     // RVOL windows
     const rvol_2d  = numOrNaN(row.rvol_2d);
     const rvol_5d  = numOrNaN(row.rvol_5d);
@@ -2729,11 +2786,12 @@ function _applySectorDigestsToCandidates(candidates, opts = {}) {
         if (!digest) continue;
 
         // Hydration (/cache-summary) is the authoritative source.
-        // If hydration has already populated this item, do NOT overwrite
-        // growth/price/freq — sector-digest data can be stale/inaccurate.
+        // If hydration has already populated this item with FRESH data, do NOT overwrite.
+        // But if hydration returned stale fallback data, allow sector-digest to overwrite.
         const hydratedRecently = (typeof item._orderflowFetchedAt === 'number')
             && item._orderflowFetchedAt > 0
-            && (Date.now() - item._orderflowFetchedAt) < ORDERFLOW_CACHE_TTL_MS;
+            && (Date.now() - item._orderflowFetchedAt) < ORDERFLOW_CACHE_TTL_MS
+            && !item._orderflowIsStaleFallback;
 
         if (!hydratedRecently) {
             // FREQ: levels_sum is the most accurate source when no hydration
@@ -2849,10 +2907,18 @@ function updateOrderflowCells(symbol, item) {
     $row.find('.of-mom').html(pct(item.order_mom_pct));
     $row.find('.of-absorb').html(absorb(item.order_absorb));
     $row.find('.of-cvd').html(cvd(item.order_cvd));
-    $row.find('.of-cvd-2d').html(cvd(item.order_cvd_2d));
-    $row.find('.of-cvd-5d').html(cvd(item.order_cvd_5d));
-    $row.find('.of-cvd-10d').html(cvd(item.order_cvd_10d));
-    $row.find('.of-cvd-20d').html(cvd(item.order_cvd_20d));
+    const cvdPctCell = (pctVal, rawVal) => {
+        if (typeof pctVal !== 'number' || !Number.isFinite(pctVal)) return cvd(rawVal);
+        const cls = pctVal > 0 ? 'text-success fw-bold' : (pctVal < 0 ? 'text-danger fw-bold' : 'text-secondary');
+        const sign = pctVal > 0 ? '+' : '';
+        const tip = (typeof rawVal === 'number' && Number.isFinite(rawVal))
+            ? ` title="Raw CVD: ${rawVal.toLocaleString('id-ID')} lot"` : '';
+        return `<span class="${cls}"${tip}>${sign}${pctVal.toFixed(2)}%</span>`;
+    };
+    $row.find('.of-cvd-2d').html(cvdPctCell(item.cvd_pct_2d, item.order_cvd_2d));
+    $row.find('.of-cvd-5d').html(cvdPctCell(item.cvd_pct_5d, item.order_cvd_5d));
+    $row.find('.of-cvd-10d').html(cvdPctCell(item.cvd_pct_10d, item.order_cvd_10d));
+    $row.find('.of-cvd-20d').html(cvdPctCell(item.cvd_pct_20d, item.order_cvd_20d));
     // RVOL
     const rvol = (v) => {
         if (typeof v !== 'number' || !Number.isFinite(v)) return '<span class="text-muted">-</span>';
