@@ -56,3 +56,4 @@ Thumbs.db
 *~
 .vscode/
 .idea/
+workers/features-service/features/
