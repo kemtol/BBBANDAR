@@ -33,8 +33,9 @@ import { SmartMoney } from './smart-money';
 export default {
     async scheduled(event, env, ctx) {
         // CRON HANDLER
-        // 11:30 -> Dispatch Logic (Calculate)
-        // 11:45 -> Aggregation Logic (Aggregate)
+        // 10:00 UTC (17:00 WIB) -> Dispatch Logic (Calculate)  — gated on yfinance readiness
+        // 10:15 UTC (17:15 WIB) -> Aggregation Logic (Aggregate) — gated on yfinance readiness
+        // */5                    -> Footprint Hybrid Aggregator (periodic)
 
         const cron = event.cron;
         console.log(`Cron Triggered: ${cron}`);
@@ -54,16 +55,23 @@ export default {
             }
         }
 
-        // 1. Dispatch Job (Calculations) - 11:30 UTC
-        // 1. Dispatch Job (Calculations) - 11:30 UTC
-        // Match "30 11" regardless of day-of-week part
-        if (cron.includes("30 11")) {
-            // Differentiate between 11:30 (Job) and 11:45 (Agg)
-            if (cron.includes("30 11")) await this.dispatchJobs(env, date);
+        // 1. Dispatch Job (Calculations) - 10:00 UTC (17:00 WIB)
+        if (cron.includes("0 10")) {
+            const ready = await this.checkYfinanceReady(env, date);
+            if (!ready) {
+                console.warn(`[scheduled] Dispatch SKIPPED: yfinance data not ready for ${date}`);
+                return;
+            }
+            await this.dispatchJobs(env, date);
         }
 
-        // 2. Aggregation Job - 11:45 UTC
-        else if (cron.includes("45 11")) {
+        // 2. Aggregation Job - 10:15 UTC (17:15 WIB)
+        else if (cron.includes("15 10")) {
+            const ready = await this.checkYfinanceReady(env, date);
+            if (!ready) {
+                console.warn(`[scheduled] Aggregation SKIPPED: yfinance data not ready for ${date}`);
+                return;
+            }
             await this.aggregateDaily(env, date);
         }
 
@@ -76,7 +84,6 @@ export default {
         // Fallback or explicit trigger
         else {
             console.log(`Unknown cron ${cron}, checking alternates...`);
-            // Integrity Scan (3 hours)
             if (cron.includes("*/3")) {
                 await this.startIntegrityScan(env);
             }
@@ -357,42 +364,33 @@ export default {
                 item.cvd_10d = has_10d ? cvd_10d : null;
                 item.cvd_20d = has_20d ? cvd_20d : null;
 
-                // RVOL windows: today_vol / avg_vol(window)
-                // Use item.v (footprint candle volume) as today's volume — processedStatsMaps[0]
-                // is often empty intraday because processed/{date}.json is written at EOD.
-                const todayVol = item.v || processedStatsMaps[0]?.get(ticker)?.vol;
-                if (Number.isFinite(todayVol) && todayVol > 0) {
-                    const calcRvol = (windowSize) => {
-                        let sum = 0, count = 0;
-                        // Start from D1 (yesterday) to avoid including today in average
-                        for (let i = 1; i <= windowSize && i < 20; i++) {
-                            const v = processedStatsMaps[i]?.get(ticker)?.vol;
-                            if (Number.isFinite(v) && v > 0) { sum += v; count++; }
-                        }
-                        if (count === 0) return null;
-                        const avg = sum / count;
-                        return parseFloat((todayVol / avg).toFixed(2));
-                    };
-                    item.rvol_2d  = calcRvol(2);
-                    item.rvol_5d  = calcRvol(5);
-                    item.rvol_10d = calcRvol(10);
-                    item.rvol_20d = calcRvol(20);
-                }
+                // RVOL + VWAP: now sourced from yfinance via D1 query in step 4.8
+                // (replaces old footprint-based RVOL which was unreliable due to data gaps)
             }
 
             // 4.7: Compute hybrid CVD (footprint ratio × yfinance volume) → D1
+            // PERF: Only run full yfinance fetch after 09:30 UTC (16:30 WIB) when yfinance cron
+            // has updated the 1d/15m files. During intraday */5 cron runs, skip expensive R2 reads.
+            // HTTP requests (url != null) always run full fetch for testing.
+            const isHttpTrigger = !!url;
+            const nowHourUTC = new Date().getUTCHours();
+            const nowMinUTC  = new Date().getUTCMinutes();
+            const afterYfinanceCron = nowHourUTC > 9 || (nowHourUTC === 9 && nowMinUTC >= 45);
+            const skipYf = !isHttpTrigger && !afterYfinanceCron;
             try {
-                await this.storeCvdDaily(env, processedStatsMaps, allTickerSet);
+                await this.storeCvdDaily(env, processedStatsMaps, allTickerSet, { skipYfinanceFetch: skipYf });
             } catch (e) {
                 console.warn('[CVD-D1] storeCvdDaily failed (non-fatal):', e?.message);
             }
 
-            // 4.8: Enrich items with CVD% windows from D1
+            // 4.8: Enrich items with CVD%, RVOL, VWAP position from D1
             try {
                 const cvdPctMap = await this.queryCvdPctWindows(env, date);
+                let enriched = 0;
                 for (const item of items) {
                     const entry = cvdPctMap.get(String(item.t).toUpperCase());
                     if (!entry) continue;
+                    // CVD%
                     item.cvd_pct_2d   = entry.cvd_pct_2d   ?? null;
                     item.cvd_pct_5d   = entry.cvd_pct_5d   ?? null;
                     item.cvd_pct_10d  = entry.cvd_pct_10d  ?? null;
@@ -401,8 +399,16 @@ export default {
                     item.est_delta_5d  = entry.est_delta_5d  ?? null;
                     item.est_delta_10d = entry.est_delta_10d ?? null;
                     item.est_delta_20d = entry.est_delta_20d ?? null;
+                    // RVOL (yfinance-sourced: today_vol / avg_vol)
+                    if (entry.rvol_2d  != null) item.rvol_2d  = entry.rvol_2d;
+                    if (entry.rvol_5d  != null) item.rvol_5d  = entry.rvol_5d;
+                    if (entry.rvol_10d != null) item.rvol_10d = entry.rvol_10d;
+                    if (entry.rvol_20d != null) item.rvol_20d = entry.rvol_20d;
+                    // VWAP position: (close - vwap) / vwap × 100
+                    if (entry.vwap_pos != null) item.vwap_pos = entry.vwap_pos;
+                    enriched++;
                 }
-                console.log(`[CVD-D1] enriched ${cvdPctMap.size} tickers with CVD% windows`);
+                console.log(`[CVD-D1] enriched ${enriched} tickers with CVD%, RVOL, VWAP`);
             } catch (e) {
                 console.warn('[CVD-D1] queryCvdPctWindows failed (non-fatal):', e?.message);
             }
@@ -654,6 +660,43 @@ export default {
         return dates;
     },
 
+    /**
+     * Gate check: verify yfinance 1d & 15m data is complete for today.
+     * Checks 3 high-liquidity reference symbols. Passes if ≥2 of 3 have:
+     *   - 1d candle for `date` in the monthly file
+     *   - ≥20 15m candles for `date` (full day ~25-26, ≥20 = market closed)
+     */
+    async checkYfinanceReady(env, date) {
+        const REF_SYMBOLS = ['BBRI', 'BBCA', 'TLKM'];
+        const month = date.slice(0, 7); // YYYY-MM
+        let passCount = 0;
+
+        await Promise.allSettled(REF_SYMBOLS.map(async (sym) => {
+            try {
+                // Check 1d
+                const key1d = `yfinance/${sym}/1d/${month}.json`;
+                const obj1d = await env.TAPE_DATA_SAHAM.get(key1d);
+                if (!obj1d) return;
+                const data1d = await obj1d.json();
+                const has1d = (data1d?.candles || []).some(c => c.date === date);
+                if (!has1d) return;
+
+                // Check 15m — daily file keyed by date
+                const key15m = `yfinance/${sym}/15m/${date}.json`;
+                const obj15m = await env.TAPE_DATA_SAHAM.get(key15m);
+                if (!obj15m) return;
+                const data15m = await obj15m.json();
+                const count15m = Array.isArray(data15m?.candles) ? data15m.candles.length : 0;
+                if (count15m < 20) return; // full day ≈ 25-26 candles, 20 = safely closed
+
+                passCount++;
+            } catch { /* skip */ }
+        }));
+
+        console.log(`[yfinance-gate] ${passCount}/${REF_SYMBOLS.length} reference symbols ready for ${date}`);
+        return passCount >= 2; // ≥2 of 3 must pass
+    },
+
     async fetchProcessedDailyStatsMaps(env, date, n = 20) {
         const dates = this.getTradingDates(date, n);
         const maps = await Promise.all(dates.map(dt => this.fetchProcessedDailyStatsMap(env, dt)));
@@ -663,12 +706,12 @@ export default {
     },
 
     /**
-     * Fetch yfinance daily volumes for all tickers across a set of dates.
+     * Fetch yfinance daily OHLCV for all tickers across a set of dates.
      * Reads monthly files (1 GET per ticker per month) and returns:
-     *   Map<ticker, Map<date, volume>>
+     *   Map<ticker, Map<date, { volume, close }>>
      */
     async fetchYfinanceVolumeMap(env, tickers, dates) {
-        const result = new Map(); // ticker → Map(date → vol)
+        const result = new Map(); // ticker → Map(date → { volume, close })
         if (!env?.TAPE_DATA_SAHAM || !dates?.length || !tickers?.length) return result;
 
         const months = [...new Set(dates.map(d => d.slice(0, 7)))];
@@ -678,7 +721,7 @@ export default {
         for (let i = 0; i < tickerArr.length; i += BATCH) {
             const batch = tickerArr.slice(i, i + BATCH);
             await Promise.allSettled(batch.map(async (ticker) => {
-                const dateVol = new Map();
+                const dateData = new Map();
                 for (const month of months) {
                     try {
                         const key = `yfinance/${ticker}/1d/${month}.json`;
@@ -687,12 +730,57 @@ export default {
                         const data = await obj.json();
                         for (const c of (data?.candles || [])) {
                             if (c?.date && Number.isFinite(Number(c.volume)) && c.volume > 0) {
-                                dateVol.set(c.date, Number(c.volume));
+                                dateData.set(c.date, {
+                                    volume: Number(c.volume),
+                                    close:  Number.isFinite(Number(c.close)) ? Number(c.close) : null
+                                });
                             }
                         }
                     } catch { /* skip */ }
                 }
-                if (dateVol.size > 0) result.set(ticker, dateVol);
+                if (dateData.size > 0) result.set(ticker, dateData);
+            }));
+        }
+        return result;
+    },
+
+    /**
+     * Fetch yfinance 15m candles and compute intraday VWAP per ticker per date.
+     * VWAP = Σ(typical_price × volume) / Σ(volume)
+     * where typical_price = (high + low + close) / 3
+     * Returns: Map<ticker, Map<date, vwap>>
+     */
+    async fetchYfinance15mVwapMap(env, tickers, dates) {
+        const result = new Map();
+        if (!env?.TAPE_DATA_SAHAM || !dates?.length || !tickers?.length) return result;
+
+        const tickerArr = Array.isArray(tickers) ? tickers : Array.from(tickers);
+        const BATCH = 50;
+
+        for (let i = 0; i < tickerArr.length; i += BATCH) {
+            const batch = tickerArr.slice(i, i + BATCH);
+            await Promise.allSettled(batch.map(async (ticker) => {
+                const dateVwap = new Map();
+                for (const dt of dates) {
+                    try {
+                        const key = `yfinance/${ticker}/15m/${dt}.json`;
+                        const obj = await env.TAPE_DATA_SAHAM.get(key);
+                        if (!obj) continue;
+                        const data = await obj.json();
+                        const candles = data?.candles || [];
+                        if (candles.length < 5) continue; // need meaningful intraday data
+                        let sumTPxV = 0, sumV = 0;
+                        for (const c of candles) {
+                            const h = Number(c.high), l = Number(c.low), cl = Number(c.close), v = Number(c.volume);
+                            if (!Number.isFinite(h) || !Number.isFinite(l) || !Number.isFinite(cl) || !Number.isFinite(v) || v <= 0) continue;
+                            const tp = (h + l + cl) / 3;
+                            sumTPxV += tp * v;
+                            sumV += v;
+                        }
+                        if (sumV > 0) dateVwap.set(dt, parseFloat((sumTPxV / sumV).toFixed(2)));
+                    } catch { /* skip */ }
+                }
+                if (dateVwap.size > 0) result.set(ticker, dateVwap);
             }));
         }
         return result;
@@ -705,13 +793,49 @@ export default {
      *
      * Called once per cron cycle. Only writes days that have BOTH sources.
      */
-    async storeCvdDaily(env, processedStatsMaps, allTickers) {
-        const dates = processedStatsMaps._dates;
-        if (!dates?.length || !allTickers?.size) return 0;
+    async storeCvdDaily(env, processedStatsMaps, allTickers, opts = {}) {
+        const allDates = processedStatsMaps._dates;
+        if (!allDates?.length || !allTickers?.size) return 0;
 
-        // 1. Fetch yfinance volumes for all tickers & dates (monthly files = cheap)
-        const yfVolMap = await this.fetchYfinanceVolumeMap(env, [...allTickers], dates);
-        console.log(`[CVD-D1] yfinance volumes loaded for ${yfVolMap.size} tickers across ${dates.length} dates`);
+        // PERF: Only upsert D0 (today) + D1 (yesterday) to stay within subrequest limits.
+        // Historical rows are already persisted from prior daily cron runs.
+        // This keeps R2 reads to ~800 tickers × 1 month (1d) + ~800 × 1 date (15m) ≈ 1600.
+        const dates = allDates.slice(0, 2);
+        const tickerArr = [...allTickers];
+
+        // If skipYfinanceFetch=true (intraday */5 runs before yfinance cron),
+        // only upsert footprint-only rows and reuse existing yfinance data from D1.
+        let yfVolMap = new Map();
+        let yfVwapMap = new Map();
+
+        if (!opts.skipYfinanceFetch) {
+            // 1. Fetch yfinance 1d data (volume + close) for D0+D1 (same monthly file = 1 read/ticker)
+            //    Fetch 15m VWAP only for today (dates[0]) — yesterday's VWAP already in D1
+            const todayDate = dates[0];
+            [yfVolMap, yfVwapMap] = await Promise.all([
+                this.fetchYfinanceVolumeMap(env, tickerArr, dates),
+                this.fetchYfinance15mVwapMap(env, tickerArr, [todayDate]),
+            ]);
+            console.log(`[CVD-D1] yfinance 1d loaded for ${yfVolMap.size} tickers (D0+D1), 15m VWAP for ${yfVwapMap.size} tickers (today only)`);
+        } else {
+            console.log(`[CVD-D1] Skipping yfinance R2 fetch (intraday mode, before yfinance cron)`);
+        }
+
+        // 1b. Load existing D1 rows to preserve yf_vol/yf_close/yf_vwap when skipping yfinance fetch
+        const existingD1 = new Map(); // "ticker|date" → { yf_vol, yf_close, yf_vwap }
+        try {
+            const ph = dates.map(() => '?').join(',');
+            const { results } = await env.SSSAHAM_DB.prepare(
+                `SELECT ticker, date, yf_vol, yf_close, yf_vwap FROM cvd_daily WHERE date IN (${ph})`
+            ).bind(...dates).all();
+            for (const r of (results || [])) {
+                existingD1.set(`${r.ticker}|${r.date}`, {
+                    yf_vol:   r.yf_vol   != null ? Number(r.yf_vol)   : null,
+                    yf_close: r.yf_close != null ? Number(r.yf_close) : null,
+                    yf_vwap:  r.yf_vwap  != null ? Number(r.yf_vwap)  : null,
+                });
+            }
+        } catch { /* non-fatal */ }
 
         // 2. Build rows to upsert
         const rows = [];
@@ -726,11 +850,20 @@ export default {
                 if (!Number.isFinite(fpVol) || fpVol <= 0 || !Number.isFinite(fpNet)) continue;
 
                 const ratio = fpNet / fpVol;
-                const yfVol = yfVolMap.get(ticker)?.get(dt);
+                const existing = existingD1.get(`${ticker}|${dt}`);
+
+                // yfinance volume + close: prefer fresh fetch, then D1 cache, then fp fallback
+                const yfEntry = yfVolMap.get(ticker)?.get(dt);
+                const yfVol   = yfEntry?.volume ?? existing?.yf_vol ?? null;
+                const yfClose = yfEntry?.close  ?? existing?.yf_close ?? null;
+                // 15m VWAP: prefer fresh fetch (today only), then D1 cache
+                const freshVwap = yfVwapMap.get(ticker)?.get(dt) ?? null;
+                const yfVwap  = freshVwap ?? existing?.yf_vwap ?? null;
+
                 const estDelta = Number.isFinite(yfVol) && yfVol > 0 ? yfVol * ratio : fpNet;
                 const finalYfVol = Number.isFinite(yfVol) && yfVol > 0 ? yfVol : fpVol;
 
-                rows.push({ ticker, date: dt, fpVol, fpNet, yfVol: finalYfVol, ratio, estDelta });
+                rows.push({ ticker, date: dt, fpVol, fpNet, yfVol: finalYfVol, ratio, estDelta, yfClose, yfVwap });
             }
         }
 
@@ -743,15 +876,16 @@ export default {
             const chunk = rows.slice(i, i + CHUNK);
             const stmts = chunk.map(r =>
                 env.SSSAHAM_DB.prepare(
-                    `INSERT OR REPLACE INTO cvd_daily (ticker, date, fp_vol, fp_net, yf_vol, ratio, est_delta)
-                     VALUES (?, ?, ?, ?, ?, ?, ?)`
+                    `INSERT OR REPLACE INTO cvd_daily (ticker, date, fp_vol, fp_net, yf_vol, ratio, est_delta, yf_close, yf_vwap)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
                 ).bind(r.ticker, r.date, r.fpVol, r.fpNet, r.yfVol,
-                       parseFloat(r.ratio.toFixed(6)), parseFloat(r.estDelta.toFixed(2)))
+                       parseFloat(r.ratio.toFixed(6)), parseFloat(r.estDelta.toFixed(2)),
+                       r.yfClose, r.yfVwap)
             );
             await env.SSSAHAM_DB.batch(stmts);
             written += chunk.length;
         }
-        console.log(`[CVD-D1] upserted ${written} rows`);
+        console.log(`[CVD-D1] upserted ${written} rows (with close + vwap)`);
         return written;
     },
 
@@ -766,6 +900,7 @@ export default {
         const d5  = dates.slice(0, 5);
         const d10 = dates.slice(0, 10);
         const d20 = dates;
+        const today = dates[0]; // D0
 
         const result = new Map();
         const queryWindow = async (windowDates, suffix) => {
@@ -773,7 +908,8 @@ export default {
             const { results } = await env.SSSAHAM_DB.prepare(
                 `SELECT ticker,
                         SUM(est_delta) as sum_delta,
-                        SUM(yf_vol)    as sum_vol
+                        SUM(yf_vol)    as sum_vol,
+                        AVG(yf_vol)    as avg_vol
                  FROM cvd_daily
                  WHERE date IN (${placeholders})
                  GROUP BY ticker`
@@ -785,8 +921,58 @@ export default {
                 const entry = result.get(t);
                 const sumD = Number(r.sum_delta) || 0;
                 const sumV = Number(r.sum_vol) || 0;
+                const avgV = Number(r.avg_vol) || 0;
                 entry[`cvd_pct_${suffix}`]   = sumV > 0 ? parseFloat(((sumD / sumV) * 100).toFixed(2)) : null;
                 entry[`est_delta_${suffix}`] = parseFloat(sumD.toFixed(0));
+                entry[`avg_vol_${suffix}`]   = avgV; // for RVOL
+            }
+        };
+
+        // Query RVOL: today_vol / avg_vol(window excluding today)
+        // Also query today's close + vwap for VWAP position
+        const queryRvolAndVwap = async () => {
+            // Get today's data per ticker
+            const { results: todayRows } = await env.SSSAHAM_DB.prepare(
+                `SELECT ticker, yf_vol, yf_close, yf_vwap FROM cvd_daily WHERE date = ?`
+            ).bind(today).all();
+
+            // Build per-window average volumes EXCLUDING today
+            const windowConfigs = [
+                { dates: d2.filter(d => d !== today),  suffix: '2d' },
+                { dates: d5.filter(d => d !== today),  suffix: '5d' },
+                { dates: d10.filter(d => d !== today), suffix: '10d' },
+                { dates: d20.filter(d => d !== today), suffix: '20d' },
+            ];
+
+            const avgMaps = await Promise.all(windowConfigs.map(async ({ dates: wDates, suffix }) => {
+                if (!wDates.length) return { suffix, map: new Map() };
+                const ph = wDates.map(() => '?').join(',');
+                const { results: rows } = await env.SSSAHAM_DB.prepare(
+                    `SELECT ticker, AVG(yf_vol) as avg_vol FROM cvd_daily WHERE date IN (${ph}) GROUP BY ticker`
+                ).bind(...wDates).all();
+                const m = new Map();
+                for (const r of (rows || [])) m.set(String(r.ticker).toUpperCase(), Number(r.avg_vol) || 0);
+                return { suffix, map: m };
+            }));
+
+            for (const r of (todayRows || [])) {
+                const t = String(r.ticker).toUpperCase();
+                if (!result.has(t)) result.set(t, {});
+                const entry = result.get(t);
+                const todayVol = Number(r.yf_vol) || 0;
+                const close = Number(r.yf_close) || 0;
+                const vwap  = Number(r.yf_vwap)  || 0;
+
+                // RVOL per window
+                for (const { suffix, map } of avgMaps) {
+                    const avg = map.get(t) || 0;
+                    entry[`rvol_${suffix}`] = (todayVol > 0 && avg > 0)
+                        ? parseFloat((todayVol / avg).toFixed(2)) : null;
+                }
+
+                // VWAP position: (close - vwap) / vwap × 100
+                entry.vwap_pos = (close > 0 && vwap > 0)
+                    ? parseFloat((((close - vwap) / vwap) * 100).toFixed(2)) : null;
             }
         };
 
@@ -795,6 +981,7 @@ export default {
             queryWindow(d5,  '5d'),
             queryWindow(d10, '10d'),
             queryWindow(d20, '20d'),
+            queryRvolAndVwap(),
         ]);
         return result;
     },
