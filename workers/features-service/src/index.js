@@ -368,12 +368,18 @@ export default {
                 // (replaces old footprint-based RVOL which was unreliable due to data gaps)
             }
 
-            // 4.7: Update fp columns (footprint ratio × volume) in yfinance_1d
-            // No R2 reads — storeCvdDaily now just UPDATEs existing yfinance_1d rows.
+            // 4.7: Upsert fp columns (footprint ratio × volume) in yfinance_1d,
+            //       then compute RVOL for any tickers with NULL rvol on today.
             try {
                 await this.storeCvdDaily(env, processedStatsMaps, allTickerSet);
             } catch (e) {
                 console.warn('[CVD-D1] storeCvdDaily failed (non-fatal):', e?.message);
+            }
+            try {
+                const rvolFilled = await this.computeMissingRvol(env, date);
+                if (rvolFilled > 0) console.log(`[RVOL-D1] computed missing RVOL for ${rvolFilled} tickers`);
+            } catch (e) {
+                console.warn('[RVOL-D1] computeMissingRvol failed (non-fatal):', e?.message);
             }
 
             // 4.8: Enrich items with CVD%, RVOL, VWAP position from D1
@@ -760,6 +766,7 @@ export default {
         if (!allDates?.length || !allTickers?.size) return 0;
 
         const dates = allDates.slice(0, 2); // D0 + D1 only
+        const now = new Date().toISOString();
 
         // Load existing yfinance_1d rows for volume fallback
         const existingD1 = new Map(); // "ticker|date" → { volume }
@@ -773,7 +780,10 @@ export default {
             }
         } catch { /* non-fatal */ }
 
-        // Build UPDATE statements for fp columns
+        // Build UPSERT statements for fp columns.
+        // INSERT...ON CONFLICT ensures rows are created for tickers not in the
+        // 101-emiten list (which don't get Yahoo Finance rows from yfinance-handler).
+        // volume = fpVol as fallback when no Yahoo data exists.
         const stmts = [];
         for (let i = 0; i < dates.length; i++) {
             const dt = dates[i];
@@ -788,13 +798,20 @@ export default {
                 const ratio = fpNet / fpVol;
                 const yfVol = existingD1.get(`${ticker}|${dt}`)?.volume || fpVol;
                 const estDelta = Number.isFinite(yfVol) && yfVol > 0 ? yfVol * ratio : fpNet;
+                const ratioRounded = parseFloat(ratio.toFixed(6));
+                const estDeltaRounded = parseFloat(estDelta.toFixed(2));
 
                 stmts.push(
                     env.SSSAHAM_DB.prepare(
-                        `UPDATE yfinance_1d SET fp_vol = ?, fp_net = ?, ratio = ?, est_delta = ?
-                         WHERE ticker = ? AND date = ?`
-                    ).bind(fpVol, fpNet, parseFloat(ratio.toFixed(6)),
-                           parseFloat(estDelta.toFixed(2)), ticker, dt)
+                        `INSERT INTO yfinance_1d (ticker, date, volume, fp_vol, fp_net, ratio, est_delta, updated_at)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                         ON CONFLICT(ticker, date) DO UPDATE SET
+                           fp_vol = excluded.fp_vol, fp_net = excluded.fp_net,
+                           ratio = excluded.ratio, est_delta = excluded.est_delta,
+                           volume = COALESCE(yfinance_1d.volume, excluded.volume),
+                           updated_at = excluded.updated_at`
+                    ).bind(ticker, dt, fpVol, fpVol, fpNet, ratioRounded,
+                           estDeltaRounded, now)
                 );
             }
         }
@@ -807,8 +824,85 @@ export default {
             await env.SSSAHAM_DB.batch(stmts.slice(i, i + CHUNK));
             written += Math.min(CHUNK, stmts.length - i);
         }
-        console.log(`[CVD-D1] updated ${written} fp rows in yfinance_1d`);
+        console.log(`[CVD-D1] upserted ${written} fp rows in yfinance_1d`);
         return written;
+    },
+
+    /**
+     * Compute RVOL for tickers that have volume data but NULL rvol on the given date.
+     * Covers non-101-emiten tickers whose rows come from storeCvdDaily UPSERT
+     * (not from yfinance-handler, which only processes 101 active emitens).
+     * Uses a single bulk D1 query for efficiency.
+     */
+    async computeMissingRvol(env, date) {
+        const tradingDates = this.getTradingDates(date, 21); // 21 dates for rvol_20d
+        const today = tradingDates[0];
+
+        // 1. Fetch all volume data for these 21 dates in one query
+        const ph = tradingDates.map(() => '?').join(',');
+        const { results: allRows } = await env.SSSAHAM_DB.prepare(
+            `SELECT ticker, date, volume, rvol_2d FROM yfinance_1d
+             WHERE date IN (${ph}) AND volume > 0`
+        ).bind(...tradingDates).all();
+
+        if (!allRows?.length) return 0;
+
+        // 2. Find tickers with NULL rvol on today
+        const todayNullRvol = new Set();
+        const byTicker = new Map(); // ticker → [{date, volume}] chronological
+        for (const r of allRows) {
+            const t = r.ticker;
+            if (r.date === today && r.rvol_2d == null) todayNullRvol.add(t);
+            if (!byTicker.has(t)) byTicker.set(t, []);
+            byTicker.get(t).push({ date: r.date, volume: Number(r.volume) });
+        }
+
+        if (todayNullRvol.size === 0) return 0;
+
+        // 3. Sort each ticker's data chronologically and compute RVOL
+        const dateOrder = new Map(tradingDates.map((d, i) => [d, tradingDates.length - i]));
+        const stmts = [];
+
+        for (const ticker of todayNullRvol) {
+            const rows = byTicker.get(ticker);
+            if (!rows) continue;
+            rows.sort((a, b) => (dateOrder.get(a.date) || 0) - (dateOrder.get(b.date) || 0));
+
+            const todayIdx = rows.findIndex(r => r.date === today);
+            if (todayIdx < 0) continue;
+            const todayVol = rows[todayIdx].volume;
+            if (todayVol <= 0) continue;
+
+            const updates = {};
+            for (const [n, key] of [[2, 'rvol_2d'], [5, 'rvol_5d'], [10, 'rvol_10d'], [20, 'rvol_20d']]) {
+                if (todayIdx >= n) {
+                    const prevVols = rows.slice(Math.max(0, todayIdx - n), todayIdx)
+                        .map(r => r.volume).filter(v => v > 0);
+                    if (prevVols.length > 0) {
+                        const avg = prevVols.reduce((a, b) => a + b, 0) / prevVols.length;
+                        updates[key] = parseFloat((todayVol / avg).toFixed(2));
+                    }
+                }
+            }
+
+            const keys = Object.keys(updates);
+            if (keys.length === 0) continue;
+            const sets = keys.map(k => `${k} = ?`).join(', ');
+            const vals = keys.map(k => updates[k]);
+            stmts.push(
+                env.SSSAHAM_DB.prepare(
+                    `UPDATE yfinance_1d SET ${sets} WHERE ticker = ? AND date = ?`
+                ).bind(...vals, ticker, today)
+            );
+        }
+
+        if (stmts.length === 0) return 0;
+
+        const CHUNK = 50;
+        for (let i = 0; i < stmts.length; i += CHUNK) {
+            await env.SSSAHAM_DB.batch(stmts.slice(i, i + CHUNK));
+        }
+        return stmts.length;
     },
 
     /**
