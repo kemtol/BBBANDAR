@@ -289,6 +289,50 @@ export default {
                     // ZSCORE ONLY: Create item from context data
                     const item = this.calculateZscoreOnlyItem(ticker, ctx);
                     if (item) {
+                        // Enrich ZSCORE-only items with processed stats (d/p/div/freq/growth)
+                        // Same pattern as sparse items (candle_count < 30) enrichment above.
+                        // processed/{date}.json has 1264 tickers — covers ALL ZSCORE-only items.
+                        const stats = processedStatsMap.get(ticker);
+                        const prevStats = prevProcessedStatsMap.get(ticker);
+
+                        if (stats) {
+                            const vol = Number(stats.vol);
+                            const netVol = Number(stats.netVol);
+                            const close = Number(stats.close);
+                            const prevClose = Number(prevStats?.close);
+
+                            // Delta%: (netVol / vol) * 100
+                            if (Number.isFinite(vol) && vol > 0 && Number.isFinite(netVol)) {
+                                item.d = Number(((netVol / vol) * 100).toFixed(2));
+                                item.net_delta = Number(netVol);
+                                item.cvd = item.net_delta;
+                                item.nv = (close && netVol !== 0) ? Math.round(netVol * close * 100) : null;
+                                item.v = vol;
+                            }
+
+                            // Growth (close-to-close) + MOM%
+                            if (Number.isFinite(close) && close > 0 && Number.isFinite(prevClose) && prevClose > 0) {
+                                const momPct = ((close - prevClose) / prevClose) * 100;
+                                item.p = Number(momPct.toFixed(2));
+                                item.p_src = 'overnight';
+                                item.growth_pct = Number(momPct.toFixed(2));
+                                item.open_price = prevClose;
+                                item.recent_price = close;
+                            }
+
+                            // Absorb: |d| / (1 + |p|)
+                            if (Number.isFinite(item.d) && Number.isFinite(item.p)) {
+                                item.div = Number((Math.abs(item.d) / (1 + Math.abs(item.p))).toFixed(2));
+                            }
+
+                            // Freq
+                            if (Number.isFinite(stats.freq) && stats.freq > 0) {
+                                item.freq_tx = Math.round(stats.freq);
+                            }
+
+                            item.enriched_from = 'processed_stats';
+                        }
+
                         item.src = 'ZSCORE';  // Source indicator
                         items.push(item);
                         zscoreOnly++;
@@ -296,7 +340,8 @@ export default {
                 }
             }
 
-            console.log(`Step 4: Generated ${items.length} items (${withFootprint} full, ${zscoreOnly} zscore-only)`);
+            const zscoreEnriched = items.filter(i => i.src === 'ZSCORE' && i.enriched_from === 'processed_stats').length;
+            console.log(`Step 4: Generated ${items.length} items (${withFootprint} full, ${zscoreOnly} zscore-only, ${zscoreEnriched} zscore-enriched)`);
 
             // Step 4.5: Merge sector digest + CVD windows into every item
             for (const item of items) {
@@ -583,6 +628,8 @@ export default {
             for (const item of items) {
                 const ticker = String(item?.kode || item?.t || '').toUpperCase();
                 const open = Number(item?.open ?? item?.o);
+                const high = Number(item?.high ?? item?.h);
+                const low = Number(item?.low ?? item?.l);
                 const close = Number(item?.close ?? item?.c);
                 const vol = Number(item?.vol ?? item?.v);
                 const netVol = Number(item?.net_vol ?? item?.nv);
@@ -590,6 +637,8 @@ export default {
                 if (!ticker || !this.isValidTicker(ticker)) continue;
                 out.set(ticker, {
                     open: Number.isFinite(open) ? open : null,
+                    high: Number.isFinite(high) ? high : null,
+                    low: Number.isFinite(low) ? low : null,
                     close: Number.isFinite(close) ? close : null,
                     vol: Number.isFinite(vol) ? vol : null,
                     netVol: Number.isFinite(netVol) ? netVol : null,
@@ -801,16 +850,27 @@ export default {
                 const ratioRounded = parseFloat(ratio.toFixed(6));
                 const estDeltaRounded = parseFloat(estDelta.toFixed(2));
 
+                // Also store OHLC from processed stats for non-101 tickers.
+                // COALESCE ensures Yahoo Finance OHLC (from yfinance-handler) is NOT overwritten.
+                const psOpen  = Number(stats.open)  || null;
+                const psHigh  = Number(stats.high)  || null;
+                const psLow   = Number(stats.low)   || null;
+                const psClose = Number(stats.close) || null;
+
                 stmts.push(
                     env.SSSAHAM_DB.prepare(
-                        `INSERT INTO yfinance_1d (ticker, date, volume, fp_vol, fp_net, ratio, est_delta, updated_at)
-                         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        `INSERT INTO yfinance_1d (ticker, date, volume, open, high, low, close, fp_vol, fp_net, ratio, est_delta, updated_at)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                          ON CONFLICT(ticker, date) DO UPDATE SET
                            fp_vol = excluded.fp_vol, fp_net = excluded.fp_net,
                            ratio = excluded.ratio, est_delta = excluded.est_delta,
                            volume = COALESCE(yfinance_1d.volume, excluded.volume),
+                           open = COALESCE(yfinance_1d.open, excluded.open),
+                           high = COALESCE(yfinance_1d.high, excluded.high),
+                           low = COALESCE(yfinance_1d.low, excluded.low),
+                           close = COALESCE(yfinance_1d.close, excluded.close),
                            updated_at = excluded.updated_at`
-                    ).bind(ticker, dt, fpVol, fpVol, fpNet, ratioRounded,
+                    ).bind(ticker, dt, fpVol, psOpen, psHigh, psLow, psClose, fpVol, fpNet, ratioRounded,
                            estDeltaRounded, now)
                 );
             }
