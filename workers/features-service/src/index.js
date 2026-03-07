@@ -413,6 +413,39 @@ export default {
                 console.warn('[CVD-D1] queryCvdPctWindows failed (non-fatal):', e?.message);
             }
 
+            // 4.9: Fallback RVOL from processedStatsMaps for missing RVOL windows.
+            // Uses footprint volume (lots) — consistent ratio (lots/lots), no R2 reads.
+            // Fills individual windows (not per-item skip) so items with rvol_5d from D1
+            // but missing rvol_2d (due to sparse D1 rows) still get filled.
+            // Search range is expanded (up to 3× window) to handle sparse data gracefully.
+            {
+                let rvolFallback = 0;
+                const windowCfg = [['2d',2],['5d',5],['10d',10],['20d',20]];
+                for (const item of items) {
+                    const ticker = item.t;
+                    const todayVol = Number(processedStatsMaps[0]?.get(ticker)?.vol || 0);
+                    if (todayVol <= 0) continue;
+                    let filled = false;
+                    for (const [suffix, winSize] of windowCfg) {
+                        if (item[`rvol_${suffix}`] != null) continue; // this window already set
+                        let sum = 0, cnt = 0;
+                        const needed = Math.max(winSize - 1, 1); // data points needed
+                        const maxSearch = Math.min(winSize * 3, processedStatsMaps.length);
+                        for (let j = 1; j < maxSearch; j++) {
+                            const hv = Number(processedStatsMaps[j]?.get(ticker)?.vol || 0);
+                            if (hv > 0) { sum += hv; cnt++; }
+                            if (cnt >= needed) break;
+                        }
+                        if (cnt > 0) {
+                            item[`rvol_${suffix}`] = parseFloat((todayVol / (sum / cnt)).toFixed(2));
+                            filled = true;
+                        }
+                    }
+                    if (filled) rvolFallback++;
+                }
+                if (rvolFallback > 0) console.log(`[RVOL-fallback] Filled missing windows from processedStatsMaps for ${rvolFallback} tickers`);
+            }
+
             // 5. Sort by Score Descending
             items.sort((a, b) => (b.sc || 0) - (a.sc || 0));
 
@@ -581,53 +614,33 @@ export default {
      * Falls back to legacy daily file if monthly not found.
      * Returns Map<ticker, { close, open, high, low, volume }>.
      */
+    /**
+     * Fetch yfinance EOD OHLCV for a given date from D1 yfinance_1d table.
+     * Returns Map<ticker, { close, open, high, low, volume }>
+     * Single D1 query replaces ~800 R2 reads.
+     */
     async fetchYfinanceCloseMap(env, dateStr, tickers) {
         const out = new Map();
-        if (!env?.TAPE_DATA_SAHAM || !dateStr || !tickers || tickers.length === 0) return out;
-
-        const BATCH_SIZE = 50;
-        const tickerArr = Array.isArray(tickers) ? tickers : Array.from(tickers);
-        const month = dateStr.slice(0, 7); // "2026-03-04" → "2026-03"
-
-        for (let i = 0; i < tickerArr.length; i += BATCH_SIZE) {
-            const batch = tickerArr.slice(i, i + BATCH_SIZE);
-            await Promise.allSettled(batch.map(async (ticker) => {
-                try {
-                    // Try monthly file first
-                    const monthlyKey = `yfinance/${ticker}/1d/${month}.json`;
-                    let obj = await env.TAPE_DATA_SAHAM.get(monthlyKey);
-                    let candles = null;
-
-                    if (obj) {
-                        const data = await obj.json();
-                        candles = data?.candles;
-                    } else {
-                        // Fallback to legacy daily file
-                        const dailyKey = `yfinance/${ticker}/1d/${dateStr}.json`;
-                        obj = await env.TAPE_DATA_SAHAM.get(dailyKey);
-                        if (obj) {
-                            const data = await obj.json();
-                            candles = data?.candles;
-                        }
-                    }
-
-                    if (!Array.isArray(candles) || candles.length === 0) return;
-
-                    // Find candle for exact date (monthly file has many dates)
-                    const c = candles.find(c => c.date === dateStr) || candles[candles.length - 1];
-                    const close = Number(c?.close);
-                    if (!Number.isFinite(close) || close <= 0) return;
-                    out.set(ticker, {
-                        close,
-                        open:   Number.isFinite(Number(c?.open))   ? Number(c.open)   : null,
-                        high:   Number.isFinite(Number(c?.high))   ? Number(c.high)   : null,
-                        low:    Number.isFinite(Number(c?.low))    ? Number(c.low)    : null,
-                        volume: Number.isFinite(Number(c?.volume)) ? Number(c.volume) : null,
-                    });
-                } catch { /* skip */ }
-            }));
+        if (!dateStr) return out;
+        try {
+            const { results } = await env.SSSAHAM_DB.prepare(
+                `SELECT ticker, open, high, low, close, volume FROM yfinance_1d WHERE date = ?`
+            ).bind(dateStr).all();
+            for (const r of (results || [])) {
+                const t = String(r.ticker).toUpperCase();
+                const close = Number(r.close);
+                if (!Number.isFinite(close) || close <= 0) continue;
+                out.set(t, {
+                    close,
+                    open:   Number.isFinite(Number(r.open))   ? Number(r.open)   : null,
+                    high:   Number.isFinite(Number(r.high))   ? Number(r.high)   : null,
+                    low:    Number.isFinite(Number(r.low))    ? Number(r.low)    : null,
+                    volume: Number.isFinite(Number(r.volume)) ? Number(r.volume) : null,
+                });
+            }
+        } catch (e) {
+            console.warn(`[yf-close] D1 query failed for ${dateStr}: ${e?.message}`);
         }
-
         return out;
     },
 
@@ -661,40 +674,23 @@ export default {
     },
 
     /**
-     * Gate check: verify yfinance 1d & 15m data is complete for today.
-     * Checks 3 high-liquidity reference symbols. Passes if ≥2 of 3 have:
-     *   - 1d candle for `date` in the monthly file
-     *   - ≥20 15m candles for `date` (full day ~25-26, ≥20 = market closed)
+     * Gate check: verify yfinance data is available for today in D1.
+     * Checks 3 high-liquidity reference symbols. Passes if ≥2 of 3 have a row in yfinance_1d.
      */
     async checkYfinanceReady(env, date) {
         const REF_SYMBOLS = ['BBRI', 'BBCA', 'TLKM'];
-        const month = date.slice(0, 7); // YYYY-MM
-        let passCount = 0;
-
-        await Promise.allSettled(REF_SYMBOLS.map(async (sym) => {
-            try {
-                // Check 1d
-                const key1d = `yfinance/${sym}/1d/${month}.json`;
-                const obj1d = await env.TAPE_DATA_SAHAM.get(key1d);
-                if (!obj1d) return;
-                const data1d = await obj1d.json();
-                const has1d = (data1d?.candles || []).some(c => c.date === date);
-                if (!has1d) return;
-
-                // Check 15m — daily file keyed by date
-                const key15m = `yfinance/${sym}/15m/${date}.json`;
-                const obj15m = await env.TAPE_DATA_SAHAM.get(key15m);
-                if (!obj15m) return;
-                const data15m = await obj15m.json();
-                const count15m = Array.isArray(data15m?.candles) ? data15m.candles.length : 0;
-                if (count15m < 20) return; // full day ≈ 25-26 candles, 20 = safely closed
-
-                passCount++;
-            } catch { /* skip */ }
-        }));
-
-        console.log(`[yfinance-gate] ${passCount}/${REF_SYMBOLS.length} reference symbols ready for ${date}`);
-        return passCount >= 2; // ≥2 of 3 must pass
+        try {
+            const { results } = await env.SSSAHAM_DB.prepare(
+                `SELECT COUNT(DISTINCT ticker) as cnt FROM yfinance_1d
+                 WHERE date = ? AND ticker IN ('BBRI','BBCA','TLKM') AND close IS NOT NULL`
+            ).bind(date).all();
+            const cnt = results?.[0]?.cnt || 0;
+            console.log(`[yfinance-gate] ${cnt}/${REF_SYMBOLS.length} reference symbols ready for ${date} (D1)`);
+            return cnt >= 2;
+        } catch (e) {
+            console.warn(`[yfinance-gate] D1 check failed: ${e?.message}`);
+            return false;
+        }
     },
 
     async fetchProcessedDailyStatsMaps(env, date, n = 20) {
@@ -706,82 +702,54 @@ export default {
     },
 
     /**
-     * Fetch yfinance daily OHLCV for all tickers across a set of dates.
-     * Reads monthly files (1 GET per ticker per month) and returns:
-     *   Map<ticker, Map<date, { volume, close }>>
+     * Fetch yfinance daily OHLCV for all tickers across a set of dates from D1.
+     * Returns: Map<ticker, Map<date, { volume, close }>>
+     * Single D1 query replaces ~800 R2 reads.
      */
     async fetchYfinanceVolumeMap(env, tickers, dates) {
-        const result = new Map(); // ticker → Map(date → { volume, close })
-        if (!env?.TAPE_DATA_SAHAM || !dates?.length || !tickers?.length) return result;
-
-        const months = [...new Set(dates.map(d => d.slice(0, 7)))];
-        const tickerArr = Array.isArray(tickers) ? tickers : Array.from(tickers);
-        const BATCH = 50;
-
-        for (let i = 0; i < tickerArr.length; i += BATCH) {
-            const batch = tickerArr.slice(i, i + BATCH);
-            await Promise.allSettled(batch.map(async (ticker) => {
-                const dateData = new Map();
-                for (const month of months) {
-                    try {
-                        const key = `yfinance/${ticker}/1d/${month}.json`;
-                        const obj = await env.TAPE_DATA_SAHAM.get(key);
-                        if (!obj) continue;
-                        const data = await obj.json();
-                        for (const c of (data?.candles || [])) {
-                            if (c?.date && Number.isFinite(Number(c.volume)) && c.volume > 0) {
-                                dateData.set(c.date, {
-                                    volume: Number(c.volume),
-                                    close:  Number.isFinite(Number(c.close)) ? Number(c.close) : null
-                                });
-                            }
-                        }
-                    } catch { /* skip */ }
-                }
-                if (dateData.size > 0) result.set(ticker, dateData);
-            }));
+        const result = new Map();
+        if (!dates?.length) return result;
+        try {
+            const ph = dates.map(() => '?').join(',');
+            const { results } = await env.SSSAHAM_DB.prepare(
+                `SELECT ticker, date, volume, close FROM yfinance_1d WHERE date IN (${ph})`
+            ).bind(...dates).all();
+            for (const r of (results || [])) {
+                const t = String(r.ticker).toUpperCase();
+                const vol = Number(r.volume);
+                if (!Number.isFinite(vol) || vol <= 0) continue;
+                if (!result.has(t)) result.set(t, new Map());
+                result.get(t).set(r.date, {
+                    volume: vol,
+                    close: Number.isFinite(Number(r.close)) ? Number(r.close) : null,
+                });
+            }
+        } catch (e) {
+            console.warn(`[yf-vol] D1 query failed: ${e?.message}`);
         }
         return result;
     },
 
     /**
-     * Fetch yfinance 15m candles and compute intraday VWAP per ticker per date.
-     * VWAP = Σ(typical_price × volume) / Σ(volume)
-     * where typical_price = (high + low + close) / 3
+     * Fetch VWAP per ticker per date from D1 yfinance_1d (pre-computed).
      * Returns: Map<ticker, Map<date, vwap>>
+     * Single D1 query replaces ~800 R2 reads for 15m files.
      */
     async fetchYfinance15mVwapMap(env, tickers, dates) {
         const result = new Map();
-        if (!env?.TAPE_DATA_SAHAM || !dates?.length || !tickers?.length) return result;
-
-        const tickerArr = Array.isArray(tickers) ? tickers : Array.from(tickers);
-        const BATCH = 50;
-
-        for (let i = 0; i < tickerArr.length; i += BATCH) {
-            const batch = tickerArr.slice(i, i + BATCH);
-            await Promise.allSettled(batch.map(async (ticker) => {
-                const dateVwap = new Map();
-                for (const dt of dates) {
-                    try {
-                        const key = `yfinance/${ticker}/15m/${dt}.json`;
-                        const obj = await env.TAPE_DATA_SAHAM.get(key);
-                        if (!obj) continue;
-                        const data = await obj.json();
-                        const candles = data?.candles || [];
-                        if (candles.length < 5) continue; // need meaningful intraday data
-                        let sumTPxV = 0, sumV = 0;
-                        for (const c of candles) {
-                            const h = Number(c.high), l = Number(c.low), cl = Number(c.close), v = Number(c.volume);
-                            if (!Number.isFinite(h) || !Number.isFinite(l) || !Number.isFinite(cl) || !Number.isFinite(v) || v <= 0) continue;
-                            const tp = (h + l + cl) / 3;
-                            sumTPxV += tp * v;
-                            sumV += v;
-                        }
-                        if (sumV > 0) dateVwap.set(dt, parseFloat((sumTPxV / sumV).toFixed(2)));
-                    } catch { /* skip */ }
-                }
-                if (dateVwap.size > 0) result.set(ticker, dateVwap);
-            }));
+        if (!dates?.length) return result;
+        try {
+            const ph = dates.map(() => '?').join(',');
+            const { results } = await env.SSSAHAM_DB.prepare(
+                `SELECT ticker, date, vwap FROM yfinance_1d WHERE date IN (${ph}) AND vwap IS NOT NULL`
+            ).bind(...dates).all();
+            for (const r of (results || [])) {
+                const t = String(r.ticker).toUpperCase();
+                if (!result.has(t)) result.set(t, new Map());
+                result.get(t).set(r.date, Number(r.vwap));
+            }
+        } catch (e) {
+            console.warn(`[yf-vwap] D1 query failed: ${e?.message}`);
         }
         return result;
     },
@@ -867,6 +835,32 @@ export default {
             }
         }
 
+        // 2b. Also create rows for tickers with yfinance 1d data but NO footprint data.
+        // This enables RVOL computation for ZSCORE-only tickers that have yfinance coverage.
+        if (!opts.skipYfinanceFetch && yfVolMap.size > 0) {
+            const existingKeys = new Set(rows.map(r => `${r.ticker}|${r.date}`));
+            for (const dt of dates) {
+                for (const [ticker, dateData] of yfVolMap) {
+                    const key = `${ticker}|${dt}`;
+                    if (existingKeys.has(key)) continue;
+                    const entry = dateData.get(dt);
+                    if (!entry || !Number.isFinite(entry.volume) || entry.volume <= 0) continue;
+                    const existing = existingD1.get(key);
+                    const freshVwap = yfVwapMap.get(ticker)?.get(dt) ?? null;
+                    const yfVwap = freshVwap ?? existing?.yf_vwap ?? null;
+                    rows.push({
+                        ticker, date: dt,
+                        fpVol: 0, fpNet: 0,
+                        yfVol: entry.volume,
+                        ratio: 0, estDelta: 0,
+                        yfClose: entry.close ?? null,
+                        yfVwap
+                    });
+                    existingKeys.add(key);
+                }
+            }
+        }
+
         if (rows.length === 0) return 0;
 
         // 3. Batch upsert to D1 (chunks of 50 for Cloudflare D1 batch limit)
@@ -928,49 +922,24 @@ export default {
             }
         };
 
-        // Query RVOL: today_vol / avg_vol(window excluding today)
-        // Also query today's close + vwap for VWAP position
+        // Query RVOL + VWAP: now pre-computed in yfinance_1d by yfinance-handler.
+        // Single D1 query replaces 5 complex cvd_daily queries.
         const queryRvolAndVwap = async () => {
-            // Get today's data per ticker
             const { results: todayRows } = await env.SSSAHAM_DB.prepare(
-                `SELECT ticker, yf_vol, yf_close, yf_vwap FROM cvd_daily WHERE date = ?`
+                `SELECT ticker, close, vwap, rvol_2d, rvol_5d, rvol_10d, rvol_20d
+                 FROM yfinance_1d WHERE date = ?`
             ).bind(today).all();
-
-            // Build per-window average volumes EXCLUDING today
-            const windowConfigs = [
-                { dates: d2.filter(d => d !== today),  suffix: '2d' },
-                { dates: d5.filter(d => d !== today),  suffix: '5d' },
-                { dates: d10.filter(d => d !== today), suffix: '10d' },
-                { dates: d20.filter(d => d !== today), suffix: '20d' },
-            ];
-
-            const avgMaps = await Promise.all(windowConfigs.map(async ({ dates: wDates, suffix }) => {
-                if (!wDates.length) return { suffix, map: new Map() };
-                const ph = wDates.map(() => '?').join(',');
-                const { results: rows } = await env.SSSAHAM_DB.prepare(
-                    `SELECT ticker, AVG(yf_vol) as avg_vol FROM cvd_daily WHERE date IN (${ph}) GROUP BY ticker`
-                ).bind(...wDates).all();
-                const m = new Map();
-                for (const r of (rows || [])) m.set(String(r.ticker).toUpperCase(), Number(r.avg_vol) || 0);
-                return { suffix, map: m };
-            }));
 
             for (const r of (todayRows || [])) {
                 const t = String(r.ticker).toUpperCase();
                 if (!result.has(t)) result.set(t, {});
                 const entry = result.get(t);
-                const todayVol = Number(r.yf_vol) || 0;
-                const close = Number(r.yf_close) || 0;
-                const vwap  = Number(r.yf_vwap)  || 0;
-
-                // RVOL per window
-                for (const { suffix, map } of avgMaps) {
-                    const avg = map.get(t) || 0;
-                    entry[`rvol_${suffix}`] = (todayVol > 0 && avg > 0)
-                        ? parseFloat((todayVol / avg).toFixed(2)) : null;
-                }
-
-                // VWAP position: (close - vwap) / vwap × 100
+                entry.rvol_2d  = r.rvol_2d  != null ? Number(r.rvol_2d)  : null;
+                entry.rvol_5d  = r.rvol_5d  != null ? Number(r.rvol_5d)  : null;
+                entry.rvol_10d = r.rvol_10d != null ? Number(r.rvol_10d) : null;
+                entry.rvol_20d = r.rvol_20d != null ? Number(r.rvol_20d) : null;
+                const close = Number(r.close) || 0;
+                const vwap  = Number(r.vwap)  || 0;
                 entry.vwap_pos = (close > 0 && vwap > 0)
                     ? parseFloat((((close - vwap) / vwap) * 100).toFixed(2)) : null;
             }
