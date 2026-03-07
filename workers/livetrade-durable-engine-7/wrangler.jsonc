@@ -7,8 +7,24 @@
       {
         "name": "STATE_ENGINE",
         "class_name": "StateEngine"
+      },
+      {
+        "name": "BACKFILL_ENGINE",
+        "class_name": "BackfillEngine"
       }
     ]
+  },
+  "kv_namespaces": [
+    {
+      "binding": "SSSAHAM_WATCHLIST",
+      "id": "701c5c47230142e49d7c899f6bdcc029",
+      "preview_id": "9df14ffa735441bdbf5931fa19c4ce09"
+    }
+  ],
+  "vars": {
+    "IPOT_APPSESSION_URL": "https://indopremier.com/ipc/appsession.js",
+    "IPOT_WS_HTTP_BASE": "https://ipotapp.ipot.id/socketcluster/",
+    "IPOT_ORIGIN": "https://indopremier.com"
   },
   "r2_buckets": [
     {
@@ -29,6 +45,12 @@
       "tag": "v1",
       "new_classes": [
         "StateEngine"
+      ]
+    },
+    {
+      "tag": "v2",
+      "new_classes": [
+        "BackfillEngine"
       ]
     }
   ],

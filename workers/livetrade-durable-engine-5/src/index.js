@@ -547,6 +547,8 @@ export class StateEngine {
     }
 
     async flushRawTrades() {
+        // [DISABLED] R2 cost optimization — raw_trades only consumed by manual repair
+        return;
         // A5: Safety guard - never write raw during warmup
         if (this.isWarmup) return;
         if (this.rawBuffer.length === 0) return;
@@ -790,9 +792,320 @@ export class StateEngine {
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// BackfillEngine: Footprint backfill via iPOT xen_qu_done_detail
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Each instance handles ONE symbol's full-day backfill.
+// Leverages DO's unlimited wall-clock time to keep a single WS session open.
+// ID naming: "BACKFILL:{SYMBOL}:{DATE}"
+// ─────────────────────────────────────────────────────────────────────────────
+
+/* ── iPOT WS helpers (self-contained for engine isolation) ─────────────── */
+
+function _makeWebSocketKey() {
+    const bytes = new Uint8Array(16);
+    crypto.getRandomValues(bytes);
+    let bin = "";
+    for (const b of bytes) bin += String.fromCharCode(b);
+    return btoa(bin);
+}
+
+async function _getIpotAppSession(env) {
+    const cached = await env.SSSAHAM_WATCHLIST.get("IPOT_APPSESSION");
+    if (cached) return cached;
+    const url    = env.IPOT_APPSESSION_URL || "https://indopremier.com/ipc/appsession.js";
+    const origin = env.IPOT_ORIGIN         || "https://indopremier.com";
+    const controller = new AbortController();
+    const tid = setTimeout(() => controller.abort(), 5000);
+    try {
+        const resp = await fetch(url, {
+            headers: { Accept: "*/*", "User-Agent": "backfill-engine/1.0", Origin: origin, Referer: origin + "/" },
+            signal: controller.signal
+        });
+        clearTimeout(tid);
+        if (!resp.ok) throw new Error(`appsession fetch failed: ${resp.status}`);
+        const text = await resp.text();
+        const patterns = [/appsession\s*[:=]\s*["']([^"']+)["']/i, /appsession=([a-zA-Z0-9\-_]+)/i, /["']appsession["']\s*[:,]\s*["']([^"']+)["']/i];
+        let token = null;
+        for (const re of patterns) { const m = text.match(re); if (m?.[1]) { token = m[1]; break; } }
+        if (!token) { const near = text.match(/appsession[^A-Za-z0-9\-_]{0,30}([A-Za-z0-9\-_]{16,128})/i); if (near) token = near[1]; }
+        if (!token) throw new Error("could not parse appsession");
+        await env.SSSAHAM_WATCHLIST.put("IPOT_APPSESSION", token, { expirationTtl: 600 });
+        await env.SSSAHAM_WATCHLIST.put("IPOT_APPSESSION_BACKUP", token, { expirationTtl: 21600 });
+        return token;
+    } catch (e) {
+        clearTimeout(tid);
+        const backup = await env.SSSAHAM_WATCHLIST.get("IPOT_APPSESSION_BACKUP");
+        if (backup) return backup;
+        throw e;
+    }
+}
+
+async function _clearIpotAppSession(env) {
+    try { await env.SSSAHAM_WATCHLIST.delete("IPOT_APPSESSION"); await env.SSSAHAM_WATCHLIST.delete("IPOT_APPSESSION_BACKUP"); } catch { }
+}
+
+async function _openIpotWs(env) {
+    const appsession = await _getIpotAppSession(env);
+    const wsBase = env.IPOT_WS_HTTP_BASE || "https://ipotapp.ipot.id/socketcluster/";
+    const wsUrl  = new URL(wsBase);
+    wsUrl.searchParams.set("appsession", appsession);
+    let httpUrl = wsUrl.toString();
+    if (httpUrl.startsWith("wss://"))     httpUrl = "https://" + httpUrl.slice(6);
+    else if (httpUrl.startsWith("ws://")) httpUrl = "http://"  + httpUrl.slice(5);
+    const resp = await fetch(httpUrl, {
+        headers: { Upgrade: "websocket", Connection: "Upgrade", Origin: env.IPOT_ORIGIN || "https://indopremier.com", "Sec-WebSocket-Version": "13", "Sec-WebSocket-Key": _makeWebSocketKey(), "User-Agent": "backfill-engine/1.0" }
+    });
+    if (!resp.webSocket) throw new Error(`WS upgrade failed: ${resp.status}`);
+    const ws = resp.webSocket;
+    ws.accept();
+    try { ws.send(JSON.stringify({ event: "#handshake", data: { authToken: env.IPOT_AUTH_TOKEN || null }, cid: 1 })); } catch { }
+    return ws;
+}
+
+/* ── Trade parser ──────────────────────────────────────────────────────── */
+
+function _parseDoneDetailLine(raw) {
+    if (!raw || typeof raw !== "string") return null;
+    const t = raw.split("|").map(x => String(x || "").trim());
+    if (t.length < 6) return null;
+    const tradeId = t[0], symbol = t[1].toUpperCase(), board = t[2].toUpperCase();
+    const timeStr = t[3], price = parseFloat(t[4]), lot = parseInt(t[5], 10);
+    if (!symbol || board !== "RG") return null;
+    if (!Number.isFinite(price) || price <= 0) return null;
+    if (!Number.isFinite(lot)   || lot   <= 0) return null;
+    if (!/^\d{1,2}:\d{2}:\d{2}$/.test(timeStr)) return null;
+    return { tradeId, symbol, board, timeStr, price, lot };
+}
+
+/* ── Candle builder (uptick rule, identical to StateEngine.updateFootprint) ── */
+
+function _buildFootprintCandles(trades, dateStr) {
+    if (!trades || trades.length === 0) return [];
+    const [yyyy, mm, dd] = dateStr.split("-").map(Number);
+    const candleMap = new Map();
+    for (const trade of trades) {
+        const [hh, mi, ss] = trade.timeStr.split(":").map(Number);
+        const wibDate = new Date(Date.UTC(yyyy, mm - 1, dd, hh, mi, ss));
+        const utcMs   = wibDate.getTime() - 7 * 3600000;
+        const minuteKey = utcMs - (utcMs % 60000);
+
+        let candle = candleMap.get(minuteKey);
+        if (!candle) {
+            candle = { t0: minuteKey, ohlc: { o: trade.price, h: trade.price, l: trade.price, c: trade.price }, vol: 0, delta: 0, levels: [], _lastPrice: null };
+            candleMap.set(minuteKey, candle);
+        }
+        candle.ohlc.h = Math.max(candle.ohlc.h, trade.price);
+        candle.ohlc.l = Math.min(candle.ohlc.l, trade.price);
+        candle.ohlc.c = trade.price;
+        candle.vol += trade.lot;
+
+        if (candle._lastPrice == null) candle._lastPrice = trade.price;
+        let side = "neutral";
+        if (trade.price > candle._lastPrice) side = "buy";
+        else if (trade.price < candle._lastPrice) side = "sell";
+        candle._lastPrice = trade.price;
+
+        if (side === "buy")  candle.delta += trade.lot;
+        if (side === "sell") candle.delta -= trade.lot;
+
+        let level = candle.levels.find(l => l.p === trade.price);
+        if (!level) { level = { p: trade.price, bv: 0, av: 0 }; candle.levels.push(level); }
+        if (side === "buy")  level.bv += trade.lot;
+        if (side === "sell") level.av += trade.lot;
+    }
+    return Array.from(candleMap.values()).sort((a, b) => a.t0 - b.t0).map(c => ({ t0: c.t0, ohlc: c.ohlc, vol: c.vol, delta: c.delta, levels: c.levels }));
+}
+
+/* ── R2 writer (merge with existing) ──────────────────────────────────── */
+
+async function _writeFootprintCandlesToR2(env, ticker, dateStr, candles, merge = true) {
+    if (!candles || candles.length === 0) return { hours_written: 0, candles_written: 0 };
+    const [yyyy, mm, dd] = dateStr.split("-");
+    const sym = ticker.toUpperCase();
+    const byHour = new Map();
+    for (const c of candles) {
+        const hh = String(new Date(c.t0).getUTCHours()).padStart(2, "0");
+        if (!byHour.has(hh)) byHour.set(hh, []);
+        byHour.get(hh).push(c);
+    }
+    let hoursWritten = 0, candlesWritten = 0;
+    for (const [hh, hourCandles] of byHour.entries()) {
+        const r2Key = `footprint/${sym}/1m/${yyyy}/${mm}/${dd}/${hh}.jsonl`;
+        let finalCandles = hourCandles;
+        if (merge) {
+            try {
+                const existing = await env.DATA_LAKE.get(r2Key);
+                if (existing) {
+                    const text = await existing.text();
+                    const existingCandles = text.split("\n").filter(l => l.trim()).map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+                    const mergedMap = new Map();
+                    for (const c of hourCandles) mergedMap.set(c.t0, c);
+                    for (const c of existingCandles) mergedMap.set(c.t0, c);
+                    finalCandles = Array.from(mergedMap.values()).sort((a, b) => a.t0 - b.t0);
+                }
+            } catch { }
+        }
+        const body = finalCandles.map(c => JSON.stringify(c)).join("\n") + "\n";
+        await env.DATA_LAKE.put(r2Key, body, { httpMetadata: { contentType: "application/x-ndjson" } });
+        hoursWritten++;
+        candlesWritten += finalCandles.length;
+    }
+    return { hours_written: hoursWritten, candles_written: candlesWritten };
+}
+
+/* ── BackfillEngine Durable Object ────────────────────────────────────── */
+
+export class BackfillEngine {
+    constructor(state, env) {
+        this.state = state;
+        this.env   = env;
+    }
+
+    async fetch(request) {
+        const url     = new URL(request.url);
+        const symbol  = (url.searchParams.get("symbol") || "").toUpperCase();
+        const dateStr = url.searchParams.get("date") || _getWibDateString();
+        const board   = (url.searchParams.get("board") || "RG").toUpperCase();
+        const merge   = url.searchParams.get("merge") !== "false";
+        const pageLen = parseInt(url.searchParams.get("pagelen") || "5000", 10);
+
+        if (!symbol) return Response.json({ ok: false, error: "Missing symbol" }, { status: 400 });
+
+        console.log(`[BackfillEngine] START ${symbol} date=${dateStr}`);
+        const t0 = Date.now();
+
+        const _saveStatus = async (result) => {
+            try { await this.env.SSSAHAM_WATCHLIST.put(`BF:${dateStr}:${symbol}`, JSON.stringify(result), { expirationTtl: 86400 }); } catch { }
+        };
+
+        try {
+            const { trades, pages_fetched, exhausted } = await this._fetchAllTrades(symbol, board, pageLen);
+
+            if (trades.length === 0) {
+                console.log(`[BackfillEngine] ${symbol} NO_TRADES`);
+                const result = { ok: true, symbol, date: dateStr, trades: 0, candles: 0, hours_written: 0, pages_fetched, exhausted, elapsed_ms: Date.now() - t0, status: "NO_TRADES" };
+                await _saveStatus(result);
+                return Response.json(result);
+            }
+
+            const candles = _buildFootprintCandles(trades, dateStr);
+            const { hours_written, candles_written } = await _writeFootprintCandlesToR2(this.env, symbol, dateStr, candles, merge);
+            const elapsed = Date.now() - t0;
+            const timeRange = { first: trades[0].timeStr, last: trades[trades.length - 1].timeStr };
+
+            console.log(`[BackfillEngine] DONE ${symbol} trades=${trades.length} candles=${candles.length} hours=${hours_written} ${elapsed}ms`);
+            const result = { ok: true, symbol, date: dateStr, trades: trades.length, pages_fetched, exhausted, candles: candles.length, candles_written, hours_written, elapsed_ms: elapsed, time_range: timeRange, status: "BACKFILLED" };
+            await _saveStatus(result);
+            return Response.json(result);
+        } catch (e) {
+            console.error(`[BackfillEngine] FAIL ${symbol}: ${e?.message || e}`);
+            const result = { ok: false, symbol, date: dateStr, error: e?.message || String(e), elapsed_ms: Date.now() - t0, status: "ERROR" };
+            await _saveStatus(result);
+            return Response.json(result, { status: 500 });
+        }
+    }
+
+    async _fetchAllTrades(symbol, board, pageLen = 5000) {
+        let ws;
+        try { ws = await _openIpotWs(this.env); } catch { await _clearIpotAppSession(this.env); ws = await _openIpotWs(this.env); }
+
+        const allTrades = [], seenIds = new Set();
+        let cid = 200, cmdid = 200, pagesFetched = 0, slid = null, exhausted = false;
+        const keepAlive = setInterval(() => { try { ws.send("#2"); } catch { } }, 20000);
+
+        try {
+            for (let pageNo = 1; ; pageNo++) {
+                const queryCmdid = ++cmdid, queryCid = ++cid;
+                const records = [];
+                let gotFooter = false, lastAt = Date.now();
+                const pageStart = Date.now();
+
+                const onMsg = (ev) => {
+                    lastAt = Date.now();
+                    const txt = typeof ev.data === "string" ? ev.data : "";
+                    if (txt === "#1") { try { ws.send("#2"); } catch { } return; }
+                    let j; try { j = JSON.parse(txt); } catch { return; }
+                    const mc = Number(j?.data?.cmdid);
+                    if (j?.event === "record" && mc === queryCmdid) {
+                        if (j?.data?.recno === -1) { gotFooter = true; return; }
+                        const d = j?.data?.data || {};
+                        if (!slid && d.slid) slid = d.slid;
+                        const raw = d.rec || d.xen_qu_done_detail || null;
+                        if (typeof raw === "string" && raw.includes("|")) records.push(raw);
+                    }
+                    if (j?.event === "res" && mc === queryCmdid) gotFooter = true;
+                };
+                ws.addEventListener("message", onMsg);
+
+                const qp = { source: "datafeed", index: "xen_qu_done_detail", args: [symbol, board], info: { pageno: pageNo, orderby: [[0, "ASC"]] }, pagelen: pageLen };
+                if (slid) qp.slid = slid;
+                ws.send(JSON.stringify({ event: "cmd", data: { cmdid: queryCmdid, param: { service: "midata", cmd: "query", param: qp } }, cid: queryCid }));
+
+                while (true) {
+                    const now = Date.now();
+                    if (now - pageStart > 30000) break;
+                    if (gotFooter) break;
+                    if (!gotFooter && records.length === 0 && (now - lastAt) > 8000) break;
+                    await new Promise(r => setTimeout(r, 30));
+                }
+                ws.removeEventListener("message", onMsg);
+                pagesFetched++;
+
+                let newCount = 0;
+                for (const raw of records) {
+                    const parsed = _parseDoneDetailLine(raw);
+                    if (!parsed || seenIds.has(parsed.tradeId)) continue;
+                    seenIds.add(parsed.tradeId);
+                    allTrades.push(parsed);
+                    newCount++;
+                }
+                if (pageNo % 5 === 0 || records.length < pageLen) console.log(`[BackfillEngine] ${symbol} pg${pageNo}: ${records.length} raw, ${newCount} new, total=${allTrades.length}`);
+                if (records.length < pageLen) { exhausted = true; break; }
+                if (records.length === 0) { exhausted = true; break; }
+            }
+        } finally { clearInterval(keepAlive); try { ws.close(); } catch { } }
+
+        allTrades.sort((a, b) => a.timeStr.localeCompare(b.timeStr));
+        console.log(`[BackfillEngine] ${symbol} TOTAL: ${allTrades.length} trades, ${pagesFetched} pages`);
+        return { trades: allTrades, pages_fetched: pagesFetched, exhausted };
+    }
+}
+
+function _getWibDateString() {
+    const wib = new Date(Date.now() + 7 * 3600000);
+    return `${wib.getUTCFullYear()}-${String(wib.getUTCMonth() + 1).padStart(2, "0")}-${String(wib.getUTCDate()).padStart(2, "0")}`;
+}
+
 export default {
-    async fetch(request, env) {
+    async fetch(request, env, ctx) {
         const url = new URL(request.url);
+
+        // Route /backfill/* to BackfillEngine DO
+        if (url.pathname.startsWith("/backfill")) {
+            const symbol  = (url.searchParams.get("symbol") || "").toUpperCase();
+            const dateStr = url.searchParams.get("date") || _getWibDateString();
+            const asyncMode = url.searchParams.get("async") === "true";
+            const doId = env.BACKFILL_ENGINE.idFromName(`BACKFILL:${symbol}:${dateStr}`);
+            const stub = env.BACKFILL_ENGINE.get(doId);
+
+            if (asyncMode) {
+                // Fire-and-forget: DO runs independently, self-reports to KV
+                ctx.waitUntil(
+                    stub.fetch(request)
+                        .then(r => r.json())
+                        .then(r => console.log(`[engine-bf] ${symbol}: ${r.status} ${r.trades || 0}tr ${r.elapsed_ms || 0}ms`))
+                        .catch(e => console.error(`[engine-bf] ${symbol} FAIL: ${e?.message}`))
+                );
+                return Response.json({ ok: true, symbol, date: dateStr, status: "DISPATCHED" });
+            }
+
+            // Sync mode: wait for DO result (for single-symbol testing)
+            return stub.fetch(request);
+        }
+
+        // Default: forward to StateEngine (live trading)
         const id = env.STATE_ENGINE.idFromName("GLOBAL_V2_ENGINE"); // Singleton for simplicity initially
         const obj = env.STATE_ENGINE.get(id);
         return obj.fetch(request);

@@ -54,6 +54,43 @@ function buildWatchList(env) {
   return merged;
 }
 
+// 🔧 Helper: Auto-fetch IPOT appsession token from public endpoint
+async function autoFetchIpotToken() {
+  const url = "https://indopremier.com/ipc/appsession.js";
+  try {
+    const resp = await fetch(url, {
+      headers: {
+        "Accept": "*/*",
+        "User-Agent": "livetrade-taping/1.0",
+        "Origin": "https://indopremier.com",
+        "Referer": "https://indopremier.com/"
+      }
+    });
+    if (!resp.ok) throw new Error(`appsession fetch failed: ${resp.status}`);
+
+    const text = await resp.text();
+    const patterns = [
+      /appsession\s*[:=]\s*["']([^"']+)["']/i,
+      /appsession=([a-zA-Z0-9\-_]+)/i,
+      /["']appsession["']\s*[:,]\s*["']([^"']+)["']/i,
+    ];
+
+    for (const re of patterns) {
+      const m = text.match(re);
+      if (m && m[1]) return m[1];
+    }
+
+    // Fallback: proximity match
+    const near = text.match(/appsession[^A-Za-z0-9\-_]{0,30}([A-Za-z0-9\-_]{16,128})/i);
+    if (near?.[1]) return near[1];
+
+    throw new Error("could not parse appsession token from response");
+  } catch (e) {
+    console.error("[AutoToken] Failed to fetch token:", e);
+    return null;
+  }
+}
+
 
 export default {
   async fetch(request, env, ctx) {
@@ -85,10 +122,12 @@ export class TradeIngestor extends DurableObject {
     this.bufferOB = [];   // OB2
     this.BATCH_SIZE_OB = 200; // Req G: 200
 
-    // OB2 15s snapshot (daily per symbol file)
-    this.OB2_SNAPSHOT_INTERVAL_MS = 15000;
+    // OB2 snapshot — single-file approach (all symbols in one JSON)
+    // Aligned to 1 minute (same as browser pressure chart bucket)
+    this.OB2_SNAPSHOT_INTERVAL_MS = 60000;
     this.latestOBByKode = new Map();          // kode -> { ts, raw }
     this.lastSnapshotBucketByKode = new Map(); // kode -> bucket integer
+    this.ob2SnapshotRing = new Map();          // kode -> [snap, snap, snap] (last 3 for seed warmup)
     this.isFlushingOB15s = false;
 
     // Phase 1: Dynamic watchlist from browser Most Active pipeline
@@ -123,6 +162,13 @@ export class TradeIngestor extends DurableObject {
     this.lastDispatchErr = "";
     this.lastDispatchStats = { accepted: 0, deduped: 0, errors: 0 };
     this.dispatchFailStreak = 0;  // A1: Track consecutive dispatch failures
+
+    // Auto-token-refresh state
+    this.wsConnectFailCount = 0;          // consecutive WS connect failures
+    this.lastTokenRefreshTs = 0;          // last auto-refresh attempt
+    this.TOKEN_REFRESH_COOLDOWN = 120000; // 2 min cooldown between auto-refresh
+    this.WS_FAIL_THRESHOLD = 3;           // trigger refresh after N consecutive failures
+    this.lastWsOpenTs = 0;                // track when WS last successfully opened
 
     // Req C: Flush Locks
     this.isFlushingLT = false;
@@ -287,6 +333,9 @@ export class TradeIngestor extends DurableObject {
           lastDispatchStats: this.lastDispatchStats,
           binding_state_engine_present: !!this.env.STATE_ENGINE,
           watchlist_count: this.watchList.length,
+          wsConnectFailCount: this.wsConnectFailCount,
+          lastTokenRefreshTs: this.lastTokenRefreshTs ? new Date(this.lastTokenRefreshTs).toISOString() : null,
+          lastWsOpenTs: this.lastWsOpenTs ? new Date(this.lastWsOpenTs).toISOString() : null,
         },
         null,
         2
@@ -325,6 +374,29 @@ export class TradeIngestor extends DurableObject {
     }
 
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      // Auto-token-refresh: if WS keeps failing, try fetching a new token
+      if (this.wsConnectFailCount >= this.WS_FAIL_THRESHOLD &&
+          (now - this.lastTokenRefreshTs) > this.TOKEN_REFRESH_COOLDOWN) {
+        console.log(`[AutoToken] WS failed ${this.wsConnectFailCount}x, attempting token refresh...`);
+        this.lastTokenRefreshTs = now;
+        try {
+          const newToken = await autoFetchIpotToken();
+          if (newToken && newToken !== this.currentSession) {
+            console.log(`[AutoToken] New token obtained: ${newToken.substr(0, 15)}...`);
+            this.currentSession = newToken;
+            await this.ctx.storage.put("session_token", newToken);
+            this.wsConnectFailCount = 0; // reset after successful refresh
+            // Close stale WS if any
+            if (this.ws) { try { this.ws.close(); } catch(_) {} this.ws = null; }
+          } else if (newToken) {
+            console.log("[AutoToken] Token unchanged, WS server may be rejecting.");
+          } else {
+            console.warn("[AutoToken] Failed to obtain new token.");
+          }
+        } catch (e) {
+          console.error("[AutoToken] Error during refresh:", e);
+        }
+      }
       this.connectStream();
     }
 
@@ -354,21 +426,22 @@ export class TradeIngestor extends DurableObject {
       }
     }
 
-    // OB2 snapshot 15s -> one logical daily file per symbol
+    // OB2 snapshot -> single file with all symbols (1 PUT vs N×GET+PUT)
     if (this.latestOBByKode.size > 0 && !this.isFlushingOB15s) {
-      this.ctx.waitUntil(this.flushOB15sDaily());
+      this.ctx.waitUntil(this.flushOB2Snapshot());
     }
 
+    // [DISABLED] R2 cost optimization — raw_ws has zero consumers
     // Check Trigger WS (Part 1.2)
-    const bufferSizeWS = JSON.stringify(this.bufferWS).length;
-    if (this.bufferWS.length > 0 && !this.isFlushingWS) {
-      const timeTrigger = (now - this.lastFlushWS) > this.FLUSH_INTERVAL_MS;
-      const countTrigger = this.bufferWS.length >= this.BATCH_SIZE_WS;
-      const sizeTrigger = bufferSizeWS >= this.MAX_BYTES_WS;
-      if (timeTrigger || countTrigger || sizeTrigger) {
-        this.ctx.waitUntil(this.flushWSToR2());
-      }
-    }
+    // const bufferSizeWS = JSON.stringify(this.bufferWS).length;
+    // if (this.bufferWS.length > 0 && !this.isFlushingWS) {
+    //   const timeTrigger = (now - this.lastFlushWS) > this.FLUSH_INTERVAL_MS;
+    //   const countTrigger = this.bufferWS.length >= this.BATCH_SIZE_WS;
+    //   const sizeTrigger = bufferSizeWS >= this.MAX_BYTES_WS;
+    //   if (timeTrigger || countTrigger || sizeTrigger) {
+    //     this.ctx.waitUntil(this.flushWSToR2());
+    //   }
+    // }
 
     // PATCH 1: Check Trigger V2 (StateEngine dispatch)
     const bufferSizeV2 = JSON.stringify(this.bufferV2).length;
@@ -408,6 +481,8 @@ export class TradeIngestor extends DurableObject {
 
       this.ws.addEventListener("open", () => {
         console.log("[WS] Connected! Handshaking...");
+        this.wsConnectFailCount = 0; // Reset on successful connection
+        this.lastWsOpenTs = Date.now();
 
         this.ws.send(
           JSON.stringify({
@@ -537,8 +612,15 @@ export class TradeIngestor extends DurableObject {
         } catch (e) { }
       });
 
-      this.ws.addEventListener("close", () => console.log("[WS] Closed."));
-      this.ws.addEventListener("error", (e) => console.error("[WS] Error:", e));
+      this.ws.addEventListener("close", () => {
+        console.log("[WS] Closed.");
+        this.wsConnectFailCount++;
+        console.log(`[WS] Connect fail count: ${this.wsConnectFailCount}`);
+      });
+      this.ws.addEventListener("error", (e) => {
+        console.error("[WS] Error:", e);
+        this.wsConnectFailCount++;
+      });
 
     } catch (e) {
       console.error("[WS] Fatal:", e);
@@ -571,14 +653,14 @@ export class TradeIngestor extends DurableObject {
       await this.env.DATA_LAKE.put(filename, fileContent);
       this.lastFlushLT = Date.now();
 
+      // [DISABLED] R2 cost optimization — sanity-info only used for cosmetic dashboard badge
       // Req F: Throttled Sanity
-      if (Date.now() - this.lastSanityLT > this.SANITY_INTERVAL) {
-        const sanityPath = `${path}/sanity-info.json`;
-        const sanityData = { last_update: Date.now(), status: "OK", count, service: "livetrade-taping" };
-        // Fire & Forget sanity write to save latency
-        this.ctx.waitUntil(this.env.DATA_LAKE.put(sanityPath, JSON.stringify(sanityData)));
-        this.lastSanityLT = Date.now();
-      }
+      // if (Date.now() - this.lastSanityLT > this.SANITY_INTERVAL) {
+      //   const sanityPath = `${path}/sanity-info.json`;
+      //   const sanityData = { last_update: Date.now(), status: "OK", count, service: "livetrade-taping" };
+      //   this.ctx.waitUntil(this.env.DATA_LAKE.put(sanityPath, JSON.stringify(sanityData)));
+      //   this.lastSanityLT = Date.now();
+      // }
 
       console.log(`[LT] Saved ${count} items.`);
     } catch (err) {
@@ -754,51 +836,54 @@ export class TradeIngestor extends DurableObject {
     };
   }
 
-  async _appendDailySnapshotLine(key, line) {
-    const existingObj = await this.env.DATA_LAKE.get(key);
-    const prev = existingObj ? await existingObj.text() : "";
-    const next = prev
-      ? `${prev.replace(/\s*$/, "")}\n${line}\n`
-      : `${line}\n`;
-
-    await this.env.DATA_LAKE.put(key, next, {
-      httpMetadata: { contentType: "application/x-ndjson; charset=utf-8" }
-    });
-  }
-
-  // Write one logical daily file per symbol with cadence 15s
-  async flushOB15sDaily() {
+  // Single-file OB2 snapshot: all symbols in one JSON (replaces per-symbol append)
+  async flushOB2Snapshot() {
     if (this.isFlushingOB15s) return;
     if (this.latestOBByKode.size === 0) return;
 
     this.isFlushingOB15s = true;
     try {
       const nowBucket = Math.floor(Date.now() / this.OB2_SNAPSHOT_INTERVAL_MS);
-      const writes = [];
+      let updated = false;
 
       for (const [kode, latest] of this.latestOBByKode.entries()) {
         const lastBucket = this.lastSnapshotBucketByKode.get(kode);
         if (lastBucket === nowBucket) continue;
 
         const snap = this._buildOB15sSnapshot(kode, Date.now(), latest.raw);
-        const date = snap.market_date || this._formatWibDate(Date.now()).date;
-        const key = `ob2/snapshot15s/v1/symbol=${kode}/date=${date}/daily.jsonl`;
-        const line = JSON.stringify(snap);
-
-        writes.push(
-          this._appendDailySnapshotLine(key, line)
-            .then(() => {
-              this.lastSnapshotBucketByKode.set(kode, nowBucket);
-            })
-        );
+        // Ring buffer: keep last 3 snapshots per symbol for seed warmup
+        const ring = this.ob2SnapshotRing.get(kode) || [];
+        ring.push({
+          ts: snap.ts_unix_ms,
+          bid: snap.bid_l10,
+          ask: snap.ask_l10,
+          best_bid: snap.best_bid,
+          best_ask: snap.best_ask,
+          spread_bps: snap.spread_bps,
+          imbalance: snap.imbalance,
+        });
+        if (ring.length > 3) ring.shift();
+        this.ob2SnapshotRing.set(kode, ring);
+        this.lastSnapshotBucketByKode.set(kode, nowBucket);
+        updated = true;
       }
 
-      if (writes.length) {
-        await Promise.all(writes);
-        console.log(`[OB15s] persisted ${writes.length} symbol snapshots (bucket=${nowBucket})`);
+      if (updated) {
+        const payload = {};
+        for (const [kode, ring] of this.ob2SnapshotRing.entries()) {
+          payload[kode] = ring;
+        }
+        await this.env.DATA_LAKE.put('ob2/snapshot/latest.json', JSON.stringify({
+          ts: Date.now(),
+          count: this.ob2SnapshotRing.size,
+          symbols: payload,
+        }), {
+          httpMetadata: { contentType: 'application/json' }
+        });
+        console.log(`[OB2] snapshot ${this.ob2SnapshotRing.size} symbols (bucket=${nowBucket})`);
       }
     } catch (err) {
-      console.error("[OB15s] persist failed:", err);
+      console.error("[OB2] snapshot persist failed:", err);
     } finally {
       this.isFlushingOB15s = false;
     }
@@ -806,20 +891,16 @@ export class TradeIngestor extends DurableObject {
 
   // ── Phase 1: Dynamic Watchlist Sync (PRD 0012 §44) ──
   // Reads browser-posted Most Active symbols from KV and subscribes OB2.
+  // ACCUMULATE-ONLY: never unsubscribes during the day. KV contains the union
+  // of all roster symbols seen today, so we only ever add new subscriptions.
+  // Subscriptions naturally reset when the DO evicts or WS reconnects.
   async syncDynamicWatchlist() {
     try {
       if (!this.env.MOST_ACTIVE_KV) return;
 
       const raw = await this.env.MOST_ACTIVE_KV.get("most-active:watchlist");
       if (!raw) {
-        // KV expired or empty — unsubscribe all dynamic symbols
-        if (this.dynamicSubscribed.size > 0) {
-          console.log(`[DynWL] KV empty, unsubscribing ${this.dynamicSubscribed.size} dynamic symbols`);
-          for (const kode of this.dynamicSubscribed) {
-            this._unsubscribeDynamic(kode);
-          }
-          this.dynamicSubscribed.clear();
-        }
+        // KV expired or empty — no new symbols to add (keep existing subscriptions alive)
         return;
       }
 
@@ -833,30 +914,19 @@ export class TradeIngestor extends DurableObject {
         return;
       }
 
-      // Build target set: ALL KV symbols (roster is the sole OB2 driver)
-      const targetDynamic = new Set(
-        kvSymbols.slice(0, 60)
-      );
-
-      // Subscribe new entrants
-      for (const kode of targetDynamic) {
+      // Subscribe new entrants only — never unsubscribe
+      let newCount = 0;
+      for (const kode of kvSymbols.slice(0, 200)) {
         if (!this.dynamicSubscribed.has(kode)) {
           this._subscribeDynamic(kode);
+          newCount++;
         }
       }
 
-      // Unsubscribe symbols no longer in KV
-      for (const kode of this.dynamicSubscribed) {
-        if (!targetDynamic.has(kode)) {
-          this._unsubscribeDynamic(kode);
-          this.dynamicSubscribed.delete(kode);
-        }
+      if (newCount > 0) {
+        console.log(`[DynWL] +${newCount} new OB2 subs (total: ${this.dynamicSubscribed.size}, KV union: ${kvSymbols.length})`);
       }
-
-      if (targetDynamic.size !== this.dynamicWatchlist.length) {
-        console.log(`[DynWL] synced: ${targetDynamic.size} roster OB2 symbols (subscribed: ${this.dynamicSubscribed.size})`);
-      }
-      this.dynamicWatchlist = [...targetDynamic];
+      this.dynamicWatchlist = [...this.dynamicSubscribed];
     } catch (err) {
       console.error("[DynWL] sync failed:", err);
     }

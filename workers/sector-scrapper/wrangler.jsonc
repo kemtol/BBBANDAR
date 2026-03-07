@@ -37,6 +37,29 @@
             "bucket_name": "tape-data-saham"
         }
     ],
+    "durable_objects": {
+        "bindings": [
+            {
+                "name": "BACKFILL_DO",
+                "class_name": "FootprintBackfillDO"
+            }
+        ]
+    },
+    "services": [
+        { "binding": "ENGINE_1", "service": "livetrade-durable-engine-1" },
+        { "binding": "ENGINE_2", "service": "livetrade-durable-engine-2" },
+        { "binding": "ENGINE_3", "service": "livetrade-durable-engine-3" },
+        { "binding": "ENGINE_4", "service": "livetrade-durable-engine-4" },
+        { "binding": "ENGINE_5", "service": "livetrade-durable-engine-5" },
+        { "binding": "ENGINE_6", "service": "livetrade-durable-engine-6" },
+        { "binding": "ENGINE_7", "service": "livetrade-durable-engine-7" }
+    ],
+    "migrations": [
+        {
+            "tag": "v1",
+            "new_classes": ["FootprintBackfillDO"]
+        }
+    ],
     "queues": {
         "producers": [
             {

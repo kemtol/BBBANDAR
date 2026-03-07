@@ -421,8 +421,7 @@ function renderTable() {
                     ${brokerLogo(r.broker)} ${r.broker}
                 </td>
                 <td class="fw-semibold">
-                    <a href="/idx/emiten/detail.html?code=${r.stock_code}" class="text-decoration-none"
-                       style="color:var(--text)">${r.stock_code}</a>
+                    <a href="/idx/emiten/broker-summary.html?kode=${r.stock_code}" class="text-decoration-none">${r.stock_code}</a>
                 </td>
                 <td class="text-end hide-mobile">${fmtPrice(r.avg_buy)}</td>
                 <td class="text-end hide-mobile">${fmtPrice(r.avg_sell)}</td>

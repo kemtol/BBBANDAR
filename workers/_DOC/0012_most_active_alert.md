@@ -565,6 +565,9 @@ Bagian ini menambahkan requirement konkret untuk pembacaan momentum “masih man
 ---
 
 ## 28) Kontrak Data Tambahan (Z-Features)
+
+> **Updated 2026-03-05:** Reflects v2.0 scoring implementation.
+
 ```json
 {
 	"code": "BUVA",
@@ -572,24 +575,42 @@ Bagian ini menambahkan requirement konkret untuk pembacaan momentum “masih man
 	"rank_delta_5m": -9,
 	"rank_delta_15m": -14,
 	"rank_trail": [15, 11, 9, 8, 7, 5, 3],
+	"pressure_trail": [52.3, 55.1, 58.7, 61.2, 63.0, 65.8, 68.4],
 	"ob2_indicator": {
-		"bid_stacking_score": 78,
-		"ask_thinner_score": 72,
-		"state": "GREEN_GREEN"
-	},
-	"risk_memory": {
-		"ever_fca": true,
-		"fca_last_date": "2025-11-18",
-		"suspend_count_1y": 1
+		"bss": 78,
+		"ats": 72,
+		"state": "GREEN_GREEN",
+		"spread_bps_avg": 14.2,
+		"missing": false
 	},
 	"stage_score": 74,
-	"stage_label": "On Stage (Continuation)",
+	"stage_label": "Strong Continuation",
 	"reason_codes": [
-		"rank_improving_15m",
+		"pressure_dominant",
+		"cvd_dominant",
 		"bid_stack_persistent",
-		"ask_thinning_consistent",
-		"fca_penalty_applied"
-	]
+		"continuation_candidate"
+	],
+	"components": {
+		"M": 65,
+		"V": 72,
+		"P": 88,
+		"Ps": 63,
+		"C": 91,
+		"Cs": 55,
+		"B": 78,
+		"O": 65,
+		"Div": 0,
+		"Extreme": 0,
+		"raw": 76,
+		"gated": false
+	},
+	"risk_memory_missing": true,
+	"last_price": 258,
+	"value": 45678900,
+	"volume": 12345600,
+	"change_pct": 24.8,
+	"freq": 8456
 }
 ```
 
@@ -709,6 +730,208 @@ Label:
 
 ---
 
+## 29-V2) Continuation Score v2.0 — Cross-Sectional Percentile Model (CURRENT)
+
+> **Status:** IMPLEMENTED & DEPLOYED. Supersedes §29 v1 formula.
+> **File:** `idx/js/most-active-pipeline.js` → `HotScoreEngine.batchComputeV2()`
+> **Date:** 2026-03-05
+
+### Latar Belakang Pergantian
+Formula v1 (§29) menghasilkan skor terkompresi di rentang 35-44 karena:
+- Tidak ada normalisasi cross-sectional (percentile) — semua dihitung independen per simbol.
+- CVD tidak masuk formula.
+- Tidak ada deteksi divergence (harga naik tapi CVD negatif).
+- Tidak ada time-of-day weighting.
+
+v2.0 menggunakan **cross-sectional percentile ranking** terhadap seluruh roster untuk setiap komponen, sehingga skor menyebar 0-100 secara natural.
+
+### Prinsip Desain v2.0
+1. **Batch scoring wajib** — Semua simbol roster dihitung sekaligus agar percentile bermakna.
+2. **10 komponen berbobot** — Masing-masing di-percentile-rank terhadap cohort.
+3. **Divergence & extreme move penalty** — Mengurangi false positive.
+4. **Gating rule** — Score >70 memerlukan microstructure confirmation.
+5. **External data provider pattern** — Pipeline module tidak tahu sumber CVD/footprint; host page menyuplai via callback.
+
+### Data Sources & External Data Provider
+
+```
+idx/index.html (host page)
+  │
+  ├── _sectorCvdMap   ← GET /sector/cvd (every 3 min)
+  ├── _footprintMap    ← GET /footprint/summary (every 2 min)
+  ├── _closePriceMap   ← GET /prev-close (on footprint load)
+  │
+  └── orchestrator.setExternalDataProvider((code) => {
+        return { cvd, div_detected, div_score, div_type, chg_pct };
+      });
+```
+
+External data injected per minute tick via `_injectExternalData()` → stored in `HotScoreEngine._externalData` Map.
+
+### Formula Matematis v2.0
+
+#### Step 1: Collect Raw Signals
+Untuk setiap simbol $i$ dalam roster cohort $N$:
+- $\text{CHG}_i$ — change percent (IPOT WS primary, yfinance fallback)
+- $\text{VAL}_i$ — trading value hari ini (IPOT WS)
+- $\text{PI}_i$ — Pressure Index = $0.40 \times BSS + 0.40 \times ATS + 0.20 \times \text{spread\_health}$
+- $\text{CVD}_i$ — Cumulative Volume Delta (sector-scrapper primary, footprint fallback)
+
+#### Step 2: Cross-Sectional Percentile Rank
+Untuk setiap sinyal, hitung **percentile rank** terhadap seluruh cohort:
+
+$$
+\text{pctl}(v, \mathbf{all}) = \frac{|\{x \in \mathbf{all} : x < v\}| + 0.5 \times |\{x \in \mathbf{all} : x = v\}|}{|\mathbf{all}|}
+$$
+
+Hasil: 0.0 – 1.0 dimana 1.0 = tertinggi dalam cohort.
+
+- $M_i = \text{pctl}(\text{CHG}_i, \text{all CHG})$ — Momentum percentile
+- $V_i = \text{pctl}(\text{VAL}_i, \text{all VAL})$ — Value percentile
+- $P_i = \text{pctl}(\text{PI}_i, \text{all PI})$ — Pressure percentile
+- $C_i = \text{pctl}(\text{CVD}_i, \text{all CVD})$ — CVD percentile
+
+#### Step 3: Slope Signals (Time-Series)
+Linear regression slope over last 30 minutes of 1-min bucket trail:
+
+- $P_s = \text{clip}\left(\frac{\text{slope}(\text{pressure\_trail}_{30m}) + 2}{4}, 0, 1\right)$ — Pressure slope
+- $C_s = \text{clip}\left(\frac{\text{slope}(\text{cvd\_trail}_{30m}) + 2}{4}, 0, 1\right)$ — CVD slope
+
+Range [-2,+2] mapped to [0,1]. Rising = closer to 1.
+
+#### Step 4: Microstructure Signals
+Direct from OB2 rolling metrics, normalized to 0-1:
+- $B = \text{BSS} / 100$ — Bid Stack Score
+- $O = \text{ATS} / 100$ — Ask Thinning Score
+
+Default 0.5 when OB2 data not yet available.
+
+#### Step 5: Penalty Signals
+
+**Divergence ($D$):**
+- $D = 1$ jika `div_detected && |div_score| > 1.5` (dari footprint)
+- $D = 1$ jika `|CHG%| > 1.5 && |CVD| > 50 && sign(CHG) ≠ sign(CVD)` (heuristic)
+- $D = 0$ otherwise
+
+**Extreme Move ($E$):**
+- Pre-computed: $\mu = \text{mean}(|\text{CHG}|)$, $\sigma = \text{std}(|\text{CHG}|)$
+- $E = 1$ jika $|\text{CHG}_i| > \mu + 2\sigma$
+- $E = 0$ otherwise
+
+#### Step 6: Weighted Formula
+
+$$
+\text{raw} = 0.10 M + 0.10 V + 0.20 P + 0.10 P_s + 0.20 C + 0.10 C_s + 0.10 B + 0.10 O - 0.25 D - 0.10 E
+$$
+
+$$
+\text{score} = \text{round}(100 \times \text{clip}(\text{raw}, 0, 1))
+$$
+
+| Komponen | Bobot | Sumber | Tipe |
+|----------|-------|--------|------|
+| M (CHG%) | 0.10 | IPOT WS + yfinance fallback | Percentile |
+| V (Value) | 0.10 | IPOT WS | Percentile |
+| P (Pressure) | 0.20 | Browser OB2 composite | Percentile |
+| Ps (P slope) | 0.10 | Pressure trail 30m | Normalized slope |
+| C (CVD) | 0.20 | sector-scrapper + footprint | Percentile |
+| Cs (C slope) | 0.10 | CVD trail 30m | Normalized slope |
+| B (BSS) | 0.10 | OB2 bid metrics | Direct 0-1 |
+| O (ATS) | 0.10 | OB2 ask metrics | Direct 0-1 |
+| D (Divergence) | −0.25 | footprint + heuristic | Binary penalty |
+| E (Extreme) | −0.10 | Cross-sectional 2σ | Binary penalty |
+
+**Total positive weight = 1.20** (max raw tanpa penalty = 1.0 saat semua percentile = 1.0 dan slopes maximal).
+Dengan penalty: raw bisa negatif (clipped ke 0).
+
+#### Step 7: Gating Rule
+
+```
+if score > 70:
+    gate_pass = P > 0.6 AND (B > 0.6 OR O > 0.6) AND D == 0
+    if NOT gate_pass:
+        score = min(score, 69)   // Cap ke Watch
+```
+
+Artinya: status "Menguat" (Strong Continuation) **wajib** didukung microstructure yang kuat dan tanpa divergence.
+
+#### Step 8: Stage Labels
+
+| Score | Label Internal | Label UI (Indonesian) | CSS Class | Color |
+|-------|---------------|----------------------|-----------|-------|
+| ≥ 70 | `Strong Continuation` | **Menguat** | `on` | `#10b981` (green) |
+| 50–69 | `Watch` | **Pantau** | `watch` | `#f59e0b` (amber) |
+| < 50 | `Cooling` | **Melemah** | `cool` | `#ef4444` (red) |
+
+SCORE text color matches STATUS badge color via `scoreColor(v)` helper.
+
+### Trail Buffers
+
+#### Pressure Trail
+- **Structure:** 1-min bucket averages, rolling 60 minutes.
+- **Push cadence:** Every 5s micro tick → `pushPressureTick(code)` accumulates into current bucket.
+- **Bucket close:** When elapsed ≥ 60s, average all accumulated values, push to `buckets[]`.
+- **Gap handling:** Carry-forward last value for missed minutes.
+- **Null guard:** If OB2 data missing (PI === null), tick is **not pushed** — prevents flat-50 pollution.
+- **Persistence:** `localStorage` key `ma_pressure_trail_v1`, same-day only.
+- **Use in scoring:** `P` percentile (current value) + `Ps` slope (last 30 buckets).
+
+#### CVD Trail
+- **Structure:** Mirrors pressure trail — 1-min buckets, rolling 60 minutes.
+- **Push cadence:** Every minute tick via `_injectExternalData()` → `pushCvdTick(code, cvdValue)`.
+- **Persistence:** `localStorage` key `ma_cvd_trail_v1`, same-day only.
+- **Use in scoring:** `Cs` slope (last 30 buckets). CVD absolute value comes from external data (`C` percentile).
+
+#### Rank Trail
+- **Structure:** Array of rank values, rolling 60 points. `null` = absent from roster.
+- **Push cadence:** Every minute tick.
+- **Use in scoring:** Reason codes only (rank_improving_15m, rank_deteriorating_5m). Not in weighted formula.
+- **Persistence:** `localStorage` key `ma_rank_trail_v1`, same-day only.
+
+### Performance Mitigations
+
+1. **Debounced `_rebatchScore` on OB2 updates:** During OB2 seed (40-60 symbols in burst), `_handleOb2Update` coalesces via 200ms `setTimeout` debounce, preventing 40-60 redundant full-batch recomputes.
+
+2. **Hoisted ExtremeMove stats:** Mean+std of |CHG%| computed once before the per-symbol loop (O(n) instead of O(n²)).
+
+3. **CHG% fallback in `_rebatchScore`:** When IPOT sends `change_pct=0`, falls back to external data provider's `chg_pct` (yfinance) so M percentile matches the displayed CHG% column.
+
+4. **Batch computation pattern:** `_rebatchScore()` called at 4 trigger points:
+   - Minute tick (roster refresh)
+   - Micro tick (5s pressure update)
+   - OB2 update (debounced)
+   - OB2 seed completion
+
+### Score Tooltip (UI)
+
+Hovering the SCORE cell shows component breakdown:
+```
+M(CHG%)=72  V(Value)=45  P(Pressure)=88  Ps(P.slope)=63
+C(CVD)=91   Cs(C.slope)=55  B(BSS)=78  O(ATS)=65
+Raw=74
+⚠ Divergence (if applicable)
+⚠ ExtremeMove (if applicable)
+🔒 Gated (cap 69) (if applicable)
+```
+
+### v2.0 vs v1 Comparison
+
+| Aspect | v1 (§29) | v2.0 (current) |
+|--------|----------|----------------|
+| Normalization | Per-symbol absolute ranges | Cross-sectional percentile (cohort) |
+| CVD | Not in formula | 20% weight (C) + 10% slope (Cs) |
+| Score range | Compressed 35-44 | Full 0-100 spread |
+| Divergence | None | −25% penalty (D) |
+| Extreme move | None | −10% penalty (E) |
+| Gating | BSS≥65 && ATS≥65 for On Stage | P>0.6 && (B>0.6\|O>0.6) && D=0 for ≥70 |
+| Computation | Per-symbol (N calls) | Batch (1 call for all N) |
+| Activity score | rank + value_accel + vol_accel | M percentile (CHG%) |
+| Persistence | consecutive_minutes_in_topN | Removed (rank trail used for reason codes only) |
+| Governance penalty | FCA/suspend/UMA | Deferred (FR-9, `risk_memory_missing=true`) |
+| Session thresholds | Pre-open/regular/late modifiers | Removed (percentile self-adjusts) |
+
+---
+
 ## 30) Threshold Operasional per Sesi (Initial)
 
 Untuk mengurangi false signal antar fase market:
@@ -763,33 +986,49 @@ at minute close:
 
 ## 32) Reason Code Matrix (Deterministik)
 
-Gunakan reason code berikut agar explainability konsisten lintas service:
+Gunakan reason code berikut agar explainability konsisten lintas service.
 
-### Positif
-- `rank_improving_5m`
-- `rank_improving_15m`
-- `bid_stack_persistent`
-- `ask_thinning_consistent`
-- `tight_spread`
-- `high_persistence_topN`
+> **Updated 2026-03-05:** Reason codes v2.0 — aligned with `_buildReasonCodesV2()` in pipeline.
 
-### Netral/Watch
-- `mixed_microstructure`
-- `rank_flat`
-- `spread_normal`
+### Positif (v2.0)
+| Code | Trigger | Weight proxy |
+|------|---------|-------------|
+| `pressure_dominant` | P > 0.75 | P |
+| `pressure_rising` | Ps > 0.7 | Ps |
+| `cvd_dominant` | C > 0.75 | C |
+| `cvd_accelerating` | Cs > 0.7 | Cs |
+| `bid_stack_persistent` | B > 0.65 | B |
+| `ask_thinning_consistent` | O > 0.65 | O |
+| `high_value_institutional` | V > 0.8 | V |
+| `strong_momentum` | M > 0.75 | M |
+| `rank_improving_15m` | rank delta 15m < -3 | |delta|/10 |
+| `continuation_candidate` | gatedScore 70-99 | 0.5 |
 
-### Negatif
-- `ask_wall_reappearing`
-- `bid_pullback_fast`
-- `spread_widening`
-- `rank_deteriorating_5m`
-- `fca_penalty_applied`
-- `suspend_penalty_applied`
+### Negatif (v2.0)
+| Code | Trigger | Weight proxy |
+|------|---------|-------------|
+| `divergence_detected` | D = 1 | 0.95 |
+| `extreme_move_caution` | E = 1 | 0.90 |
+| `pressure_weak` | P < 0.3 | 1 − P |
+| `pressure_fading` | Ps < 0.3 | 1 − Ps |
+| `cvd_weak` | C < 0.3 | 1 − C |
+| `cvd_decelerating` | Cs < 0.3 | 1 − Cs |
+| `bid_pullback_fast` | B < 0.35 | 1 − B |
+| `ask_wall_reappearing` | O < 0.35 | 1 − O |
+| `rank_deteriorating_5m` | rank delta 5m > +2 | delta/10 |
+
+### Removed from v1
+- `rank_improving_5m` — replaced by `strong_momentum` (percentile-based)
+- `tight_spread` — absorbed into Pressure Index composite
+- `high_persistence_topN` — persistence removed from v2 formula
+- `mixed_microstructure` — replaced by specific component codes
+- `rank_flat`, `spread_normal`, `spread_widening` — removed
+- `fca_penalty_applied`, `suspend_penalty_applied` — deferred (FR-9)
 
 Rule output:
-- minimal 3 code,
+- minimal 2 code (padded with `neutral` if needed),
 - maksimal 6 code,
-- urut berdasarkan absolute contribution score terbesar.
+- urut berdasarkan absolute weight proxy terbesar.
 
 ---
 
@@ -885,12 +1124,14 @@ Fokus tahap ini adalah membuat keputusan cepat untuk trader: **lanjut**, **wait*
 ## 38) UX Components (Definitif)
 
 ### 38.1 `StageBadge`
-- Value: `On Stage`, `Watch`, `Cooling`.
-- Warna:
-	- Hijau = On Stage
-	- Amber = Watch
-	- Merah = Cooling
+- Internal value: `Strong Continuation`, `Watch`, `Cooling`.
+- **Label UI (Indonesian):**
+	- **Menguat** (≥70) — Hijau `#10b981` — CSS class `on`
+	- **Pantau** (50-69) — Amber `#f59e0b` — CSS class `watch`
+	- **Melemah** (<50) — Merah `#ef4444` — CSS class `cool`
 - Tooltip wajib: reason top-3.
+- SCORE text color matches badge color via `scoreColor(v)` helper.
+- Mapper: `rosterStageFromLabel(label)` → `{ label, cls }`
 
 ### 38.2 `DualMicroBar`
 - Menampilkan `BSS` dan `ATS` berdampingan.
@@ -940,9 +1181,11 @@ Fokus tahap ini adalah membuat keputusan cepat untuk trader: **lanjut**, **wait*
 ## 40) UX Copy & Labeling
 
 Gunakan label pendek dan konsisten:
-- `Masih Manggung` = On Stage
-- `Perlu Konfirmasi` = Watch
-- `Mulai Dingin` = Cooling
+- **`Menguat`** = Strong Continuation (score ≥ 70)
+- **`Pantau`** = Watch (score 50-69)
+- **`Melemah`** = Cooling (score < 50)
+
+> Label Indonesia dipilih untuk konsistensi dengan user base. Internal label tetap English untuk logging/debug.
 
 Microcopy contoh:
 - `BSS kuat, ATS kuat, rank naik 15m`.
@@ -1376,3 +1619,92 @@ Browser opens page                   api-saham                         R2
 | Phase 3 | OB2 minute summary coverage for top-N | 100% for subscribed symbols | Manifest audit |
 | Phase 4 | Continuation signal precision | ≥ 0.62 (per PRD §33) | Backtest after 20 days |
 | Phase 4 | Pre-market view load time | < 1s | Browser performance |
+
+---
+
+## 51) Column Audit — Roster Table (11 Columns)
+
+> **Audited 2026-03-05.** Every column verified end-to-end: data source → logic → business rule → presentation → sort → performance.
+
+### Table Headers (with tooltips)
+All `<th>` elements have `title` attributes explaining meaning, formula role, and weight.
+
+### Column-by-Column
+
+#### 51.1 `#` (Rank)
+- **Source:** IPOT WS `xen_qu_top_stock_gl` → dual G/L query (cmdid 94 gainers, 95 losers) → merged, deduped → sorted by `|CHG%|` DESC → `rank = idx + 1`.
+- **Sort:** Default ASC. `_getSortValue` returns `r.rank_now`.
+- **Verified:** ✅
+
+#### 51.2 `EMITEN` (Symbol)
+- **Source:** Column 0 of IPOT record. Validated: `.trim().toUpperCase()`, regex `/^[A-Z]{2,6}$/`.
+- **Presentation:** Logo from `api-saham/logo?symbol=`, `onerror` hides image.
+- **Clickable:** Navigates to `emiten/broker-summary.html?kode=`.
+- **Verified:** ✅
+
+#### 51.3 `LAST` (Last Price)
+- **Source:** Primary: IPOT WS `r.last_price` (fieldnames `p_close` — despite name, this IS current price). Fallback: `_closePriceMap.close` (yfinance D1).
+- **Sort:** Same fallback chain in `_getSortValue('last_price')`.
+- **Presentation:** `toLocaleString('id-ID')`, "—" when 0. Tooltip: close_date + prev_close + prev_date.
+- **Verified:** ✅
+
+#### 51.4 `CHG%` (Change Percent)
+- **Source:** Primary: IPOT WS `r.change_pct` (fieldnames `pchg`). Fallback 1: yfinance `(close-prev_close)/prev_close`. Fallback 2: `_footprintMap.growth_pct`.
+- **Consistency:** Same 3-tier fallback in: display, sort, external data provider, scoring `_rebatchScore`.
+- **Presentation:** `+` prefix for positive, `.toFixed(2)%`, green/red CSS class.
+- **Verified:** ✅ (fixed: `_rebatchScore` now falls back to `ext.chg_pct` when IPOT sends 0)
+
+#### 51.5 `VALUE` (Trading Value)
+- **Source:** IPOT WS `r.value` (fieldnames `tval`). Always unsigned/positive.
+- **In scoring:** V percentile via `batchComputeV2`.
+- **Presentation:** `formatRosterValue(v)` → `toLocaleString('id-ID')`.
+- **Verified:** ✅
+
+#### 51.6 `CVD` (Cumulative Volume Delta)
+- **Source:** Primary: `_sectorCvdMap.cvd_lot` (sector-scrapper, ~862 symbols, every 3 min). Fallback: `_footprintMap.cvd` (footprint summary, every 2 min).
+- **Sort:** Same priority chain in `_getSortValue('cvd')`.
+- **In scoring:** C percentile + Cs slope (CVD trail 30m).
+- **Presentation:** `formatCvd(v)` → K/M suffix, green/red color, +/- prefix. "—" when null.
+- **Note:** CVD trail only pushes on minute tick (by design — CVD is a point-in-time value, not streaming).
+- **Verified:** ✅
+
+#### 51.7 `PRESSURE IDX` (Sparkline)
+- **Source:** Browser-computed: `0.40×BSS + 0.40×ATS + 0.20×spread_health`. From OB2 rolling metrics.
+- **Trail:** 1-min bucket averages, rolling 60 min. Pushed every 5s micro tick. `null` guard prevents flat-50.
+- **In scoring:** P percentile (current value) + Ps slope (last 30 buckets).
+- **Presentation:** `pressureSpark(trail)` — SVG area-line, auto-scaled Y, trend color, last-value label.
+- **Persistence:** `localStorage` key `ma_pressure_trail_v1`, same-day only.
+- **Verified:** ✅
+
+#### 51.8 `BID MENEBAL` (BSS — Bid Stack Score)
+- **Source:** `Ob2RollingMetrics._bss` — bid delta 45% + refill rate 35% + best-bid stability 20%.
+- **Window:** 60 OB2 ticks (~5 min of 5s ticks).
+- **In scoring:** B = BSS/100 (direct 0-1). Gate: B>0.6 required for score>70.
+- **Presentation:** Mini track bar + `rosterColor()` (green ≥65, amber 45-64, red <45). "—" when OB2 missing.
+- **Note:** Visual threshold (65) ≠ scoring gate threshold (60) — intentionally different contexts.
+- **Verified:** ✅
+
+#### 51.9 `OFFER MENIPIS` (ATS — Ask Thinning Score)
+- **Source:** `Ob2RollingMetrics._ats` — ask drop 45% + eaten rate 35% + wall reappear penalty 20%.
+- Same window, scoring role, and presentation pattern as BSS.
+- **Verified:** ✅
+
+#### 51.10 `SCORE` (Continuation Score v2.0)
+- **Source:** `batchComputeV2()` — see §29-V2 for full formula.
+- **Sort:** Sortable via `data-sort="stage_score"`.
+- **Presentation:** `scoreColor(v)` matches STATUS colors. Tooltip shows M/V/P/Ps/C/Cs/B/O breakdown + penalty flags.
+- **Performance:** Debounced on OB2 updates (200ms). ExtremeMove stats hoisted (O(n)).
+- **Verified:** ✅
+
+#### 51.11 `STATUS` (Stage Label)
+- **Source:** Pure function of `stage_score`: ≥70 → Menguat, 50-69 → Pantau, <50 → Melemah.
+- **Presentation:** CSS badge `.roster-stage.{on|watch|cool}`. Same color as SCORE text.
+- **Verified:** ✅ — aligned 100% with SCORE, no separate logic.
+
+### Issues Found & Fixed (2026-03-05)
+
+| # | Severity | Issue | Fix |
+|---|----------|-------|-----|
+| 1 | Medium | `_rebatchScore` used IPOT-only `change_pct` for M percentile; when IPOT sends 0 but yfinance has real value, score was wrong while display was correct | Falls back to `_externalData.chg_pct` when IPOT value is 0 |
+| 2 | Low | ExtremeMove mean+std recomputed per-symbol inside loop (O(n²)) | Hoisted outside loop — computed once |
+| 3 | Low | `_handleOb2Update` called `_rebatchScore` per-symbol without debounce during OB2 seed (40-60 burst) | Added 200ms setTimeout debounce |
