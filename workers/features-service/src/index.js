@@ -368,17 +368,10 @@ export default {
                 // (replaces old footprint-based RVOL which was unreliable due to data gaps)
             }
 
-            // 4.7: Compute hybrid CVD (footprint ratio × yfinance volume) → D1
-            // PERF: Only run full yfinance fetch after 09:30 UTC (16:30 WIB) when yfinance cron
-            // has updated the 1d/15m files. During intraday */5 cron runs, skip expensive R2 reads.
-            // HTTP requests (url != null) always run full fetch for testing.
-            const isHttpTrigger = !!url;
-            const nowHourUTC = new Date().getUTCHours();
-            const nowMinUTC  = new Date().getUTCMinutes();
-            const afterYfinanceCron = nowHourUTC > 9 || (nowHourUTC === 9 && nowMinUTC >= 45);
-            const skipYf = !isHttpTrigger && !afterYfinanceCron;
+            // 4.7: Update fp columns (footprint ratio × volume) in yfinance_1d
+            // No R2 reads — storeCvdDaily now just UPDATEs existing yfinance_1d rows.
             try {
-                await this.storeCvdDaily(env, processedStatsMaps, allTickerSet, { skipYfinanceFetch: skipYf });
+                await this.storeCvdDaily(env, processedStatsMaps, allTickerSet);
             } catch (e) {
                 console.warn('[CVD-D1] storeCvdDaily failed (non-fatal):', e?.message);
             }
@@ -755,58 +748,33 @@ export default {
     },
 
     /**
-     * Compute hybrid CVD per ticker per day and upsert into D1 `cvd_daily`.
+     * Compute hybrid CVD per ticker per day and UPDATE yfinance_1d fp columns.
      * ratio = fp_net / fp_vol (directional signal from broksum footprint)
-     * est_delta = yf_vol × ratio (calibrated with Yahoo Finance official volume)
+     * est_delta = volume × ratio (calibrated with Yahoo Finance official volume)
      *
-     * Called once per cron cycle. Only writes days that have BOTH sources.
+     * Only updates D0 + D1 (today + yesterday). fp_vol/fp_net/ratio/est_delta
+     * are written into the yfinance_1d table alongside the existing OHLCV + indicators.
      */
     async storeCvdDaily(env, processedStatsMaps, allTickers, opts = {}) {
         const allDates = processedStatsMaps._dates;
         if (!allDates?.length || !allTickers?.size) return 0;
 
-        // PERF: Only upsert D0 (today) + D1 (yesterday) to stay within subrequest limits.
-        // Historical rows are already persisted from prior daily cron runs.
-        // This keeps R2 reads to ~800 tickers × 1 month (1d) + ~800 × 1 date (15m) ≈ 1600.
-        const dates = allDates.slice(0, 2);
-        const tickerArr = [...allTickers];
+        const dates = allDates.slice(0, 2); // D0 + D1 only
 
-        // If skipYfinanceFetch=true (intraday */5 runs before yfinance cron),
-        // only upsert footprint-only rows and reuse existing yfinance data from D1.
-        let yfVolMap = new Map();
-        let yfVwapMap = new Map();
-
-        if (!opts.skipYfinanceFetch) {
-            // 1. Fetch yfinance 1d data (volume + close) for D0+D1 (same monthly file = 1 read/ticker)
-            //    Fetch 15m VWAP only for today (dates[0]) — yesterday's VWAP already in D1
-            const todayDate = dates[0];
-            [yfVolMap, yfVwapMap] = await Promise.all([
-                this.fetchYfinanceVolumeMap(env, tickerArr, dates),
-                this.fetchYfinance15mVwapMap(env, tickerArr, [todayDate]),
-            ]);
-            console.log(`[CVD-D1] yfinance 1d loaded for ${yfVolMap.size} tickers (D0+D1), 15m VWAP for ${yfVwapMap.size} tickers (today only)`);
-        } else {
-            console.log(`[CVD-D1] Skipping yfinance R2 fetch (intraday mode, before yfinance cron)`);
-        }
-
-        // 1b. Load existing D1 rows to preserve yf_vol/yf_close/yf_vwap when skipping yfinance fetch
-        const existingD1 = new Map(); // "ticker|date" → { yf_vol, yf_close, yf_vwap }
+        // Load existing yfinance_1d rows for volume fallback
+        const existingD1 = new Map(); // "ticker|date" → { volume }
         try {
             const ph = dates.map(() => '?').join(',');
             const { results } = await env.SSSAHAM_DB.prepare(
-                `SELECT ticker, date, yf_vol, yf_close, yf_vwap FROM cvd_daily WHERE date IN (${ph})`
+                `SELECT ticker, date, volume FROM yfinance_1d WHERE date IN (${ph})`
             ).bind(...dates).all();
             for (const r of (results || [])) {
-                existingD1.set(`${r.ticker}|${r.date}`, {
-                    yf_vol:   r.yf_vol   != null ? Number(r.yf_vol)   : null,
-                    yf_close: r.yf_close != null ? Number(r.yf_close) : null,
-                    yf_vwap:  r.yf_vwap  != null ? Number(r.yf_vwap)  : null,
-                });
+                existingD1.set(`${r.ticker}|${r.date}`, { volume: Number(r.volume) || 0 });
             }
         } catch { /* non-fatal */ }
 
-        // 2. Build rows to upsert
-        const rows = [];
+        // Build UPDATE statements for fp columns
+        const stmts = [];
         for (let i = 0; i < dates.length; i++) {
             const dt = dates[i];
             const statsMap = processedStatsMaps[i];
@@ -818,68 +786,28 @@ export default {
                 if (!Number.isFinite(fpVol) || fpVol <= 0 || !Number.isFinite(fpNet)) continue;
 
                 const ratio = fpNet / fpVol;
-                const existing = existingD1.get(`${ticker}|${dt}`);
-
-                // yfinance volume + close: prefer fresh fetch, then D1 cache, then fp fallback
-                const yfEntry = yfVolMap.get(ticker)?.get(dt);
-                const yfVol   = yfEntry?.volume ?? existing?.yf_vol ?? null;
-                const yfClose = yfEntry?.close  ?? existing?.yf_close ?? null;
-                // 15m VWAP: prefer fresh fetch (today only), then D1 cache
-                const freshVwap = yfVwapMap.get(ticker)?.get(dt) ?? null;
-                const yfVwap  = freshVwap ?? existing?.yf_vwap ?? null;
-
+                const yfVol = existingD1.get(`${ticker}|${dt}`)?.volume || fpVol;
                 const estDelta = Number.isFinite(yfVol) && yfVol > 0 ? yfVol * ratio : fpNet;
-                const finalYfVol = Number.isFinite(yfVol) && yfVol > 0 ? yfVol : fpVol;
 
-                rows.push({ ticker, date: dt, fpVol, fpNet, yfVol: finalYfVol, ratio, estDelta, yfClose, yfVwap });
+                stmts.push(
+                    env.SSSAHAM_DB.prepare(
+                        `UPDATE yfinance_1d SET fp_vol = ?, fp_net = ?, ratio = ?, est_delta = ?
+                         WHERE ticker = ? AND date = ?`
+                    ).bind(fpVol, fpNet, parseFloat(ratio.toFixed(6)),
+                           parseFloat(estDelta.toFixed(2)), ticker, dt)
+                );
             }
         }
 
-        // 2b. Also create rows for tickers with yfinance 1d data but NO footprint data.
-        // This enables RVOL computation for ZSCORE-only tickers that have yfinance coverage.
-        if (!opts.skipYfinanceFetch && yfVolMap.size > 0) {
-            const existingKeys = new Set(rows.map(r => `${r.ticker}|${r.date}`));
-            for (const dt of dates) {
-                for (const [ticker, dateData] of yfVolMap) {
-                    const key = `${ticker}|${dt}`;
-                    if (existingKeys.has(key)) continue;
-                    const entry = dateData.get(dt);
-                    if (!entry || !Number.isFinite(entry.volume) || entry.volume <= 0) continue;
-                    const existing = existingD1.get(key);
-                    const freshVwap = yfVwapMap.get(ticker)?.get(dt) ?? null;
-                    const yfVwap = freshVwap ?? existing?.yf_vwap ?? null;
-                    rows.push({
-                        ticker, date: dt,
-                        fpVol: 0, fpNet: 0,
-                        yfVol: entry.volume,
-                        ratio: 0, estDelta: 0,
-                        yfClose: entry.close ?? null,
-                        yfVwap
-                    });
-                    existingKeys.add(key);
-                }
-            }
-        }
+        if (stmts.length === 0) return 0;
 
-        if (rows.length === 0) return 0;
-
-        // 3. Batch upsert to D1 (chunks of 50 for Cloudflare D1 batch limit)
         const CHUNK = 50;
         let written = 0;
-        for (let i = 0; i < rows.length; i += CHUNK) {
-            const chunk = rows.slice(i, i + CHUNK);
-            const stmts = chunk.map(r =>
-                env.SSSAHAM_DB.prepare(
-                    `INSERT OR REPLACE INTO cvd_daily (ticker, date, fp_vol, fp_net, yf_vol, ratio, est_delta, yf_close, yf_vwap)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-                ).bind(r.ticker, r.date, r.fpVol, r.fpNet, r.yfVol,
-                       parseFloat(r.ratio.toFixed(6)), parseFloat(r.estDelta.toFixed(2)),
-                       r.yfClose, r.yfVwap)
-            );
-            await env.SSSAHAM_DB.batch(stmts);
-            written += chunk.length;
+        for (let i = 0; i < stmts.length; i += CHUNK) {
+            await env.SSSAHAM_DB.batch(stmts.slice(i, i + CHUNK));
+            written += Math.min(CHUNK, stmts.length - i);
         }
-        console.log(`[CVD-D1] upserted ${written} rows (with close + vwap)`);
+        console.log(`[CVD-D1] updated ${written} fp rows in yfinance_1d`);
         return written;
     },
 
@@ -902,10 +830,10 @@ export default {
             const { results } = await env.SSSAHAM_DB.prepare(
                 `SELECT ticker,
                         SUM(est_delta) as sum_delta,
-                        SUM(yf_vol)    as sum_vol,
-                        AVG(yf_vol)    as avg_vol
-                 FROM cvd_daily
-                 WHERE date IN (${placeholders})
+                        SUM(volume)    as sum_vol,
+                        AVG(volume)    as avg_vol
+                 FROM yfinance_1d
+                 WHERE date IN (${placeholders}) AND est_delta IS NOT NULL
                  GROUP BY ticker`
             ).bind(...windowDates).all();
 
