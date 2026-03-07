@@ -186,10 +186,13 @@ export default {
             const footprintMap = new Map();
             footprintData.forEach(fp => footprintMap.set(fp.ticker, fp));
 
-            // 3. MERGE: Union of footprint + context tickers
+            // 3. MERGE: Union of footprint + context + processed-stats tickers
+            // processed-stats adds ~1264 tickers from broksum data, covering items
+            // that have no D1 footprint candles and no z-score context but DO trade.
             const allTickers = new Set([
                 ...footprintData.map(fp => fp.ticker),
-                ...contextData.map(c => c.ticker).filter(t => this.isValidTicker(t))
+                ...contextData.map(c => c.ticker).filter(t => this.isValidTicker(t)),
+                ...[...processedStatsMap.keys()].filter(t => this.isValidTicker(t))
             ]);
             console.log(`Step 3: Merged ticker set = ${allTickers.size} unique tickers`);
 
@@ -285,13 +288,15 @@ export default {
                         items.push(item);
                         withFootprint++;
                     }
-                } else if (ctx) {
-                    // ZSCORE ONLY: Create item from context data
-                    const item = this.calculateZscoreOnlyItem(ticker, ctx);
+                } else if (ctx || processedStatsMap.has(ticker)) {
+                    // ZSCORE / BROKSUM-ONLY: Create base item from z-score context
+                    // (or empty shell if no context but has processed stats)
+                    const item = ctx
+                        ? this.calculateZscoreOnlyItem(ticker, ctx)
+                        : this.calculateZscoreOnlyItem(ticker, { hist_z_ngr: 0, hist_state: 'NEUTRAL' });
                     if (item) {
-                        // Enrich ZSCORE-only items with processed stats (d/p/div/freq/growth)
-                        // Same pattern as sparse items (candle_count < 30) enrichment above.
-                        // processed/{date}.json has 1264 tickers — covers ALL ZSCORE-only items.
+                        // Enrich with processed stats (d/p/div/freq/growth)
+                        // processed/{date}.json has ~1264 tickers from broksum.
                         const stats = processedStatsMap.get(ticker);
                         const prevStats = prevProcessedStatsMap.get(ticker);
 
@@ -331,9 +336,16 @@ export default {
                             }
 
                             item.enriched_from = 'processed_stats';
+
+                            // FIX: Change signal from NO_INTRADAY so frontend gate
+                            // (hasIntradayData = sig !== 'NO_INTRADAY') allows
+                            // d/p/div/cvd to render. We now HAVE data from broksum.
+                            if (item.sig === 'NO_INTRADAY') {
+                                item.sig = 'NEUTRAL';
+                            }
                         }
 
-                        item.src = 'ZSCORE';  // Source indicator
+                        item.src = ctx ? 'ZSCORE' : 'BROKSUM';  // Source indicator
                         items.push(item);
                         zscoreOnly++;
                     }
