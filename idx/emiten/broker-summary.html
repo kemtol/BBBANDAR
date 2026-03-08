@@ -250,6 +250,67 @@
             .broker-table-mobile {
                 font-size: 0.85rem;
             }
+
+            /* ── Filter/Preset labels: hide on mobile ── */
+            #filter-row > span:first-child,
+            #filter-row-2 > span:first-child {
+                display: none !important;
+            }
+
+            /* ── Search bar: full width ── */
+            #search-hint-row {
+                justify-content: center !important;
+            }
+            #search-hint-row > div:first-child,
+            #search-hint-row > small {
+                display: none !important;
+            }
+            #emiten-search {
+                width: 100% !important;
+            }
+
+            /* ── Table: hide all group colspan headers ── */
+            .thead-group-row th[colspan] {
+                display: none !important;
+            }
+
+            /* ── Table: hide Orderflow sub-columns (Mom%, Absorb) ── */
+            th[data-sort="order_mom_pct"],
+            th[data-sort="order_absorb"],
+            .of-mom, .of-absorb {
+                display: none !important;
+            }
+
+            /* ── Table: hide CVD Δ% 1D column ── */
+            .of-cvd {
+                display: none !important;
+            }
+
+            /* ── Table: hide Foreign/Local/Smart/Flow/Effort/RVOL/VWAP/CVD-multi groups ── */
+            .col-fflw, .col-lflw, .col-smny, .col-flow, .col-eff,
+            .col-cvdm, .col-rvol, .col-vwp {
+                display: none !important;
+            }
+
+            /* ── Table: hide State, Value, Quadrant ── */
+            th[data-sort="state"],
+            th[data-sort="order_net_value"],
+            th[data-sort="order_quadrant"],
+            .of-state, .of-value, .of-q {
+                display: none !important;
+            }
+
+            /* ── Tighten up table spacing ── */
+            .table-orderflow td, .table-orderflow th {
+                padding: 0.35rem 0.3rem !important;
+                font-size: 0.8rem;
+            }
+
+            /* ── Container: no horizontal padding ── */
+            #app.container {
+                padding-left: 4px !important;
+                padding-right: 4px !important;
+            }
         }
 
         @media (max-width: 576px) {
@@ -815,7 +876,7 @@
                 <!-- Row 1: Presets -->
                 <div class="d-flex justify-content-between align-items-center mb-2">
                     <div class="d-flex align-items-center flex-wrap">
-                        <span class="text-muted fw-bold text-uppercase"
+                        <span class="text-muted fw-bold text-uppercase hide-mobile"
                             style="font-size:0.85rem; letter-spacing:0.5px;width: 75px;">Preset</span>
                         <div class="btn-group btn-group-sm" id="preset-selector">
                             <a href="#" class="btn btn-outline-secondary btn-sm active"
@@ -839,7 +900,7 @@
                         <small class="text-muted d-none" id="preset-desc" style="font-size:0.85rem;">Tanpa
                             filter</small>
                     </div>
-                    <div class="d-flex align-items-center gap-2 ms-auto">
+                    <div class="d-flex align-items-center gap-2 ms-auto hide-mobile">
                         <small class="text-muted" id="screener-count"></small>
                         <div class="dropdown">
                             <button class="btn btn-sm btn-outline-secondary dropdown-toggle py-0 px-2" type="button"
@@ -1244,10 +1305,10 @@
                 <!-- Row 3: Active filter pills -->
                 <div id="active-pills" class="d-flex flex-wrap gap-1 mb-1" style="min-height:0;"></div>
             </div>
-            <div class="d-flex justify-content-between align-items-center border-bottom py-2"
+            <div id="search-hint-row" class="d-flex justify-content-between align-items-center border-bottom py-2"
                 style="line-height:normal">
-                <div style="min-width:220px;"></div>
-                <small class="small text-muted flex-grow-1 text-center"
+                <div class="hide-mobile" style="min-width:220px;"></div>
+                <small class="small text-muted flex-grow-1 text-center hide-mobile"
                     style="font-size: 0.75rem;line-height:normal">Shift+Scroll untuk geser
                     ke kiri/kanan</small>
                 <div class="d-flex align-items-center gap-1">
@@ -1295,8 +1356,12 @@
                                     </button>
                                     Claude <i class="fa-solid fa-sort small text-muted"></i>
                                 </th>
-                                <!-- Group: Orderflow (3 cols) -->
-                                <th colspan="3" class="text-center thead-group-label">Orderflow</th>
+                                <th rowspan="2" class="text-center" data-sort="order_delta_pct"
+                                    style="cursor:pointer; white-space: nowrap;"
+                                    title="HAKA% = (CVD% + 100) / 2.&#10;Buy on ask pressure ratio (0-100%).&#10;>50% = dominasi buyer, <50% = dominasi seller.&#10;Hover untuk raw net delta lot.">HAKA <i
+                                        class="fa-solid fa-sort small text-muted"></i></th>
+                                <!-- Group: Orderflow (2 cols: Mom%, Absorb) -->
+                                <th colspan="2" class="text-center thead-group-label">Orderflow</th>
                                 <!-- Group: Cum Volume Delta (5 cols) -->
                                 <th colspan="5" class="text-center thead-group-label">Volume Delta</th>
                                 <!-- Group: Foreign Flow (4 cols) -->
@@ -1327,12 +1392,8 @@
                             </tr>
                             <!-- Row 2: Column Sub-Headers -->
                             <tr>
-                                <!-- Orderflow -->
-                                <th class="text-center thead-group-label" data-sort="order_delta_pct"
-                                    style="cursor:pointer; white-space: nowrap;"
-                                    title="HAKA% = (CVD% + 100) / 2.&#10;Buy on ask pressure ratio (0-100%).&#10;>50% = dominasi buyer, <50% = dominasi seller.&#10;Hover untuk raw net delta lot.">
-                                    HAKA <i class="fa-solid fa-sort small text-muted"></i></th>
-                                <th class="text-center" data-sort="order_mom_pct"
+                                <!-- Orderflow (Mom%, Absorb) -->
+                                <th class="text-center thead-group-label" data-sort="order_mom_pct"
                                     style="cursor:pointer; white-space: nowrap;"
                                     title="Mom% = (close_today − close_5d_ago) / close_5d_ago × 100.&#10;Relative Momentum 5 hari kebelakang.">
                                     Mom% <i class="fa-solid fa-sort small text-muted"></i></th>
@@ -1341,7 +1402,7 @@
                                     title="Absorb = |Δ%| / (1 + |Mom%|).&#10;Tinggi = potensi breakout.">
                                     Absorb <i class="fa-solid fa-sort small text-muted"></i></th>
                                 <!-- Cum Volume Delta -->
-                                <th class="text-center" data-sort="order_delta_pct"
+                                <th class="text-center hide-mobile" data-sort="order_delta_pct"
                                     style="cursor:pointer; white-space: nowrap;"
                                     title="CVD% = net_delta / volume × 100.&#10;Rasio delta terhadap total volume.&#10;Positif = dominasi buyer, Negatif = dominasi seller.&#10;Hover untuk raw CVD lot.">
                                      Δ% <i class="fa-solid fa-sort small text-muted"></i></th>
@@ -1706,7 +1767,7 @@
     <script src="../js/component.js?v=73"></script>
 
     <!-- MAIN APP LOGIC -->
-    <script src="../js/broker-summary.js?v=88"></script>
+    <script src="../js/broker-summary.js?v=89"></script>
     <script defer
         src="https://static.cloudflareinsights.com/beacon.min.js/vcd15cbe7772f49c399c6a5babf22c1241717689176015"
         data-cf-beacon='{"version":"2024.11.0","token":"0e06ac31f3fc47b3ab72d7670102e368","r":1,"server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}'

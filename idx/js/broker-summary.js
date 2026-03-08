@@ -2436,9 +2436,9 @@ function renderScreenerTable(candidates) {
                 <td class="text-center swg5-cell d-none">${fmtProbCell(item.swg5)}</td>
                 <td class="text-center claude-cell ${typeof item.claude_score === 'number' ? 'claude-revealed-instant' : 'claude-locked'}">${fmtClaudeCell(item.claude_score)}</td>
                 <td class="text-center of-delta">${fmtHaka(item.order_delta_pct, item.order_cvd)}</td>
-                <td class="text-center of-mom">${fmtPct(item.order_mom_pct)}</td>
-                <td class="text-center of-absorb">${fmtAbsorb(item.order_absorb)}</td>
-                <td class="text-center of-cvd">${fmtCvdPct(item.order_delta_pct, item.order_cvd)}</td>
+                <td class="text-center of-mom hide-mobile">${fmtPct(item.order_mom_pct)}</td>
+                <td class="text-center of-absorb hide-mobile">${fmtAbsorb(item.order_absorb)}</td>
+                <td class="text-center of-cvd hide-mobile">${fmtCvdPct(item.order_delta_pct, item.order_cvd)}</td>
                 <td class="text-center hide-mobile col-h2 col-cvdm of-cvd-2d">${fmtCvdPct(item.cvd_pct_2d, item.order_cvd_2d)}</td>
                 <td class="text-center hide-mobile col-h5 col-cvdm of-cvd-5d">${fmtCvdPct(item.cvd_pct_5d, item.order_cvd_5d)}</td>
                 <td class="text-center hide-mobile col-h10 col-cvdm of-cvd-10d">${fmtCvdPct(item.cvd_pct_10d, item.order_cvd_10d)}</td>
@@ -2471,9 +2471,9 @@ function renderScreenerTable(candidates) {
                 <td class="text-center col-h5 col-eff">${getBadge(m.effort5, 'effort')}</td>
                 <td class="text-center hide-mobile col-h10 col-eff">${getBadge(m.effort10, 'effort')}</td>
                 <td class="text-center hide-mobile col-h20 col-eff">${getBadge(m.effort20, 'effort')}</td>
-                <td class="text-center">${getStateText(item.state)}</td>
-                <td class="text-center of-value">${fmtValue(item.order_net_value)}</td>
-                <td class="text-center of-q">${fmtQuadrant(item.order_quadrant)}</td>
+                <td class="text-center of-state hide-mobile">${getStateText(item.state)}</td>
+                <td class="text-center of-value hide-mobile">${fmtValue(item.order_net_value)}</td>
+                <td class="text-center of-q hide-mobile">${fmtQuadrant(item.order_quadrant)}</td>
             </tr>
         `;
         tbody.append(row);
