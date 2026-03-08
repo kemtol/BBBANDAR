@@ -1,11 +1,17 @@
 const WORKER_BASE_URL = "https://api-saham.mkemalw.workers.dev";
 const SECTOR_SCRAPPER_BASE_URL = "https://sector-scrapper.mkemalw.workers.dev";
+const YFINANCE_BASE_URL = "https://yfinance-handler.mkemalw.workers.dev";
 
 // Cache: symbol (uppercase) → digest { freq_tx, growth_pct, price_open, price_last, ... }
-// Populated by prefillSectorDigest() on page load and refreshed every SECTOR_DIGEST_TTL_MS.
+// Populated by prefillSectorDigest() on page load — now a FALLBACK after yfinance D1.
 const sectorDigestCache = new Map();
 let sectorDigestLoadedAt = 0;
 const SECTOR_DIGEST_TTL_MS = 10 * 60 * 1000; // refresh every 10 min
+
+// yfinance D1 cache: symbol → { close, prev_close, volume, growth_pct, delta_pct, mom_pct, est_delta, ... }
+const yfinanceD1Cache = new Map();
+let yfinanceD1LoadedAt = 0;
+const YFINANCE_D1_TTL_MS = 10 * 60 * 1000; // refresh every 10 min
 
 const urlParams = new URLSearchParams(window.location.search);
 const kodeParam = urlParams.get('kode');
@@ -152,6 +158,7 @@ const activeFilters = {
     zeffort: 'any',   // any | 2gt5 | 2gt10 | 2gt20 | 5gt10 | 5gt20 | 10gt20 | ladderUp
     zngr:    'any',   // any | 2gt5 | 2gt10 | 2gt20 | 5gt10 | 5gt20 | 10gt20 | ladderUp
     zvwap:   'any',   // any | 2gt5 | 2gt10 | 2gt20 | 5gt10 | 5gt20 | 10gt20 | ladderUp
+    zcvd:    'any',   // any | 2gt5 | 2gt10 | 2gt20 | 5gt10 | 5gt20 | 10gt20 | ladderUp | allPos | allNeg
     effort:  'any',   // any | high | positive
     state:   'any',   // any | accum | markup
     horizon:  'any',   // any | 2 | 5 | 10 | 20
@@ -179,7 +186,7 @@ const columnGroupVisibility = { fflw: true, lflw: true, smny: true, cvdm: true, 
 let _urlPushTimer = null;
 let _suppressUrlPush = false; // Guard: prevent pushing URL during popstate restore
 const URL_STATE_DEFAULTS = {
-    activeFilters: { foreign:'any', smart:'any', local:'any', streak:'any', zeffort:'any', zngr:'any', zvwap:'any', effort:'any', state:'any', horizon:'any', quadrant:'any' },
+    activeFilters: { foreign:'any', smart:'any', local:'any', streak:'any', zeffort:'any', zngr:'any', zvwap:'any', zcvd:'any', effort:'any', state:'any', horizon:'any', quadrant:'any' },
     sortKey: 'sm2', sortDesc: true, page: 1
 };
 
@@ -327,10 +334,10 @@ function updateViewButtonLabel() {
 
 // Preset recipes
 const PRESETS = {
-    strict:  { foreign:'allPos', smart:'allPos', local:'any', streak:'any', zeffort:'any', zngr:'any', zvwap:'any', effort:'any', state:'any', horizon:'any', quadrant:'any' },
-    smart:   { foreign:'any',    smart:'allPos', local:'any', streak:'any', zeffort:'any', zngr:'any', zvwap:'any', effort:'any', state:'any', horizon:'any', quadrant:'any' },
-    ara:     { foreign:'any',    smart:'positive', local:'any', streak:'any', zeffort:'any', zngr:'any', zvwap:'any', effort:'positive', state:'any', horizon:'any', quadrant:'any' },
-    all:     { foreign:'any',    smart:'any',    local:'any', streak:'any', zeffort:'any', zngr:'any', zvwap:'any', effort:'any', state:'any', horizon:'any', quadrant:'any' }
+    strict:  { foreign:'allPos', smart:'allPos', local:'any', streak:'any', zeffort:'any', zngr:'any', zvwap:'any', zcvd:'any', effort:'any', state:'any', horizon:'any', quadrant:'any' },
+    smart:   { foreign:'any',    smart:'allPos', local:'any', streak:'any', zeffort:'any', zngr:'any', zvwap:'any', zcvd:'any', effort:'any', state:'any', horizon:'any', quadrant:'any' },
+    ara:     { foreign:'any',    smart:'positive', local:'any', streak:'any', zeffort:'any', zngr:'any', zvwap:'any', zcvd:'any', effort:'positive', state:'any', horizon:'any', quadrant:'any' },
+    all:     { foreign:'any',    smart:'any',    local:'any', streak:'any', zeffort:'any', zngr:'any', zvwap:'any', zcvd:'any', effort:'any', state:'any', horizon:'any', quadrant:'any' }
 };
 
 const PRESET_NUMERIC = {
@@ -340,7 +347,7 @@ const PRESET_NUMERIC = {
 const PRESET_DESC = {
     strict: 'Foreign & Smart Money positif tiap hari',
     smart:  'Smart Money positif tiap hari',
-    ara:    'Saham ARA (Δ%≥20) + Smart Money + Effort positif + RVOL≥1.5',
+    ara:    'Saham ARA (CVD%≥20) + Smart Money + Effort positif + RVOL≥1.5',
     all:    'Tanpa filter'
 };
 
@@ -352,6 +359,7 @@ const FILTER_LABELS = {
     zeffort: { any:'Any', '2gt5':'2D > 5D', '2gt10':'2D > 10D', '2gt20':'2D > 20D', '5gt10':'5D > 10D', '5gt20':'5D > 20D', '10gt20':'10D > 20D', ladderUp:'2D ≥ 5D ≥ 10D ≥ 20D' },
     zngr:    { any:'Any', '2gt5':'2D > 5D', '2gt10':'2D > 10D', '2gt20':'2D > 20D', '5gt10':'5D > 10D', '5gt20':'5D > 20D', '10gt20':'10D > 20D', ladderUp:'2D ≥ 5D ≥ 10D ≥ 20D' },
     zvwap:   { any:'Any', '2gt5':'2D > 5D', '2gt10':'2D > 10D', '2gt20':'2D > 20D', '5gt10':'5D > 10D', '5gt20':'5D > 20D', '10gt20':'10D > 20D', ladderUp:'2D ≥ 5D ≥ 10D ≥ 20D' },
+    zcvd:    { any:'Any', allPos:'Semua Positif', allNeg:'Semua Negatif', '2gt5':'2D > 5D', '2gt10':'2D > 10D', '2gt20':'2D > 20D', '5gt10':'5D > 10D', '5gt20':'5D > 20D', '10gt20':'10D > 20D', ladderUp:'2D ≥ 5D ≥ 10D ≥ 20D' },
     effort:  { any:'Any', high:'High (z > 1)', positive:'Positif (z > 0)' },
     state:   { any:'Any', accum:'Accumulation', markup:'Accum / Ready Markup' },
     horizon:  { any:'Any horizon', '2':'2D only', '5':'5D only', '10':'10D only', '20':'20D only' },
@@ -359,7 +367,7 @@ const FILTER_LABELS = {
 };
 
 const PILL_COLORS = {
-    foreign:'success', smart:'primary', local:'success', streak:'warning', zeffort:'dark', zngr:'dark', zvwap:'dark', effort:'info', state:'danger', horizon:'secondary', quadrant:'info'
+    foreign:'success', smart:'primary', local:'success', streak:'warning', zeffort:'dark', zngr:'dark', zvwap:'dark', zcvd:'dark', effort:'info', state:'danger', horizon:'secondary', quadrant:'info'
 };
 
 async function loadScreenerData() {
@@ -494,7 +502,14 @@ async function loadScreenerData() {
         // Fast path: prefill intraday columns from bulk footprint summary.
         // This helps Δ%, Mom%, Absorb appear quickly before per-symbol hydration completes.
         await prefillIntradayFromFootprintSummary(allCandidates, { updateDom: false });
-        // Sector digest provides authoritative closing price data with weekend fallback.
+        // yfinance D1 is the PRIMARY source for Growth, Freq, Delta%, MOM%, and CVD% intraday.
+        // Growth    = (close_today - close_prev) / close_prev × 100  (day-over-day)
+        // Freq      = yfinance volume (reliable, always populated)
+        // Delta%    = est_delta / volume × 100  (hybrid ratio)
+        // MOM%      = (close_today - close_5d_ago) / close_5d_ago × 100  (5-day relative momentum)
+        // CVD% 1D   = est_delta / volume × 100  (same as Δ% for single day)
+        await prefillFromYfinanceD1(allCandidates);
+        // Sector digest as fallback for symbols not covered by yfinance.
         await prefillSectorDigest(allCandidates);
 
         // Restore filter/sort/page from URL (or localStorage fallback)
@@ -1190,6 +1205,7 @@ function applyFilter() {
         if (!matchesZRelation(activeFilters.zeffort, c.metrics.effort2, c.metrics.effort5, c.metrics.effort10, c.metrics.effort20)) return false;
         if (!matchesZRelation(activeFilters.zngr, c.metrics.ngr2, c.metrics.ngr5, c.metrics.ngr10, c.metrics.ngr20)) return false;
         if (!matchesZRelation(activeFilters.zvwap, c.metrics.vwap2, c.metrics.vwap5, c.metrics.vwap10, c.metrics.vwap20)) return false;
+        if (!matchesCvdTrend(activeFilters.zcvd, c)) return false;
         return true;
     });
 
@@ -1223,7 +1239,7 @@ function applyFilter() {
         if (Number.isFinite(numericFilters.delta_min)   && !((c.order_delta_pct ?? -Infinity) >= numericFilters.delta_min)) return false;
         if (Number.isFinite(numericFilters.mom_min)     && !((c.order_mom_pct ?? -Infinity) >= numericFilters.mom_min)) return false;
         if (Number.isFinite(numericFilters.absorb_min)  && !((c.order_absorb ?? -Infinity) >= numericFilters.absorb_min)) return false;
-        if (Number.isFinite(numericFilters.cvd_min)     && !((c.order_cvd ?? -Infinity) >= numericFilters.cvd_min)) return false;
+        if (Number.isFinite(numericFilters.cvd_min)     && !(((typeof c.order_delta_pct === 'number' && Number.isFinite(c.order_delta_pct) ? (c.order_delta_pct + 100) / 2 : -Infinity)) >= numericFilters.cvd_min)) return false;
         if (Number.isFinite(numericFilters.rvol_min)    && !((c.rvol_2d ?? c.rvol_5d ?? -Infinity) >= numericFilters.rvol_min)) return false;
         if (Number.isFinite(numericFilters.value_min)   && !((c.order_net_value ?? -Infinity) >= numericFilters.value_min)) return false;
         return true;
@@ -1248,6 +1264,33 @@ function matchesZRelation(mode, z2, z5, z10, z20) {
     if (mode === '5gt20') return z5 > z20;
     if (mode === '10gt20') return z10 > z20;
     if (mode === 'ladderUp') return z2 >= z5 && z5 >= z10 && z10 >= z20;
+    return true;
+}
+
+/**
+ * CVD Trend filter: compare CVD% across multi-day windows (2D, 5D, 10D, 20D).
+ * Uses cvd_pct_Nd fields (from features-service: est_delta / volume × 100 over N days).
+ * Extra modes: allPos (all windows > 0), allNeg (all windows < 0).
+ */
+function matchesCvdTrend(mode, c) {
+    if (!mode || mode === 'any') return true;
+    const v2  = c.cvd_pct_2d;
+    const v5  = c.cvd_pct_5d;
+    const v10 = c.cvd_pct_10d;
+    const v20 = c.cvd_pct_20d;
+    const all = [v2, v5, v10, v20];
+    if (!all.every(v => typeof v === 'number' && Number.isFinite(v))) return false;
+
+    if (mode === 'allPos') return all.every(v => v > 0);
+    if (mode === 'allNeg') return all.every(v => v < 0);
+    // Relationship modes (same pattern as matchesZRelation)
+    if (mode === '2gt5') return v2 > v5;
+    if (mode === '2gt10') return v2 > v10;
+    if (mode === '2gt20') return v2 > v20;
+    if (mode === '5gt10') return v5 > v10;
+    if (mode === '5gt20') return v5 > v20;
+    if (mode === '10gt20') return v10 > v20;
+    if (mode === 'ladderUp') return v2 >= v5 && v5 >= v10 && v10 >= v20;
     return true;
 }
 
@@ -1829,6 +1872,7 @@ function syncFilterDropdowns() {
             : key === 'zeffort' ? 'Effort Rel'
             : key === 'zngr' ? 'NGR Rel'
             : key === 'zvwap' ? 'VWAP Rel'
+            : key === 'zcvd' ? 'CVD Trend'
             : key === 'effort' ? 'Effort'
             : key === 'state' ? 'State'
             : key === 'horizon' ? 'Horizon'
@@ -1907,7 +1951,7 @@ function renderFilterPills() {
     // Numeric filter pills
     const numLabels = {
         growth_min: 'Growth', freq_min: 'Freq', tom2_min: 'TOM2', swg5_min: 'SWG5',
-        delta_min: 'Δ%', mom_min: 'Mom%', absorb_min: 'Absorb', cvd_min: 'CVD',
+        delta_min: 'CVD%', mom_min: 'Mom%', absorb_min: 'Absorb', cvd_min: 'HAKA',
         rvol_min: 'RVOL', value_min: 'Value'
     };
     Object.keys(numericFilters).forEach(nk => {
@@ -1960,10 +2004,10 @@ const NUMERIC_DD_MAP = {
     freq_min:   { id: '#dd-freq',   prefix: 'Freq' },
     tom2_min:   { id: '#dd-tom2',   prefix: 'TOM2' },
     swg5_min:   { id: '#dd-swg5',   prefix: 'SWG5' },
-    delta_min:  { id: '#dd-delta',  prefix: 'Δ%' },
+    delta_min:  { id: '#dd-delta',  prefix: 'CVD%' },
     mom_min:    { id: '#dd-mom',    prefix: 'Mom%' },
     absorb_min: { id: '#dd-absorb', prefix: 'Absorb' },
-    cvd_min:    { id: '#dd-cvd',    prefix: 'CVD' },
+    cvd_min:    { id: '#dd-cvd',    prefix: 'HAKA' },
     rvol_min:   { id: '#dd-rvol',   prefix: 'RVOL' },
     value_min:  { id: '#dd-value',  prefix: 'Value' }
 };
@@ -2304,7 +2348,10 @@ function renderScreenerTable(candidates) {
 
     const fmtFreq = (v) => {
         if (typeof v !== 'number' || !Number.isFinite(v)) return '<span class="text-muted">-</span>';
-        return `<span>${Math.round(v).toLocaleString('id-ID')}</span>`;
+        const rounded = Math.round(v);
+        // Use compact format for large yfinance volumes
+        if (rounded >= 1e6) return `<span>${formatCompactNumber(rounded)}</span>`;
+        return `<span>${rounded.toLocaleString('id-ID')}</span>`;
     };
 
     const fmtAbsorb = (v) => {
@@ -2319,11 +2366,27 @@ function renderScreenerTable(candidates) {
     const fmtCvd = (v) => {
         if (typeof v !== 'number' || !Number.isFinite(v)) return '<span class="text-muted">-</span>';
         const cls = v >= 0 ? 'text-success' : 'text-danger';
+        // Use compact format for large values (e.g. -4.2M for BBRI)
+        const abs = Math.abs(v);
+        if (abs >= 1e6) return `<span class="${cls}">${formatCompactNumber(v)}</span>`;
         return `<span class="${cls}">${v.toLocaleString('id-ID')}</span>`;
     };
 
+    // HAKA% = (delta_pct + 100) / 2  → 0-100 scale (50 = neutral)
+    const fmtHaka = (deltaPct, rawCvd) => {
+        if (typeof deltaPct !== 'number' || !Number.isFinite(deltaPct)) return '<span class="text-muted">-</span>';
+        const haka = (deltaPct + 100) / 2;
+        const cls = haka >= 60 ? 'text-success fw-bold'
+                  : haka >= 50 ? 'text-success'
+                  : haka >= 40 ? 'text-warning'
+                  : 'text-danger fw-bold';
+        const tip = (typeof rawCvd === 'number' && Number.isFinite(rawCvd))
+            ? ` title="Net Δ: ${rawCvd.toLocaleString('id-ID')} lot"` : '';
+        return `<span class="${cls}"${tip}>${haka.toFixed(1)}%</span>`;
+    };
+
     const fmtCvdPct = (pct, rawLots) => {
-        if (typeof pct !== 'number' || !Number.isFinite(pct)) return '<span class="text-muted">-</span>';
+        if (typeof pct !== 'number' || !Number.isFinite(pct)) return fmtCvd(rawLots);
         const cls = pct > 0 ? 'text-success fw-bold' : (pct < 0 ? 'text-danger fw-bold' : 'text-secondary');
         const sign = pct > 0 ? '+' : '';
         const tip = (typeof rawLots === 'number' && Number.isFinite(rawLots))
@@ -2372,10 +2435,10 @@ function renderScreenerTable(candidates) {
                 <td class="text-center tom2-cell d-none">${fmtProbCell(item.tom2)}</td>
                 <td class="text-center swg5-cell d-none">${fmtProbCell(item.swg5)}</td>
                 <td class="text-center claude-cell ${typeof item.claude_score === 'number' ? 'claude-revealed-instant' : 'claude-locked'}">${fmtClaudeCell(item.claude_score)}</td>
-                <td class="text-center of-delta">${fmtPct(item.order_delta_pct)}</td>
+                <td class="text-center of-delta">${fmtHaka(item.order_delta_pct, item.order_cvd)}</td>
                 <td class="text-center of-mom">${fmtPct(item.order_mom_pct)}</td>
                 <td class="text-center of-absorb">${fmtAbsorb(item.order_absorb)}</td>
-                <td class="text-center of-cvd">${fmtCvd(item.order_cvd)}</td>
+                <td class="text-center of-cvd">${fmtCvdPct(item.order_delta_pct, item.order_cvd)}</td>
                 <td class="text-center hide-mobile col-h2 col-cvdm of-cvd-2d">${fmtCvdPct(item.cvd_pct_2d, item.order_cvd_2d)}</td>
                 <td class="text-center hide-mobile col-h5 col-cvdm of-cvd-5d">${fmtCvdPct(item.cvd_pct_5d, item.order_cvd_5d)}</td>
                 <td class="text-center hide-mobile col-h10 col-cvdm of-cvd-10d">${fmtCvdPct(item.cvd_pct_10d, item.order_cvd_10d)}</td>
@@ -2473,25 +2536,39 @@ function applyOrderflowSnapshotToCandidate(item, snapshot) {
         item.order_recent_price = typeof snapshot.recent_price === 'number'
             ? snapshot.recent_price
             : ((typeof snapshot.price === 'number') ? snapshot.price : item.order_recent_price);
-        item.order_growth_pct = typeof snapshot.growth_pct === 'number'
-            ? snapshot.growth_pct
-            : ((typeof item.order_open_price === 'number' && typeof item.order_recent_price === 'number' && item.order_open_price > 0)
-                ? (((item.order_recent_price - item.order_open_price) / item.order_open_price) * 100)
-                : item.order_growth_pct);
-        const snapshotFreq = (typeof snapshot.freq_tx === 'number' && Number.isFinite(snapshot.freq_tx)) ? snapshot.freq_tx : null;
-        const currentFreq = (typeof item.order_freq_tx === 'number' && Number.isFinite(item.order_freq_tx)) ? item.order_freq_tx : null;
-        if (snapshotFreq !== null) {
-            item.order_freq_tx = currentFreq !== null ? Math.max(currentFreq, snapshotFreq) : snapshotFreq;
+        // Growth: during market hours, hydration's intraday growth is useful.
+        // Outside market hours (weekend/after-hours), yfinance day-over-day growth is authoritative.
+        const marketOpen = _isMarketLikelyOpen();
+        if (marketOpen || !item._yfinanceGrowthSet) {
+            item.order_growth_pct = typeof snapshot.growth_pct === 'number'
+                ? snapshot.growth_pct
+                : ((typeof item.order_open_price === 'number' && typeof item.order_recent_price === 'number' && item.order_open_price > 0)
+                    ? (((item.order_recent_price - item.order_open_price) / item.order_open_price) * 100)
+                    : item.order_growth_pct);
         }
-        item.order_delta_pct = typeof snapshot.delta_pct === 'number' ? snapshot.delta_pct : item.order_delta_pct;
-        item.order_mom_pct = typeof snapshot.mom_pct === 'number' ? snapshot.mom_pct : item.order_mom_pct;
+        // Freq: yfinance volume is authoritative; only overwrite if yfinance hasn't set it
+        if (!item._yfinanceFreqSet) {
+            const snapshotFreq = (typeof snapshot.freq_tx === 'number' && Number.isFinite(snapshot.freq_tx)) ? snapshot.freq_tx : null;
+            const currentFreq = (typeof item.order_freq_tx === 'number' && Number.isFinite(item.order_freq_tx)) ? item.order_freq_tx : null;
+            if (snapshotFreq !== null) {
+                item.order_freq_tx = currentFreq !== null ? Math.max(currentFreq, snapshotFreq) : snapshotFreq;
+            }
+        }
+        // Delta%: yfinance est_delta/volume is authoritative when available
+        if (!item._yfinanceDeltaSet) {
+            item.order_delta_pct = typeof snapshot.delta_pct === 'number' ? snapshot.delta_pct : item.order_delta_pct;
+        }
+        // MOM%: yfinance 5-day relative momentum is authoritative when available
+        if (!item._yfinanceMomSet) {
+            item.order_mom_pct = typeof snapshot.mom_pct === 'number' ? snapshot.mom_pct : item.order_mom_pct;
+        }
         item.order_absorb = typeof snapshot.absorb === 'number' ? snapshot.absorb : item.order_absorb;
         item.order_cvd = typeof snapshot.cvd === 'number' ? snapshot.cvd : item.order_cvd;
         item.order_net_value = typeof snapshot.net_value === 'number' ? snapshot.net_value : item.order_net_value;
         item.order_quadrant = snapshot.quadrant || item.order_quadrant;
     } else {
         // Stale fallback — do NOT overwrite price/growth with yesterday's values.
-        // Only fill price/growth if still null (as seed). 
+        // Only fill price/growth if still null AND yfinance hasn't set them.
         // Delta/mom/absorb/cvd: overwrite freely (stale is better than NO_INTRADAY zeros).
         if (item.order_open_price == null && typeof snapshot.open_price === 'number') item.order_open_price = snapshot.open_price;
         if (item.order_recent_price == null) {
@@ -2499,11 +2576,11 @@ function applyOrderflowSnapshotToCandidate(item, snapshot) {
                 ? snapshot.recent_price
                 : ((typeof snapshot.price === 'number') ? snapshot.price : null);
         }
-        if (item.order_growth_pct == null && typeof snapshot.growth_pct === 'number') item.order_growth_pct = snapshot.growth_pct;
-        if (item.order_freq_tx == null && typeof snapshot.freq_tx === 'number') item.order_freq_tx = snapshot.freq_tx;
+        if (!item._yfinanceGrowthSet && item.order_growth_pct == null && typeof snapshot.growth_pct === 'number') item.order_growth_pct = snapshot.growth_pct;
+        if (!item._yfinanceFreqSet && item.order_freq_tx == null && typeof snapshot.freq_tx === 'number') item.order_freq_tx = snapshot.freq_tx;
         // Intraday metrics: stale data is more useful than 0 from NO_INTRADAY footprint
-        if (typeof snapshot.delta_pct === 'number') item.order_delta_pct = snapshot.delta_pct;
-        if (typeof snapshot.mom_pct === 'number') item.order_mom_pct = snapshot.mom_pct;
+        if (!item._yfinanceDeltaSet && typeof snapshot.delta_pct === 'number') item.order_delta_pct = snapshot.delta_pct;
+        if (!item._yfinanceMomSet && typeof snapshot.mom_pct === 'number') item.order_mom_pct = snapshot.mom_pct;
         if (typeof snapshot.absorb === 'number') item.order_absorb = snapshot.absorb;
         if (typeof snapshot.cvd === 'number') item.order_cvd = snapshot.cvd;
         if (typeof snapshot.net_value === 'number') item.order_net_value = snapshot.net_value;
@@ -2564,15 +2641,16 @@ function applyFootprintRowToCandidate(item, row, opts = {}) {
 
     let touched = false;
     if (!skipCoreFields) {
-        if (hasIntradayData && Number.isFinite(d)) { item.order_delta_pct = d; touched = true; }
-        if (hasIntradayData && Number.isFinite(p)) { item.order_mom_pct = p; touched = true; }
+        if (!item._yfinanceDeltaSet && hasIntradayData && Number.isFinite(d)) { item.order_delta_pct = d; touched = true; }
+        if (!item._yfinanceMomSet && hasIntradayData && Number.isFinite(p)) { item.order_mom_pct = p; touched = true; }
         if (hasIntradayData && Number.isFinite(div)) { item.order_absorb = div; touched = true; }
         if (hasIntradayData && Number.isFinite(net_delta)) { item.order_cvd = net_delta; touched = true; }
         if (hasIntradayData && Number.isFinite(notional_val)) { item.order_net_value = notional_val; touched = true; }
         if (Number.isFinite(open)) { item.order_open_price = open; touched = true; }
         if (Number.isFinite(recent)) { item.order_recent_price = recent; touched = true; }
-        if (Number.isFinite(growth)) { item.order_growth_pct = growth; touched = true; }
-        if (opts.applyFreq === true && Number.isFinite(freq)) { item.order_freq_tx = freq; touched = true; }
+        // Growth & Freq: do NOT overwrite if yfinance D1 already set them (yfinance is authoritative)
+        if (!item._yfinanceGrowthSet && Number.isFinite(growth)) { item.order_growth_pct = growth; touched = true; }
+        if (!item._yfinanceFreqSet && opts.applyFreq === true && Number.isFinite(freq)) { item.order_freq_tx = freq; touched = true; }
     }
     // CVD multi-window & RVOL: always apply (footprint-exclusive, no conflict)
     if (Number.isFinite(cvd_2d))  { item.order_cvd_2d  = cvd_2d;  touched = true; }
@@ -2598,7 +2676,7 @@ function applyFootprintRowToCandidate(item, row, opts = {}) {
     if (Number.isFinite(rvol_10d)) { item.rvol_10d = rvol_10d; touched = true; }
     if (Number.isFinite(rvol_20d)) { item.rvol_20d = rvol_20d; touched = true; }
     if (!skipCoreFields) {
-        if (!Number.isFinite(growth) && Number.isFinite(item.order_open_price) && Number.isFinite(item.order_recent_price) && item.order_open_price > 0) {
+        if (!item._yfinanceGrowthSet && !Number.isFinite(growth) && Number.isFinite(item.order_open_price) && Number.isFinite(item.order_recent_price) && item.order_open_price > 0) {
             item.order_growth_pct = ((item.order_recent_price - item.order_open_price) / item.order_open_price) * 100;
             touched = true;
         }
@@ -2621,14 +2699,284 @@ function applyFootprintRowToCandidate(item, row, opts = {}) {
     return touched;
 }
 
+// =========================================
+// YFINANCE D1: PRIMARY source for Growth & Freq
+// =========================================
+
+/**
+ * Prefill GROWTH, FREQ, DELTA%, MOM%, and CVD% from yfinance D1 data (Cloudflare D1 database).
+ *
+ * Growth    = (close_today − close_prev) / close_prev × 100   (day-over-day)
+ * Freq      = yfinance volume (total shares traded — reliable, always populated)
+ * Delta%    = est_delta / volume × 100   (hybrid: footprint ratio × yfinance volume)
+ * MOM%      = (close_today − close_5d_ago) / close_5d_ago × 100   (5-day relative momentum)
+ * CVD% 1D   = est_delta / volume × 100   (same as Δ% for single day)
+ *
+ * Strategy:
+ *   1. Determine the last 6 trading days (for 5-day MOM% lookback).
+ *   2. Fetch /indicators?date=<date> for all 6 days in parallel.
+ *   3. Compute growth_pct, delta_pct, mom_pct per symbol, cache results.
+ *   4. Apply to candidates and update DOM.
+ *
+ * On weekends / after trading hours, if yfinance data for the last trading day
+ * is already in D1, we simply use it — no need for complex fallback.
+ *
+ * Cache TTL = 10 min; subsequent calls within TTL apply from cache only.
+ */
+async function prefillFromYfinanceD1(candidates) {
+    if (!Array.isArray(candidates) || !candidates.length) return;
+
+    const now = Date.now();
+    if ((now - yfinanceD1LoadedAt) <= YFINANCE_D1_TTL_MS && yfinanceD1Cache.size > 0) {
+        _applyYfinanceD1ToCandidates(candidates, { updateDom: true });
+        return;
+    }
+
+    try {
+        // Get last 6 trading days (today + 5 previous) for 5-day MOM% lookback
+        const tradingDays = [];
+        let td = _getLastTradingDayString();
+        tradingDays.push(td);
+        for (let i = 1; i <= 5; i++) {
+            td = _getPrevTradingDayString(td);
+            tradingDays.push(td);
+        }
+        // tradingDays[0] = lastTD, [1] = prevTD, ..., [5] = 5th previous day
+
+        // Fetch all 6 days in parallel from yfinance-handler
+        const responses = await Promise.all(
+            tradingDays.map(d =>
+                fetch(`${YFINANCE_BASE_URL}/indicators?date=${d}`)
+                    .then(r => r.ok ? r.json() : null).catch(() => null)
+            )
+        );
+
+        const allDayRows = responses.map(resp => resp?.rows || []);
+        const todayRows = allDayRows[0];
+        const prevRows  = allDayRows[1];
+
+        if (!todayRows.length) {
+            console.log(`[yfinance-d1] no data for ${tradingDays[0]}, skipping`);
+            return;
+        }
+
+        // Build prev-day close lookup: ticker → close
+        // Walk back through days [1]→[2]→[3]→[4] to find the most recent prev close
+        const prevCloseMap = new Map();
+        for (let dayIdx = 1; dayIdx <= 4; dayIdx++) {
+            const dayRows = allDayRows[dayIdx] || [];
+            for (const r of dayRows) {
+                const ticker = String(r.ticker || '').toUpperCase();
+                if (ticker && typeof r.close === 'number' && r.close > 0 && !prevCloseMap.has(ticker)) {
+                    prevCloseMap.set(ticker, r.close);
+                }
+            }
+        }
+
+        // Build 5th-previous-day close lookup for MOM%: ticker → close
+        // Walk back from day [5] → [4] → [3] to find a close for each ticker
+        const close5dMap = new Map();
+        for (let dayIdx = 5; dayIdx >= 3; dayIdx--) {
+            const dayRows = allDayRows[dayIdx] || [];
+            for (const r of dayRows) {
+                const ticker = String(r.ticker || '').toUpperCase();
+                if (ticker && typeof r.close === 'number' && r.close > 0 && !close5dMap.has(ticker)) {
+                    close5dMap.set(ticker, r.close);
+                }
+            }
+        }
+
+        // Build yfinance cache
+        let count = 0;
+        for (const r of todayRows) {
+            const ticker = String(r.ticker || '').toUpperCase();
+            if (!ticker) continue;
+
+            const close      = (typeof r.close === 'number' && r.close > 0) ? r.close : null;
+            const volume     = (typeof r.volume === 'number' && r.volume > 0) ? r.volume : null;
+            const prevClose  = prevCloseMap.get(ticker) || null;
+            const est_delta  = (typeof r.est_delta === 'number') ? r.est_delta : null;
+
+            // Growth = day-over-day: (close_today - close_prev) / close_prev × 100
+            // Fallback: (close - open) / open × 100 if prev close unavailable
+            const openPrice = (typeof r.open === 'number' && r.open > 0) ? r.open : null;
+            let growth_pct = null;
+            if (close != null && prevClose != null && prevClose > 0) {
+                growth_pct = parseFloat((((close - prevClose) / prevClose) * 100).toFixed(4));
+            } else if (close != null && openPrice != null && openPrice > 0) {
+                growth_pct = parseFloat((((close - openPrice) / openPrice) * 100).toFixed(4));
+            }
+
+            // Delta% = est_delta / volume × 100 (hybrid: footprint ratio × yfinance volume)
+            let delta_pct = null;
+            if (est_delta != null && volume != null && volume > 0) {
+                delta_pct = parseFloat(((est_delta / volume) * 100).toFixed(4));
+            }
+
+            // MOM% = 5-day relative momentum: (close_today - close_5d_ago) / close_5d_ago × 100
+            const close5d = close5dMap.get(ticker) || null;
+            let mom_pct = null;
+            if (close != null && close5d != null && close5d > 0) {
+                mom_pct = parseFloat((((close - close5d) / close5d) * 100).toFixed(4));
+            }
+
+            yfinanceD1Cache.set(ticker, {
+                close,
+                prev_close: prevClose,
+                volume,
+                growth_pct,
+                delta_pct,
+                mom_pct,
+                est_delta,
+                open:  openPrice,
+                high:  (typeof r.high === 'number' && r.high > 0) ? r.high : null,
+                low:   (typeof r.low === 'number' && r.low > 0) ? r.low : null,
+                ma5:   r.ma5 ?? null,
+                ma10:  r.ma10 ?? null,
+                ma20:  r.ma20 ?? null,
+                rsi14: r.rsi14 ?? null,
+                rvol_2d:  (typeof r.rvol_2d  === 'number') ? r.rvol_2d  : null,
+                rvol_5d:  (typeof r.rvol_5d  === 'number') ? r.rvol_5d  : null,
+                rvol_10d: (typeof r.rvol_10d === 'number') ? r.rvol_10d : null,
+                rvol_20d: (typeof r.rvol_20d === 'number') ? r.rvol_20d : null,
+            });
+            count++;
+        }
+
+        // RVOL fallback: for tickers NOT in today's data (or today's RVOL is null),
+        // pull RVOL from the most recent previous day that has it.
+        let rvolFills = 0;
+        for (let dayIdx = 1; dayIdx <= 4; dayIdx++) {
+            const dayRows = allDayRows[dayIdx] || [];
+            for (const r of dayRows) {
+                const ticker = String(r.ticker || '').toUpperCase();
+                if (!ticker) continue;
+                const existing = yfinanceD1Cache.get(ticker);
+                // Already has RVOL from today? skip
+                if (existing && existing.rvol_2d != null) continue;
+                const rv2  = (typeof r.rvol_2d  === 'number') ? r.rvol_2d  : null;
+                const rv5  = (typeof r.rvol_5d  === 'number') ? r.rvol_5d  : null;
+                const rv10 = (typeof r.rvol_10d === 'number') ? r.rvol_10d : null;
+                const rv20 = (typeof r.rvol_20d === 'number') ? r.rvol_20d : null;
+                if (rv2 == null && rv5 == null) continue; // no RVOL here either
+                if (existing) {
+                    // Supplement existing entry with RVOL from prev day
+                    existing.rvol_2d  = rv2;
+                    existing.rvol_5d  = rv5;
+                    existing.rvol_10d = rv10;
+                    existing.rvol_20d = rv20;
+                } else {
+                    // Create minimal cache entry (RVOL-only); null fields won't overwrite candidate data
+                    yfinanceD1Cache.set(ticker, {
+                        close: null, prev_close: null, volume: null,
+                        growth_pct: null, delta_pct: null, mom_pct: null,
+                        est_delta: null, open: null, high: null, low: null,
+                        ma5: null, ma10: null, ma20: null, rsi14: null,
+                        rvol_2d: rv2, rvol_5d: rv5, rvol_10d: rv10, rvol_20d: rv20,
+                    });
+                }
+                rvolFills++;
+            }
+        }
+
+        yfinanceD1LoadedAt = now;
+        console.log(`[yfinance-d1] loaded ${count} symbols for ${tradingDays[0]} (${tradingDays.length} days fetched, prev: ${tradingDays[1]})${rvolFills ? `, RVOL fallback: ${rvolFills}` : ''}`);
+
+        _applyYfinanceD1ToCandidates(candidates, { updateDom: true });
+
+    } catch (e) {
+        console.warn('[yfinance-d1] prefill failed:', e);
+    }
+}
+
+/**
+ * Returns the previous trading day before the given date string.
+ */
+function _getPrevTradingDayString(dateStr) {
+    const d = new Date(`${dateStr}T12:00:00Z`); // noon UTC to avoid timezone edge cases
+    d.setUTCDate(d.getUTCDate() - 1);
+    // Walk back until we find a trading day
+    for (let i = 0; i < 14; i++) {
+        const dayOfWeek = d.getUTCDay();
+        const ds = `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,'0')}-${String(d.getUTCDate()).padStart(2,'0')}`;
+        if (dayOfWeek !== 0 && dayOfWeek !== 6 && !IDX_HOLIDAYS.has(ds)) {
+            return ds;
+        }
+        d.setUTCDate(d.getUTCDate() - 1);
+    }
+    return dateStr; // fallback
+}
+
+/**
+ * Apply cached yfinance D1 data to candidates.
+ * yfinance is the PRIMARY authoritative source for Growth, Freq, Delta%, MOM%, and CVD% intraday.
+ */
+function _applyYfinanceD1ToCandidates(candidates, opts = {}) {
+    if (!yfinanceD1Cache.size) return 0;
+    let changed = 0;
+    for (const item of candidates) {
+        const sym = String(item?.symbol || '').toUpperCase();
+        if (!sym) continue;
+        const yf = yfinanceD1Cache.get(sym);
+        if (!yf) continue;
+
+        // Growth: day-over-day from yfinance (authoritative)
+        if (typeof yf.growth_pct === 'number' && Number.isFinite(yf.growth_pct)) {
+            item.order_growth_pct = yf.growth_pct;
+            item._yfinanceGrowthSet = true;
+        }
+
+        // Freq: use yfinance volume (reliable, always populated)
+        if (typeof yf.volume === 'number' && Number.isFinite(yf.volume) && yf.volume > 0) {
+            item.order_freq_tx = yf.volume;
+            item._yfinanceFreqSet = true;
+        }
+
+        // Delta%: est_delta / volume × 100 — hybrid ratio (authoritative)
+        if (typeof yf.delta_pct === 'number' && Number.isFinite(yf.delta_pct)) {
+            item.order_delta_pct = yf.delta_pct;
+            item._yfinanceDeltaSet = true;
+        }
+
+        // MOM%: 5-day relative momentum (authoritative)
+        if (typeof yf.mom_pct === 'number' && Number.isFinite(yf.mom_pct)) {
+            item.order_mom_pct = yf.mom_pct;
+            item._yfinanceMomSet = true;
+        }
+
+        // Price data from yfinance (as fallback for missing footprint data)
+        if (typeof yf.close === 'number' && yf.close > 0) {
+            item.order_recent_price = yf.close;
+        }
+        if (typeof yf.open === 'number' && yf.open > 0) {
+            item.order_open_price = yf.open;
+        }
+
+        // RVOL: relative volume windows (yfinance authoritative, supplements footprint)
+        if (typeof yf.rvol_2d  === 'number' && Number.isFinite(yf.rvol_2d))  item.rvol_2d  = yf.rvol_2d;
+        if (typeof yf.rvol_5d  === 'number' && Number.isFinite(yf.rvol_5d))  item.rvol_5d  = yf.rvol_5d;
+        if (typeof yf.rvol_10d === 'number' && Number.isFinite(yf.rvol_10d)) item.rvol_10d = yf.rvol_10d;
+        if (typeof yf.rvol_20d === 'number' && Number.isFinite(yf.rvol_20d)) item.rvol_20d = yf.rvol_20d;
+
+        item._yfinanceD1FetchedAt = Date.now();
+        changed++;
+        if (opts.updateDom) updateOrderflowCells(sym, item);
+    }
+    if (changed > 0) scheduleProbRefreshAfterOrderflow();
+    return changed;
+}
+
 /**
  * Prefill FREQ (from levels_sum) and GROWTH (first vs last snapshot price)
  * for all candidates using sector-scrapper /sector/digest/batch.
  *
+ * NOTE: This is now a FALLBACK source. yfinance D1 is the primary source.
+ * Only symbols NOT already populated by yfinance will be overwritten.
+ *
  * Strategy:
  *   1. Fetch /sector/digest/batch for all 11 sectors in parallel.
  *   2. Merge all symbol→digest results into sectorDigestCache.
- *   3. Apply freq_tx + growth_pct to every matching candidate.
+ *   3. Apply freq_tx + growth_pct to every matching candidate (if not already set by yfinance).
  *   4. Update DOM cells immediately.
  *
  * Cache TTL = 10 min; subsequent calls within TTL apply from cache only.
@@ -2773,7 +3121,8 @@ function _isMarketLikelyOpen() {
 
 /**
  * Apply cached sector digests to candidates array.
- * Overwrites order_freq_tx and order_growth_pct (sector data is authoritative).
+ * NOW a FALLBACK: only fills growth/freq if yfinance D1 hasn't already set them.
+ * Still provides price_open/price_last and intraday CVD data.
  */
 function _applySectorDigestsToCandidates(candidates, opts = {}) {
     if (!sectorDigestCache.size) return 0;
@@ -2794,20 +3143,23 @@ function _applySectorDigestsToCandidates(candidates, opts = {}) {
             && !item._orderflowIsStaleFallback;
 
         if (!hydratedRecently) {
-            // FREQ: levels_sum is the most accurate source when no hydration
-            if (typeof digest.freq_tx === 'number' && Number.isFinite(digest.freq_tx)) {
+            // FREQ: only fill if yfinance hasn't already set it
+            if (!item._yfinanceFreqSet && typeof digest.freq_tx === 'number' && Number.isFinite(digest.freq_tx)) {
                 item.order_freq_tx = digest.freq_tx;
             }
-            // GROWTH: sector-digest as seed before hydration
-            if (typeof digest.growth_pct === 'number' && Number.isFinite(digest.growth_pct)) {
+            // GROWTH: only fill if yfinance hasn't already set it
+            if (!item._yfinanceGrowthSet && typeof digest.growth_pct === 'number' && Number.isFinite(digest.growth_pct)) {
                 item.order_growth_pct = digest.growth_pct;
             }
             // Propagate open/last prices for downstream TOM2 calculations
-            if (typeof digest.price_open === 'number' && digest.price_open > 0) {
-                item.order_open_price = digest.price_open;
-            }
-            if (typeof digest.price_last === 'number' && digest.price_last > 0) {
-                item.order_recent_price = digest.price_last;
+            // (only if yfinance D1 hasn't already set them)
+            if (!item._yfinanceD1FetchedAt) {
+                if (typeof digest.price_open === 'number' && digest.price_open > 0) {
+                    item.order_open_price = digest.price_open;
+                }
+                if (typeof digest.price_last === 'number' && digest.price_last > 0) {
+                    item.order_recent_price = digest.price_last;
+                }
             }
         }
 
@@ -2878,12 +3230,17 @@ function updateOrderflowCells(symbol, item) {
         const sign = vv > 0 ? '+' : '';
         return `<span class="${cls}">${sign}${vv.toFixed(2)}%</span>`;
     };
-    const freq = (v) => (typeof v === 'number' && Number.isFinite(v))
-        ? `<span>${Math.round(v).toLocaleString('id-ID')}</span>`
-        : '<span class="text-muted">-</span>';
+    const freq = (v) => {
+        if (typeof v !== 'number' || !Number.isFinite(v)) return '<span class="text-muted">-</span>';
+        const rounded = Math.round(v);
+        if (rounded >= 1e6) return `<span>${formatCompactNumber(rounded)}</span>`;
+        return `<span>${rounded.toLocaleString('id-ID')}</span>`;
+    };
     const cvd = (v) => {
         if (typeof v !== 'number' || !Number.isFinite(v)) return '<span class="text-muted">-</span>';
         const cls = v >= 0 ? 'text-success' : 'text-danger';
+        const abs = Math.abs(v);
+        if (abs >= 1e6) return `<span class="${cls}">${formatCompactNumber(v)}</span>`;
         return `<span class="${cls}">${v.toLocaleString('id-ID')}</span>`;
     };
     const value = (v) => {
@@ -2903,10 +3260,21 @@ function updateOrderflowCells(symbol, item) {
 
     $row.find('.of-growth').html(growth(item.order_growth_pct));
     $row.find('.of-freq').html(freq(item.order_freq_tx));
-    $row.find('.of-delta').html(pct(item.order_delta_pct));
+    // HAKA% = (delta_pct + 100) / 2  → 0-100 scale
+    const haka = (dpct, rawCvd) => {
+        if (typeof dpct !== 'number' || !Number.isFinite(dpct)) return '<span class="text-muted">-</span>';
+        const h = (dpct + 100) / 2;
+        const cls = h >= 60 ? 'text-success fw-bold'
+                  : h >= 50 ? 'text-success'
+                  : h >= 40 ? 'text-warning'
+                  : 'text-danger fw-bold';
+        const tip = (typeof rawCvd === 'number' && Number.isFinite(rawCvd))
+            ? ` title="Net Δ: ${rawCvd.toLocaleString('id-ID')} lot"` : '';
+        return `<span class="${cls}"${tip}>${h.toFixed(1)}%</span>`;
+    };
+    $row.find('.of-delta').html(haka(item.order_delta_pct, item.order_cvd));
     $row.find('.of-mom').html(pct(item.order_mom_pct));
     $row.find('.of-absorb').html(absorb(item.order_absorb));
-    $row.find('.of-cvd').html(cvd(item.order_cvd));
     const cvdPctCell = (pctVal, rawVal) => {
         if (typeof pctVal !== 'number' || !Number.isFinite(pctVal)) return cvd(rawVal);
         const cls = pctVal > 0 ? 'text-success fw-bold' : (pctVal < 0 ? 'text-danger fw-bold' : 'text-secondary');
@@ -2915,6 +3283,7 @@ function updateOrderflowCells(symbol, item) {
             ? ` title="Raw CVD: ${rawVal.toLocaleString('id-ID')} lot"` : '';
         return `<span class="${cls}"${tip}>${sign}${pctVal.toFixed(2)}%</span>`;
     };
+    $row.find('.of-cvd').html(cvdPctCell(item.order_delta_pct, item.order_cvd));
     $row.find('.of-cvd-2d').html(cvdPctCell(item.cvd_pct_2d, item.order_cvd_2d));
     $row.find('.of-cvd-5d').html(cvdPctCell(item.cvd_pct_5d, item.order_cvd_5d));
     $row.find('.of-cvd-10d').html(cvdPctCell(item.cvd_pct_10d, item.order_cvd_10d));

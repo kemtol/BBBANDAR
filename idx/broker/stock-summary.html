@@ -263,6 +263,27 @@
             }
         }
 
+        /* Chart Sub-Tab Toggle (same as broker-summary) */
+        .chart-subtab-group .btn {
+            font-size: 0.82rem;
+            padding: 4px 16px;
+            border-radius: 0px;
+            border: 1px solid var(--primary);
+            color: var(--primary);
+            background: transparent;
+            font-weight: 600;
+            text-decoration: none;
+        }
+        .chart-subtab-group .btn.active {
+            background: var(--primary);
+            border-color: var(--primary);
+            color: #fff;
+        }
+        .chart-subtab-group .btn:hover:not(.active) {
+            background: rgba(37, 99, 235, 0.1);
+            color: var(--primary);
+        }
+
         .nav-title {
             font-size: 0.9rem !important;
         }
@@ -291,15 +312,66 @@
             transition: color 0.2s ease;
         }
 
-        .quad-legend {
+        #quad-legend-box {
+            position: absolute;
+            top: -45px;
+            left: 0;
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
             font-size: 0.75rem;
+            z-index: 10;
         }
 
-        .quad-legend .q-dot {
+        #quad-legend-box .q-dot {
             width: 10px;
             height: 10px;
             border-radius: 50%;
             display: inline-block;
+        }
+
+        #broker-bubble-widget {
+            position: relative;
+        }
+
+        #broker-filter-checkboxes {
+            max-height: 120px;
+            overflow-y: auto;
+            padding: 12px 8px;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            background: var(--surface-alt);
+            font-size: 0.85rem;
+        }
+
+        #broker-filter-checkboxes label {
+            display: inline-block;
+            margin-right: 16px;
+            margin-bottom: 4px;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+
+        #broker-filter-checkboxes input[type="checkbox"] {
+            margin-right: 4px;
+        }
+
+        /* ── Timeframe Selector (yellow active) ── */
+        #broker-range-selector a {
+            font-size: 0.82rem;
+            padding: 3px 12px;
+            color: var(--text-muted);
+            text-decoration: none;
+            font-weight: 600;
+            transition: color 0.15s;
+        }
+
+        #broker-range-selector a:hover {
+            color: #eab308;
+        }
+
+        #broker-range-selector a.active {
+            color: #eab308;
         }
 
         /* ── Column Group Headers ── */
@@ -434,7 +506,7 @@
         <!-- INDEX VIEW -->
         <div id="index-view">
             <!-- DASHBOARD TABS -->
-            <ul class="nav nav-tabs mb-3" role="tablist">
+            <ul class="nav nav-tabs mb-3 mt-3" role="tablist">
                 <li class="nav-item" role="presentation">
                     <a class="nav-link" href="../index.html">Feed</a>
                 </li>
@@ -444,73 +516,63 @@
             </ul>
 
             <!-- ═══════════════════════════════════════════════════ -->
-            <!-- BUBBLE CHART: BROKER ACTIVITY MATRIX               -->
+            <!-- METEOR TRAIL: BROKER ACTIVITY                      -->
             <!-- ═══════════════════════════════════════════════════ -->
-            <div id="broker-bubble-widget" class="p-3 mb-3 bg-white rounded-3 shadow-sm">
-                <!-- Header row: tabs + timeframe selector -->
+
+            <!-- Timeframe selector — top row -->
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <span class="small" id="cache-status" style="visibility: hidden; font-size:0.72rem;"></span>
+                <div class="d-flex align-items-center gap-0" id="broker-range-selector">
+                    <a href="#" class="d-none" data-days="1">1D</a>
+                    <a href="#" class="active" data-days="5">5D</a>
+                    <a href="#" data-days="10">10D</a>
+                    <a href="#" data-days="20">20D</a>
+                </div>
+            </div>
+
+            <div id="broker-bubble-widget" class="p-3 mb-3 bg-white shadow-sm">
+                <!-- Header row: by Stock / by Broker tabs -->
                 <div class="d-flex justify-content-between align-items-center mb-2">
                     <div class="d-flex align-items-center gap-2">
-                        <ul class="nav nav-tabs nav-tabs-bubble mb-0" style="border-bottom:none;">
-                            <li class="nav-item">
-                                <a class="nav-link" href="/idx/emiten/broker-summary.html"
-                                    style="font-size:0.82rem;padding:4px 16px;border-radius:0px;background:transparent;color:#2563eb;border:1px solid #2563eb;font-weight:600;">by
-                                    Stock</a>
-                            </li>
-                            <li class="nav-item">
-                                <a class="nav-link active" href="#"
-                                    style="font-size:0.82rem;padding:4px 16px;border-radius:0px;background:#2563eb;color:#fff;border:1px solid #2563eb;font-weight:600;">by
-                                    Broker</a>
-                            </li>
-                        </ul>
-                    </div>
-                    <div class="btn-group btn-group-sm" id="broker-range-selector">
-                        <a href="#" class="btn btn-outline-secondary btn-sm" data-days="1">1D</a>
-                        <a href="#" class="btn btn-outline-secondary btn-sm active" data-days="5">5D</a>
-                        <a href="#" class="btn btn-outline-secondary btn-sm" data-days="10">10D</a>
-                        <a href="#" class="btn btn-outline-secondary btn-sm" data-days="20">20D</a>
+                        <div class="btn-group btn-group-sm chart-subtab-group">
+                            <a href="/idx/emiten/broker-summary.html" class="btn">by Stock</a>
+                            <a href="#" class="btn active">by Broker</a>
+                        </div>
                     </div>
                 </div>
 
-                <!-- Subtitle -->
-                <div class="mb-2">
-                    <h6 class="text-muted mb-0" id="bubble-title">
-                        Broker Activity Matrix
-                        <span class="d-block small mt-1" style="font-weight:400;font-size:0.78rem;">
-                            X = Net Value &nbsp;|&nbsp; Y = Breadth (jumlah saham) &nbsp;|&nbsp; Size = Total Value
-                        </span>
-                    </h6>
+                <!-- Meteor Trail Chart -->
+                <div id="meteor-bubble-loading" class="text-center py-4">
+                    <div class="spinner-border spinner-border-sm text-primary me-2" role="status"></div>
+                    <span class="small text-muted">Memuat broker meteor trail...</span>
                 </div>
-
-                <!-- Bubble Chart Canvas -->
-                <div id="broker-bubble-loading" class="text-center py-4">
-                    <div class="spinner-border text-primary" role="status">
-                        <span class="visually-hidden">Loading...</span>
-                    </div>
-                    <p class="small text-muted mt-2 mb-0">Memuat broker activity matrix...</p>
+                <div class="chart-container-responsive" style="height:40vh; display: none;"
+                    id="meteor-bubble-container">
+                    <canvas id="meteor-bubble-chart"></canvas>
                 </div>
-                <div class="chart-container-responsive" style="height:35vh; display: none;"
-                    id="broker-bubble-container">
-                    <canvas id="broker-bubble-chart"></canvas>
+                <div class="text-center mt-1 d-none">
+                    <small class="text-muted" style="font-size:0.72rem;">
+                        <i class="fa-solid fa-circle-info me-1"></i>
+                        Setiap bubble = 1 hari · Tail → Head (hari terbaru) · Top 15 broker by |Net Value|
+                    </small>
                 </div>
-
 
             </div>
-            <!-- Quadrant Legend -->
-            <div class="d-flex justify-content-center gap-3 mt-2 mb-4 quad-legend flex-wrap">
-                <span><span class="q-dot" style="background:rgba(34,197,94,0.75);"></span> Q1 Aggressive
-                    Accum</span>
-                <span><span class="q-dot" style="background:rgba(239,68,68,0.72);"></span> Q2 Aggressive
-                    Distrib</span>
-                <span><span class="q-dot" style="background:rgba(245,158,11,0.72);"></span> Q3 Quiet Exit</span>
-                <span><span class="q-dot" style="background:rgba(59,130,246,0.70);"></span> Q4 Stealth Accum</span>
+            <!-- Quadrant Legend — below chart, centered -->
+            <div id="quad-legend-inline" class="d-flex justify-content-center align-items-center flex-wrap gap-3 mb-2 mt-1" style="font-size:0.78rem;">
+                <span><span style="background:rgba(34,197,94,0.75);width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:4px;"></span>Q1 Aggressive Accum</span>
+                <span><span style="background:rgba(239,68,68,0.72);width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:4px;"></span>Q2 Aggressive Distrib</span>
+                <span><span style="background:rgba(245,158,11,0.72);width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:4px;"></span>Q3 Quiet Exit</span>
+                <span><span style="background:rgba(59,130,246,0.70);width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:4px;"></span>Q4 Stealth Accum</span>
             </div>
+
             <!-- ═══════════════════════════════════════════════════ -->
             <!-- FILTER BAR                                         -->
             <!-- ═══════════════════════════════════════════════════ -->
             <div class="mb-2 container">
                 <!-- Row 1: Presets -->
                 <div class="d-flex justify-content-between align-items-center mb-2">
-                    <div class="d-flex align-items-center gap-2 flex-wrap">
+                    <div class="d-flex align-items-center flex-wrap">
                         <span class="text-muted fw-bold text-uppercase"
                             style="font-size:0.85rem; letter-spacing:0.5px;width: 75px;">Preset</span>
                         <div class="btn-group btn-group-sm" id="preset-selector">
@@ -534,6 +596,15 @@
                     </div>
                     <div class="d-flex align-items-center gap-2 ms-auto">
                         <small class="text-muted" id="broker-count"></small>
+                    </div>
+                </div>
+
+                <!-- Row 1.5: Broker Filter -->
+                <div class="d-flex align-items-center flex-wrap mb-2">
+                    <span class="text-muted fw-bold text-uppercase"
+                        style="font-size:0.85rem; letter-spacing:0.5px;width: 75px;">BROKER</span>
+                    <div class="d-flex flex-wrap gap-1" id="broker-btn-group" style="min-height:28px;">
+                        <!-- Populated by JS after data loads -->
                     </div>
                 </div>
 
@@ -613,6 +684,21 @@
                                     Exit</a></li>
                             <li><a class="dropdown-item small" href="#" data-filter="quadrant" data-val="Q4">Q4 Stealth
                                     Accum</a></li>
+                        </ul>
+                    </div>
+                    <!-- CVD Trend -->
+                    <div class="dropdown">
+                        <button class="btn btn-sm btn-outline-secondary dropdown-toggle px-2" type="button"
+                            data-bs-toggle="dropdown" id="dd-cvdtrend">
+                            CVD: Any
+                        </button>
+                        <ul class="dropdown-menu dropdown-menu-sm">
+                            <li><a class="dropdown-item small" href="#" data-filter="cvdtrend" data-val="any">Any</a></li>
+                            <li><a class="dropdown-item small" href="#" data-filter="cvdtrend" data-val="up2">▲▲ Strong Accum</a></li>
+                            <li><a class="dropdown-item small" href="#" data-filter="cvdtrend" data-val="up1">▲ Accum</a></li>
+                            <li><a class="dropdown-item small" href="#" data-filter="cvdtrend" data-val="neutral">─ Neutral</a></li>
+                            <li><a class="dropdown-item small" href="#" data-filter="cvdtrend" data-val="down1">▼ Distrib</a></li>
+                            <li><a class="dropdown-item small" href="#" data-filter="cvdtrend" data-val="down2">▼▼ Strong Distrib</a></li>
                         </ul>
                     </div>
                     <!-- Reset All -->
@@ -782,7 +868,7 @@
     <script src="../js/component.js?v=73"></script>
 
     <!-- BROKER ACTIVITY LOGIC -->
-    <script src="../js/broker-activity.js?v=6"></script>
+    <script src="../js/broker-activity.js?v=12"></script>
 
     <script defer
         src="https://static.cloudflareinsights.com/beacon.min.js/vcd15cbe7772f49c399c6a5babf22c1241717689176015"

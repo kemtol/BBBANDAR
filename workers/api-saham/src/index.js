@@ -6873,13 +6873,46 @@ export default {
         }
 
         if (broker && /^[A-Z0-9]{2,3}$/.test(broker)) {
+          const breakdownDaily = url.searchParams.get("breakdown") === "daily";
+
+          // ── Daily breakdown mode: return per-day summaries ──
+          if (breakdownDaily) {
+            const daily = [];
+            for (const date of tradingDays) {
+              const [sy, sm, sd] = date.split("-");
+              const r2Key = `BYBROKER_${broker}/${sy}/${sm}/${sd}.json`;
+              try {
+                const obj = await env.RAW_BROKSUM.get(r2Key);
+                if (!obj) continue;
+                const data = await obj.json();
+                let net_val = 0, total_val = 0, buy_val = 0, sell_val = 0;
+                let buy_freq = 0, sell_freq = 0;
+                const stockSet = new Set();
+                for (const s of (data.stocks || [])) {
+                  net_val += Number(s.net_val) || 0;
+                  total_val += Number(s.total_val) || 0;
+                  buy_val += Number(s.buy_val) || 0;
+                  sell_val += Number(s.sell_val) || 0;
+                  buy_freq += Number(s.buy_freq) || 0;
+                  sell_freq += Number(s.sell_freq) || 0;
+                  stockSet.add(s.stock_code);
+                }
+                // Skip days with no actual trades (empty scrape or pre-market file)
+                if (total_val === 0 && net_val === 0) continue;
+                daily.push({ date, net_val, total_val, buy_val, sell_val, buy_freq, sell_freq, breadth: stockSet.size });
+              } catch (e) { /* skip failed date */ }
+            }
+            return json({ ok: true, broker, days, daily });
+          }
+
           // Single broker — aggregate N days (with R2 cache)
           // Cache key: BYBROKER_{CODE}/cache/{days}D_{latestTradingDay}.json
           // Cache auto-invalidates when a new trading day starts (key changes)
           const cacheKey = `BYBROKER_${broker}/cache/v2_${days}D_${tradingDays[0]}.json`;
+          const nocache = url.searchParams.get("nocache") === "true";
 
-          // 1) Try cache first (days > 1 only; days=1 is already a single file read)
-          if (days > 1) {
+          // 1) Try cache first (days > 1 only; days=1 is already a single file read; skip if nocache=true)
+          if (days > 1 && !nocache) {
             try {
               const cached = await env.RAW_BROKSUM.get(cacheKey);
               if (cached) {

@@ -276,3 +276,170 @@ function getPreviousTradingDay(fromDateStr) {
 
     return d.toISOString().split('T')[0];
 }
+
+// ========================================
+// BROKER ACTIVITY HEALTH CHECK
+// ========================================
+
+// Sample 15 brokers: 10 critical (top foreign + top local) + 5 random
+const BA_CRITICAL_BROKERS = [
+    'MG', 'YP', 'AK', 'BK', 'CC', 'CS', 'ZP', 'RX', 'YU', 'DB',
+    'KK', 'NI', 'DH', 'LG', 'HP',
+];
+const BA_RANDOM_SAMPLE = 10;
+const BA_MISSING_THRESHOLD = 0.15; // >15% brokers missing → full backfill
+
+/**
+ * Broker Activity Health Check.
+ * Runs after the main broker-activity scrape to verify R2 data completeness.
+ * Samples ~25 brokers × today, reports missing, triggers selective or full repair.
+ *
+ * Cost: ~25 R2 HEAD ops (Class A = free tier) + 1 KV read + 1 KV write + 1 D1 read (broker list)
+ *
+ * @param {object} env - Worker environment bindings
+ * @param {object} opts
+ * @param {Function} opts.sendWebhook - Webhook sender
+ * @param {Function} opts.dispatchBrokerActivityJobs - Dispatch repair function
+ * @returns {Promise<object>} Health report
+ */
+export async function runBrokerActivityHealthCheck(env, { sendWebhook, dispatchBrokerActivityJobs }) {
+    // Target: today (WIB)
+    const wibNow = new Date(Date.now() + 7 * 3600000);
+    const today = wibNow.toISOString().slice(0, 10);
+
+    console.log(`[BA-HEALTH] Checking broker activity data for ${today}`);
+
+    const report = {
+        date: today,
+        checkedAt: new Date().toISOString(),
+        totalChecked: 0,
+        present: 0,
+        missing: 0,
+        missingBrokers: [],
+        repairTriggered: false,
+        repairType: null,
+    };
+
+    // 1. Get all broker codes from D1
+    let allBrokers = [];
+    try {
+        const { results } = await env.SSSAHAM_DB.prepare("SELECT code FROM brokers").all();
+        allBrokers = (results || []).map(r => r.code).filter(c => /^[A-Z0-9]{2,3}$/.test(c));
+    } catch (e) {
+        console.error(`[BA-HEALTH] D1 error: ${e.message}`);
+        return report;
+    }
+
+    // 2. Build sample list: critical + random
+    const sampleSet = new Set(BA_CRITICAL_BROKERS.filter(c => allBrokers.includes(c)));
+    const candidates = allBrokers.filter(c => !sampleSet.has(c));
+    shuffleArray(candidates);
+    candidates.slice(0, BA_RANDOM_SAMPLE).forEach(c => sampleSet.add(c));
+    const sampleList = [...sampleSet];
+
+    report.totalChecked = sampleList.length;
+
+    // 3. Check R2 existence via HEAD (Class A op — very cheap)
+    const [sy, sm, sd] = today.split("-");
+    for (const code of sampleList) {
+        const r2Key = `BYBROKER_${code}/${sy}/${sm}/${sd}.json`;
+        try {
+            const head = await env.RAW_BROKSUM.head(r2Key);
+            if (head) {
+                report.present++;
+            } else {
+                report.missing++;
+                report.missingBrokers.push(code);
+            }
+        } catch {
+            report.missing++;
+            report.missingBrokers.push(code);
+        }
+    }
+
+    const missingRate = report.totalChecked > 0 ? report.missing / report.totalChecked : 0;
+    console.log(`[BA-HEALTH] ${report.present}/${report.totalChecked} present, ${report.missing} missing (${(missingRate * 100).toFixed(1)}%)`);
+
+    // 4. Decision: repair or not
+    if (missingRate > BA_MISSING_THRESHOLD) {
+        // >15% missing → full backfill for today (all 92 brokers, skip existing)
+        report.repairTriggered = true;
+        report.repairType = 'FULL_BACKFILL';
+
+        console.log(`[BA-HEALTH] ⚠️ ${(missingRate * 100).toFixed(0)}% missing — triggering FULL BACKFILL for ${today}`);
+
+        try {
+            const resp = await dispatchBrokerActivityJobs(env, { date: today, days: 1, dryRun: false, overwrite: false });
+            const result = await resp.json();
+            report.dispatchResult = { dispatched: result.dispatched, skipped: result.skipped };
+        } catch (e) {
+            report.dispatchError = e.message;
+        }
+
+        const msg = `⚠️ **Broker Activity Health: FULL BACKFILL**\n` +
+            `Date: ${today}\n` +
+            `Missing: ${report.missing}/${report.totalChecked} (${(missingRate * 100).toFixed(0)}%)\n` +
+            `Sample: ${report.missingBrokers.slice(0, 10).join(', ')}`;
+        await sendWebhook(env, msg);
+
+    } else if (report.missing > 0) {
+        // Some missing → selective repair (only re-scrape missing brokers)
+        report.repairTriggered = true;
+        report.repairType = 'SELECTIVE_REPAIR';
+
+        console.log(`[BA-HEALTH] 🔧 Selective repair for: ${report.missingBrokers.join(', ')}`);
+
+        // Also scan the FULL broker list to find ALL missing (not just sample)
+        const fullMissing = [];
+        for (const code of allBrokers) {
+            if (sampleSet.has(code)) {
+                // Already checked
+                if (report.missingBrokers.includes(code)) fullMissing.push(code);
+            } else {
+                const key = `BYBROKER_${code}/${sy}/${sm}/${sd}.json`;
+                try {
+                    const h = await env.RAW_BROKSUM.head(key);
+                    if (!h) fullMissing.push(code);
+                } catch { fullMissing.push(code); }
+            }
+        }
+
+        // Queue only missing brokers
+        if (fullMissing.length > 0 && env.SSSAHAM_QUEUE) {
+            const messages = fullMissing.map(code => ({
+                body: { type: "broker_activity", broker: code, date: today, overwrite: false, attempt: 0 }
+            }));
+            for (let i = 0; i < messages.length; i += 50) {
+                await env.SSSAHAM_QUEUE.sendBatch(messages.slice(i, i + 50));
+            }
+            report.fullMissingCount = fullMissing.length;
+            report.fullMissingDispatched = fullMissing.length;
+        }
+
+        const msg = `🔧 **Broker Activity Health: SELECTIVE REPAIR**\n` +
+            `Date: ${today}\n` +
+            `Sample missing: ${report.missingBrokers.join(', ')}\n` +
+            `Full scan missing: ${fullMissing.length} brokers dispatched`;
+        await sendWebhook(env, msg);
+
+    } else {
+        const msg = `✅ **Broker Activity Health: All Present**\n` +
+            `Date: ${today}\n` +
+            `Checked: ${report.totalChecked} brokers — all OK`;
+        console.log(`[BA-HEALTH] ${msg}`);
+        await sendWebhook(env, msg);
+    }
+
+    // 5. Save report to KV (7 day TTL)
+    try {
+        await env.SSSAHAM_WATCHLIST.put(
+            `ba-health:${today}`,
+            JSON.stringify(report),
+            { expirationTtl: 7 * 24 * 60 * 60 }
+        );
+    } catch (e) {
+        console.error(`[BA-HEALTH] Failed to save report: ${e.message}`);
+    }
+
+    return report;
+}

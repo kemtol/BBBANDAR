@@ -33,7 +33,7 @@
  *  */
 
 import { validateBroksum, hasValidBrokerData } from './validator.js';
-import { runHealthCheck } from './health-check.js';
+import { runHealthCheck, runBrokerActivityHealthCheck } from './health-check.js';
 import { aggregateAndStore, backfillFlowFromR2 } from './flow-aggregator.js';
 import { runAccumPreprocessor } from './accum-preprocessor.js';
 
@@ -769,15 +769,18 @@ export default {
             }
 
             // MODE SELECTION
-            // UTC 10    (17:00 WIB) -> BROKER ACTIVITY SCRAPE
+            // UTC 10:00 (17:00 WIB) -> BROKER ACTIVITY SCRAPE
+            // UTC 10:45 (17:45 WIB) -> BROKER ACTIVITY HEALTH CHECK (self-healing)
             // UTC 11    (18:00 WIB) -> DAILY REWRITE
-            // UTC 12:00 (19:00 WIB) -> HEALTH CHECK
+            // UTC 12:00 (19:00 WIB) -> HEALTH CHECK (stock broksum)
             // UTC 12:15 (19:15 WIB) -> ACCUM PREPROCESSOR
-            // Otherwise              -> SWEEPING BACKFILL
-            const isBrokerActivity = (utcHour === 10);
+            // Otherwise              -> SWEEPING BACKFILL (stock broksum + broker activity)
+            const utcMin = now.getUTCMinutes();
+            const isBrokerActivity = (utcHour === 10 && utcMin < 30);
+            const isBrokerActivityHealth = (utcHour === 10 && utcMin >= 30);
             const isDailyRewrite = (utcHour === 11);
-            const isHealthCheck = (utcHour === 12 && now.getUTCMinutes() < 10);
-            const isAccumPreprocessor = (utcHour === 12 && now.getUTCMinutes() >= 15);
+            const isHealthCheck = (utcHour === 12 && utcMin < 10);
+            const isAccumPreprocessor = (utcHour === 12 && utcMin >= 15);
 
             if (isBrokerActivity) {
                 console.log("📊 MODE: BROKER ACTIVITY (17:00 WIB) - Dispatching broker→stock jobs to queue");
@@ -788,6 +791,21 @@ export default {
                 } catch (e) {
                     console.error(`📊 Broker activity dispatch error: ${e.message}`);
                     await this.sendWebhook(env, `❌ **Broker Activity Dispatch Failed**\nError: ${e.message}`);
+                }
+                return;
+            }
+
+            if (isBrokerActivityHealth) {
+                console.log("🩺 MODE: BROKER ACTIVITY HEALTH (17:45 WIB) - Verifying today's broker data");
+                try {
+                    const baReport = await runBrokerActivityHealthCheck(env, {
+                        sendWebhook: this.sendWebhook.bind(this),
+                        dispatchBrokerActivityJobs: this.dispatchBrokerActivityJobs.bind(this),
+                    });
+                    console.log(`🩺 BA Health: ${baReport.present}/${baReport.totalChecked} present, repair=${baReport.repairType || 'none'}`);
+                } catch (e) {
+                    console.error(`🩺 BA Health error: ${e.message}`);
+                    await this.sendWebhook(env, `❌ **Broker Activity Health Failed**\nError: ${e.message}`);
                 }
                 return;
             }
@@ -880,8 +898,47 @@ export default {
                     if (processedSymbols % 10 === 0) await new Promise(r => setTimeout(r, 20));
                 }
 
-                if (totalMissingQueued > 0) {
-                    const msg = `🧹 **Sweeping Complete**\nQueued ${totalMissingQueued} missing dates for backfill.`;
+                // ── BROKER ACTIVITY SWEEP (last 5 trading days) ──
+                // Lightweight: check R2 HEAD for each broker × date
+                // Cost: 92 brokers × 5 days = 460 HEAD ops (Class A) per sweep cycle
+                let baMissing = 0;
+                try {
+                    const { results: brokerRows } = await env.SSSAHAM_DB.prepare("SELECT code FROM brokers").all();
+                    const brokerCodes = (brokerRows || []).map(r => r.code).filter(c => /^[A-Z0-9]{2,3}$/.test(c));
+                    const baLookback = getTradingDays(5);
+                    const baMissingJobs = [];
+
+                    for (const baDate of baLookback) {
+                        if (baDate === today) continue; // skip today (handled by health check)
+                        const [by, bm, bd] = baDate.split("-");
+                        for (const code of brokerCodes) {
+                            const key = `BYBROKER_${code}/${by}/${bm}/${bd}.json`;
+                            try {
+                                const h = await env.RAW_BROKSUM.head(key);
+                                if (!h) {
+                                    baMissingJobs.push({ body: { type: "broker_activity", broker: code, date: baDate, overwrite: false, attempt: 0 } });
+                                }
+                            } catch { 
+                                baMissingJobs.push({ body: { type: "broker_activity", broker: code, date: baDate, overwrite: false, attempt: 0 } });
+                            }
+                        }
+                    }
+
+                    if (baMissingJobs.length > 0) {
+                        for (let i = 0; i < baMissingJobs.length; i += 50) {
+                            await env.SSSAHAM_QUEUE.sendBatch(baMissingJobs.slice(i, i + 50));
+                        }
+                        baMissing = baMissingJobs.length;
+                        console.log(`🧹 BA Sweep: queued ${baMissing} missing broker-activity files`);
+                    } else {
+                        console.log("🧹 BA Sweep: all broker-activity files present for last 5 days");
+                    }
+                } catch (e) {
+                    console.error(`🧹 BA Sweep error: ${e.message}`);
+                }
+
+                if (totalMissingQueued > 0 || baMissing > 0) {
+                    const msg = `🧹 **Sweeping Complete**\nStock broksum: ${totalMissingQueued} missing dates queued\nBroker activity: ${baMissing} missing files queued`;
                     console.log(msg);
                     await this.sendWebhook(env, msg);
                 } else {

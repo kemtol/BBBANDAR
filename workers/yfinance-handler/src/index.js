@@ -526,8 +526,10 @@ async function handleRequest(req, env) {
     // All tickers for a specific date (bulk query for features-service)
     if (!date) return json({ error: "date or symbol required" }, 400);
     const { results } = await env.SSSAHAM_DB.prepare(
-      `SELECT ticker, date, close, volume, ma5, ma10, ma20, rsi14,
-              rvol_2d, rvol_5d, rvol_10d, rvol_20d, vwap
+      `SELECT ticker, date, open, high, low, close, volume,
+              ma5, ma10, ma20, rsi14,
+              rvol_2d, rvol_5d, rvol_10d, rvol_20d, vwap,
+              est_delta, fp_vol, fp_net, ratio
        FROM yfinance_1d WHERE date = ?`
     ).bind(date).all();
     return json({ date, count: results?.length || 0, rows: results || [] });
