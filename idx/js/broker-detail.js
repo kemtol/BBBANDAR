@@ -227,11 +227,12 @@ $(document).ready(async function () {
         renderCharts();
     });
 
-    // Table sorting
+    // Table sorting — also re-renders charts to stay in sync
     $('#holdings-table thead th[data-sort]').on('click', function () {
         const key = $(this).data('sort');
         if (tableSortKey === key) tableSortDir *= -1;
         else { tableSortKey = key; tableSortDir = -1; }
+        renderCharts();
         renderTable();
     });
 
@@ -300,9 +301,38 @@ function renderCharts() {
 
 function getTopStocks(n) {
     if (!apiData?.stock_summary) return [];
-    const sorted = [...apiData.stock_summary].sort((a, b) => Math.abs(b.total_net) - Math.abs(a.total_net));
-    if (n <= 0 || n >= sorted.length) return sorted;
-    return sorted.slice(0, n);
+    // Enrich with momentum + streak so we can sort by any key
+    const enriched = apiData.stock_summary.map(s => {
+        const series = apiData.series[s.stock_code] || [];
+        let streak = 0;
+        if (series.length > 0) {
+            const last = series[series.length - 1];
+            const dir = last.net_val > 0 ? 1 : last.net_val < 0 ? -1 : 0;
+            if (dir !== 0) {
+                streak = dir;
+                for (let i = series.length - 2; i >= 0; i--) {
+                    const d = series[i].net_val > 0 ? 1 : series[i].net_val < 0 ? -1 : 0;
+                    if (d === dir) streak += dir;
+                    else break;
+                }
+            }
+        }
+        const momentum = computeMomentumScore(series);
+        return { ...s, streak, momentum };
+    });
+    // Sort using same key/direction as table
+    enriched.sort((a, b) => {
+        let va = a[tableSortKey], vb = b[tableSortKey];
+        if (tableSortKey === 'stock_code') {
+            return tableSortDir * va.localeCompare(vb);
+        }
+        if (tableSortKey === 'total_net') {
+            return tableSortDir * (Math.abs(vb) - Math.abs(va)) || (vb - va);
+        }
+        return tableSortDir * ((vb || 0) - (va || 0));
+    });
+    if (n <= 0 || n >= enriched.length) return enriched;
+    return enriched.slice(0, n);
 }
 
 function renderTrailingChart() {
@@ -560,39 +590,8 @@ function renderMomentumChart() {
 function renderTable() {
     if (!apiData?.stock_summary) return;
 
-    // Enrich with streak + momentum score
-    const enriched = apiData.stock_summary.map(s => {
-        const series = apiData.series[s.stock_code] || [];
-        // Compute streak from series (chronological order — last entry is most recent)
-        let streak = 0;
-        if (series.length > 0) {
-            const last = series[series.length - 1];
-            const dir = last.net_val > 0 ? 1 : last.net_val < 0 ? -1 : 0;
-            if (dir !== 0) {
-                streak = dir;
-                for (let i = series.length - 2; i >= 0; i--) {
-                    const d = series[i].net_val > 0 ? 1 : series[i].net_val < 0 ? -1 : 0;
-                    if (d === dir) streak += dir;
-                    else break;
-                }
-            }
-        }
-        const momentum = computeMomentumScore(series);
-        return { ...s, streak, momentum };
-    });
-
-    // Sort
-    enriched.sort((a, b) => {
-        let va = a[tableSortKey], vb = b[tableSortKey];
-        if (tableSortKey === 'stock_code') {
-            return tableSortDir * va.localeCompare(vb);
-        }
-        // For total_net, sort by absolute value when descending
-        if (tableSortKey === 'total_net') {
-            return tableSortDir * (Math.abs(vb) - Math.abs(va)) || (vb - va);
-        }
-        return tableSortDir * ((vb || 0) - (va || 0));
-    });
+    // Use getTopStocks(0) to get ALL stocks, already enriched + sorted
+    const enriched = getTopStocks(0);
 
     function fmtMomentum(m) {
         if (!Number.isFinite(m) || m === 0) return '<span class="text-muted">—</span>';
