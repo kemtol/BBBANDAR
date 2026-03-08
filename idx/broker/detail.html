@@ -255,7 +255,6 @@
                     title="Toggle theme (Shift + D)"></i>
                 <a href="/idx/broker/stock-summary.html" id="nav-back" class="d-flex align-items-center text-decoration-none">
                     <i class="fa-solid fa-chevron-left me-1"></i>
-                    <span class="small">Broker Scanner</span>
                 </a>
             </div>
             <div class="flex-grow-1 text-center">
@@ -275,7 +274,7 @@
     <div id="app" class="container mb-3" style="display:none;">
 
         <!-- SUMMARY STATS ROW -->
-        <div class="row g-2 mb-3" id="summary-row">
+        <div class="row g-2 my-3" id="summary-row">
             <div class="col-4 col-md-2">
                 <div class="summary-stat bg-white shadow-sm rounded">
                     <div class="stat-value" id="stat-net-val">—</div>
@@ -317,7 +316,6 @@
         <!-- TIMEFRAME + TOP-N CONTROLS -->
         <div class="d-flex justify-content-between align-items-center mb-2">
             <div class="d-flex align-items-center gap-2" id="topn-selector">
-                <span class="text-muted" style="font-size:0.75rem;">Show:</span>
                 <a href="#" data-topn="3">Top 3</a>
                 <a href="#" data-topn="5" class="active">Top 5</a>
                 <a href="#" data-topn="10">Top 10</a>
@@ -332,11 +330,7 @@
 
         <!-- TRAILING LINE CHART -->
         <div id="trailing-chart-widget" class="p-3 mb-3 bg-white shadow-sm">
-            <div class="d-flex justify-content-between align-items-center mb-2">
-                <h6 class="text-muted mb-0" style="font-size:0.85rem;">
-                    <i class="fa-solid fa-chart-line me-1"></i> Cumulative Net Value Trail
-                </h6>
-            </div>
+
             <div id="trailing-chart-loading" class="text-center py-4">
                 <div class="spinner-border spinner-border-sm text-primary me-2" role="status"></div>
                 <span class="small text-muted">Memuat trailing chart...</span>
@@ -346,60 +340,59 @@
             </div>
         </div>
 
-        <!-- DIVERGING BAR CHART (Net Buy vs Net Sell) -->
-        <div id="diverging-chart-widget" class="p-3 mb-3 bg-white shadow-sm">
-            <div class="d-flex justify-content-between align-items-center mb-2">
-                <h6 class="text-muted mb-0" style="font-size:0.85rem;">
-                    <i class="fa-solid fa-chart-bar me-1"></i> Accumulation Momentum Score
-                </h6>
-            </div>
-            <div class="chart-bar-container" id="diverging-chart-container" style="min-height:300px;">
-                <canvas id="diverging-chart"></canvas>
-            </div>
-        </div>
-
-        <!-- HOLDINGS TABLE -->
-        <div class="card card-swing mb-4" style="border-radius: 0;">
-            <div class="card-header bg-white border-bottom-0 py-2">
-                <div class="d-flex justify-content-between align-items-center">
-                    <span class="fw-bold" style="font-size:0.9rem;">
-                        <i class="fa-solid fa-list me-1"></i> Stock Holdings
-                    </span>
-                    <small class="text-muted" id="holdings-count"></small>
+        <!-- MOMENTUM + TABLE: side-by-side on desktop, stacked on mobile -->
+        <div class="row g-3 mb-4">
+            <!-- LEFT: Momentum Score Chart -->
+            <div class="col-12 col-lg-5">
+                <div id="diverging-chart-widget" class="p-3 bg-white shadow-sm h-100">
+                    <div class="chart-bar-container" id="diverging-chart-container" style="min-height:300px;">
+                        <canvas id="diverging-chart"></canvas>
+                    </div>
                 </div>
             </div>
-            <div class="table-responsive">
-                <table id="holdings-table" class="table table-hover mb-0 table-holdings align-middle">
-                    <thead>
-                        <tr>
-                            <th class="text-center" style="width:40px">#</th>
-                            <th data-sort="stock_code" style="cursor:pointer">
-                                Stock <i class="fa-solid fa-sort small text-muted"></i>
-                            </th>
-                            <th class="text-end" data-sort="total_net" style="cursor:pointer">
-                                Net Val <i class="fa-solid fa-sort small text-muted"></i>
-                            </th>
-                            <th class="text-end" data-sort="total_buy" style="cursor:pointer">
-                                Buy Val <i class="fa-solid fa-sort small text-muted"></i>
-                            </th>
-                            <th class="text-end" data-sort="total_sell" style="cursor:pointer">
-                                Sell Val <i class="fa-solid fa-sort small text-muted"></i>
-                            </th>
-                            <th class="text-center hide-mobile" data-sort="days_active" style="cursor:pointer">
-                                Days <i class="fa-solid fa-sort small text-muted"></i>
-                            </th>
-                            <th class="text-center hide-mobile" data-sort="streak" style="cursor:pointer">
-                                Streak <i class="fa-solid fa-sort small text-muted"></i>
-                            </th>
-                            <th class="text-center hide-mobile" data-sort="momentum" style="cursor:pointer">
-                                AMS <i class="fa-solid fa-sort small text-muted"></i>
-                            </th>
-                        </tr>
-                    </thead>
-                    <tbody id="tbody-holdings">
-                        <!-- Populated by JS -->
-                    </tbody>
-                </table>
+
+            <!-- RIGHT: Holdings Table -->
+            <div class="col-12 col-lg-7">
+                <div class="card card-swing h-100" style="border-radius: 0;">
+                    <div class="card-header bg-white border-bottom-0 py-2">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <small class="text-muted" id="holdings-count"></small>
+                        </div>
+                    </div>
+                    <div class="table-responsive">
+                        <table id="holdings-table" class="table table-hover mb-0 table-holdings align-middle">
+                            <thead>
+                                <tr>
+                                    <th class="text-center" style="width:40px">#</th>
+                                    <th data-sort="stock_code" style="cursor:pointer">
+                                        Stock <i class="fa-solid fa-sort small text-muted"></i>
+                                    </th>
+                                    <th class="text-end" data-sort="total_net" style="cursor:pointer">
+                                        Net Val <i class="fa-solid fa-sort small text-muted"></i>
+                                    </th>
+                                    <th class="text-end" data-sort="total_buy" style="cursor:pointer">
+                                        Buy Val <i class="fa-solid fa-sort small text-muted"></i>
+                                    </th>
+                                    <th class="text-end" data-sort="total_sell" style="cursor:pointer">
+                                        Sell Val <i class="fa-solid fa-sort small text-muted"></i>
+                                    </th>
+                                    <th class="text-center hide-mobile" data-sort="days_active" style="cursor:pointer">
+                                        Days <i class="fa-solid fa-sort small text-muted"></i>
+                                    </th>
+                                    <th class="text-center hide-mobile" data-sort="streak" style="cursor:pointer">
+                                        Streak <i class="fa-solid fa-sort small text-muted"></i>
+                                    </th>
+                                    <th class="text-center hide-mobile" data-sort="momentum" style="cursor:pointer">
+                                        AMS <i class="fa-solid fa-sort small text-muted"></i>
+                                    </th>
+                                </tr>
+                            </thead>
+                            <tbody id="tbody-holdings">
+                                <!-- Populated by JS -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
             </div>
         </div>
 
