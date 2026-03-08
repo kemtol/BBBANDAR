@@ -39,6 +39,14 @@ let momentumChart = null;
 let tableSortKey = 'total_net';
 let tableSortDir = -1;       // -1 = desc
 
+// Active filters
+const activeFilters = {
+    net: 'any',     // any | buy | sell
+    streak: 'any',  // any | buy2 | buy3 | sell2 | sell3
+    ams: 'any',     // any | strong_acc | acc | dist | strong_dist
+    days: 'any',    // any | 3 | 5
+};
+
 // ── Format Helpers ──
 function fmtValue(v) {
     if (typeof v !== 'number' || !Number.isFinite(v)) return '-';
@@ -236,6 +244,24 @@ $(document).ready(async function () {
         renderTable();
     });
 
+    // ── Filter handlers ──
+    $(document).on('click', '#filter-row .dropdown-item[data-filter]', function (e) {
+        e.preventDefault();
+        const key = $(this).data('filter');
+        const val = $(this).data('val');
+        activeFilters[key] = val;
+        updateFilterButtons();
+        renderCharts();
+        renderTable();
+    });
+
+    $('#btn-filter-reset').on('click', function () {
+        Object.keys(activeFilters).forEach(k => activeFilters[k] = 'any');
+        updateFilterButtons();
+        renderCharts();
+        renderTable();
+    });
+
     loadData();
 });
 
@@ -245,6 +271,55 @@ function updateURL() {
     url.searchParams.set('days', currentDays);
     url.searchParams.set('topn', currentTopN);
     history.replaceState(null, '', url.toString());
+}
+
+// ── Filter UI ──
+function updateFilterButtons() {
+    const labelMap = {
+        net: { any: 'Net: Any', buy: 'Net: Buy', sell: 'Net: Sell' },
+        streak: { any: 'Streak: Any', buy2: 'Streak: Buy≥2', buy3: 'Streak: Buy≥3', sell2: 'Streak: Sell≥2', sell3: 'Streak: Sell≥3' },
+        ams: { any: 'AMS: Any', strong_acc: 'AMS: Strong Acc', acc: 'AMS: Acc', dist: 'AMS: Dist', strong_dist: 'AMS: Strong Dist' },
+        days: { any: 'Days: Any', '3': 'Days: ≥3', '5': 'Days: ≥5' },
+    };
+    Object.keys(activeFilters).forEach(key => {
+        const val = activeFilters[key];
+        const btn = $(`#dd-${key === 'days' ? 'days' : key}`);
+        const map = labelMap[key] || {};
+        btn.text(map[val] || `${key}: ${val}`);
+        btn.toggleClass('active-filter', val !== 'any');
+    });
+    // Show/hide reset button
+    const hasActive = Object.values(activeFilters).some(v => v !== 'any');
+    $('#btn-filter-reset').toggle(hasActive);
+}
+
+function applyFilters(stocks) {
+    return stocks.filter(s => {
+        // Net direction
+        if (activeFilters.net === 'buy' && s.total_net <= 0) return false;
+        if (activeFilters.net === 'sell' && s.total_net >= 0) return false;
+
+        // Streak
+        const sf = activeFilters.streak;
+        if (sf === 'buy2' && s.streak < 2) return false;
+        if (sf === 'buy3' && s.streak < 3) return false;
+        if (sf === 'sell2' && s.streak > -2) return false;
+        if (sf === 'sell3' && s.streak > -3) return false;
+
+        // AMS
+        const af = activeFilters.ams;
+        if (af === 'strong_acc' && s.momentum < 30) return false;
+        if (af === 'acc' && s.momentum < 10) return false;
+        if (af === 'dist' && s.momentum > -10) return false;
+        if (af === 'strong_dist' && s.momentum > -30) return false;
+
+        // Days active
+        const df = activeFilters.days;
+        if (df === '3' && s.days_active < 3) return false;
+        if (df === '5' && s.days_active < 5) return false;
+
+        return true;
+    });
 }
 
 // ── Data Loading ──
@@ -331,8 +406,10 @@ function getTopStocks(n) {
         }
         return tableSortDir * ((vb || 0) - (va || 0));
     });
-    if (n <= 0 || n >= enriched.length) return enriched;
-    return enriched.slice(0, n);
+    // Apply active filters
+    const filtered = applyFilters(enriched);
+    if (n <= 0 || n >= filtered.length) return filtered;
+    return filtered.slice(0, n);
 }
 
 function renderTrailingChart() {

@@ -227,6 +227,35 @@
             color: var(--text-muted);
         }
 
+        /* Filter row */
+        #filter-row {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            flex-wrap: nowrap;
+            overflow-x: auto;
+            padding: 4px 0;
+            -webkit-overflow-scrolling: touch;
+        }
+        #filter-row::-webkit-scrollbar { display: none; }
+        #filter-row .btn {
+            font-size: 0.78rem;
+            padding: 2px 10px;
+            white-space: nowrap;
+            border-color: var(--border);
+            color: var(--text-muted);
+        }
+        #filter-row .btn.active-filter {
+            background: var(--primary);
+            border-color: var(--primary);
+            color: #fff;
+        }
+        .dropdown-menu-sm {
+            font-size: 0.82rem;
+            min-width: 150px;
+        }
+        .dropdown-menu-sm .dropdown-item { padding: 4px 12px; }
+
         @media (max-width: 767px) {
             .hide-mobile { display: none !important; }
             .chart-container-responsive { height: 28vh !important; }
@@ -234,6 +263,7 @@
             #app.container { padding-left: 4px !important; padding-right: 4px !important; }
             .summary-stat .stat-value { font-size: 1rem; }
             .table-holdings td, .table-holdings th { padding: 0.35rem 0.3rem !important; font-size: 0.8rem; }
+            #filter-row .btn { font-size: 0.72rem; padding: 2px 8px; }
         }
     </style>
 </head>
@@ -310,6 +340,63 @@
                     <div class="stat-label">Total Trade</div>
                 </div>
             </div>
+        </div>
+
+        <!-- FILTER ROW -->
+        <div id="filter-row" class="mb-2">
+            <span class="text-muted fw-bold text-uppercase" style="font-size:0.75rem; letter-spacing:0.5px; flex-shrink:0;">FILTER</span>
+            <!-- Net Direction -->
+            <div class="dropdown">
+                <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" id="dd-net">
+                    Net: Any
+                </button>
+                <ul class="dropdown-menu dropdown-menu-sm">
+                    <li><a class="dropdown-item" href="#" data-filter="net" data-val="any">Any</a></li>
+                    <li><a class="dropdown-item" href="#" data-filter="net" data-val="buy">Net Buy (> 0)</a></li>
+                    <li><a class="dropdown-item" href="#" data-filter="net" data-val="sell">Net Sell (< 0)</a></li>
+                </ul>
+            </div>
+            <!-- Streak -->
+            <div class="dropdown">
+                <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" id="dd-streak">
+                    Streak: Any
+                </button>
+                <ul class="dropdown-menu dropdown-menu-sm">
+                    <li><a class="dropdown-item" href="#" data-filter="streak" data-val="any">Any</a></li>
+                    <li><a class="dropdown-item" href="#" data-filter="streak" data-val="buy2">Buy ≥ 2 hari</a></li>
+                    <li><a class="dropdown-item" href="#" data-filter="streak" data-val="buy3">Buy ≥ 3 hari</a></li>
+                    <li><a class="dropdown-item" href="#" data-filter="streak" data-val="sell2">Sell ≥ 2 hari</a></li>
+                    <li><a class="dropdown-item" href="#" data-filter="streak" data-val="sell3">Sell ≥ 3 hari</a></li>
+                </ul>
+            </div>
+            <!-- AMS -->
+            <div class="dropdown">
+                <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" id="dd-ams">
+                    AMS: Any
+                </button>
+                <ul class="dropdown-menu dropdown-menu-sm">
+                    <li><a class="dropdown-item" href="#" data-filter="ams" data-val="any">Any</a></li>
+                    <li><a class="dropdown-item" href="#" data-filter="ams" data-val="strong_acc">Strong Acc (≥ 30)</a></li>
+                    <li><a class="dropdown-item" href="#" data-filter="ams" data-val="acc">Accumulation (≥ 10)</a></li>
+                    <li><a class="dropdown-item" href="#" data-filter="ams" data-val="dist">Distribution (≤ -10)</a></li>
+                    <li><a class="dropdown-item" href="#" data-filter="ams" data-val="strong_dist">Strong Dist (≤ -30)</a></li>
+                </ul>
+            </div>
+            <!-- Days Active -->
+            <div class="dropdown">
+                <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" id="dd-days">
+                    Days: Any
+                </button>
+                <ul class="dropdown-menu dropdown-menu-sm">
+                    <li><a class="dropdown-item" href="#" data-filter="days" data-val="any">Any</a></li>
+                    <li><a class="dropdown-item" href="#" data-filter="days" data-val="3">Active ≥ 3 hari</a></li>
+                    <li><a class="dropdown-item" href="#" data-filter="days" data-val="5">Active ≥ 5 hari</a></li>
+                </ul>
+            </div>
+            <!-- Reset -->
+            <button class="btn btn-sm btn-outline-danger" id="btn-filter-reset" style="display:none;">
+                <i class="fa-solid fa-xmark"></i> Reset
+            </button>
         </div>
 
         <!-- TIMEFRAME + TOP-N CONTROLS -->
@@ -405,7 +492,7 @@
     <script src="../js/component.js?v=73"></script>
 
     <!-- BROKER DETAIL LOGIC -->
-    <script src="../js/broker-detail.js?v=4"></script>
+    <script src="../js/broker-detail.js?v=5"></script>
 
     <script defer
         src="https://static.cloudflareinsights.com/beacon.min.js/vcd15cbe7772f49c399c6a5babf22c1241717689176015"
