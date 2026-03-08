@@ -1,15 +1,19 @@
 /**
  * broker-detail.js — Broker Detail / Inventory Trailing Page
- * v2 — 2026-03-08
+ * v7 — 2026-03-08
  *
- * Shows:
- *   1. Cumulative net value trailing line chart (top N stocks, value at each node, name at endpoint)
- *   2. Accumulation Momentum Score horizontal bar chart
- *   3. Holdings table with sort
+ * Features:
+ *   1. Cumulative net value trailing line chart (top N stocks)
+ *   2. Accumulation Momentum Score (AMS) horizontal bar chart
+ *   3. Holdings table with sort, avg buy/sell per transaction
+ *   4. Persistent filters via URL params (survives refresh)
+ *   5. Custom range filters for Net/Buy/Sell values
+ *   6. Calendar-based accumulation streak
+ *   7. Tooltips on all table headers
  *
  * Data source:
  *   GET /broker-activity/trailing?broker={code}&days=N
- *   GET /brokers  (for broker name + category)
+ *   GET /brokers  (broker name + category)
  */
 
 'use strict';
@@ -17,7 +21,6 @@
 // ── Config ──
 const API_BASE = 'https://api-saham.mkemalw.workers.dev';
 
-// Chart color palette for line chart (distinct, readable on dark bg)
 const LINE_COLORS = [
     '#3b82f6', '#22c55e', '#f59e0b', '#ef4444', '#8b5cf6',
     '#06b6d4', '#ec4899', '#14b8a6', '#f97316', '#6366f1',
@@ -25,26 +28,33 @@ const LINE_COLORS = [
     '#d946ef', '#eab308', '#64748b', '#fb923c', '#2dd4bf'
 ];
 
-// Register chartjs-plugin-datalabels globally
 if (typeof ChartDataLabels !== 'undefined') Chart.register(ChartDataLabels);
 
 // ── State ──
 let brokerCode = '';
-let brokerInfo = null;       // { code, name, category, character } from /brokers
+let brokerInfo = null;
 let currentDays = 10;
 let currentTopN = 10;
-let apiData = null;          // raw API response
+let apiData = null;
 let trailingChart = null;
 let momentumChart = null;
 let tableSortKey = 'total_net';
-let tableSortDir = -1;       // -1 = desc
+let tableSortDir = -1;
 
-// Active filters
+// Filters — persisted to URL params
 const activeFilters = {
-    net: 'any',     // any | buy | sell
-    streak: 'any',  // any | buy2 | buy3 | sell2 | sell3
-    ams: 'any',     // any | strong_acc | acc | dist | strong_dist
-    days: 'any',    // any | 3 | 5
+    net: 'any',          // any | buy | sell | custom
+    net_min: null,       // in billions (only when net=custom)
+    net_max: null,
+    buyval: 'any',       // any | buy_only | custom
+    buyval_min: null,
+    buyval_max: null,
+    sellval: 'any',      // any | sell_only | custom
+    sellval_min: null,
+    sellval_max: null,
+    streak: 'any',       // any | acc2 | acc3 | dist2 | dist3
+    ams: 'any',          // any | strong_acc | acc | dist | strong_dist
+    days: 'any',         // any | 3 | 5
 };
 
 // ── Format Helpers ──
@@ -76,56 +86,52 @@ function netClass(v) {
     return 'text-muted';
 }
 
+function fmtStreak(s) {
+    if (!s || s === 0) return '<span class="text-muted">—</span>';
+    const abs = Math.abs(s);
+    const cls = s > 0 ? 'text-success' : 'text-danger';
+    const icon = s > 0 ? '▲' : '▼';
+    return `<span class="${cls}">${icon}${abs}d</span>`;
+}
+
+function stockLogo(code) {
+    return `<img src="${API_BASE}/logo?ticker=${code}" alt="${code}" class="stock-logo" loading="lazy" onerror="this.style.display='none'"> `;
+}
+
 /**
  * Accumulation Momentum Score (AMS)
  *
- * Industry-standard approach combining:
- *   1. Money Flow Index (MFI) — volume-weighted buy/sell pressure → [0, 100]
- *      Adapted: MFI = 100 - 100/(1 + MoneyFlowRatio)
- *      where MoneyFlowRatio = Σ(buy_val) / Σ(sell_val)
- *      Rescaled to [-100, +100]: AMS_base = (MFI - 50) * 2
+ * Combines:
+ *   1. MFI (Money Flow Index) — buy/sell pressure [0,100] → rescaled [-100,+100]
+ *   2. EMA-weighted conviction — recent-biased daily conviction
+ *   3. ROC acceleration — recent vs older period momentum change
  *
- *   2. EMA-weighted direction — exponential moving average gives
- *      more weight to recent data (decay factor α = 2/(n+1))
- *
- *   3. Rate of Change (ROC) acceleration — compares recent vs older
- *      period conviction to detect momentum buildup
- *
- * Final score: [-100, +100]
- *   > 0  = accumulation pressure (green)
- *   < 0  = distribution pressure (red)
+ * Final: 40% MFI + 40% EMA + 20% ROC → [-100, +100]
  */
 function computeMomentumScore(series) {
     if (!series || series.length === 0) return 0;
     const n = series.length;
 
-    // ── 1. Volume-weighted Money Flow Index (MFI) ──
     let totalBuy = 0, totalSell = 0;
     for (const pt of series) {
         totalBuy += pt.buy_val;
         totalSell += pt.sell_val;
     }
-    // MFI: 0..100, then rescale to -100..+100
     const mfRatio = totalSell > 0 ? totalBuy / totalSell : (totalBuy > 0 ? 10 : 1);
-    const mfi = 100 - 100 / (1 + mfRatio); // 0..100
-    const mfiScore = (mfi - 50) * 2;        // -100..+100
+    const mfi = 100 - 100 / (1 + mfRatio);
+    const mfiScore = (mfi - 50) * 2;
 
-    // ── 2. EMA-weighted daily conviction ──
-    // Daily conviction: net / total, range [-1, 1]
     const dailyConv = series.map(pt => {
         const total = pt.buy_val + pt.sell_val;
         return total > 0 ? pt.net_val / total : 0;
     });
-    // EMA with α = 2/(n+1)
     const alpha = 2 / (n + 1);
     let ema = dailyConv[0];
     for (let i = 1; i < n; i++) {
         ema = alpha * dailyConv[i] + (1 - alpha) * ema;
     }
-    const emaScore = ema * 100; // -100..+100
+    const emaScore = ema * 100;
 
-    // ── 3. Rate of Change (ROC) acceleration ──
-    // Compare EMA of recent third vs older third
     let roc = 0;
     if (n >= 3) {
         const third = Math.max(1, Math.floor(n / 3));
@@ -133,25 +139,101 @@ function computeMomentumScore(series) {
         const recentSlice = dailyConv.slice(n - third);
         const avgOlder = olderSlice.reduce((a, b) => a + b, 0) / olderSlice.length;
         const avgRecent = recentSlice.reduce((a, b) => a + b, 0) / recentSlice.length;
-        roc = (avgRecent - avgOlder); // -2..+2 range
+        roc = avgRecent - avgOlder;
     }
     const rocScore = Math.max(-100, Math.min(100, roc * 100));
 
-    // ── Composite: 40% MFI + 40% EMA + 20% ROC ──
     const composite = mfiScore * 0.4 + emaScore * 0.4 + rocScore * 0.2;
     return Math.max(-100, Math.min(100, composite));
 }
 
-function fmtStreak(s) {
-    if (!s || s === 0) return '<span class="text-muted">—</span>';
-    const abs = Math.abs(s);
-    const cls = s > 0 ? 'text-success' : 'text-danger';
-    const icon = s > 0 ? '▲' : '▼';
-    return `<span class="${cls}">${icon}${abs}</span>`;
+/**
+ * Accumulation Streak (calendar-day based)
+ *
+ * Counts consecutive recent TRADING days where the broker is actively
+ * accumulating (net_val > 0) or distributing (net_val < 0).
+ *
+ * Uses the full dates array (calendar of all trading days in the period).
+ * If the broker has no activity on a trading day → streak breaks.
+ * "Bertahan" (just holding without new activity) does NOT count as streak.
+ *
+ * Returns: positive = accumulation streak, negative = distribution streak
+ */
+function computeStreak(series, dates) {
+    if (!series || series.length === 0 || !dates || dates.length === 0) return 0;
+
+    const dateNetMap = {};
+    for (const pt of series) {
+        dateNetMap[pt.date] = pt.net_val;
+    }
+
+    let streak = 0;
+    let dir = 0;
+
+    for (let i = dates.length - 1; i >= 0; i--) {
+        const netVal = dateNetMap[dates[i]] || 0;
+
+        if (netVal === 0) {
+            if (streak === 0) continue; // Skip trailing inactive days to find first active
+            break; // Active streak broken by inactivity
+        }
+
+        const d = netVal > 0 ? 1 : -1;
+
+        if (streak === 0) {
+            dir = d;
+            streak = d;
+        } else if (d === dir) {
+            streak += dir;
+        } else {
+            break;
+        }
+    }
+
+    return streak;
 }
 
-function stockLogo(code) {
-    return `<img src="${API_BASE}/logo?ticker=${code}" alt="${code}" class="stock-logo" loading="lazy" onerror="this.style.display='none'"> `;
+// ── URL State Persistence ──
+function saveFiltersToURL() {
+    const url = new URL(window.location);
+    url.searchParams.set('kode', brokerCode);
+    url.searchParams.set('days', currentDays);
+    url.searchParams.set('topn', currentTopN);
+
+    // Enum filters
+    ['net', 'buyval', 'sellval', 'streak', 'ams', 'days'].forEach(k => {
+        if (activeFilters[k] !== 'any') url.searchParams.set(`f_${k}`, activeFilters[k]);
+        else url.searchParams.delete(`f_${k}`);
+    });
+
+    // Range filters (stored in billions)
+    ['net_min', 'net_max', 'buyval_min', 'buyval_max', 'sellval_min', 'sellval_max'].forEach(k => {
+        if (activeFilters[k] != null) url.searchParams.set(`f_${k}`, activeFilters[k]);
+        else url.searchParams.delete(`f_${k}`);
+    });
+
+    history.replaceState(null, '', url.toString());
+}
+
+function restoreFiltersFromURL(params) {
+    ['net', 'buyval', 'sellval', 'streak', 'ams', 'days'].forEach(k => {
+        const v = params.get(`f_${k}`);
+        if (v) activeFilters[k] = v;
+    });
+
+    ['net_min', 'net_max', 'buyval_min', 'buyval_max', 'sellval_min', 'sellval_max'].forEach(k => {
+        const v = params.get(`f_${k}`);
+        if (v != null && v !== '') activeFilters[k] = parseFloat(v);
+    });
+}
+
+function restoreRangeInputs() {
+    ['net', 'buyval', 'sellval'].forEach(key => {
+        const minVal = activeFilters[`${key}_min`];
+        const maxVal = activeFilters[`${key}_max`];
+        if (minVal != null) $(`.range-input[data-rf="${key}_min"]`).val(minVal.toString());
+        if (maxVal != null) $(`.range-input[data-rf="${key}_max"]`).val(maxVal.toString());
+    });
 }
 
 // ── Init ──
@@ -164,32 +246,31 @@ $(document).ready(async function () {
         return;
     }
 
-    // Set initial header (code only, name will be updated after API call)
-    $('#broker-code').text(brokerCode);
+    // Restore persisted state
+    if (params.get('days')) currentDays = Math.max(1, Math.min(30, parseInt(params.get('days')) || 10));
+    if (params.get('topn')) currentTopN = parseInt(params.get('topn')) || 10;
+    restoreFiltersFromURL(params);
+
+    // Set header
     $('#header-title').text(brokerCode);
     document.title = `SSSAHAM - Broker ${brokerCode}`;
-    $('#broker-logo').attr('src', `${API_BASE}/broker/logo/${brokerCode}`);
 
-    // Fetch broker info (name + category) from /brokers API
+    // Fetch broker info
     try {
         const resp = await fetch(`${API_BASE}/brokers`);
         if (resp.ok) {
             const data = await resp.json();
-            const list = data.brokers || [];
-            brokerInfo = list.find(b => b.code === brokerCode) || null;
+            brokerInfo = (data.brokers || []).find(b => b.code === brokerCode) || null;
         }
-    } catch (_) { /* non-critical */ }
+    } catch (_) { }
 
-    // Update header with broker name
     if (brokerInfo?.name) {
         const shortName = brokerInfo.name.replace(/ Sekuritas.*$/i, '').replace(/ Securities.*$/i, '');
-        $('#broker-code').text(brokerCode);
-        $('#broker-name').text(shortName);
         $('#header-title').text(`${brokerCode}: ${shortName}`);
         document.title = `SSSAHAM - ${brokerCode} ${shortName}`;
     }
 
-    // Category badge from API data
+    // Category badge
     const cat = (brokerInfo?.category || '').toLowerCase();
     const catMap = {
         'foreign': { text: 'Foreign', cls: 'bg-primary' },
@@ -199,17 +280,21 @@ $(document).ready(async function () {
     const badge = catMap[cat] || { text: brokerInfo?.category || 'Unknown', cls: 'bg-secondary' };
     $('#broker-category-badge').text(badge.text).addClass(badge.cls);
 
-    // Parse URL state
-    if (params.get('days')) currentDays = Math.max(1, Math.min(30, parseInt(params.get('days')) || 10));
-    if (params.get('topn')) currentTopN = parseInt(params.get('topn')) || 5;
-
-    // Activate correct timeframe button
+    // Activate UI controls
     $(`#trailing-range-selector a`).removeClass('active');
     $(`#trailing-range-selector a[data-days="${currentDays}"]`).addClass('active');
-
-    // Activate correct TopN button
     $(`#topn-selector a`).removeClass('active');
     $(`#topn-selector a[data-topn="${currentTopN}"]`).addClass('active');
+
+    // Restore filter UI
+    updateFilterButtons();
+    restoreRangeInputs();
+
+    // Bootstrap tooltips
+    const tooltipEls = document.querySelectorAll('[data-bs-toggle="tooltip"]');
+    tooltipEls.forEach(el => new bootstrap.Tooltip(el));
+
+    // ── Event handlers ──
 
     // Timeframe selector
     $('#trailing-range-selector a').on('click', function (e) {
@@ -219,7 +304,7 @@ $(document).ready(async function () {
         currentDays = days;
         $('#trailing-range-selector a').removeClass('active');
         $(this).addClass('active');
-        updateURL();
+        saveFiltersToURL();
         loadData();
     });
 
@@ -231,11 +316,11 @@ $(document).ready(async function () {
         currentTopN = topn;
         $('#topn-selector a').removeClass('active');
         $(this).addClass('active');
-        updateURL();
+        saveFiltersToURL();
         renderCharts();
     });
 
-    // Table sorting — also re-renders charts to stay in sync
+    // Table sorting
     $('#holdings-table thead th[data-sort]').on('click', function () {
         const key = $(this).data('sort');
         if (tableSortKey === key) tableSortDir *= -1;
@@ -244,20 +329,69 @@ $(document).ready(async function () {
         renderTable();
     });
 
-    // ── Filter handlers ──
+    // Filter dropdown items (presets)
     $(document).on('click', '#filter-row .dropdown-item[data-filter]', function (e) {
         e.preventDefault();
         const key = $(this).data('filter');
         const val = $(this).data('val');
         activeFilters[key] = val;
+
+        // Clear custom range if selecting a preset
+        if (['net', 'buyval', 'sellval'].includes(key)) {
+            activeFilters[`${key}_min`] = null;
+            activeFilters[`${key}_max`] = null;
+            $(`.range-input[data-rf="${key}_min"]`).val('');
+            $(`.range-input[data-rf="${key}_max"]`).val('');
+        }
+
+        // Close dropdown manually (needed with data-bs-auto-close="outside")
+        $(this).closest('.dropdown-menu').parent().find('.dropdown-toggle').dropdown('hide');
+
         updateFilterButtons();
+        saveFiltersToURL();
         renderCharts();
         renderTable();
     });
 
-    $('#btn-filter-reset').on('click', function () {
-        Object.keys(activeFilters).forEach(k => activeFilters[k] = 'any');
+    // Range filter apply
+    $(document).on('click', '.range-apply', function () {
+        const key = $(this).data('rf-key');
+        const minInput = $(`.range-input[data-rf="${key}_min"]`).val().trim();
+        const maxInput = $(`.range-input[data-rf="${key}_max"]`).val().trim();
+
+        const minVal = minInput !== '' ? parseFloat(minInput) : null;
+        const maxVal = maxInput !== '' ? parseFloat(maxInput) : null;
+
+        if (minVal == null && maxVal == null) return;
+
+        activeFilters[key] = 'custom';
+        activeFilters[`${key}_min`] = minVal;
+        activeFilters[`${key}_max`] = maxVal;
+
         updateFilterButtons();
+        saveFiltersToURL();
+        renderCharts();
+        renderTable();
+
+        $(this).closest('.dropdown-menu').parent().find('.dropdown-toggle').dropdown('hide');
+    });
+
+    // Enter key in range inputs
+    $(document).on('keydown', '.range-input', function (e) {
+        if (e.key === 'Enter') {
+            $(this).closest('.dropdown-menu').find('.range-apply').click();
+        }
+    });
+
+    // Reset all filters
+    $('#btn-filter-reset').on('click', function () {
+        Object.keys(activeFilters).forEach(k => {
+            if (k.endsWith('_min') || k.endsWith('_max')) activeFilters[k] = null;
+            else activeFilters[k] = 'any';
+        });
+        $('.range-input').val('');
+        updateFilterButtons();
+        saveFiltersToURL();
         renderCharts();
         renderTable();
     });
@@ -265,46 +399,77 @@ $(document).ready(async function () {
     loadData();
 });
 
-function updateURL() {
-    const url = new URL(window.location);
-    url.searchParams.set('kode', brokerCode);
-    url.searchParams.set('days', currentDays);
-    url.searchParams.set('topn', currentTopN);
-    history.replaceState(null, '', url.toString());
-}
-
 // ── Filter UI ──
 function updateFilterButtons() {
     const labelMap = {
-        net: { any: 'Net: Any', buy: 'Net: Buy', sell: 'Net: Sell' },
-        streak: { any: 'Streak: Any', buy2: 'Streak: Buy≥2', buy3: 'Streak: Buy≥3', sell2: 'Streak: Sell≥2', sell3: 'Streak: Sell≥3' },
-        ams: { any: 'AMS: Any', strong_acc: 'AMS: Strong Acc', acc: 'AMS: Acc', dist: 'AMS: Dist', strong_dist: 'AMS: Strong Dist' },
-        days: { any: 'Days: Any', '3': 'Days: ≥3', '5': 'Days: ≥5' },
+        net:     { any: 'Net: Any', buy: 'Net: Buy', sell: 'Net: Sell' },
+        buyval:  { any: 'Buy: Any', buy_only: 'Buy Only (0 Sell)' },
+        sellval: { any: 'Sell: Any', sell_only: 'Sell Only (0 Buy)' },
+        streak:  { any: 'Streak: Any', acc2: 'Streak: Acc≥2d', acc3: 'Streak: Acc≥3d', dist2: 'Streak: Dist≥2d', dist3: 'Streak: Dist≥3d' },
+        ams:     { any: 'AMS: Any', strong_acc: 'AMS: Strong Acc', acc: 'AMS: Acc', dist: 'AMS: Dist', strong_dist: 'AMS: Strong Dist' },
+        days:    { any: 'Active: Any', '3': 'Active: ≥3', '5': 'Active: ≥5' },
     };
-    Object.keys(activeFilters).forEach(key => {
+
+    Object.keys(labelMap).forEach(key => {
         const val = activeFilters[key];
-        const btn = $(`#dd-${key === 'days' ? 'days' : key}`);
-        const map = labelMap[key] || {};
-        btn.text(map[val] || `${key}: ${val}`);
+        const btn = $(`#dd-${key}`);
+        if (!btn.length) return;
+
+        if (val === 'custom') {
+            const minV = activeFilters[`${key}_min`];
+            const maxV = activeFilters[`${key}_max`];
+            const base = key === 'net' ? 'Net' : key === 'buyval' ? 'Buy' : 'Sell';
+            if (minV != null && maxV != null) {
+                btn.text(`${base}: ${fmtValue(minV * 1e9)}–${fmtValue(maxV * 1e9)}`);
+            } else if (minV != null) {
+                btn.text(`${base}: ≥${fmtValue(minV * 1e9)}`);
+            } else if (maxV != null) {
+                btn.text(`${base}: ≤${fmtValue(maxV * 1e9)}`);
+            }
+        } else {
+            btn.text((labelMap[key] || {})[val] || `${key}: ${val}`);
+        }
+
         btn.toggleClass('active-filter', val !== 'any');
     });
-    // Show/hide reset button
-    const hasActive = Object.values(activeFilters).some(v => v !== 'any');
+
+    const hasActive = Object.keys(activeFilters).some(k => {
+        if (k.endsWith('_min') || k.endsWith('_max')) return activeFilters[k] != null;
+        return activeFilters[k] !== 'any';
+    });
     $('#btn-filter-reset').toggle(hasActive);
 }
 
 function applyFilters(stocks) {
     return stocks.filter(s => {
-        // Net direction
+        // Net
         if (activeFilters.net === 'buy' && s.total_net <= 0) return false;
         if (activeFilters.net === 'sell' && s.total_net >= 0) return false;
+        if (activeFilters.net === 'custom') {
+            if (activeFilters.net_min != null && s.total_net < activeFilters.net_min * 1e9) return false;
+            if (activeFilters.net_max != null && s.total_net > activeFilters.net_max * 1e9) return false;
+        }
+
+        // Buy Val
+        if (activeFilters.buyval === 'buy_only' && (s.total_buy <= 0 || s.total_sell > 0)) return false;
+        if (activeFilters.buyval === 'custom') {
+            if (activeFilters.buyval_min != null && s.total_buy < activeFilters.buyval_min * 1e9) return false;
+            if (activeFilters.buyval_max != null && s.total_buy > activeFilters.buyval_max * 1e9) return false;
+        }
+
+        // Sell Val
+        if (activeFilters.sellval === 'sell_only' && (s.total_sell <= 0 || s.total_buy > 0)) return false;
+        if (activeFilters.sellval === 'custom') {
+            if (activeFilters.sellval_min != null && s.total_sell < activeFilters.sellval_min * 1e9) return false;
+            if (activeFilters.sellval_max != null && s.total_sell > activeFilters.sellval_max * 1e9) return false;
+        }
 
         // Streak
         const sf = activeFilters.streak;
-        if (sf === 'buy2' && s.streak < 2) return false;
-        if (sf === 'buy3' && s.streak < 3) return false;
-        if (sf === 'sell2' && s.streak > -2) return false;
-        if (sf === 'sell3' && s.streak > -3) return false;
+        if (sf === 'acc2' && s.streak < 2) return false;
+        if (sf === 'acc3' && s.streak < 3) return false;
+        if (sf === 'dist2' && s.streak > -2) return false;
+        if (sf === 'dist3' && s.streak > -3) return false;
 
         // AMS
         const af = activeFilters.ams;
@@ -348,7 +513,7 @@ async function loadData() {
     renderTable();
 }
 
-// ── Summary Stats ──
+// ── Summary ──
 function renderSummary() {
     if (!apiData) return;
     const summary = apiData.stock_summary || [];
@@ -358,14 +523,13 @@ function renderSummary() {
         buyVal += s.total_buy;
         sellVal += s.total_sell;
     }
-    const totalVal = buyVal + sellVal;
 
     $('#stat-net-val').text(fmtValue(netVal)).removeClass('text-success text-danger').addClass(netClass(netVal));
     $('#stat-buy-val').text(fmtValue(buyVal)).addClass('text-success');
     $('#stat-sell-val').text(fmtValue(sellVal)).addClass('text-danger');
     $('#stat-breadth').text(summary.length);
     $('#stat-days').text(apiData.dates?.length || 0);
-    $('#stat-total-val').text(fmtValue(totalVal));
+    $('#stat-total-val').text(fmtValue(buyVal + sellVal));
 }
 
 // ── Charts ──
@@ -376,37 +540,37 @@ function renderCharts() {
 
 function getTopStocks(n) {
     if (!apiData?.stock_summary) return [];
-    // Enrich with momentum + streak so we can sort by any key
+    const dates = apiData.dates || [];
+
     const enriched = apiData.stock_summary.map(s => {
         const series = apiData.series[s.stock_code] || [];
-        let streak = 0;
-        if (series.length > 0) {
-            const last = series[series.length - 1];
-            const dir = last.net_val > 0 ? 1 : last.net_val < 0 ? -1 : 0;
-            if (dir !== 0) {
-                streak = dir;
-                for (let i = series.length - 2; i >= 0; i--) {
-                    const d = series[i].net_val > 0 ? 1 : series[i].net_val < 0 ? -1 : 0;
-                    if (d === dir) streak += dir;
-                    else break;
-                }
-            }
-        }
+
+        // Accumulation streak (calendar-day based)
+        const streak = computeStreak(series, dates);
+
+        // Momentum score
         const momentum = computeMomentumScore(series);
-        return { ...s, streak, momentum };
+
+        // Average per transaction
+        let totalBuyFreq = 0, totalSellFreq = 0;
+        for (const pt of series) {
+            totalBuyFreq += pt.buy_freq || 0;
+            totalSellFreq += pt.sell_freq || 0;
+        }
+        const avg_buy_tx = totalBuyFreq > 0 ? s.total_buy / totalBuyFreq : 0;
+        const avg_sell_tx = totalSellFreq > 0 ? s.total_sell / totalSellFreq : 0;
+
+        return { ...s, streak, momentum, avg_buy_tx, avg_sell_tx };
     });
-    // Sort using same key/direction as table
+
+    // Sort
     enriched.sort((a, b) => {
         let va = a[tableSortKey], vb = b[tableSortKey];
-        if (tableSortKey === 'stock_code') {
-            return tableSortDir * va.localeCompare(vb);
-        }
-        if (tableSortKey === 'total_net') {
-            return tableSortDir * (Math.abs(vb) - Math.abs(va)) || (vb - va);
-        }
+        if (tableSortKey === 'stock_code') return tableSortDir * va.localeCompare(vb);
+        if (tableSortKey === 'total_net') return tableSortDir * (Math.abs(vb) - Math.abs(va)) || (vb - va);
         return tableSortDir * ((vb || 0) - (va || 0));
     });
-    // Apply active filters
+
     const filtered = applyFilters(enriched);
     if (n <= 0 || n >= filtered.length) return filtered;
     return filtered.slice(0, n);
@@ -427,12 +591,8 @@ function renderTrailingChart() {
 
     const datasets = topStocks.map((stock, idx) => {
         const series = apiData.series[stock.stock_code] || [];
-        // Build a map: date → cumulative_net
         const dateMap = {};
-        for (const pt of series) {
-            dateMap[pt.date] = pt.cumulative_net;
-        }
-        // Fill in gaps with last known value
+        for (const pt of series) dateMap[pt.date] = pt.cumulative_net;
         const data = [];
         let lastVal = 0;
         for (const d of dates) {
@@ -453,10 +613,9 @@ function renderTrailingChart() {
         };
     });
 
-    // Format dates for labels: "03/04" style
     const labels = dates.map(d => {
-        const parts = d.split('-');
-        return `${parts[1]}/${parts[2]}`;
+        const p = d.split('-');
+        return `${p[1]}/${p[2]}`;
     });
 
     const isMobile = window.innerWidth < 768;
@@ -470,39 +629,24 @@ function renderTrailingChart() {
         options: {
             responsive: true,
             maintainAspectRatio: false,
-            interaction: {
-                mode: 'index',
-                intersect: false,
-            },
-            layout: {
-                padding: { right: isMobile ? 40 : 60 }
-            },
+            interaction: { mode: 'index', intersect: false },
+            layout: { padding: { right: isMobile ? 40 : 60 } },
             plugins: {
-                legend: {
-                    display: false,  // legend off — stock name shown at end of line
-                },
+                legend: { display: false },
                 datalabels: {
                     display: true,
-                    color: function (ctx) {
-                        return ctx.dataset.borderColor;
-                    },
+                    color: function (ctx) { return ctx.dataset.borderColor; },
                     font: { size: isMobile ? 8 : 10, weight: '600' },
                     anchor: function (ctx) {
-                        const val = ctx.dataset.data[ctx.dataIndex];
-                        return val >= 0 ? 'end' : 'start';
+                        return ctx.dataset.data[ctx.dataIndex] >= 0 ? 'end' : 'start';
                     },
                     align: function (ctx) {
-                        const val = ctx.dataset.data[ctx.dataIndex];
-                        return val >= 0 ? 'top' : 'bottom';
+                        return ctx.dataset.data[ctx.dataIndex] >= 0 ? 'top' : 'bottom';
                     },
                     clip: false,
                     formatter: function (value, ctx) {
-                        const isLast = ctx.dataIndex === lastIdx;
                         const label = fmtValueShort(value);
-                        if (isLast) {
-                            return ctx.dataset.label + ' ' + label;
-                        }
-                        return label;
+                        return ctx.dataIndex === lastIdx ? ctx.dataset.label + ' ' + label : label;
                     },
                 },
                 tooltip: { enabled: false },
@@ -521,7 +665,7 @@ function renderTrailingChart() {
                     ticks: {
                         color: getComputedStyle(document.documentElement).getPropertyValue('--text-muted').trim() || '#94a3b8',
                         font: { size: isMobile ? 9 : 11 },
-                        callback: v => fmtValueShort(v),
+                        callback: function (v) { return fmtValueShort(v); },
                     },
                     title: {
                         display: !isMobile,
@@ -535,52 +679,31 @@ function renderTrailingChart() {
     });
 }
 
-/**
- * Momentum Score Bar Chart
- *
- * Sorted by Accumulation Momentum Score (AMS) — highest accumulation at top.
- * Color gradient: green (accumulating) → red (distributing)
- * Score considers: conviction + recency-weighted acceleration + volume intensity
- */
 function renderMomentumChart() {
     const topStocks = getTopStocks(currentTopN);
     if (topStocks.length === 0) return;
 
-    // Compute momentum score for each stock
     const scored = topStocks.map(s => {
         const series = apiData.series[s.stock_code] || [];
-        const score = computeMomentumScore(series);
-        return { ...s, momentum: score };
+        return { ...s, momentum: computeMomentumScore(series) };
     });
-
-    // Sort by momentum score descending (highest accumulation at top)
     scored.sort((a, b) => b.momentum - a.momentum);
 
     const labels = scored.map(s => s.stock_code);
     const values = scored.map(s => s.momentum);
 
-    // Color gradient: interpolate green↔red based on score
     function scoreColor(v, alpha) {
         if (v >= 0) {
-            const t = Math.min(v / 60, 1); // 0..1 for green intensity
-            const g = Math.round(140 + t * 57);  // 140..197
-            return `rgba(34,${g},94,${alpha})`;
-        } else {
-            const t = Math.min(Math.abs(v) / 60, 1);
-            const r = Math.round(200 + t * 39);  // 200..239
-            return `rgba(${r},68,68,${alpha})`;
+            const t = Math.min(v / 60, 1);
+            return `rgba(34,${Math.round(140 + t * 57)},94,${alpha})`;
         }
+        const t = Math.min(Math.abs(v) / 60, 1);
+        return `rgba(${Math.round(200 + t * 39)},68,68,${alpha})`;
     }
-    const bgColors = values.map(v => scoreColor(v, 0.75));
-    const borderColors = values.map(v => scoreColor(v, 1));
 
     const isMobile = window.innerWidth < 768;
-
-    // Dynamic height
     const barHeight = isMobile ? 24 : 30;
-    const minHeight = 200;
-    const chartHeight = Math.max(minHeight, scored.length * barHeight + 60);
-    $('#diverging-chart-container').css('height', chartHeight + 'px');
+    $('#diverging-chart-container').css('height', Math.max(200, scored.length * barHeight + 60) + 'px');
 
     if (momentumChart) momentumChart.destroy();
     const ctx = document.getElementById('diverging-chart').getContext('2d');
@@ -590,8 +713,8 @@ function renderMomentumChart() {
             labels,
             datasets: [{
                 data: values,
-                backgroundColor: bgColors,
-                borderColor: borderColors,
+                backgroundColor: values.map(v => scoreColor(v, 0.75)),
+                borderColor: values.map(v => scoreColor(v, 1)),
                 borderWidth: 1,
                 borderRadius: 3,
                 barThickness: isMobile ? 18 : 24,
@@ -617,20 +740,18 @@ function renderMomentumChart() {
                     font: { size: isMobile ? 9 : 11, weight: '600' },
                     formatter: function (v) {
                         const sign = v >= 0 ? '+' : '';
-                        if (Math.abs(v) >= 1) return sign + v.toFixed(0);
-                        return sign + v.toFixed(1);
+                        return Math.abs(v) >= 1 ? sign + v.toFixed(0) : sign + v.toFixed(1);
                     },
                     clip: false,
                 },
                 tooltip: {
                     callbacks: {
-                        title: ctx => ctx[0]?.label || '',
+                        title: function (ctx) { return ctx[0]?.label || ''; },
                         label: function (ctx) {
-                            const idx = ctx.dataIndex;
-                            const s = scored[idx];
-                            const xVal = parseFloat(ctx.parsed.x.toFixed(2));
+                            const s = scored[ctx.dataIndex];
+                            const x = parseFloat(ctx.parsed.x.toFixed(2));
                             return [
-                                `Momentum: ${xVal >= 0 ? '+' : ''}${xVal}`,
+                                `Momentum: ${x >= 0 ? '+' : ''}${x}`,
                                 `Net: ${fmtValue(s.total_net)}`,
                                 `Buy: ${fmtValue(s.total_buy)}  Sell: ${fmtValue(s.total_sell)}`,
                             ];
@@ -672,15 +793,13 @@ function renderMomentumChart() {
 function renderTable() {
     if (!apiData?.stock_summary) return;
 
-    // Use getTopStocks(0) to get ALL stocks, already enriched + sorted
     const enriched = getTopStocks(0);
 
     function fmtMomentum(m) {
         if (!Number.isFinite(m) || m === 0) return '<span class="text-muted">—</span>';
         const sign = m >= 0 ? '+' : '';
         const cls = m >= 30 ? 'text-success fw-bold' : m >= 10 ? 'text-success'
-                  : m <= -30 ? 'text-danger fw-bold' : m <= -10 ? 'text-danger'
-                  : 'text-muted';
+                  : m <= -30 ? 'text-danger fw-bold' : m <= -10 ? 'text-danger' : 'text-muted';
         return `<span class="${cls}">${sign}${m.toFixed(0)}</span>`;
     }
 
@@ -695,6 +814,8 @@ function renderTable() {
             <td class="text-end ${netClass(s.total_net)}">${fmtValue(s.total_net)}</td>
             <td class="text-end">${fmtValue(s.total_buy)}</td>
             <td class="text-end">${fmtValue(s.total_sell)}</td>
+            <td class="text-end hide-mobile">${fmtValue(s.avg_buy_tx)}</td>
+            <td class="text-end hide-mobile">${fmtValue(s.avg_sell_tx)}</td>
             <td class="text-center hide-mobile">${s.days_active}</td>
             <td class="text-center hide-mobile">${fmtStreak(s.streak)}</td>
             <td class="text-center hide-mobile">${fmtMomentum(s.momentum)}</td>

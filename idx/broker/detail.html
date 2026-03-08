@@ -270,6 +270,23 @@
             color: var(--text-inverse);
         }
 
+        html[data-theme="dark"] .dropdown-menu {
+            background-color: var(--surface-alt);
+            border-color: var(--border);
+            color: var(--text);
+        }
+
+        html[data-theme="dark"] .dropdown-item:hover {
+            background-color: var(--table-hover-bg);
+            color: var(--text);
+        }
+
+        html[data-theme="dark"] .form-control {
+            background-color: var(--surface-alt);
+            color: var(--text);
+            border-color: var(--border);
+        }
+
         /* Summary cards */
         .summary-stat {
             font-size: 0.82rem;
@@ -297,6 +314,16 @@
             padding: 4px 0;
             position: relative;
             z-index: 10;
+        }
+
+        .range-input {
+            font-size: 0.82rem !important;
+            padding: 2px 6px !important;
+        }
+
+        .range-apply {
+            padding: 2px 8px !important;
+            font-size: 0.78rem !important;
         }
 
         #filter-row .btn {
@@ -466,62 +493,118 @@
         <div id="filter-row" class="mb-2">
             <span class="text-muted fw-bold text-uppercase"
                 style="font-size:0.85rem; letter-spacing:0.5px; width:75px;">FILTER</span>
+
             <!-- Net Direction -->
             <div class="dropdown">
-                <button class="btn btn-sm btn-outline-secondary dropdown-toggle px-2" type="button" data-bs-toggle="dropdown"
-                    id="dd-net">
-                    Net: Any
-                </button>
-                <ul class="dropdown-menu dropdown-menu-sm">
-                    <li><a class="dropdown-item" href="#" data-filter="net" data-val="any">Any</a></li>
-                    <li><a class="dropdown-item" href="#" data-filter="net" data-val="buy">Net Buy (> 0)</a></li>
-                    <li><a class="dropdown-item" href="#" data-filter="net" data-val="sell">Net Sell (< 0)</a>
-                    </li>
-                </ul>
+                <button class="btn btn-sm btn-outline-secondary dropdown-toggle px-2" type="button"
+                    data-bs-toggle="dropdown" data-bs-auto-close="outside" id="dd-net">Net: Any</button>
+                <div class="dropdown-menu dropdown-menu-sm">
+                    <a class="dropdown-item" href="#" data-filter="net" data-val="any">Any</a>
+                    <a class="dropdown-item" href="#" data-filter="net" data-val="buy">Net Buy (&gt; 0)</a>
+                    <a class="dropdown-item" href="#" data-filter="net" data-val="sell">Net Sell (&lt; 0)</a>
+                    <div class="dropdown-divider"></div>
+                    <div class="px-2 py-1">
+                        <label class="small text-muted mb-1">Custom Range (B)</label>
+                        <div class="d-flex gap-1 align-items-center">
+                            <input type="number" step="any" class="form-control form-control-sm range-input"
+                                data-rf="net_min" placeholder="Min" style="width:65px;">
+                            <span class="small text-muted">—</span>
+                            <input type="number" step="any" class="form-control form-control-sm range-input"
+                                data-rf="net_max" placeholder="Max" style="width:65px;">
+                            <button class="btn btn-sm btn-primary range-apply" data-rf-key="net">
+                                <i class="fa-solid fa-check"></i>
+                            </button>
+                        </div>
+                        <small class="text-muted" style="font-size:0.68rem">Dalam Milyar. Contoh: 0.5 = 500M</small>
+                    </div>
+                </div>
             </div>
+
+            <!-- Buy Val -->
+            <div class="dropdown">
+                <button class="btn btn-sm btn-outline-secondary dropdown-toggle px-2" type="button"
+                    data-bs-toggle="dropdown" data-bs-auto-close="outside" id="dd-buyval">Buy: Any</button>
+                <div class="dropdown-menu dropdown-menu-sm">
+                    <a class="dropdown-item" href="#" data-filter="buyval" data-val="any">Any</a>
+                    <a class="dropdown-item" href="#" data-filter="buyval" data-val="buy_only">Buy Only (0 Sell)</a>
+                    <div class="dropdown-divider"></div>
+                    <div class="px-2 py-1">
+                        <label class="small text-muted mb-1">Buy Val Range (B)</label>
+                        <div class="d-flex gap-1 align-items-center">
+                            <input type="number" step="any" class="form-control form-control-sm range-input"
+                                data-rf="buyval_min" placeholder="Min" style="width:65px;">
+                            <span class="small text-muted">—</span>
+                            <input type="number" step="any" class="form-control form-control-sm range-input"
+                                data-rf="buyval_max" placeholder="Max" style="width:65px;">
+                            <button class="btn btn-sm btn-primary range-apply" data-rf-key="buyval">
+                                <i class="fa-solid fa-check"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Sell Val -->
+            <div class="dropdown">
+                <button class="btn btn-sm btn-outline-secondary dropdown-toggle px-2" type="button"
+                    data-bs-toggle="dropdown" data-bs-auto-close="outside" id="dd-sellval">Sell: Any</button>
+                <div class="dropdown-menu dropdown-menu-sm">
+                    <a class="dropdown-item" href="#" data-filter="sellval" data-val="any">Any</a>
+                    <a class="dropdown-item" href="#" data-filter="sellval" data-val="sell_only">Sell Only (0 Buy)</a>
+                    <div class="dropdown-divider"></div>
+                    <div class="px-2 py-1">
+                        <label class="small text-muted mb-1">Sell Val Range (B)</label>
+                        <div class="d-flex gap-1 align-items-center">
+                            <input type="number" step="any" class="form-control form-control-sm range-input"
+                                data-rf="sellval_min" placeholder="Min" style="width:65px;">
+                            <span class="small text-muted">—</span>
+                            <input type="number" step="any" class="form-control form-control-sm range-input"
+                                data-rf="sellval_max" placeholder="Max" style="width:65px;">
+                            <button class="btn btn-sm btn-primary range-apply" data-rf-key="sellval">
+                                <i class="fa-solid fa-check"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <!-- Streak -->
             <div class="dropdown">
-                <button class="btn btn-sm btn-outline-secondary dropdown-toggle px-2" type="button" data-bs-toggle="dropdown"
-                    id="dd-streak">
-                    Streak: Any
-                </button>
+                <button class="btn btn-sm btn-outline-secondary dropdown-toggle px-2" type="button"
+                    data-bs-toggle="dropdown" id="dd-streak">Streak: Any</button>
                 <ul class="dropdown-menu dropdown-menu-sm">
                     <li><a class="dropdown-item" href="#" data-filter="streak" data-val="any">Any</a></li>
-                    <li><a class="dropdown-item" href="#" data-filter="streak" data-val="buy2">Buy ≥ 2 hari</a></li>
-                    <li><a class="dropdown-item" href="#" data-filter="streak" data-val="buy3">Buy ≥ 3 hari</a></li>
-                    <li><a class="dropdown-item" href="#" data-filter="streak" data-val="sell2">Sell ≥ 2 hari</a></li>
-                    <li><a class="dropdown-item" href="#" data-filter="streak" data-val="sell3">Sell ≥ 3 hari</a></li>
+                    <li><a class="dropdown-item" href="#" data-filter="streak" data-val="acc2">Akumulasi ≥ 2 hari</a></li>
+                    <li><a class="dropdown-item" href="#" data-filter="streak" data-val="acc3">Akumulasi ≥ 3 hari</a></li>
+                    <li><a class="dropdown-item" href="#" data-filter="streak" data-val="dist2">Distribusi ≥ 2 hari</a></li>
+                    <li><a class="dropdown-item" href="#" data-filter="streak" data-val="dist3">Distribusi ≥ 3 hari</a></li>
                 </ul>
             </div>
+
             <!-- AMS -->
             <div class="dropdown">
-                <button class="btn btn-sm btn-outline-secondary dropdown-toggle px-2" type="button" data-bs-toggle="dropdown"
-                    id="dd-ams">
-                    AMS: Any
-                </button>
+                <button class="btn btn-sm btn-outline-secondary dropdown-toggle px-2" type="button"
+                    data-bs-toggle="dropdown" id="dd-ams">AMS: Any</button>
                 <ul class="dropdown-menu dropdown-menu-sm">
                     <li><a class="dropdown-item" href="#" data-filter="ams" data-val="any">Any</a></li>
-                    <li><a class="dropdown-item" href="#" data-filter="ams" data-val="strong_acc">Strong Acc (≥ 30)</a>
-                    </li>
+                    <li><a class="dropdown-item" href="#" data-filter="ams" data-val="strong_acc">Strong Acc (≥ 30)</a></li>
                     <li><a class="dropdown-item" href="#" data-filter="ams" data-val="acc">Accumulation (≥ 10)</a></li>
-                    <li><a class="dropdown-item" href="#" data-filter="ams" data-val="dist">Distribution (≤ -10)</a>
-                    </li>
-                    <li><a class="dropdown-item" href="#" data-filter="ams" data-val="strong_dist">Strong Dist (≤
-                            -30)</a></li>
+                    <li><a class="dropdown-item" href="#" data-filter="ams" data-val="dist">Distribution (≤ -10)</a></li>
+                    <li><a class="dropdown-item" href="#" data-filter="ams" data-val="strong_dist">Strong Dist (≤ -30)</a></li>
                 </ul>
             </div>
+
             <!-- Days Active -->
             <div class="dropdown">
-                <button class="btn btn-sm btn-outline-secondary dropdown-toggle px-2" type="button" data-bs-toggle="dropdown"
-                    id="dd-days">
-                    Days: Any
-                </button>
+                <button class="btn btn-sm btn-outline-secondary dropdown-toggle px-2" type="button"
+                    data-bs-toggle="dropdown" id="dd-days">Active: Any</button>
                 <ul class="dropdown-menu dropdown-menu-sm">
                     <li><a class="dropdown-item" href="#" data-filter="days" data-val="any">Any</a></li>
                     <li><a class="dropdown-item" href="#" data-filter="days" data-val="3">Active ≥ 3 hari</a></li>
                     <li><a class="dropdown-item" href="#" data-filter="days" data-val="5">Active ≥ 5 hari</a></li>
                 </ul>
             </div>
+
             <!-- Reset -->
             <button class="btn btn-sm btn-outline-danger" id="btn-filter-reset" style="display:none;">
                 <i class="fa-solid fa-xmark"></i> Reset
@@ -550,26 +633,50 @@
                         <table id="holdings-table" class="table table-hover mb-0 table-holdings align-middle">
                             <thead>
                                 <tr>
-                                    <th class="text-center" style="width:40px">#</th>
-                                    <th data-sort="stock_code" style="cursor:pointer">
+                                    <th class="text-center" style="width:40px" data-bs-toggle="tooltip"
+                                        title="Urutan berdasarkan sortir aktif">#</th>
+                                    <th data-sort="stock_code" style="cursor:pointer" data-bs-toggle="tooltip"
+                                        title="Kode saham yang ditransaksikan broker ini">
                                         Stock <i class="fa-solid fa-sort small text-muted"></i>
                                     </th>
-                                    <th class="text-end" data-sort="total_net" style="cursor:pointer">
+                                    <th class="text-end" data-sort="total_net" style="cursor:pointer"
+                                        data-bs-toggle="tooltip"
+                                        title="Total nilai bersih (Buy − Sell) selama periode">
                                         Net Val <i class="fa-solid fa-sort small text-muted"></i>
                                     </th>
-                                    <th class="text-end" data-sort="total_buy" style="cursor:pointer">
+                                    <th class="text-end" data-sort="total_buy" style="cursor:pointer"
+                                        data-bs-toggle="tooltip"
+                                        title="Total nilai pembelian broker selama periode">
                                         Buy Val <i class="fa-solid fa-sort small text-muted"></i>
                                     </th>
-                                    <th class="text-end" data-sort="total_sell" style="cursor:pointer">
+                                    <th class="text-end" data-sort="total_sell" style="cursor:pointer"
+                                        data-bs-toggle="tooltip"
+                                        title="Total nilai penjualan broker selama periode">
                                         Sell Val <i class="fa-solid fa-sort small text-muted"></i>
                                     </th>
-                                    <th class="text-center hide-mobile" data-sort="days_active" style="cursor:pointer">
-                                        Days <i class="fa-solid fa-sort small text-muted"></i>
+                                    <th class="text-end hide-mobile" data-sort="avg_buy_tx" style="cursor:pointer"
+                                        data-bs-toggle="tooltip"
+                                        title="Rata-rata nilai per transaksi beli (Total Buy ÷ Jumlah transaksi). Semakin besar = semakin institusional.">
+                                        Avg Buy <i class="fa-solid fa-sort small text-muted"></i>
                                     </th>
-                                    <th class="text-center hide-mobile" data-sort="streak" style="cursor:pointer">
+                                    <th class="text-end hide-mobile" data-sort="avg_sell_tx" style="cursor:pointer"
+                                        data-bs-toggle="tooltip"
+                                        title="Rata-rata nilai per transaksi jual (Total Sell ÷ Jumlah transaksi). Semakin besar = semakin institusional.">
+                                        Avg Sell <i class="fa-solid fa-sort small text-muted"></i>
+                                    </th>
+                                    <th class="text-center hide-mobile" data-sort="days_active" style="cursor:pointer"
+                                        data-bs-toggle="tooltip"
+                                        title="Jumlah hari broker aktif bertransaksi di saham ini selama periode. Bukan total hari kalender.">
+                                        Active <i class="fa-solid fa-sort small text-muted"></i>
+                                    </th>
+                                    <th class="text-center hide-mobile" data-sort="streak" style="cursor:pointer"
+                                        data-bs-toggle="tooltip"
+                                        title="Hari berturut-turut tanpa jeda broker akumulasi (▲) atau distribusi (▼). Jeda 1 hari tanpa aktivitas = streak putus.">
                                         Streak <i class="fa-solid fa-sort small text-muted"></i>
                                     </th>
-                                    <th class="text-center hide-mobile" data-sort="momentum" style="cursor:pointer">
+                                    <th class="text-center hide-mobile" data-sort="momentum" style="cursor:pointer"
+                                        data-bs-toggle="tooltip"
+                                        title="Accumulation Momentum Score [-100,+100]. Gabungan MFI (40%) + EMA conviction (40%) + ROC acceleration (20%).">
                                         AMS <i class="fa-solid fa-sort small text-muted"></i>
                                     </th>
                                 </tr>
@@ -593,7 +700,7 @@
     <script src="../js/component.js?v=73"></script>
 
     <!-- BROKER DETAIL LOGIC -->
-    <script src="../js/broker-detail.js?v=6"></script>
+    <script src="../js/broker-detail.js?v=7"></script>
 
     <script defer
         src="https://static.cloudflareinsights.com/beacon.min.js/vcd15cbe7772f49c399c6a5babf22c1241717689176015"
