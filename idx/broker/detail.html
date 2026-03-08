@@ -54,7 +54,9 @@
             transition: background-color 0.3s ease, color 0.3s ease;
         }
 
-        body, .card, .navbar {
+        body,
+        .card,
+        .navbar {
             transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease;
         }
 
@@ -81,14 +83,20 @@
             background: transparent !important;
         }
 
-        .card-swing-header, .card-header {
+        .card-swing-header,
+        .card-header {
             background: transparent;
             border-bottom: 1px solid var(--card-divider);
             border-radius: var(--card-radius) var(--card-radius) 0 0;
         }
 
-        .navbar { box-shadow: none; }
-        .nav-title { font-size: 0.9rem !important; }
+        .navbar {
+            box-shadow: none;
+        }
+
+        .nav-title {
+            font-size: 0.9rem !important;
+        }
 
         /* Broker identity */
         .broker-logo-lg {
@@ -108,8 +116,14 @@
             font-weight: 600;
             transition: color 0.15s;
         }
-        #trailing-range-selector a:hover { color: #eab308; }
-        #trailing-range-selector a.active { color: #eab308; }
+
+        #trailing-range-selector a:hover {
+            color: #eab308;
+        }
+
+        #trailing-range-selector a.active {
+            color: #eab308;
+        }
 
         /* TopN toggle */
         #topn-selector a {
@@ -120,8 +134,15 @@
             cursor: pointer;
             transition: color 0.15s;
         }
-        #topn-selector a:hover { color: var(--text); }
-        #topn-selector a.active { color: var(--accent-primary, var(--primary)); font-weight: 600; }
+
+        #topn-selector a:hover {
+            color: var(--text);
+        }
+
+        #topn-selector a.active {
+            color: var(--accent-primary, var(--primary));
+            font-weight: 600;
+        }
 
         /* Chart containers */
         .chart-container-responsive {
@@ -129,9 +150,13 @@
             width: 100%;
             position: relative;
         }
+
         @media (orientation: portrait) {
-            .chart-container-responsive { height: 30vh !important; }
+            .chart-container-responsive {
+                height: 30vh !important;
+            }
         }
+
         .chart-bar-container {
             width: 100%;
             position: relative;
@@ -143,16 +168,21 @@
             white-space: nowrap;
             color: var(--text);
         }
+
         .table-holdings thead th {
             text-transform: uppercase;
             font-size: 0.78rem;
             color: var(--table-header-text);
             border-bottom-color: var(--border);
         }
+
         .table-holdings tbody tr:hover {
             background-color: var(--table-hover-bg);
         }
-        .table-holdings thead th { background: var(--sticky-col-bg); }
+
+        .table-holdings thead th {
+            background: var(--sticky-col-bg);
+        }
 
         .stock-logo {
             width: 18px;
@@ -165,7 +195,9 @@
         /* Pull indicator */
         #pull-indicator {
             position: fixed;
-            top: -60px; left: 0; right: 0;
+            top: -60px;
+            left: 0;
+            right: 0;
             height: 60px;
             display: flex;
             align-items: center;
@@ -175,13 +207,20 @@
             z-index: 1000;
             color: var(--pull-indicator-icon);
         }
-        #pull-indicator.visible { top: 0; }
+
+        #pull-indicator.visible {
+            top: 0;
+        }
+
         #pull-indicator i {
             font-size: 1.5rem;
             color: var(--pull-indicator-icon);
             transition: transform 0.2s;
         }
-        #pull-indicator.ready i { transform: rotate(180deg); }
+
+        #pull-indicator.ready i {
+            transform: rotate(180deg);
+        }
 
         /* Tab style matching stock-summary */
         .chart-subtab-group .btn {
@@ -194,22 +233,42 @@
             font-weight: 600;
             text-decoration: none;
         }
+
         .chart-subtab-group .btn.active {
             background: var(--primary);
             border-color: var(--primary);
             color: #fff;
         }
+
         .chart-subtab-group .btn:hover:not(.active) {
             background: rgba(37, 99, 235, 0.1);
             color: var(--primary);
         }
 
         /* Dark mode overrides */
-        html[data-theme="dark"] .table-holdings tbody tr:hover { color: var(--text); }
-        html[data-theme="dark"] .shadow-sm { box-shadow: var(--shadow-elevated) !important; }
-        html[data-theme="dark"] .btn-outline-secondary { color: var(--text); border-color: var(--border); }
-        html[data-theme="dark"] .btn-outline-secondary:hover { background-color: var(--btn-outline-secondary-hover); color: var(--text); }
-        html[data-theme="dark"] .btn-outline-secondary.active { background-color: var(--primary); border-color: var(--primary); color: var(--text-inverse); }
+        html[data-theme="dark"] .table-holdings tbody tr:hover {
+            color: var(--text);
+        }
+
+        html[data-theme="dark"] .shadow-sm {
+            box-shadow: var(--shadow-elevated) !important;
+        }
+
+        html[data-theme="dark"] .btn-outline-secondary {
+            color: var(--text);
+            border-color: var(--border);
+        }
+
+        html[data-theme="dark"] .btn-outline-secondary:hover {
+            background-color: var(--btn-outline-secondary-hover);
+            color: var(--text);
+        }
+
+        html[data-theme="dark"] .btn-outline-secondary.active {
+            background-color: var(--primary);
+            border-color: var(--primary);
+            color: var(--text-inverse);
+        }
 
         /* Summary cards */
         .summary-stat {
@@ -217,10 +276,12 @@
             text-align: center;
             padding: 8px 4px;
         }
+
         .summary-stat .stat-value {
             font-size: 1.15rem;
             font-weight: 700;
         }
+
         .summary-stat .stat-label {
             font-size: 0.7rem;
             text-transform: uppercase;
@@ -236,8 +297,14 @@
             overflow-x: auto;
             padding: 4px 0;
             -webkit-overflow-scrolling: touch;
+            position: relative;
+            z-index: 10;
         }
-        #filter-row::-webkit-scrollbar { display: none; }
+
+        #filter-row::-webkit-scrollbar {
+            display: none;
+        }
+
         #filter-row .btn {
             font-size: 0.78rem;
             padding: 2px 10px;
@@ -245,25 +312,54 @@
             border-color: var(--border);
             color: var(--text-muted);
         }
+
         #filter-row .btn.active-filter {
             background: var(--primary);
             border-color: var(--primary);
             color: #fff;
         }
+
         .dropdown-menu-sm {
             font-size: 0.82rem;
             min-width: 150px;
         }
-        .dropdown-menu-sm .dropdown-item { padding: 4px 12px; }
+
+        .dropdown-menu-sm .dropdown-item {
+            padding: 4px 12px;
+        }
 
         @media (max-width: 767px) {
-            .hide-mobile { display: none !important; }
-            .chart-container-responsive { height: 28vh !important; }
-            .chart-bar-container { min-height: 200px; }
-            #app.container { padding-left: 4px !important; padding-right: 4px !important; }
-            .summary-stat .stat-value { font-size: 1rem; }
-            .table-holdings td, .table-holdings th { padding: 0.35rem 0.3rem !important; font-size: 0.8rem; }
-            #filter-row .btn { font-size: 0.72rem; padding: 2px 8px; }
+            .hide-mobile {
+                display: none !important;
+            }
+
+            .chart-container-responsive {
+                height: 28vh !important;
+            }
+
+            .chart-bar-container {
+                min-height: 200px;
+            }
+
+            #app.container {
+                padding-left: 4px !important;
+                padding-right: 4px !important;
+            }
+
+            .summary-stat .stat-value {
+                font-size: 1rem;
+            }
+
+            .table-holdings td,
+            .table-holdings th {
+                padding: 0.35rem 0.3rem !important;
+                font-size: 0.8rem;
+            }
+
+            #filter-row .btn {
+                font-size: 0.72rem;
+                padding: 2px 8px;
+            }
         }
     </style>
 </head>
@@ -282,7 +378,8 @@
             <div class="d-flex align-items-center gap-3" style="min-width: 140px;">
                 <i class="fa-solid fa-circle-half-stroke d-none" id="theme-toggle-icon"
                     title="Toggle theme (Shift + D)"></i>
-                <a href="/idx/broker/stock-summary.html" id="nav-back" class="d-flex align-items-center text-decoration-none">
+                <a href="/idx/broker/stock-summary.html" id="nav-back"
+                    class="d-flex align-items-center text-decoration-none">
                     <i class="fa-solid fa-chevron-left me-1"></i>
                 </a>
             </div>
@@ -342,62 +439,7 @@
             </div>
         </div>
 
-        <!-- FILTER ROW -->
-        <div id="filter-row" class="mb-2">
-            <span class="text-muted fw-bold text-uppercase" style="font-size:0.75rem; letter-spacing:0.5px; flex-shrink:0;">FILTER</span>
-            <!-- Net Direction -->
-            <div class="dropdown">
-                <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" id="dd-net">
-                    Net: Any
-                </button>
-                <ul class="dropdown-menu dropdown-menu-sm">
-                    <li><a class="dropdown-item" href="#" data-filter="net" data-val="any">Any</a></li>
-                    <li><a class="dropdown-item" href="#" data-filter="net" data-val="buy">Net Buy (> 0)</a></li>
-                    <li><a class="dropdown-item" href="#" data-filter="net" data-val="sell">Net Sell (< 0)</a></li>
-                </ul>
-            </div>
-            <!-- Streak -->
-            <div class="dropdown">
-                <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" id="dd-streak">
-                    Streak: Any
-                </button>
-                <ul class="dropdown-menu dropdown-menu-sm">
-                    <li><a class="dropdown-item" href="#" data-filter="streak" data-val="any">Any</a></li>
-                    <li><a class="dropdown-item" href="#" data-filter="streak" data-val="buy2">Buy ≥ 2 hari</a></li>
-                    <li><a class="dropdown-item" href="#" data-filter="streak" data-val="buy3">Buy ≥ 3 hari</a></li>
-                    <li><a class="dropdown-item" href="#" data-filter="streak" data-val="sell2">Sell ≥ 2 hari</a></li>
-                    <li><a class="dropdown-item" href="#" data-filter="streak" data-val="sell3">Sell ≥ 3 hari</a></li>
-                </ul>
-            </div>
-            <!-- AMS -->
-            <div class="dropdown">
-                <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" id="dd-ams">
-                    AMS: Any
-                </button>
-                <ul class="dropdown-menu dropdown-menu-sm">
-                    <li><a class="dropdown-item" href="#" data-filter="ams" data-val="any">Any</a></li>
-                    <li><a class="dropdown-item" href="#" data-filter="ams" data-val="strong_acc">Strong Acc (≥ 30)</a></li>
-                    <li><a class="dropdown-item" href="#" data-filter="ams" data-val="acc">Accumulation (≥ 10)</a></li>
-                    <li><a class="dropdown-item" href="#" data-filter="ams" data-val="dist">Distribution (≤ -10)</a></li>
-                    <li><a class="dropdown-item" href="#" data-filter="ams" data-val="strong_dist">Strong Dist (≤ -30)</a></li>
-                </ul>
-            </div>
-            <!-- Days Active -->
-            <div class="dropdown">
-                <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" id="dd-days">
-                    Days: Any
-                </button>
-                <ul class="dropdown-menu dropdown-menu-sm">
-                    <li><a class="dropdown-item" href="#" data-filter="days" data-val="any">Any</a></li>
-                    <li><a class="dropdown-item" href="#" data-filter="days" data-val="3">Active ≥ 3 hari</a></li>
-                    <li><a class="dropdown-item" href="#" data-filter="days" data-val="5">Active ≥ 5 hari</a></li>
-                </ul>
-            </div>
-            <!-- Reset -->
-            <button class="btn btn-sm btn-outline-danger" id="btn-filter-reset" style="display:none;">
-                <i class="fa-solid fa-xmark"></i> Reset
-            </button>
-        </div>
+
 
         <!-- TIMEFRAME + TOP-N CONTROLS -->
         <div class="d-flex justify-content-between align-items-center mb-2">
@@ -425,7 +467,71 @@
                 <canvas id="trailing-chart"></canvas>
             </div>
         </div>
-
+        <!-- FILTER ROW -->
+        <div id="filter-row" class="mb-2">
+            <span class="text-muted fw-bold text-uppercase"
+                style="font-size:0.75rem; letter-spacing:0.5px; flex-shrink:0;">FILTER</span>
+            <!-- Net Direction -->
+            <div class="dropdown">
+                <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown"
+                    id="dd-net">
+                    Net: Any
+                </button>
+                <ul class="dropdown-menu dropdown-menu-sm">
+                    <li><a class="dropdown-item" href="#" data-filter="net" data-val="any">Any</a></li>
+                    <li><a class="dropdown-item" href="#" data-filter="net" data-val="buy">Net Buy (> 0)</a></li>
+                    <li><a class="dropdown-item" href="#" data-filter="net" data-val="sell">Net Sell (< 0)</a>
+                    </li>
+                </ul>
+            </div>
+            <!-- Streak -->
+            <div class="dropdown">
+                <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown"
+                    id="dd-streak">
+                    Streak: Any
+                </button>
+                <ul class="dropdown-menu dropdown-menu-sm">
+                    <li><a class="dropdown-item" href="#" data-filter="streak" data-val="any">Any</a></li>
+                    <li><a class="dropdown-item" href="#" data-filter="streak" data-val="buy2">Buy ≥ 2 hari</a></li>
+                    <li><a class="dropdown-item" href="#" data-filter="streak" data-val="buy3">Buy ≥ 3 hari</a></li>
+                    <li><a class="dropdown-item" href="#" data-filter="streak" data-val="sell2">Sell ≥ 2 hari</a></li>
+                    <li><a class="dropdown-item" href="#" data-filter="streak" data-val="sell3">Sell ≥ 3 hari</a></li>
+                </ul>
+            </div>
+            <!-- AMS -->
+            <div class="dropdown">
+                <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown"
+                    id="dd-ams">
+                    AMS: Any
+                </button>
+                <ul class="dropdown-menu dropdown-menu-sm">
+                    <li><a class="dropdown-item" href="#" data-filter="ams" data-val="any">Any</a></li>
+                    <li><a class="dropdown-item" href="#" data-filter="ams" data-val="strong_acc">Strong Acc (≥ 30)</a>
+                    </li>
+                    <li><a class="dropdown-item" href="#" data-filter="ams" data-val="acc">Accumulation (≥ 10)</a></li>
+                    <li><a class="dropdown-item" href="#" data-filter="ams" data-val="dist">Distribution (≤ -10)</a>
+                    </li>
+                    <li><a class="dropdown-item" href="#" data-filter="ams" data-val="strong_dist">Strong Dist (≤
+                            -30)</a></li>
+                </ul>
+            </div>
+            <!-- Days Active -->
+            <div class="dropdown">
+                <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown"
+                    id="dd-days">
+                    Days: Any
+                </button>
+                <ul class="dropdown-menu dropdown-menu-sm">
+                    <li><a class="dropdown-item" href="#" data-filter="days" data-val="any">Any</a></li>
+                    <li><a class="dropdown-item" href="#" data-filter="days" data-val="3">Active ≥ 3 hari</a></li>
+                    <li><a class="dropdown-item" href="#" data-filter="days" data-val="5">Active ≥ 5 hari</a></li>
+                </ul>
+            </div>
+            <!-- Reset -->
+            <button class="btn btn-sm btn-outline-danger" id="btn-filter-reset" style="display:none;">
+                <i class="fa-solid fa-xmark"></i> Reset
+            </button>
+        </div>
         <!-- MOMENTUM + TABLE: side-by-side on desktop, stacked on mobile -->
         <div class="row g-3 mb-4">
             <!-- LEFT: Momentum Score Chart -->
