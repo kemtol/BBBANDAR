@@ -293,24 +293,19 @@
             display: flex;
             align-items: center;
             gap: 6px;
-            flex-wrap: nowrap;
-            overflow-x: auto;
+            flex-wrap: wrap;
             padding: 4px 0;
-            -webkit-overflow-scrolling: touch;
             position: relative;
             z-index: 10;
         }
 
-        #filter-row::-webkit-scrollbar {
-            display: none;
-        }
-
         #filter-row .btn {
-            font-size: 0.78rem;
+            font-size: 0.9rem;
             padding: 2px 10px;
             white-space: nowrap;
             border-color: var(--border);
             color: var(--text-muted);
+            border-radius: 0;
         }
 
         #filter-row .btn.active-filter {
@@ -357,7 +352,7 @@
             }
 
             #filter-row .btn {
-                font-size: 0.72rem;
+                font-size: 0.82rem;
                 padding: 2px 8px;
             }
         }
@@ -470,10 +465,10 @@
         <!-- FILTER ROW -->
         <div id="filter-row" class="mb-2">
             <span class="text-muted fw-bold text-uppercase"
-                style="font-size:0.75rem; letter-spacing:0.5px; flex-shrink:0;">FILTER</span>
+                style="font-size:0.85rem; letter-spacing:0.5px; width:75px;">FILTER</span>
             <!-- Net Direction -->
             <div class="dropdown">
-                <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown"
+                <button class="btn btn-sm btn-outline-secondary dropdown-toggle px-2" type="button" data-bs-toggle="dropdown"
                     id="dd-net">
                     Net: Any
                 </button>
@@ -486,7 +481,7 @@
             </div>
             <!-- Streak -->
             <div class="dropdown">
-                <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown"
+                <button class="btn btn-sm btn-outline-secondary dropdown-toggle px-2" type="button" data-bs-toggle="dropdown"
                     id="dd-streak">
                     Streak: Any
                 </button>
@@ -500,7 +495,7 @@
             </div>
             <!-- AMS -->
             <div class="dropdown">
-                <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown"
+                <button class="btn btn-sm btn-outline-secondary dropdown-toggle px-2" type="button" data-bs-toggle="dropdown"
                     id="dd-ams">
                     AMS: Any
                 </button>
@@ -517,7 +512,7 @@
             </div>
             <!-- Days Active -->
             <div class="dropdown">
-                <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown"
+                <button class="btn btn-sm btn-outline-secondary dropdown-toggle px-2" type="button" data-bs-toggle="dropdown"
                     id="dd-days">
                     Days: Any
                 </button>
@@ -598,7 +593,7 @@
     <script src="../js/component.js?v=73"></script>
 
     <!-- BROKER DETAIL LOGIC -->
-    <script src="../js/broker-detail.js?v=5"></script>
+    <script src="../js/broker-detail.js?v=6"></script>
 
     <script defer
         src="https://static.cloudflareinsights.com/beacon.min.js/vcd15cbe7772f49c399c6a5babf22c1241717689176015"

@@ -617,7 +617,8 @@ function renderMomentumChart() {
                     font: { size: isMobile ? 9 : 11, weight: '600' },
                     formatter: function (v) {
                         const sign = v >= 0 ? '+' : '';
-                        return sign + v.toFixed(0);
+                        if (Math.abs(v) >= 1) return sign + v.toFixed(0);
+                        return sign + v.toFixed(1);
                     },
                     clip: false,
                 },
@@ -627,8 +628,9 @@ function renderMomentumChart() {
                         label: function (ctx) {
                             const idx = ctx.dataIndex;
                             const s = scored[idx];
+                            const xVal = parseFloat(ctx.parsed.x.toFixed(2));
                             return [
-                                `Momentum: ${ctx.parsed.x >= 0 ? '+' : ''}${ctx.parsed.x.toFixed(1)}`,
+                                `Momentum: ${xVal >= 0 ? '+' : ''}${xVal}`,
                                 `Net: ${fmtValue(s.total_net)}`,
                                 `Buy: ${fmtValue(s.total_buy)}  Sell: ${fmtValue(s.total_sell)}`,
                             ];
@@ -642,7 +644,10 @@ function renderMomentumChart() {
                     ticks: {
                         color: '#94a3b8',
                         font: { size: isMobile ? 9 : 11 },
-                        callback: function (v) { return (v >= 0 ? '+' : '') + v; },
+                        callback: function (v) {
+                            const r = parseFloat(v.toFixed(2));
+                            return (r >= 0 ? '+' : '') + r;
+                        },
                     },
                     title: {
                         display: !isMobile,
