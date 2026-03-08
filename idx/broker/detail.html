@@ -408,9 +408,23 @@
             <div class="flex-grow-1 text-center">
                 <span class="nav-title" id="header-title">Broker Detail</span>
             </div>
-            <div style="width:72px;" class="text-end"></div>
+            <div style="width:72px;" class="text-end">
+                <i class="fa-solid fa-magnifying-glass" style="cursor: pointer;" onclick="toggleSearch()"></i>
+            </div>
         </div>
     </nav>
+
+    <!-- Search Panel (slide-in) -->
+    <div id="search-panel">
+        <div class="mb-4">
+            <input type="text" id="search-input" class="search-input" placeholder="Masukkan Kode (e.g. BBRI)"
+                autocomplete="off">
+        </div>
+        <div>
+            <p class="small opacity-75 mb-2 fw-bold">RIWAYAT PENCARIAN</p>
+            <div id="search-history-list"></div>
+        </div>
+    </div>
 
     <div id="loading-indicator" class="text-center my-5">
         <div class="spinner-border text-primary" role="status">
@@ -490,7 +504,7 @@
             </div>
         </div>
         <!-- FILTER ROW -->
-        <div id="filter-row" class="mb-2">
+        <div id="filter-row" class="mb-3">
             <span class="text-muted fw-bold text-uppercase"
                 style="font-size:0.85rem; letter-spacing:0.5px; width:75px;">FILTER</span>
 
