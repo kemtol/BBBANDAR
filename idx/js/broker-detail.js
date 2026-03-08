@@ -1,31 +1,21 @@
 /**
  * broker-detail.js — Broker Detail / Inventory Trailing Page
- * v1 — 2026-03-08
+ * v2 — 2026-03-08
  *
  * Shows:
- *   1. Cumulative net value trailing line chart (top N stocks)
- *   2. Diverging horizontal bar chart (net buy vs net sell)
+ *   1. Cumulative net value trailing line chart (top N stocks, value at each node, name at endpoint)
+ *   2. Accumulation Momentum Score horizontal bar chart
  *   3. Holdings table with sort
  *
- * Data source: GET /broker-activity/trailing?broker={code}&days=N
+ * Data source:
+ *   GET /broker-activity/trailing?broker={code}&days=N
+ *   GET /brokers  (for broker name + category)
  */
 
 'use strict';
 
 // ── Config ──
 const API_BASE = 'https://api-saham.mkemalw.workers.dev';
-
-// Broker categories (same as broker-activity.js)
-const BROKER_CATEGORIES = {
-    foreign: new Set(['ZP', 'YU', 'KZ', 'RX', 'BK', 'AK', 'CS', 'CG', 'DB', 'ML', 'CC', 'DX',
-        'MS', 'UB', 'FS', 'GR', 'JP', 'YP', 'LG', 'DP', 'KK', 'SK', 'BW', 'FG',
-        'MG', 'AD', 'OD', 'BB', 'PT', 'SQ']),
-    local: new Set(['NI', 'EP', 'IF', 'PD', 'AI', 'DR', 'KI', 'TP', 'BZ', 'DH',
-        'AZ', 'XA', 'IB', 'GI', 'MA', 'BS', 'KS', 'LP', 'AG', 'PS',
-        'PO', 'HG', 'EL', 'SA', 'RF', 'MR', 'BI', 'BJ', 'IS']),
-    retail: new Set(['YO', 'PG', 'AP', 'GL', 'SH', 'CP', 'FZ', 'IP', 'OD', 'DN',
-        'HD', 'PP', 'NC', 'WH', 'SP'])
-};
 
 // Chart color palette for line chart (distinct, readable on dark bg)
 const LINE_COLORS = [
@@ -35,13 +25,17 @@ const LINE_COLORS = [
     '#d946ef', '#eab308', '#64748b', '#fb923c', '#2dd4bf'
 ];
 
+// Register chartjs-plugin-datalabels globally
+if (typeof ChartDataLabels !== 'undefined') Chart.register(ChartDataLabels);
+
 // ── State ──
 let brokerCode = '';
+let brokerInfo = null;       // { code, name, category, character } from /brokers
 let currentDays = 10;
 let currentTopN = 5;
 let apiData = null;          // raw API response
 let trailingChart = null;
-let divergingChart = null;
+let momentumChart = null;
 let tableSortKey = 'total_net';
 let tableSortDir = -1;       // -1 = desc
 
@@ -74,11 +68,63 @@ function netClass(v) {
     return 'text-muted';
 }
 
-function getBrokerCategory(code) {
-    if (BROKER_CATEGORIES.foreign.has(code)) return 'foreign';
-    if (BROKER_CATEGORIES.local.has(code)) return 'local';
-    if (BROKER_CATEGORIES.retail.has(code)) return 'retail';
-    return 'unknown';
+/**
+ * Accumulation Momentum Score (AMS)
+ *
+ * Combines:
+ *   1. Conviction (directional bias) = net_val / total_trade  → [-1, 1]
+ *   2. Recency-weighted acceleration: recent days weighted higher
+ *   3. Velocity: rate of change of daily conviction
+ *
+ * Score range: approximately -100 to +100
+ *   > 0  = accumulation momentum (green)
+ *   < 0  = distribution momentum (red)
+ *   Higher magnitude = stronger + accelerating
+ */
+function computeMomentumScore(series) {
+    if (!series || series.length === 0) return 0;
+
+    const n = series.length;
+    // Daily conviction: net / (buy + sell), NaN-safe
+    const dailyConv = series.map(pt => {
+        const total = pt.buy_val + pt.sell_val;
+        return total > 0 ? pt.net_val / total : 0;
+    });
+
+    // Recency-weighted average conviction (linear weights: oldest=1, newest=n)
+    let weightSum = 0, wConvSum = 0;
+    for (let i = 0; i < n; i++) {
+        const w = i + 1; // oldest=1, newest=n
+        wConvSum += dailyConv[i] * w;
+        weightSum += w;
+    }
+    const weightedConv = wConvSum / weightSum; // [-1, 1]
+
+    // Acceleration: compare recent half avg vs older half avg
+    let acceleration = 0;
+    if (n >= 2) {
+        const mid = Math.floor(n / 2);
+        const olderSlice = dailyConv.slice(0, mid);
+        const recentSlice = dailyConv.slice(mid);
+        const avgOlder = olderSlice.reduce((a, b) => a + b, 0) / olderSlice.length;
+        const avgRecent = recentSlice.reduce((a, b) => a + b, 0) / recentSlice.length;
+        acceleration = avgRecent - avgOlder; // positive = accelerating buy
+    }
+
+    // Volume intensity: recent days have higher volume → stronger signal
+    let recentVolRatio = 1;
+    if (n >= 3) {
+        const mid = Math.floor(n / 2);
+        const olderVol = series.slice(0, mid).reduce((a, pt) => a + pt.buy_val + pt.sell_val, 0) / Math.max(mid, 1);
+        const recentVol = series.slice(mid).reduce((a, pt) => a + pt.buy_val + pt.sell_val, 0) / Math.max(n - mid, 1);
+        if (olderVol > 0) recentVolRatio = Math.min(recentVol / olderVol, 3); // cap at 3x
+    }
+
+    // Combine: base conviction * (1 + acceleration boost) * volume intensity
+    const raw = weightedConv * (1 + Math.abs(acceleration) * 2) * Math.sqrt(recentVolRatio);
+
+    // Scale to ~[-100, 100]
+    return Math.max(-100, Math.min(100, raw * 100));
 }
 
 function fmtStreak(s) {
@@ -89,19 +135,12 @@ function fmtStreak(s) {
     return `<span class="${cls}">${icon}${abs}</span>`;
 }
 
-function fmtPct(c) {
-    if (!Number.isFinite(c) || c === 0) return '<span class="text-muted">—</span>';
-    const pct = (c * 100).toFixed(0);
-    const cls = c >= 0.7 ? 'text-success fw-bold' : c >= 0.4 ? 'text-warning' : 'text-muted';
-    return `<span class="${cls}">${pct}%</span>`;
-}
-
 function stockLogo(code) {
     return `<img src="${API_BASE}/logo?ticker=${code}" alt="${code}" class="stock-logo" loading="lazy" onerror="this.style.display='none'"> `;
 }
 
 // ── Init ──
-$(document).ready(function () {
+$(document).ready(async function () {
     const params = new URLSearchParams(window.location.search);
     brokerCode = (params.get('kode') || params.get('broker') || '').toUpperCase();
 
@@ -110,20 +149,39 @@ $(document).ready(function () {
         return;
     }
 
-    // Set header
+    // Set initial header (code only, name will be updated after API call)
     $('#broker-code').text(brokerCode);
-    $('#header-title').text(`Broker: ${brokerCode}`);
+    $('#header-title').text(brokerCode);
     document.title = `SSSAHAM - Broker ${brokerCode}`;
     $('#broker-logo').attr('src', `${API_BASE}/broker/logo/${brokerCode}`);
 
-    // Category badge
-    const cat = getBrokerCategory(brokerCode);
+    // Fetch broker info (name + category) from /brokers API
+    try {
+        const resp = await fetch(`${API_BASE}/brokers`);
+        if (resp.ok) {
+            const data = await resp.json();
+            const list = data.brokers || [];
+            brokerInfo = list.find(b => b.code === brokerCode) || null;
+        }
+    } catch (_) { /* non-critical */ }
+
+    // Update header with broker name
+    if (brokerInfo?.name) {
+        const shortName = brokerInfo.name.replace(/ Sekuritas.*$/i, '').replace(/ Securities.*$/i, '');
+        $('#broker-code').text(brokerCode);
+        $('#broker-name').text(shortName);
+        $('#header-title').text(`${brokerCode}: ${shortName}`);
+        document.title = `SSSAHAM - ${brokerCode} ${shortName}`;
+    }
+
+    // Category badge from API data
+    const cat = (brokerInfo?.category || '').toLowerCase();
     const catMap = {
-        foreign: { text: 'Foreign', cls: 'bg-primary' },
-        local: { text: 'Local Fund', cls: 'bg-success' },
-        retail: { text: 'Retail', cls: 'bg-warning text-dark' },
+        'foreign': { text: 'Foreign', cls: 'bg-primary' },
+        'local fund': { text: 'Local Fund', cls: 'bg-success' },
+        'retail': { text: 'Retail', cls: 'bg-warning text-dark' },
     };
-    const badge = catMap[cat] || { text: 'Unknown', cls: 'bg-secondary' };
+    const badge = catMap[cat] || { text: brokerInfo?.category || 'Unknown', cls: 'bg-secondary' };
     $('#broker-category-badge').text(badge.text).addClass(badge.cls);
 
     // Parse URL state
@@ -218,20 +276,19 @@ function renderSummary() {
         sellVal += s.total_sell;
     }
     const totalVal = buyVal + sellVal;
-    const conviction = totalVal > 0 ? Math.abs(netVal) / totalVal : 0;
 
     $('#stat-net-val').text(fmtValue(netVal)).removeClass('text-success text-danger').addClass(netClass(netVal));
     $('#stat-buy-val').text(fmtValue(buyVal)).addClass('text-success');
     $('#stat-sell-val').text(fmtValue(sellVal)).addClass('text-danger');
     $('#stat-breadth').text(summary.length);
     $('#stat-days').text(apiData.dates?.length || 0);
-    $('#stat-conviction').text(conviction > 0 ? (conviction * 100).toFixed(0) + '%' : '—');
+    $('#stat-total-val').text(fmtValue(totalVal));
 }
 
 // ── Charts ──
 function renderCharts() {
     renderTrailingChart();
-    renderDivergingChart();
+    renderMomentumChart();
 }
 
 function getTopStocks(n) {
@@ -273,10 +330,10 @@ function renderTrailingChart() {
             label: stock.stock_code,
             data,
             borderColor: color,
-            backgroundColor: color + '20',
             borderWidth: 2,
-            pointRadius: 3,
-            pointHoverRadius: 5,
+            pointRadius: 4,
+            pointHoverRadius: 6,
+            pointBackgroundColor: color,
             tension: 0.3,
             fill: false,
         };
@@ -289,6 +346,7 @@ function renderTrailingChart() {
     });
 
     const isMobile = window.innerWidth < 768;
+    const lastIdx = dates.length - 1;
 
     if (trailingChart) trailingChart.destroy();
     const ctx = document.getElementById('trailing-chart').getContext('2d');
@@ -302,18 +360,39 @@ function renderTrailingChart() {
                 mode: 'index',
                 intersect: false,
             },
+            layout: {
+                padding: { right: isMobile ? 40 : 60 }
+            },
             plugins: {
                 legend: {
-                    position: 'top',
-                    labels: {
-                        usePointStyle: true,
-                        pointStyle: 'circle',
-                        boxWidth: 8,
-                        font: { size: isMobile ? 10 : 12 },
-                        color: getComputedStyle(document.documentElement).getPropertyValue('--text').trim() || '#e2e8f0',
-                    }
+                    display: false,  // legend off — stock name shown at end of line
                 },
-                datalabels: { display: false },
+                datalabels: {
+                    display: true,
+                    color: function (ctx) {
+                        return ctx.dataset.borderColor;
+                    },
+                    font: { size: isMobile ? 8 : 10, weight: '600' },
+                    anchor: function (ctx) {
+                        const val = ctx.dataset.data[ctx.dataIndex];
+                        return val >= 0 ? 'end' : 'start';
+                    },
+                    align: function (ctx) {
+                        const val = ctx.dataset.data[ctx.dataIndex];
+                        return val >= 0 ? 'top' : 'bottom';
+                    },
+                    clip: false,
+                    formatter: function (value, ctx) {
+                        const isLast = ctx.dataIndex === lastIdx;
+                        const label = fmtValueShort(value);
+                        if (isLast) {
+                            return ctx.dataset.label + ' ' + label;
+                        }
+                        // On mobile, only show label at first and last points
+                        if (isMobile && ctx.dataIndex !== 0) return '';
+                        return label;
+                    },
+                },
                 tooltip: {
                     callbacks: {
                         label: ctx => `${ctx.dataset.label}: ${fmtValue(ctx.parsed.y)}`,
@@ -348,29 +427,56 @@ function renderTrailingChart() {
     });
 }
 
-function renderDivergingChart() {
+/**
+ * Momentum Score Bar Chart
+ *
+ * Sorted by Accumulation Momentum Score (AMS) — highest accumulation at top.
+ * Color gradient: green (accumulating) → red (distributing)
+ * Score considers: conviction + recency-weighted acceleration + volume intensity
+ */
+function renderMomentumChart() {
     const topStocks = getTopStocks(currentTopN);
     if (topStocks.length === 0) return;
 
-    // Sort by total_net (positive to negative)
-    const sorted = [...topStocks].sort((a, b) => b.total_net - a.total_net);
+    // Compute momentum score for each stock
+    const scored = topStocks.map(s => {
+        const series = apiData.series[s.stock_code] || [];
+        const score = computeMomentumScore(series);
+        return { ...s, momentum: score };
+    });
 
-    const labels = sorted.map(s => s.stock_code);
-    const values = sorted.map(s => s.total_net);
-    const bgColors = values.map(v => v >= 0 ? 'rgba(34,197,94,0.7)' : 'rgba(239,68,68,0.7)');
-    const borderColors = values.map(v => v >= 0 ? '#22c55e' : '#ef4444');
+    // Sort by momentum score descending (highest accumulation at top)
+    scored.sort((a, b) => b.momentum - a.momentum);
+
+    const labels = scored.map(s => s.stock_code);
+    const values = scored.map(s => s.momentum);
+
+    // Color gradient: interpolate green↔red based on score
+    function scoreColor(v, alpha) {
+        if (v >= 0) {
+            const t = Math.min(v / 60, 1); // 0..1 for green intensity
+            const g = Math.round(140 + t * 57);  // 140..197
+            return `rgba(34,${g},94,${alpha})`;
+        } else {
+            const t = Math.min(Math.abs(v) / 60, 1);
+            const r = Math.round(200 + t * 39);  // 200..239
+            return `rgba(${r},68,68,${alpha})`;
+        }
+    }
+    const bgColors = values.map(v => scoreColor(v, 0.75));
+    const borderColors = values.map(v => scoreColor(v, 1));
 
     const isMobile = window.innerWidth < 768;
 
-    // Dynamic height based on number of bars
-    const barHeight = isMobile ? 22 : 28;
+    // Dynamic height
+    const barHeight = isMobile ? 24 : 30;
     const minHeight = 200;
-    const chartHeight = Math.max(minHeight, sorted.length * barHeight + 60);
+    const chartHeight = Math.max(minHeight, scored.length * barHeight + 60);
     $('#diverging-chart-container').css('height', chartHeight + 'px');
 
-    if (divergingChart) divergingChart.destroy();
+    if (momentumChart) momentumChart.destroy();
     const ctx = document.getElementById('diverging-chart').getContext('2d');
-    divergingChart = new Chart(ctx, {
+    momentumChart = new Chart(ctx, {
         type: 'bar',
         data: {
             labels,
@@ -380,7 +486,7 @@ function renderDivergingChart() {
                 borderColor: borderColors,
                 borderWidth: 1,
                 borderRadius: 3,
-                barThickness: isMobile ? 16 : 22,
+                barThickness: isMobile ? 18 : 24,
             }]
         },
         options: {
@@ -391,16 +497,34 @@ function renderDivergingChart() {
                 legend: { display: false },
                 datalabels: {
                     display: true,
-                    anchor: ctx => ctx.dataset.data[ctx.dataIndex] >= 0 ? 'end' : 'start',
-                    align: ctx => ctx.dataset.data[ctx.dataIndex] >= 0 ? 'right' : 'left',
-                    color: ctx => ctx.dataset.data[ctx.dataIndex] >= 0 ? '#22c55e' : '#ef4444',
+                    anchor: function (ctx) {
+                        return ctx.dataset.data[ctx.dataIndex] >= 0 ? 'end' : 'start';
+                    },
+                    align: function (ctx) {
+                        return ctx.dataset.data[ctx.dataIndex] >= 0 ? 'right' : 'left';
+                    },
+                    color: function (ctx) {
+                        return ctx.dataset.data[ctx.dataIndex] >= 0 ? '#22c55e' : '#ef4444';
+                    },
                     font: { size: isMobile ? 9 : 11, weight: '600' },
-                    formatter: v => fmtValueShort(v),
+                    formatter: function (v) {
+                        const sign = v >= 0 ? '+' : '';
+                        return sign + v.toFixed(0);
+                    },
                     clip: false,
                 },
                 tooltip: {
                     callbacks: {
-                        label: ctx => `Net: ${fmtValue(ctx.parsed.x)}`,
+                        title: ctx => ctx[0]?.label || '',
+                        label: function (ctx) {
+                            const idx = ctx.dataIndex;
+                            const s = scored[idx];
+                            return [
+                                `Momentum: ${ctx.parsed.x >= 0 ? '+' : ''}${ctx.parsed.x.toFixed(1)}`,
+                                `Net: ${fmtValue(s.total_net)}`,
+                                `Buy: ${fmtValue(s.total_buy)}  Sell: ${fmtValue(s.total_sell)}`,
+                            ];
+                        }
                     }
                 }
             },
@@ -410,11 +534,11 @@ function renderDivergingChart() {
                     ticks: {
                         color: '#94a3b8',
                         font: { size: isMobile ? 9 : 11 },
-                        callback: v => fmtValueShort(v),
+                        callback: function (v) { return (v >= 0 ? '+' : '') + v; },
                     },
                     title: {
                         display: !isMobile,
-                        text: 'Net Value',
+                        text: 'Accumulation Momentum Score',
                         color: '#94a3b8',
                         font: { size: 11 },
                     }
@@ -435,7 +559,7 @@ function renderDivergingChart() {
 function renderTable() {
     if (!apiData?.stock_summary) return;
 
-    // Enrich with streak + conviction
+    // Enrich with streak + momentum score
     const enriched = apiData.stock_summary.map(s => {
         const series = apiData.series[s.stock_code] || [];
         // Compute streak from series (chronological order — last entry is most recent)
@@ -452,9 +576,8 @@ function renderTable() {
                 }
             }
         }
-        const totalTrade = s.total_buy + s.total_sell;
-        const conviction = totalTrade > 0 ? Math.abs(s.total_net) / totalTrade : 0;
-        return { ...s, streak, conviction };
+        const momentum = computeMomentumScore(series);
+        return { ...s, streak, momentum };
     });
 
     // Sort
@@ -470,6 +593,15 @@ function renderTable() {
         return tableSortDir * ((vb || 0) - (va || 0));
     });
 
+    function fmtMomentum(m) {
+        if (!Number.isFinite(m) || m === 0) return '<span class="text-muted">—</span>';
+        const sign = m >= 0 ? '+' : '';
+        const cls = m >= 30 ? 'text-success fw-bold' : m >= 10 ? 'text-success'
+                  : m <= -30 ? 'text-danger fw-bold' : m <= -10 ? 'text-danger'
+                  : 'text-muted';
+        return `<span class="${cls}">${sign}${m.toFixed(0)}</span>`;
+    }
+
     let html = '';
     enriched.forEach((s, i) => {
         html += `<tr>
@@ -483,7 +615,7 @@ function renderTable() {
             <td class="text-end">${fmtValue(s.total_sell)}</td>
             <td class="text-center hide-mobile">${s.days_active}</td>
             <td class="text-center hide-mobile">${fmtStreak(s.streak)}</td>
-            <td class="text-center hide-mobile">${fmtPct(s.conviction)}</td>
+            <td class="text-center hide-mobile">${fmtMomentum(s.momentum)}</td>
         </tr>`;
     });
 
