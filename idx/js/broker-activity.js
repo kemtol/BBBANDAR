@@ -864,14 +864,14 @@ function renderBrokerBubble() {
             layout: { padding: { top: 20 } },
             scales: {
                 x: {
-                    title: { display: true, text: 'Net Value (IDR)', color: textCol, font: { size: 11 } },
+                    title: { display: window.innerWidth >= 768, text: 'Net Value (IDR)', color: textCol, font: { size: 11 } },
                     grid: {
                         color: (c) => c.tick && c.tick.value === 0 ? zeroCol : gridCol,
                     },
                     ticks: { callback: v => fmtValue(v), color: textCol, font: { size: 10 } },
                 },
                 y: {
-                    title: { display: true, text: 'Breadth (Jumlah Saham)', color: textCol, font: { size: 11 } },
+                    title: { display: window.innerWidth >= 768, text: 'Breadth (Jumlah Saham)', color: textCol, font: { size: 11 } },
                     grid: { color: gridCol },
                     ticks: { color: textCol, font: { size: 10 } },
                     beginAtZero: true,
@@ -1277,13 +1277,13 @@ function renderMeteorBubble() {
             layout: { padding: { top: 20, bottom: 10 } },
             scales: {
                 x: {
-                    title: { display: true, text: 'Daily Net Value (IDR)', color: textCol, font: { size: 11 } },
+                    title: { display: window.innerWidth >= 768, text: 'Daily Net Value (IDR)', color: textCol, font: { size: 11 } },
                     grid: { display: false },
                     border: { display: false },
                     ticks: { callback: v => fmtValue(v), color: textCol, font: { size: 10 } },
                 },
                 y: {
-                    title: { display: true, text: 'Daily Breadth (Saham)', color: textCol, font: { size: 11 } },
+                    title: { display: window.innerWidth >= 768, text: 'Daily Breadth (Saham)', color: textCol, font: { size: 11 } },
                     grid: { display: false },
                     border: { display: false },
                     ticks: { color: textCol, font: { size: 10 } },

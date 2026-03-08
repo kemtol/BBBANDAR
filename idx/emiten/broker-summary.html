@@ -257,6 +257,28 @@
                 display: none !important;
             }
 
+            /* ── Filter/Preset: horizontal scroll, no wrap ── */
+            #filter-row, #filter-row-2 {
+                flex-wrap: nowrap !important;
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch;
+                scrollbar-width: none;
+            }
+            #filter-row::-webkit-scrollbar,
+            #filter-row-2::-webkit-scrollbar {
+                display: none;
+            }
+            /* Preset row inner flex: no wrap + scroll */
+            .mb-2.container > .d-flex:first-child > .d-flex:first-child {
+                flex-wrap: nowrap !important;
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch;
+                scrollbar-width: none;
+            }
+            .mb-2.container > .d-flex:first-child > .d-flex:first-child::-webkit-scrollbar {
+                display: none;
+            }
+
             /* ── Search bar: full width ── */
             #search-hint-row {
                 justify-content: center !important;
@@ -265,8 +287,19 @@
             #search-hint-row > small {
                 display: none !important;
             }
+            #search-hint-row > .d-flex {
+                width: 100%;
+            }
             #emiten-search {
                 width: 100% !important;
+            }
+
+            /* ── Table: hide # column on mobile ── */
+            .sticky-col-no {
+                display: none !important;
+            }
+            #screener-table .sticky-col-symbol {
+                left: 0 !important;
             }
 
             /* ── Table: hide all group colspan headers ── */
@@ -286,10 +319,21 @@
                 display: none !important;
             }
 
-            /* ── Table: hide Foreign/Local/Smart/Flow/Effort/RVOL/VWAP/CVD-multi groups ── */
-            .col-fflw, .col-lflw, .col-smny, .col-flow, .col-eff,
-            .col-cvdm, .col-rvol, .col-vwp {
+            /* ── Table: hide entire less-important groups ── */
+            .col-lflw, .col-cvdm, .col-rvol, .col-vwp,
+            .col-flow, .col-eff {
                 display: none !important;
+            }
+
+            /* ── Table: Foreign & Smart — hide 2D & 10D, keep 5D & 20D ── */
+            .col-h2.col-fflw, .col-h10.col-fflw,
+            .col-h2.col-smny, .col-h10.col-smny {
+                display: none !important;
+            }
+            /* force-show 5D & 20D for Foreign & Smart (override hide-mobile on 20D) */
+            .col-h5.col-fflw, .col-h20.col-fflw,
+            .col-h5.col-smny, .col-h20.col-smny {
+                display: table-cell !important;
             }
 
             /* ── Table: hide State, Value, Quadrant ── */
@@ -304,6 +348,15 @@
             .table-orderflow td, .table-orderflow th {
                 padding: 0.35rem 0.3rem !important;
                 font-size: 0.8rem;
+            }
+
+            /* ── Chart: reduce whitespace on mobile ── */
+            #foreign-sentiment-widget {
+                padding: 0.5rem !important;
+                margin-bottom: 0.5rem !important;
+            }
+            .chart-container-responsive {
+                height: 25vh !important;
             }
 
             /* ── Container: no horizontal padding ── */
@@ -559,25 +612,27 @@
             line-height: 1.1;
         }
 
-        /* Chart Sub-Tab Toggle */
+        /* Chart Sub-Tab Toggle (aligned with stock-summary) */
         .chart-subtab-group .btn {
-            font-size: 0.8rem;
-            padding: 0.2rem 0.75rem;
-            border-radius: 4px;
-            border: 1px solid var(--border);
-            color: var(--text-muted);
+            font-size: 0.82rem;
+            padding: 4px 16px;
+            border-radius: 0px;
+            border: 1px solid var(--primary);
+            color: var(--primary);
             background: transparent;
+            font-weight: 600;
+            text-decoration: none;
         }
 
         .chart-subtab-group .btn.active {
             background: var(--primary);
             border-color: var(--primary);
-            color: var(--text-inverse);
+            color: #fff;
         }
 
         .chart-subtab-group .btn:hover:not(.active) {
-            background: var(--table-hover-bg);
-            color: var(--text);
+            background: rgba(37, 99, 235, 0.1);
+            color: var(--primary);
         }
 
         /* Broker Flow Legend */
@@ -1303,7 +1358,7 @@
                     </a>
                 </div>
                 <!-- Row 3: Active filter pills -->
-                <div id="active-pills" class="d-flex flex-wrap gap-1 mb-1" style="min-height:0;"></div>
+                <div id="active-pills" class="d-flex flex-wrap gap-1 mb-1 d-none" style="min-height:0;"></div>
             </div>
             <div id="search-hint-row" class="d-flex justify-content-between align-items-center border-bottom py-2"
                 style="line-height:normal">
@@ -1767,7 +1822,7 @@
     <script src="../js/component.js?v=73"></script>
 
     <!-- MAIN APP LOGIC -->
-    <script src="../js/broker-summary.js?v=89"></script>
+    <script src="../js/broker-summary.js?v=90"></script>
     <script defer
         src="https://static.cloudflareinsights.com/beacon.min.js/vcd15cbe7772f49c399c6a5babf22c1241717689176015"
         data-cf-beacon='{"version":"2024.11.0","token":"0e06ac31f3fc47b3ab72d7670102e368","r":1,"server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}'

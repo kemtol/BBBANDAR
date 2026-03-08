@@ -1964,6 +1964,8 @@ function renderFilterPills() {
             `);
         }
     });
+    // Toggle visibility: hide container when no active pills
+    $pills.toggleClass('d-none', $pills.children().length === 0);
 }
 
 // Click pill X to remove that individual filter
