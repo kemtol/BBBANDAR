@@ -26,6 +26,17 @@ if (typeof Chart !== 'undefined' && typeof ChartDataLabels !== 'undefined') {
 }
 
 $(document).ready(function () {
+    // Fix mobile thead: reduce colspan for visible groups
+    function fixMobileColspan() {
+        const isMobile = window.innerWidth < 768;
+        const fflw = document.getElementById('th-fflw-group');
+        const smny = document.getElementById('th-smny-group');
+        if (fflw) fflw.colSpan = isMobile ? 2 : 4;
+        if (smny) smny.colSpan = isMobile ? 2 : 4;
+    }
+    fixMobileColspan();
+    window.addEventListener('resize', fixMobileColspan);
+
     // 1. Fetch Brokers Mapping
     fetch(`${WORKER_BASE_URL}/brokers`)
         .then(r => r.json())

@@ -302,10 +302,7 @@
                 left: 0 !important;
             }
 
-            /* ── Table: hide all group colspan headers ── */
-            .thead-group-row th[colspan] {
-                display: none !important;
-            }
+
 
             /* ── Table: hide Orderflow sub-columns (Mom%, Absorb) ── */
             th[data-sort="order_mom_pct"],
@@ -931,7 +928,7 @@
             <!-- PRESET BAR -->
             <div class="my-2 py-2 container">
                 <!-- Row 1: Presets -->
-                <div class="d-flex justify-content-between align-items-center mb-2">
+                <div class="d-flex justify-content-between align-items-center  my-1 py-1">
                     <div class="d-flex align-items-center flex-wrap">
                         <span class="text-muted fw-bold text-uppercase hide-mobile"
                             style="font-size:0.85rem; letter-spacing:0.5px;width: 75px;">Preset</span>
@@ -1015,7 +1012,7 @@
                     </div>
                 </div>
                 <!-- Row 2: Individual Filters -->
-                <div class="d-flex align-items-center flex-wrap py-2" id="filter-row">
+                <div class="d-flex align-items-center flex-wrap  my-1 py-1" id="filter-row">
                     <span class="text-muted fw-bold text-uppercase"
                         style="font-size:0.85rem; letter-spacing:0.5px;width: 75px;">FILTER</span>
                     <!-- Foreign Net -->
@@ -1231,7 +1228,7 @@
                     </div>
                 </div>
                 <!-- Row 2b: Numeric column filters (inline) -->
-                <div class="d-flex align-items-center flex-wrap mb-1 pt-1 pb-2" id="filter-row-2">
+                <div class="d-flex align-items-center flex-wrap  my-1 py-1" id="filter-row-2">
                     <span class="text-muted fw-bold text-uppercase"
                         style="font-size:0.75rem; letter-spacing:0.5px;width: 75px;">MORE</span>
                     <!-- Growth -->
@@ -1362,13 +1359,13 @@
                 <!-- Row 3: Active filter pills -->
                 <div id="active-pills" class="d-flex flex-wrap gap-1 mb-1 d-none" style="min-height:0;"></div>
             </div>
-            <div id="search-hint-row" class="d-flex justify-content-between align-items-center border-bottom py-2"
+            <div id="search-hint-row" class="d-flex justify-content-between align-items-center border-bottom pb-2"
                 style="line-height:normal">
                 <div class="hide-mobile" style="min-width:220px;"></div>
                 <small class="small text-muted flex-grow-1 text-center hide-mobile"
                     style="font-size: 0.75rem;line-height:normal">Shift+Scroll untuk geser
                     ke kiri/kanan</small>
-                <div class="d-flex align-items-center gap-1">
+                <div class="d-flex align-items-center gap-1 px-3">
                     <input type="text" id="emiten-search" class="form-control form-control-sm"
                         placeholder="BBRI, TLKM.." style="width:220px; font-size:0.8rem;border-radius: 0px;">
                 </div>
@@ -1418,23 +1415,23 @@
                                     title="HAKA% = (CVD% + 100) / 2.&#10;Buy on ask pressure ratio (0-100%).&#10;>50% = dominasi buyer, <50% = dominasi seller.&#10;Hover untuk raw net delta lot.">HAKA <i
                                         class="fa-solid fa-sort small text-muted"></i></th>
                                 <!-- Group: Orderflow (2 cols: Mom%, Absorb) -->
-                                <th colspan="2" class="text-center thead-group-label">Orderflow</th>
+                                <th colspan="2" class="text-center thead-group-label hide-mobile">Orderflow</th>
                                 <!-- Group: Cum Volume Delta (5 cols) -->
-                                <th colspan="5" class="text-center thead-group-label">Volume Delta</th>
+                                <th colspan="5" class="text-center thead-group-label hide-mobile">Volume Delta</th>
                                 <!-- Group: Foreign Flow (4 cols) -->
-                                <th colspan="4" class="text-center thead-group-label">Foreign Flow</th>
+                                <th colspan="4" class="text-center thead-group-label" id="th-fflw-group">Foreign Flow</th>
                                 <!-- Group: Local Flow (4 cols) -->
-                                <th colspan="4" class="text-center thead-group-label">Local Flow</th>
+                                <th colspan="4" class="text-center thead-group-label hide-mobile">Local Flow</th>
                                 <!-- Group: Smart Money (4 cols) -->
-                                <th colspan="4" class="text-center thead-group-label">Smart Money</th>
+                                <th colspan="4" class="text-center thead-group-label" id="th-smny-group">Smart Money</th>
                                 <!-- Group: Rel Volume (4 cols) -->
                                 <th colspan="4" class="text-center thead-group-label hide-mobile">Rel Volume</th>
                                 <!-- Group: VWAP Position (4 cols) -->
                                 <th colspan="4" class="text-center thead-group-label hide-mobile">VWAP Position</th>
                                 <!-- Group: Flow Score (4 cols) -->
-                                <th colspan="4" class="text-center thead-group-label">Flow Score</th>
+                                <th colspan="4" class="text-center thead-group-label hide-mobile">Flow Score</th>
                                 <!-- Group: Effort (4 cols) -->
-                                <th colspan="4" class="text-center thead-group-label thead-group-end">Effort</th>
+                                <th colspan="4" class="text-center thead-group-label thead-group-end hide-mobile">Effort</th>
                                 <th rowspan="2" class="text-center thead-group-label" data-sort="state"
                                     style="cursor:pointer"
                                     title="State klasifikasi berdasarkan Z-NGR &amp; delta harian.">
@@ -1824,7 +1821,7 @@
     <script src="../js/component.js?v=73"></script>
 
     <!-- MAIN APP LOGIC -->
-    <script src="../js/broker-summary.js?v=90"></script>
+    <script src="../js/broker-summary.js?v=91"></script>
     <script defer
         src="https://static.cloudflareinsights.com/beacon.min.js/vcd15cbe7772f49c399c6a5babf22c1241717689176015"
         data-cf-beacon='{"version":"2024.11.0","token":"0e06ac31f3fc47b3ab72d7670102e368","r":1,"server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}'
