@@ -32,7 +32,7 @@ if (typeof ChartDataLabels !== 'undefined') Chart.register(ChartDataLabels);
 let brokerCode = '';
 let brokerInfo = null;       // { code, name, category, character } from /brokers
 let currentDays = 10;
-let currentTopN = 5;
+let currentTopN = 10;
 let apiData = null;          // raw API response
 let trailingChart = null;
 let momentumChart = null;
@@ -71,60 +71,67 @@ function netClass(v) {
 /**
  * Accumulation Momentum Score (AMS)
  *
- * Combines:
- *   1. Conviction (directional bias) = net_val / total_trade  → [-1, 1]
- *   2. Recency-weighted acceleration: recent days weighted higher
- *   3. Velocity: rate of change of daily conviction
+ * Industry-standard approach combining:
+ *   1. Money Flow Index (MFI) — volume-weighted buy/sell pressure → [0, 100]
+ *      Adapted: MFI = 100 - 100/(1 + MoneyFlowRatio)
+ *      where MoneyFlowRatio = Σ(buy_val) / Σ(sell_val)
+ *      Rescaled to [-100, +100]: AMS_base = (MFI - 50) * 2
  *
- * Score range: approximately -100 to +100
- *   > 0  = accumulation momentum (green)
- *   < 0  = distribution momentum (red)
- *   Higher magnitude = stronger + accelerating
+ *   2. EMA-weighted direction — exponential moving average gives
+ *      more weight to recent data (decay factor α = 2/(n+1))
+ *
+ *   3. Rate of Change (ROC) acceleration — compares recent vs older
+ *      period conviction to detect momentum buildup
+ *
+ * Final score: [-100, +100]
+ *   > 0  = accumulation pressure (green)
+ *   < 0  = distribution pressure (red)
  */
 function computeMomentumScore(series) {
     if (!series || series.length === 0) return 0;
-
     const n = series.length;
-    // Daily conviction: net / (buy + sell), NaN-safe
+
+    // ── 1. Volume-weighted Money Flow Index (MFI) ──
+    let totalBuy = 0, totalSell = 0;
+    for (const pt of series) {
+        totalBuy += pt.buy_val;
+        totalSell += pt.sell_val;
+    }
+    // MFI: 0..100, then rescale to -100..+100
+    const mfRatio = totalSell > 0 ? totalBuy / totalSell : (totalBuy > 0 ? 10 : 1);
+    const mfi = 100 - 100 / (1 + mfRatio); // 0..100
+    const mfiScore = (mfi - 50) * 2;        // -100..+100
+
+    // ── 2. EMA-weighted daily conviction ──
+    // Daily conviction: net / total, range [-1, 1]
     const dailyConv = series.map(pt => {
         const total = pt.buy_val + pt.sell_val;
         return total > 0 ? pt.net_val / total : 0;
     });
-
-    // Recency-weighted average conviction (linear weights: oldest=1, newest=n)
-    let weightSum = 0, wConvSum = 0;
-    for (let i = 0; i < n; i++) {
-        const w = i + 1; // oldest=1, newest=n
-        wConvSum += dailyConv[i] * w;
-        weightSum += w;
+    // EMA with α = 2/(n+1)
+    const alpha = 2 / (n + 1);
+    let ema = dailyConv[0];
+    for (let i = 1; i < n; i++) {
+        ema = alpha * dailyConv[i] + (1 - alpha) * ema;
     }
-    const weightedConv = wConvSum / weightSum; // [-1, 1]
+    const emaScore = ema * 100; // -100..+100
 
-    // Acceleration: compare recent half avg vs older half avg
-    let acceleration = 0;
-    if (n >= 2) {
-        const mid = Math.floor(n / 2);
-        const olderSlice = dailyConv.slice(0, mid);
-        const recentSlice = dailyConv.slice(mid);
+    // ── 3. Rate of Change (ROC) acceleration ──
+    // Compare EMA of recent third vs older third
+    let roc = 0;
+    if (n >= 3) {
+        const third = Math.max(1, Math.floor(n / 3));
+        const olderSlice = dailyConv.slice(0, third);
+        const recentSlice = dailyConv.slice(n - third);
         const avgOlder = olderSlice.reduce((a, b) => a + b, 0) / olderSlice.length;
         const avgRecent = recentSlice.reduce((a, b) => a + b, 0) / recentSlice.length;
-        acceleration = avgRecent - avgOlder; // positive = accelerating buy
+        roc = (avgRecent - avgOlder); // -2..+2 range
     }
+    const rocScore = Math.max(-100, Math.min(100, roc * 100));
 
-    // Volume intensity: recent days have higher volume → stronger signal
-    let recentVolRatio = 1;
-    if (n >= 3) {
-        const mid = Math.floor(n / 2);
-        const olderVol = series.slice(0, mid).reduce((a, pt) => a + pt.buy_val + pt.sell_val, 0) / Math.max(mid, 1);
-        const recentVol = series.slice(mid).reduce((a, pt) => a + pt.buy_val + pt.sell_val, 0) / Math.max(n - mid, 1);
-        if (olderVol > 0) recentVolRatio = Math.min(recentVol / olderVol, 3); // cap at 3x
-    }
-
-    // Combine: base conviction * (1 + acceleration boost) * volume intensity
-    const raw = weightedConv * (1 + Math.abs(acceleration) * 2) * Math.sqrt(recentVolRatio);
-
-    // Scale to ~[-100, 100]
-    return Math.max(-100, Math.min(100, raw * 100));
+    // ── Composite: 40% MFI + 40% EMA + 20% ROC ──
+    const composite = mfiScore * 0.4 + emaScore * 0.4 + rocScore * 0.2;
+    return Math.max(-100, Math.min(100, composite));
 }
 
 function fmtStreak(s) {
@@ -334,7 +341,7 @@ function renderTrailingChart() {
             pointRadius: 4,
             pointHoverRadius: 6,
             pointBackgroundColor: color,
-            tension: 0.3,
+            tension: 0,
             fill: false,
         };
     });
@@ -388,20 +395,14 @@ function renderTrailingChart() {
                         if (isLast) {
                             return ctx.dataset.label + ' ' + label;
                         }
-                        // On mobile, only show label at first and last points
-                        if (isMobile && ctx.dataIndex !== 0) return '';
                         return label;
                     },
                 },
-                tooltip: {
-                    callbacks: {
-                        label: ctx => `${ctx.dataset.label}: ${fmtValue(ctx.parsed.y)}`,
-                    }
-                }
+                tooltip: { enabled: false },
             },
             scales: {
                 x: {
-                    grid: { color: 'rgba(255,255,255,0.05)' },
+                    grid: { display: false },
                     ticks: {
                         color: getComputedStyle(document.documentElement).getPropertyValue('--text-muted').trim() || '#94a3b8',
                         font: { size: isMobile ? 9 : 11 },
@@ -409,7 +410,7 @@ function renderTrailingChart() {
                     }
                 },
                 y: {
-                    grid: { color: 'rgba(255,255,255,0.05)' },
+                    grid: { display: false },
                     ticks: {
                         color: getComputedStyle(document.documentElement).getPropertyValue('--text-muted').trim() || '#94a3b8',
                         font: { size: isMobile ? 9 : 11 },
@@ -530,7 +531,7 @@ function renderMomentumChart() {
             },
             scales: {
                 x: {
-                    grid: { color: 'rgba(255,255,255,0.05)' },
+                    grid: { display: false },
                     ticks: {
                         color: '#94a3b8',
                         font: { size: isMobile ? 9 : 11 },
