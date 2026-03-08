@@ -290,10 +290,6 @@ $(document).ready(async function () {
     updateFilterButtons();
     restoreRangeInputs();
 
-    // Bootstrap tooltips
-    const tooltipEls = document.querySelectorAll('[data-bs-toggle="tooltip"]');
-    tooltipEls.forEach(el => new bootstrap.Tooltip(el));
-
     // ── Event handlers ──
 
     // Timeframe selector
