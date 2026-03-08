@@ -7024,6 +7024,116 @@ export default {
         }
       }
 
+      // ── Broker Trailing: per-stock per-day series for a broker ──
+      if (url.pathname === "/broker-activity/trailing" && req.method === "GET") {
+        const broker = (url.searchParams.get("broker") || "").toUpperCase();
+        if (!broker || !/^[A-Z0-9]{2,3}$/.test(broker)) {
+          return json({ error: "Missing or invalid ?broker= param" }, 400);
+        }
+        const days = Math.max(1, Math.min(30, parseInt(url.searchParams.get("days")) || 10));
+
+        // Build trading-day list (newest first)
+        const wibNow = new Date(Date.now() + 7 * 3600000);
+        const tradingDays = [];
+        let d = new Date(wibNow); d.setUTCHours(0, 0, 0, 0);
+        let checked = 0;
+        while (tradingDays.length < days && checked < days * 3) {
+          const dow = d.getUTCDay();
+          if (dow !== 0 && dow !== 6 && !IDX_HOLIDAYS.has(d.toISOString().slice(0, 10))) {
+            tradingDays.push(d.toISOString().slice(0, 10));
+          }
+          d.setUTCDate(d.getUTCDate() - 1);
+          checked++;
+        }
+
+        // Cache key
+        const cacheKey = `BYBROKER_${broker}/cache/trailing_${days}D_${tradingDays[0]}.json`;
+        const nocache = url.searchParams.get("nocache") === "true";
+        if (!nocache) {
+          try {
+            const cached = await env.RAW_BROKSUM.get(cacheKey);
+            if (cached) {
+              const payload = await cached.json();
+              payload._cached = true;
+              return json(payload);
+            }
+          } catch (_) { /* miss */ }
+        }
+
+        // Fetch each day's raw data — newest first, reverse to chronological for output
+        const daysChronological = [...tradingDays].reverse(); // oldest first
+        // stockSeries: { "BBRI": [{ date, buy_val, sell_val, net_val, net_vol, buy_freq, sell_freq }] }
+        const stockSeries = {};
+        const loadedDates = [];
+
+        for (const date of daysChronological) {
+          const [sy, sm, sd] = date.split("-");
+          const r2Key = `BYBROKER_${broker}/${sy}/${sm}/${sd}.json`;
+          try {
+            const obj = await env.RAW_BROKSUM.get(r2Key);
+            if (!obj) continue;
+            const data = await obj.json();
+            if (!data.stocks || data.stocks.length === 0) continue;
+            loadedDates.push(date);
+            for (const s of data.stocks) {
+              if (!stockSeries[s.stock_code]) stockSeries[s.stock_code] = [];
+              stockSeries[s.stock_code].push({
+                date,
+                buy_val: Number(s.buy_val) || 0,
+                sell_val: Number(s.sell_val) || 0,
+                net_val: Number(s.net_val) || 0,
+                net_vol: Number(s.net_vol) || 0,
+                buy_freq: Number(s.buy_freq) || 0,
+                sell_freq: Number(s.sell_freq) || 0,
+              });
+            }
+          } catch (e) { /* skip */ }
+        }
+
+        // Add cumulative_net to each stock series + compute total_net
+        const stockSummary = [];
+        for (const [code, series] of Object.entries(stockSeries)) {
+          let cumNet = 0;
+          let totalBuy = 0, totalSell = 0;
+          for (const pt of series) {
+            cumNet += pt.net_val;
+            pt.cumulative_net = cumNet;
+            totalBuy += pt.buy_val;
+            totalSell += pt.sell_val;
+          }
+          stockSummary.push({
+            stock_code: code,
+            total_net: cumNet,
+            total_buy: totalBuy,
+            total_sell: totalSell,
+            days_active: series.length,
+          });
+        }
+
+        // Sort by absolute net descending
+        stockSummary.sort((a, b) => Math.abs(b.total_net) - Math.abs(a.total_net));
+
+        const payload = {
+          ok: true,
+          broker,
+          days,
+          dates: loadedDates,
+          stock_summary: stockSummary,
+          series: stockSeries,
+        };
+
+        // Write cache (non-blocking)
+        if (loadedDates.length > 1) {
+          try {
+            await env.RAW_BROKSUM.put(cacheKey, JSON.stringify(payload), {
+              httpMetadata: { contentType: "application/json" }
+            });
+          } catch (e) { /* ignore */ }
+        }
+
+        return json(payload);
+      }
+
       // Fallback
       return json({ error: "Not Found", method: req.method, path: url.pathname }, 404);
 

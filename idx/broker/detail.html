@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="id">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0b0b0e" />
+
+    <script>
+        (function () {
+            const root = document.documentElement;
+            root.setAttribute('data-theme', 'dark');
+            root.style.colorScheme = 'dark';
+            try { localStorage.setItem('ui:theme', 'dark'); } catch (e) { }
+        })();
+    </script>
+
+    <title>SSSAHAM - Broker Detail</title>
+
+    <link rel="apple-touch-icon" sizes="180x180" href="../img/apple-touch-icon.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="../img/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="../img/favicon-16x16.png">
+
+    <!-- Bootstrap & Font Awesome -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css" rel="stylesheet" />
+    <link rel="stylesheet" href="../../theme.css" />
+    <link href="../css/component.css" rel="stylesheet" />
+
+    <style>
+        :root {
+            --table-header-text: var(--muted);
+            --table-hover-bg: #f1f5f9;
+            --sticky-col-bg: #ffffff;
+            --sticky-col-hover-bg: #eef2f7;
+            --card-divider: rgba(148, 163, 184, 0.35);
+            --card-radius: 12px;
+            --pull-indicator-bg: #f6f8fb;
+            --pull-indicator-icon: var(--muted);
+        }
+
+        :root[data-theme="dark"] {
+            --table-hover-bg: rgba(255, 255, 255, 0.05);
+            --sticky-col-bg: #171c24;
+            --sticky-col-hover-bg: #202734;
+            --card-divider: rgba(82, 94, 106, 0.55);
+            --pull-indicator-bg: var(--surface-alt);
+            --pull-indicator-icon: var(--text-secondary);
+        }
+
+        body {
+            background: var(--bg);
+            color: var(--text);
+            transition: background-color 0.3s ease, color 0.3s ease;
+        }
+
+        body, .card, .navbar {
+            transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease;
+        }
+
+        .bg-white {
+            background-color: var(--surface) !important;
+            color: var(--text);
+        }
+
+        .text-muted {
+            color: var(--text-muted) !important;
+        }
+
+        .card {
+            background-color: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--card-radius);
+            color: var(--text);
+        }
+
+        .card-swing {
+            border-radius: var(--card-radius);
+            border: 1px solid var(--card-divider);
+            box-shadow: none;
+            background: transparent !important;
+        }
+
+        .card-swing-header, .card-header {
+            background: transparent;
+            border-bottom: 1px solid var(--card-divider);
+            border-radius: var(--card-radius) var(--card-radius) 0 0;
+        }
+
+        .navbar { box-shadow: none; }
+        .nav-title { font-size: 0.9rem !important; }
+
+        /* Broker identity */
+        .broker-logo-lg {
+            width: 32px;
+            height: 32px;
+            border-radius: 6px;
+            object-fit: contain;
+            background: #fff;
+        }
+
+        /* Timeframe selector */
+        #trailing-range-selector a {
+            font-size: 0.82rem;
+            padding: 3px 12px;
+            color: var(--text-muted);
+            text-decoration: none;
+            font-weight: 600;
+            transition: color 0.15s;
+        }
+        #trailing-range-selector a:hover { color: #eab308; }
+        #trailing-range-selector a.active { color: #eab308; }
+
+        /* TopN toggle */
+        #topn-selector a {
+            font-size: 0.78rem;
+            padding: 2px 10px;
+            color: var(--text-muted);
+            text-decoration: none;
+            cursor: pointer;
+            transition: color 0.15s;
+        }
+        #topn-selector a:hover { color: var(--text); }
+        #topn-selector a.active { color: var(--accent-primary, var(--primary)); font-weight: 600; }
+
+        /* Chart containers */
+        .chart-container-responsive {
+            height: 50vh;
+            width: 100%;
+            position: relative;
+        }
+        @media (orientation: portrait) {
+            .chart-container-responsive { height: 30vh !important; }
+        }
+        .chart-bar-container {
+            width: 100%;
+            position: relative;
+        }
+
+        /* Holdings table */
+        .table-holdings {
+            font-size: 0.88rem;
+            white-space: nowrap;
+            color: var(--text);
+        }
+        .table-holdings thead th {
+            text-transform: uppercase;
+            font-size: 0.78rem;
+            color: var(--table-header-text);
+            border-bottom-color: var(--border);
+        }
+        .table-holdings tbody tr:hover {
+            background-color: var(--table-hover-bg);
+        }
+        .table-holdings thead th { background: var(--sticky-col-bg); }
+
+        .stock-logo {
+            width: 18px;
+            height: 18px;
+            border-radius: 3px;
+            object-fit: contain;
+            background: #fff;
+            vertical-align: middle;
+        }
+
+        /* Pull indicator */
+        #pull-indicator {
+            position: fixed;
+            top: -60px; left: 0; right: 0;
+            height: 60px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: var(--pull-indicator-bg);
+            transition: top 0.2s ease-out;
+            z-index: 1000;
+            color: var(--pull-indicator-icon);
+        }
+        #pull-indicator.visible { top: 0; }
+        #pull-indicator i {
+            font-size: 1.5rem;
+            color: var(--pull-indicator-icon);
+            transition: transform 0.2s;
+        }
+        #pull-indicator.ready i { transform: rotate(180deg); }
+
+        /* Tab style matching stock-summary */
+        .chart-subtab-group .btn {
+            font-size: 0.82rem;
+            padding: 4px 16px;
+            border-radius: 0;
+            border: 1px solid var(--primary);
+            color: var(--primary);
+            background: transparent;
+            font-weight: 600;
+            text-decoration: none;
+        }
+        .chart-subtab-group .btn.active {
+            background: var(--primary);
+            border-color: var(--primary);
+            color: #fff;
+        }
+        .chart-subtab-group .btn:hover:not(.active) {
+            background: rgba(37, 99, 235, 0.1);
+            color: var(--primary);
+        }
+
+        /* Dark mode overrides */
+        html[data-theme="dark"] .table-holdings tbody tr:hover { color: var(--text); }
+        html[data-theme="dark"] .shadow-sm { box-shadow: var(--shadow-elevated) !important; }
+        html[data-theme="dark"] .btn-outline-secondary { color: var(--text); border-color: var(--border); }
+        html[data-theme="dark"] .btn-outline-secondary:hover { background-color: var(--btn-outline-secondary-hover); color: var(--text); }
+        html[data-theme="dark"] .btn-outline-secondary.active { background-color: var(--primary); border-color: var(--primary); color: var(--text-inverse); }
+
+        /* Summary cards */
+        .summary-stat {
+            font-size: 0.82rem;
+            text-align: center;
+            padding: 8px 4px;
+        }
+        .summary-stat .stat-value {
+            font-size: 1.15rem;
+            font-weight: 700;
+        }
+        .summary-stat .stat-label {
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            color: var(--text-muted);
+        }
+
+        @media (max-width: 767px) {
+            .hide-mobile { display: none !important; }
+            .chart-container-responsive { height: 28vh !important; }
+            .chart-bar-container { min-height: 200px; }
+            #app.container { padding-left: 4px !important; padding-right: 4px !important; }
+            .summary-stat .stat-value { font-size: 1rem; }
+            .table-holdings td, .table-holdings th { padding: 0.35rem 0.3rem !important; font-size: 0.8rem; }
+        }
+    </style>
+</head>
+
+<body>
+    <!-- Pull to Refresh Indicator -->
+    <div id="pull-indicator">
+        <i class="fa-solid fa-arrow-down"></i>
+        <span class="ms-2 small text-muted" id="pull-text">Tarik untuk refresh</span>
+    </div>
+
+    <!-- NAVBAR -->
+    <nav class="navbar sticky-top py-3">
+        <div class="container d-flex align-items-center justify-content-between"
+            style="max-width: 1440px; position: relative;">
+            <div class="d-flex align-items-center gap-3" style="min-width: 140px;">
+                <i class="fa-solid fa-circle-half-stroke d-none" id="theme-toggle-icon"
+                    title="Toggle theme (Shift + D)"></i>
+                <a href="/idx/broker/stock-summary.html" id="nav-back" class="d-flex align-items-center text-decoration-none">
+                    <i class="fa-solid fa-chevron-left me-1"></i>
+                    <span class="small">Broker Scanner</span>
+                </a>
+            </div>
+            <div class="flex-grow-1 text-center">
+                <span class="nav-title" id="header-title">Broker Detail</span>
+            </div>
+            <div style="width:72px;" class="text-end"></div>
+        </div>
+    </nav>
+
+    <div id="loading-indicator" class="text-center my-5">
+        <div class="spinner-border text-primary" role="status">
+            <span class="visually-hidden">Loading...</span>
+        </div>
+        <p class="small text-muted mt-2">Memuat data broker...</p>
+    </div>
+
+    <div id="app" class="container mb-3" style="display:none;">
+
+        <!-- BROKER IDENTITY HEADER -->
+        <div class="d-flex align-items-center gap-3 mb-3 mt-2">
+            <img id="broker-logo" class="broker-logo-lg" src="" alt="" onerror="this.style.display='none'">
+            <div>
+                <h5 class="mb-0 fw-bold" id="broker-code">—</h5>
+                <small class="text-muted" id="broker-name"></small>
+            </div>
+            <span id="broker-category-badge" class="ms-auto badge"></span>
+        </div>
+
+        <!-- SUMMARY STATS ROW -->
+        <div class="row g-2 mb-3" id="summary-row">
+            <div class="col-4 col-md-2">
+                <div class="summary-stat bg-white shadow-sm rounded">
+                    <div class="stat-value" id="stat-net-val">—</div>
+                    <div class="stat-label">Net Value</div>
+                </div>
+            </div>
+            <div class="col-4 col-md-2">
+                <div class="summary-stat bg-white shadow-sm rounded">
+                    <div class="stat-value" id="stat-buy-val">—</div>
+                    <div class="stat-label">Buy</div>
+                </div>
+            </div>
+            <div class="col-4 col-md-2">
+                <div class="summary-stat bg-white shadow-sm rounded">
+                    <div class="stat-value" id="stat-sell-val">—</div>
+                    <div class="stat-label">Sell</div>
+                </div>
+            </div>
+            <div class="col-4 col-md-2">
+                <div class="summary-stat bg-white shadow-sm rounded">
+                    <div class="stat-value" id="stat-breadth">—</div>
+                    <div class="stat-label">Stocks</div>
+                </div>
+            </div>
+            <div class="col-4 col-md-2">
+                <div class="summary-stat bg-white shadow-sm rounded">
+                    <div class="stat-value" id="stat-days">—</div>
+                    <div class="stat-label">Days</div>
+                </div>
+            </div>
+            <div class="col-4 col-md-2">
+                <div class="summary-stat bg-white shadow-sm rounded">
+                    <div class="stat-value" id="stat-conviction">—</div>
+                    <div class="stat-label">Conviction</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- TIMEFRAME + TOP-N CONTROLS -->
+        <div class="d-flex justify-content-between align-items-center mb-2">
+            <div class="d-flex align-items-center gap-2" id="topn-selector">
+                <span class="text-muted" style="font-size:0.75rem;">Show:</span>
+                <a href="#" data-topn="3">Top 3</a>
+                <a href="#" data-topn="5" class="active">Top 5</a>
+                <a href="#" data-topn="10">Top 10</a>
+                <a href="#" data-topn="0">All</a>
+            </div>
+            <div class="d-flex align-items-center gap-0" id="trailing-range-selector">
+                <a href="#" data-days="5">5D</a>
+                <a href="#" data-days="10" class="active">10D</a>
+                <a href="#" data-days="20">20D</a>
+            </div>
+        </div>
+
+        <!-- TRAILING LINE CHART -->
+        <div id="trailing-chart-widget" class="p-3 mb-3 bg-white shadow-sm">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <h6 class="text-muted mb-0" style="font-size:0.85rem;">
+                    <i class="fa-solid fa-chart-line me-1"></i> Cumulative Net Value Trail
+                </h6>
+            </div>
+            <div id="trailing-chart-loading" class="text-center py-4">
+                <div class="spinner-border spinner-border-sm text-primary me-2" role="status"></div>
+                <span class="small text-muted">Memuat trailing chart...</span>
+            </div>
+            <div class="chart-container-responsive" style="display:none;" id="trailing-chart-container">
+                <canvas id="trailing-chart"></canvas>
+            </div>
+        </div>
+
+        <!-- DIVERGING BAR CHART (Net Buy vs Net Sell) -->
+        <div id="diverging-chart-widget" class="p-3 mb-3 bg-white shadow-sm">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <h6 class="text-muted mb-0" style="font-size:0.85rem;">
+                    <i class="fa-solid fa-chart-bar me-1"></i> Holdings: Net Buy vs Net Sell
+                </h6>
+            </div>
+            <div class="chart-bar-container" id="diverging-chart-container" style="min-height:300px;">
+                <canvas id="diverging-chart"></canvas>
+            </div>
+        </div>
+
+        <!-- HOLDINGS TABLE -->
+        <div class="card card-swing mb-4" style="border-radius: 0;">
+            <div class="card-header bg-white border-bottom-0 py-2">
+                <div class="d-flex justify-content-between align-items-center">
+                    <span class="fw-bold" style="font-size:0.9rem;">
+                        <i class="fa-solid fa-list me-1"></i> Stock Holdings
+                    </span>
+                    <small class="text-muted" id="holdings-count"></small>
+                </div>
+            </div>
+            <div class="table-responsive">
+                <table id="holdings-table" class="table table-hover mb-0 table-holdings align-middle">
+                    <thead>
+                        <tr>
+                            <th class="text-center" style="width:40px">#</th>
+                            <th data-sort="stock_code" style="cursor:pointer">
+                                Stock <i class="fa-solid fa-sort small text-muted"></i>
+                            </th>
+                            <th class="text-end" data-sort="total_net" style="cursor:pointer">
+                                Net Val <i class="fa-solid fa-sort small text-muted"></i>
+                            </th>
+                            <th class="text-end" data-sort="total_buy" style="cursor:pointer">
+                                Buy Val <i class="fa-solid fa-sort small text-muted"></i>
+                            </th>
+                            <th class="text-end" data-sort="total_sell" style="cursor:pointer">
+                                Sell Val <i class="fa-solid fa-sort small text-muted"></i>
+                            </th>
+                            <th class="text-center hide-mobile" data-sort="days_active" style="cursor:pointer">
+                                Days <i class="fa-solid fa-sort small text-muted"></i>
+                            </th>
+                            <th class="text-center hide-mobile" data-sort="streak" style="cursor:pointer">
+                                Streak <i class="fa-solid fa-sort small text-muted"></i>
+                            </th>
+                            <th class="text-center hide-mobile" data-sort="conviction" style="cursor:pointer">
+                                CVT% <i class="fa-solid fa-sort small text-muted"></i>
+                            </th>
+                        </tr>
+                    </thead>
+                    <tbody id="tbody-holdings">
+                        <!-- Populated by JS -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- SCRIPTS -->
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0"></script>
+    <script src="../js/component.js?v=73"></script>
+
+    <!-- BROKER DETAIL LOGIC -->
+    <script src="../js/broker-detail.js?v=1"></script>
+
+    <script defer
+        src="https://static.cloudflareinsights.com/beacon.min.js/vcd15cbe7772f49c399c6a5babf22c1241717689176015"
+        data-cf-beacon='{"version":"2024.11.0","token":"0e06ac31f3fc47b3ab72d7670102e368","r":1}'
+        crossorigin="anonymous"></script>
+</body>
+
+</html>

@@ -646,7 +646,7 @@ function renderTable() {
             html += `<tr>
                 <td class="text-center sticky-col sticky-col-no">${start + i + 1}</td>
                 <td class="sticky-col sticky-col-code fw-semibold">
-                    ${brokerLogo(r.broker)} ${r.broker}
+                    <a href="/idx/broker/detail.html?kode=${r.broker}" class="text-decoration-none">${brokerLogo(r.broker)} ${r.broker}</a>
                 </td>
                 <td class="fw-semibold">
                     <a href="/idx/emiten/broker-summary.html?kode=${r.stock_code}" class="text-decoration-none">${r.stock_code}</a>
