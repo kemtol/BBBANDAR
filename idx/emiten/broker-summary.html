@@ -354,9 +354,15 @@
             #foreign-sentiment-widget {
                 padding: 0.5rem !important;
                 margin-bottom: 0.5rem !important;
+                min-height: unset !important;
             }
             .chart-container-responsive {
                 height: 25vh !important;
+            }
+
+            /* ── Active pills: tighter padding ── */
+            #active-pills {
+                padding: 0.5rem 0 !important;
             }
 
             /* ── Container: no horizontal padding ── */
@@ -408,16 +414,12 @@
         }
 
         #foreign-sentiment-widget {
-            min-height: 35vh;
+            min-height: auto;
         }
 
         @media (orientation: portrait) {
             .chart-container-responsive {
                 height: 30vh !important;
-            }
-
-            #foreign-sentiment-widget {
-                min-height: 50vh !important;
             }
         }
 
@@ -927,7 +929,7 @@
                 </div>
             </div>
             <!-- PRESET BAR -->
-            <div class="mb-2 container">
+            <div class="my-2 py-2 container">
                 <!-- Row 1: Presets -->
                 <div class="d-flex justify-content-between align-items-center mb-2">
                     <div class="d-flex align-items-center flex-wrap">
