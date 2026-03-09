@@ -5666,54 +5666,38 @@ export default {
           }
 
           const CLAUDE_URL = "https://api.anthropic.com/v1/messages";
+          const SCREENSHOT_BASE = "https://api-saham.mkemalw.workers.dev/ai/screenshot";
 
-          // Claude only accepts these media types
-          const VALID_CLAUDE_TYPES = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"]);
-          // Min size to skip placeholder/stub images (10x10 pixel dumps = ~122 bytes)
-          const MIN_IMAGE_BYTES = 5000;
-
-          // Fetch images directly from R2 and encode as base64
-          // (Claude cannot fetch from our worker URL — Anthropic servers cannot reach it)
-          const imageBlocks = (await Promise.all(aggregatedKeys.map(async ik => {
-            const obj = await env.SSSAHAM_EMITEN.get(ik.key);
-            if (!obj) {
-              console.warn(`[Claude] Screenshot missing in R2: ${ik.key}, skipping`);
-              return null;
+          // Build image blocks using URL references (much smaller payload vs base64)
+          // Claude API supports type: "url" — Anthropic servers fetch the image directly
+          // This saves ~1.3MB of base64 data from the request body for 5 screenshots
+          const imageBlocks = [];
+          for (const ik of aggregatedKeys) {
+            // Quick HEAD check to verify the image exists and isn't a placeholder
+            try {
+              const obj = await env.SSSAHAM_EMITEN.head(ik.key);
+              if (!obj) {
+                console.warn(`[Claude] Screenshot missing in R2: ${ik.key}, skipping`);
+                continue;
+              }
+              if (obj.size < 5000) {
+                console.warn(`[Claude] Image ${ik.label} too small (${obj.size} bytes) — placeholder, skipping`);
+                continue;
+              }
+              const imgUrl = `${SCREENSHOT_BASE}?key=${encodeURIComponent(ik.key)}`;
+              console.log(`[Claude] Image ${ik.label}: ${(obj.size / 1024).toFixed(0)} KB via URL`);
+              imageBlocks.push({
+                type: "image",
+                source: { type: "url", url: imgUrl }
+              });
+            } catch (e) {
+              console.warn(`[Claude] Failed to check ${ik.key}: ${e.message}`);
             }
-
-            const arrayBuffer = await obj.arrayBuffer();
-            const bytes = new Uint8Array(arrayBuffer);
-
-            // Skip placeholder/stub images (e.g. 10x10 fallback PNG saved when screenshot fails)
-            if (bytes.length < MIN_IMAGE_BYTES) {
-              console.warn(`[Claude] Image ${ik.label} is too small (${bytes.length} bytes) — likely a placeholder, skipping`);
-              return null;
-            }
-
-            // Chunked base64 encoding — avoids stack overflow on large images
-            const chunkSize = 8192;
-            let binary = '';
-            for (let i = 0; i < bytes.length; i += chunkSize) {
-              binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
-            }
-            const base64Data = btoa(binary);
-
-            // Normalize media type — Claude rejects "image/jpg" or unknown types
-            let mediaType = (obj.httpMetadata?.contentType || "image/jpeg").toLowerCase().split(";")[0].trim();
-            if (mediaType === "image/jpg") mediaType = "image/jpeg";
-            if (!VALID_CLAUDE_TYPES.has(mediaType)) mediaType = "image/jpeg";
-
-            console.log(`[Claude] Image ${ik.label}: ${bytes.length} bytes, type: ${mediaType}`);
-
-            return {
-              type: "image",
-              source: { type: "base64", media_type: mediaType, data: base64Data }
-            };
-          }))).filter(Boolean); // remove nulls (skipped images)
+          }
 
           // If no valid images, fall back to text-only analysis
           const hasImages = imageBlocks.length > 0;
-          console.log(`[Claude] ${hasImages ? imageBlocks.length + ' valid images' : 'no valid images — text-only mode'}`);
+          console.log(`[Claude] ${hasImages ? imageBlocks.length + ' images via URL' : 'no valid images — text-only mode'}`);
 
           const userContent = hasImages
             ? [
