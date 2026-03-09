@@ -26,17 +26,62 @@
 const BROKER_PAGE_SIZE = 50;
 const API_BASE = 'https://api-saham.mkemalw.workers.dev';
 
-// Known broker codes by category
-const BROKER_CATEGORIES = {
-    foreign: new Set(['ZP', 'YU', 'KZ', 'RX', 'BK', 'AK', 'CS', 'CG', 'DB', 'ML', 'CC', 'DX',
-        'MS', 'UB', 'FS', 'GR', 'JP', 'YP', 'LG', 'DP', 'KK', 'SK', 'BW', 'FG',
-        'MG', 'AD', 'OD', 'BB', 'PT', 'SQ']),
-    local: new Set(['NI', 'EP', 'IF', 'PD', 'AI', 'DR', 'KI', 'TP', 'BZ', 'DH',
-        'AZ', 'XA', 'IB', 'GI', 'MA', 'BS', 'KS', 'LP', 'AG', 'PS',
-        'PO', 'HG', 'EL', 'SA', 'RF', 'MR', 'BI', 'BJ', 'IS']),
-    retail: new Set(['YO', 'PG', 'AP', 'GL', 'SH', 'CP', 'FZ', 'IP', 'OD', 'DN',
-        'HD', 'PP', 'NC', 'WH', 'SP'])
-};
+// Broker classification from D1 database (cached in localStorage, TTL 30 days)
+const BROKERS_CACHE_KEY = 'brokers_category_cache';
+const BROKERS_CACHE_TTL = 30 * 24 * 60 * 60 * 1000; // 30 days in ms
+let brokersMap = {};       // { code: { code, name, category, ... } }
+let brokersLoaded = false; // flag: true once /brokers data is ready
+
+function loadBrokersFromCache() {
+    try {
+        const raw = localStorage.getItem(BROKERS_CACHE_KEY);
+        if (!raw) return null;
+        const cached = JSON.parse(raw);
+        if (Date.now() - cached.ts > BROKERS_CACHE_TTL) {
+            localStorage.removeItem(BROKERS_CACHE_KEY);
+            return null;
+        }
+        return cached.brokers; // array of broker objects
+    } catch (e) {
+        localStorage.removeItem(BROKERS_CACHE_KEY);
+        return null;
+    }
+}
+
+function saveBrokersToCache(brokers) {
+    try {
+        localStorage.setItem(BROKERS_CACHE_KEY, JSON.stringify({
+            ts: Date.now(),
+            brokers
+        }));
+    } catch (e) {
+        console.warn('[broker-activity] Failed to cache brokers:', e);
+    }
+}
+
+async function loadBrokersFromDB() {
+    // 1) Try localStorage cache first
+    const cached = loadBrokersFromCache();
+    if (cached && cached.length > 0) {
+        cached.forEach(b => { brokersMap[b.code] = b; });
+        brokersLoaded = true;
+        console.log(`[broker-activity] Brokers loaded from cache (${cached.length} brokers)`);
+        return;
+    }
+    // 2) Fetch from API
+    try {
+        const res = await fetch(API_BASE + '/brokers');
+        const data = await res.json();
+        if (data.brokers && Array.isArray(data.brokers)) {
+            data.brokers.forEach(b => { brokersMap[b.code] = b; });
+            saveBrokersToCache(data.brokers);
+            brokersLoaded = true;
+            console.log(`[broker-activity] Loaded ${data.brokers.length} brokers from D1 (cached for 30 days)`);
+        }
+    } catch (e) {
+        console.warn('[broker-activity] Failed to load brokers from D1:', e);
+    }
+}
 
 // Default broker list to scan
 const DEFAULT_BROKER_LIST = [
@@ -196,9 +241,14 @@ function syncDomToState() {
 
 // ── Helpers ──
 function getBrokerCategory(code) {
-    if (BROKER_CATEGORIES.foreign.has(code)) return 'foreign';
-    if (BROKER_CATEGORIES.local.has(code)) return 'local';
-    if (BROKER_CATEGORIES.retail.has(code)) return 'retail';
+    const broker = brokersMap[code];
+    if (broker && broker.category) {
+        const cat = broker.category.toLowerCase();
+        if (cat.includes('foreign') || cat.includes('asing')) return 'foreign';
+        if (cat.includes('local') || cat.includes('lokal')) return 'local';
+        if (cat.includes('retail')) return 'retail';
+        return cat;
+    }
     return 'unknown';
 }
 
@@ -327,6 +377,32 @@ function fmtStreak(s) {
     }
 }
 
+// ── Interbroker Accumulation Formatters ──
+
+function fmtCR(cr) {
+    if (!Number.isFinite(cr) || cr === 0) return '<span class="text-muted">—</span>';
+    const pct = (cr * 100).toFixed(0);
+    const cls = cr >= 0.4 ? 'text-warning fw-bold' : cr >= 0.2 ? 'text-warning' : 'text-muted';
+    return `<span class="${cls}">${pct}%</span>`;
+}
+
+function fmtPersist(p, streak) {
+    if (!Number.isFinite(p) || p === 0) return '<span class="text-muted">—</span>';
+    const pct = (p * 100).toFixed(0);
+    const isDistrib = (streak || 0) < 0;
+    const hi = isDistrib ? 'text-danger fw-bold' : 'text-success fw-bold';
+    const md = isDistrib ? 'text-danger' : 'text-success';
+    const cls = p >= 0.7 ? hi : p >= 0.4 ? md : 'text-muted';
+    return `<span class="${cls}">${pct}%</span>`;
+}
+
+function fmtHerd(h, n) {
+    if (!Number.isFinite(h) || h === 0 || n < 2) return '<span class="text-muted">—</span>';
+    const pct = (h * 100).toFixed(0);
+    const cls = h >= 0.7 ? 'text-success fw-bold' : h >= 0.5 ? 'text-success' : h <= 0.3 ? 'text-danger' : 'text-muted';
+    return `<span class="${cls}">${pct}%</span>`;
+}
+
 /**
  * Compute z-scores and conviction for all loaded rows.
  *
@@ -382,7 +458,36 @@ function computeZScores() {
         r.cvd_trend = computeCvdTrend(r);
     }
 
-    console.log(`[broker-activity] Z-scores + CVD trends computed for ${allRows.length} rows`);
+    // 5. Concentration Ratio (CR%): |net_val_broker| / Σ|net_val_all| per stock
+    //    "How dominant is this broker's flow in this stock?"
+    for (const rows of Object.values(byStock)) {
+        const totalAbsNet = rows.reduce((s, r) => s + Math.abs(r.net_val), 0);
+        rows.forEach(r => {
+            r.cr_pct = totalAbsNet > 0 ? Math.abs(r.net_val) / totalAbsNet : 0;
+        });
+    }
+
+    // 6. Persistence Score: |streak| / activeDays
+    //    "How consistently has this broker been buying/selling this stock?"
+    for (const r of allRows) {
+        r.persistence = activeDays > 0 ? Math.abs(r.streak || 0) / activeDays : 0;
+    }
+
+    // 7. Herding %: proportion of brokers moving same direction on this stock
+    //    "Are other brokers doing the same thing?"
+    for (const rows of Object.values(byStock)) {
+        const n = rows.length;
+        const nBuy = rows.filter(r => r.net_val > 0).length;
+        const nSell = rows.filter(r => r.net_val < 0).length;
+        rows.forEach(r => {
+            if (n < 2 || r.net_val === 0) { r.herd_pct = 0; return; }
+            // How many brokers are on the same side as this broker?
+            const sameDir = r.net_val > 0 ? nBuy : nSell;
+            r.herd_pct = sameDir / n;
+        });
+    }
+
+    console.log(`[broker-activity] Z-scores + CVD trends + interbroker metrics computed for ${allRows.length} rows`);
 }
 
 // ══════════════════════════════════════════════
@@ -434,6 +539,9 @@ let brokerDailyData = {}; // { "MG": [{date, net_val, total_val, breadth}, ...],
 
 async function loadAllBrokers() {
     if (isLoading) return;
+
+    // ── Load broker classification from D1 (if not loaded yet) ──
+    if (!brokersLoaded) await loadBrokersFromDB();
 
     // ── Cache check ──
     if (!forceRebuild) {
@@ -629,13 +737,13 @@ function renderTable() {
 
     if (total === 0 && !isLoading) {
         $tbody.html(
-            '<tr><td colspan="21" class="text-center text-muted py-4">' +
+            '<tr><td colspan="24" class="text-center text-muted py-4">' +
             '<i class="fa-solid fa-inbox me-2"></i>Tidak ada data. Pastikan data sudah di-scrape terlebih dahulu.' +
             '</td></tr>'
         );
     } else if (page.length === 0) {
         $tbody.html(
-            '<tr><td colspan="21" class="text-center text-muted py-4">' +
+            '<tr><td colspan="24" class="text-center text-muted py-4">' +
             '<i class="fa-solid fa-filter me-2"></i>Tidak ada data sesuai filter.' +
             '</td></tr>'
         );
@@ -648,14 +756,14 @@ function renderTable() {
                 <td class="sticky-col sticky-col-code fw-semibold">
                     <a href="/idx/broker/detail.html?kode=${r.broker}" class="text-decoration-none">${brokerLogo(r.broker)} ${r.broker}</a>
                 </td>
-                <td class="fw-semibold">
+                <td class="sticky-col sticky-col-emiten fw-semibold">
                     <a href="/idx/emiten/broker-summary.html?kode=${r.stock_code}" class="text-decoration-none">${r.stock_code}</a>
                 </td>
-                <td class="text-end hide-mobile" style="color:${r.avg_buy > r.avg_sell && r.avg_sell > 0 ? '#22c55e' : ''}">${fmtPrice(r.avg_buy)}</td>
-                <td class="text-end hide-mobile" style="color:${r.avg_sell > r.avg_buy && r.avg_buy > 0 ? '#ef4444' : ''}">${fmtPrice(r.avg_sell)}</td>
+                <td class="text-end hide-mobile" style="color:${r.avg_sell > r.avg_buy && r.avg_buy > 0 ? '#22c55e' : r.avg_buy > r.avg_sell && r.avg_sell > 0 ? '#ef4444' : ''}">${fmtPrice(r.avg_buy)}</td>
+                <td class="text-end hide-mobile" style="color:${r.avg_sell > r.avg_buy && r.avg_buy > 0 ? '#22c55e' : r.avg_buy > r.avg_sell && r.avg_sell > 0 ? '#ef4444' : ''}">${fmtPrice(r.avg_sell)}</td>
                 <td class="text-end ${netClass(r.net_val)}">${fmtValue(r.net_val)}</td>
-                <td class="text-end">${fmtValue(r.buy_val)}</td>
-                <td class="text-end">${fmtValue(r.sell_val)}</td>
+                <td class="text-end col-bval">${fmtValue(r.buy_val)}</td>
+                <td class="text-end col-sval">${fmtValue(r.sell_val)}</td>
                 <td class="text-end">${fmtValue(r.total_val)}</td>
                 <td class="text-end hide-mobile ${netClass(r.net_vol)}">${fmtVol(r.net_vol)}</td>
                 <td class="text-center hide-mobile">${r.buy_freq.toLocaleString('id-ID')}</td>
@@ -669,6 +777,9 @@ function renderTable() {
                 <td class="text-center hide-mobile">${fmtPct(r.conviction)}</td>
                 <td class="text-center hide-mobile">${fmtZ(r.z_net)}</td>
                 <td class="text-center hide-mobile">${fmtZ(r.z_ind, r.n_brokers_stock)}</td>
+                <td class="text-center hide-mobile">${fmtCR(r.cr_pct)}</td>
+                <td class="text-center hide-mobile">${fmtPersist(r.persistence, r.streak)}</td>
+                <td class="text-center hide-mobile">${fmtHerd(r.herd_pct, r.n_brokers_stock)}</td>
             </tr>`;
         });
         $tbody.html(html);
@@ -681,6 +792,7 @@ function renderTable() {
     const maxPage = Math.max(1, Math.ceil(total / BROKER_PAGE_SIZE));
     $('#next-page').toggleClass('disabled', currentPage >= maxPage);
     $('#pagination-nav .page-item.active .page-link').text(currentPage);
+    $('#total-pages').text(`/ ${maxPage}`);
 
     // Broker count
     const uniqueBrokers = new Set(filteredRows.map(r => r.broker)).size;
@@ -982,8 +1094,15 @@ function populateBrokerButtonRow(allBrokers) {
         syncBrokerButtonState();
         return;
     }
+    const catBtnClass = (code) => {
+        const c = getBrokerCategory(code);
+        if (c === 'foreign') return 'btn-outline-primary';
+        if (c === 'local')   return 'btn-outline-success';
+        if (c === 'retail')  return 'btn-outline-warning';
+        return 'btn-outline-secondary';
+    };
     const html = allBrokers.map(b =>
-        `<a href="#" class="btn btn-outline-secondary btn-sm active" data-broker="${b}"
+        `<a href="#" class="btn ${catBtnClass(b)} btn-sm active" data-broker="${b}"
             style="font-size:0.82rem;border-radius:0;padding:2px 10px;">${b}</a>`
     ).join('');
     $group.html(html);
@@ -1010,12 +1129,18 @@ function populateBrokerButtonRow(allBrokers) {
     });
 }
 
-/** Sync button active states to match activeFilteredBrokers set. */
+/** Sync button active states to match activeFilteredBrokers set AND activePreset category. */
 function syncBrokerButtonState() {
     const allActive = activeFilteredBrokers.size === 0;
     $('#broker-btn-group a[data-broker]').each(function () {
-        const isActive = allActive || activeFilteredBrokers.has($(this).data('broker'));
+        const code = $(this).data('broker');
+        const cat = getBrokerCategory(code);
+        // If a category preset is active, only highlight brokers of that category
+        const matchesPreset = activePreset === 'all' || cat === activePreset;
+        const isActive = allActive ? matchesPreset : activeFilteredBrokers.has(code);
         $(this).toggleClass('active', isActive);
+        // Dim non-matching brokers when a preset is active
+        $(this).css('opacity', isActive ? '1' : '0.35');
     });
 }
 
@@ -1320,6 +1445,7 @@ $(function () {
     if (urlCacheParam.get('cache') === 'rebuild') {
         forceRebuild = true;
         clearAllCaches();
+        localStorage.removeItem(BROKERS_CACHE_KEY); // also refresh broker categories
         window.history.replaceState({}, '', window.location.pathname);
     }
 
@@ -1334,7 +1460,7 @@ $(function () {
 
     // Initial placeholder
     $('#tbody-broker').html(
-        '<tr><td colspan="21" class="text-center text-muted py-4">' +
+        '<tr><td colspan="24" class="text-center text-muted py-4">' +
         '<i class="fa-solid fa-spinner fa-spin me-2"></i>Memuat data broker activity...' +
         '</td></tr>'
     );
@@ -1345,6 +1471,11 @@ $(function () {
         $('#preset-selector a').removeClass('active');
         $(this).addClass('active');
         activePreset = $(this).data('preset');
+        // Also sync category dropdown label
+        $('#dd-category').text(`Category: ${activePreset === 'all' ? 'Any' : activePreset}`);
+        // Clear individual broker selection so preset takes effect visually
+        activeFilteredBrokers.clear();
+        syncBrokerButtonState();
         if (allRows.length > 0) {
             applyFilters();
             pushUrlParams();
@@ -1369,6 +1500,8 @@ $(function () {
             activePreset = val === 'any' ? 'all' : val;
             $('#preset-selector a').removeClass('active');
             $(`#preset-selector a[data-preset="${activePreset}"]`).addClass('active');
+            activeFilteredBrokers.clear();
+            syncBrokerButtonState();
         } else {
             $(`#dd-${filter}`).text(`${filter.charAt(0).toUpperCase() + filter.slice(1)}: ${val === 'any' ? 'Any' : val}`);
         }

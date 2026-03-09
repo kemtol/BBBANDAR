@@ -1,0 +1,15 @@
+{
+  "name": "ai-screenshot-service",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "dependencies": {
+    "@cloudflare/puppeteer": "^0.0.15"
+  },
+  "devDependencies": {
+    "wrangler": "^3.0.0"
+  }
+}

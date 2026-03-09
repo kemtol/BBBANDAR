@@ -138,6 +138,13 @@
 
         #broker-table .sticky-col-code {
             left: 42px;
+            min-width: 76px;
+            width: 76px;
+            max-width: 76px;
+        }
+
+        #broker-table .sticky-col-emiten {
+            left: 118px;
             box-shadow: 1px 0 0 var(--border);
         }
 
@@ -212,6 +219,154 @@
             .hide-mobile {
                 display: none !important;
             }
+
+            /* ── Filter/Preset labels: hide on mobile ── */
+            #filter-row > span:first-child {
+                display: none !important;
+            }
+            .mb-2.container > .d-flex > .d-flex > span[style*="width: 75px"] {
+                display: none !important;
+            }
+            /* Hide BROKER label on mobile */
+            .d-flex.align-items-center.flex-wrap.mb-2 > span:first-child {
+                display: none !important;
+            }
+
+            /* ── Filter/Preset: horizontal scroll, no wrap ── */
+            #filter-row {
+                flex-wrap: nowrap !important;
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch;
+                scrollbar-width: none;
+            }
+            #filter-row::-webkit-scrollbar {
+                display: none;
+            }
+            /* Preset row: no wrap + scroll */
+            .mb-2.container > .d-flex:first-child > .d-flex:first-child {
+                flex-wrap: nowrap !important;
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch;
+                scrollbar-width: none;
+            }
+            .mb-2.container > .d-flex:first-child > .d-flex:first-child::-webkit-scrollbar {
+                display: none;
+            }
+
+            /* ── Broker buttons row: horizontal scroll ── */
+            #broker-btn-group {
+                flex-wrap: nowrap !important;
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch;
+                scrollbar-width: none;
+                max-width: calc(100vw - 32px);
+            }
+            #broker-btn-group::-webkit-scrollbar {
+                display: none;
+            }
+
+            /* ── Quadrant legend: smaller + wrap tighter ── */
+            #quad-legend-inline {
+                font-size: 0.68rem !important;
+                gap: 6px !important;
+            }
+
+            /* ── Search bar: full width ── */
+            .border-bottom.py-2 > div:first-child,
+            .border-bottom.py-2 > small {
+                display: none !important;
+            }
+            .border-bottom.py-2 > .d-flex {
+                width: 100%;
+            }
+            #broker-search {
+                width: 100% !important;
+            }
+
+            /* ── Table: hide # column on mobile ── */
+            .sticky-col-no {
+                display: none !important;
+            }
+            #broker-table .sticky-col-code {
+                left: 0 !important;
+                min-width: 68px;
+                width: 68px;
+                max-width: 68px;
+            }
+            #broker-table .sticky-col-emiten {
+                left: 68px !important;
+            }
+
+            /* ── Table: hide Buy Val & Sell Val on mobile, keep Net Val + Total Val ── */
+            th[data-sort="buy_val"],
+            th[data-sort="sell_val"],
+            .col-bval, .col-sval {
+                display: none !important;
+            }
+
+            /* ── Tighten up table spacing ── */
+            .table-broker td, .table-broker th {
+                padding: 0.35rem 0.3rem !important;
+                font-size: 0.78rem;
+            }
+
+            /* ── Chart: reduce whitespace on mobile ── */
+            #broker-bubble-widget {
+                padding: 0.5rem !important;
+                margin-bottom: 0.5rem !important;
+            }
+            .chart-container-responsive {
+                height: 42vh !important;
+            }
+
+            /* ── Active pills: tighter padding ── */
+            #active-pills {
+                padding: 0.5rem 0 !important;
+            }
+            #active-pills .badge {
+                font-size: 0.78rem;
+            }
+
+            /* ── Container: minimal horizontal padding ── */
+            #app.container {
+                padding-left: 4px !important;
+                padding-right: 4px !important;
+            }
+
+            /* ── Timeframe selector: centered ── */
+            #broker-range-selector {
+                gap: 0 !important;
+            }
+            #broker-range-selector a {
+                font-size: 0.78rem;
+                padding: 2px 8px;
+            }
+
+            /* ── Preset buttons smaller on mobile ── */
+            #preset-selector a.btn {
+                width: auto !important;
+                min-width: 55px;
+                font-size: 0.8rem !important;
+                padding: 3px 10px;
+            }
+
+            /* ── Filter buttons smaller on mobile ── */
+            #filter-row button {
+                font-size: 0.78rem !important;
+                padding: 2px 6px !important;
+            }
+
+            /* ── Broker filter items smaller ── */
+            #broker-btn-group .btn {
+                font-size: 0.72rem !important;
+                padding: 2px 8px !important;
+                white-space: nowrap;
+            }
+
+            /* ── Pagination tighter ── */
+            #pagination-nav {
+                font-size: 0.78rem;
+            }
         }
 
         #pull-indicator {
@@ -255,7 +410,7 @@
 
         @media (orientation: portrait) {
             .chart-container-responsive {
-                height: 30vh !important;
+                height: 40vh !important;
             }
 
             #broker-bubble-widget {
@@ -546,7 +701,7 @@
                     <div class="spinner-border spinner-border-sm text-primary me-2" role="status"></div>
                     <span class="small text-muted">Memuat broker meteor trail...</span>
                 </div>
-                <div class="chart-container-responsive" style="height:40vh; display: none;"
+                <div class="chart-container-responsive" style="height:50vh; display: none;"
                     id="meteor-bubble-container">
                     <canvas id="meteor-bubble-chart"></canvas>
                 </div>
@@ -735,13 +890,13 @@
                                 <th rowspan="2" class="text-center sticky-col sticky-col-no">#</th>
                                 <th rowspan="2" class="sticky-col sticky-col-code" data-sort="broker"
                                     style="cursor:pointer">
-                                    Broker <i class="fa-solid fa-sort small text-muted"></i>
+                                    BRKR <i class="fa-solid fa-sort small text-muted"></i>
                                 </th>
-                                <th rowspan="2" data-sort="stock_code" style="cursor:pointer">
+                                <th rowspan="2" class="sticky-col sticky-col-emiten" data-sort="stock_code" style="cursor:pointer">
                                     Emiten <i class="fa-solid fa-sort small text-muted"></i>
                                 </th>
-                                <!-- Group: VWAP Price (2 cols) -->
-                                <th colspan="2" class="text-center thead-group-label hide-mobile">VWAP Price</th>
+                                <!-- Group: Avg Price (2 cols) -->
+                                <th colspan="2" class="text-center thead-group-label hide-mobile">Avg Price</th>
                                 <!-- Group: Value (4 cols) -->
                                 <th colspan="4" class="text-center thead-group-label">Value</th>
                                 <!-- Group: Volume & Freq (3 cols) -->
@@ -749,7 +904,9 @@
                                 <!-- Group: Cum Volume Delta (6 cols: 2D, 5D, 10D, 20D, Trend, Streak) -->
                                 <th colspan="6" class="text-center thead-group-label hide-mobile">Cum Volume Delta</th>
                                 <!-- Group: Analytics (3 cols) -->
-                                <th colspan="3" class="text-center thead-group-label hide-mobile thead-group-end">Analytics</th>
+                                <th colspan="3" class="text-center thead-group-label hide-mobile">Analytics</th>
+                                <!-- Group: Interbroker (3 cols) -->
+                                <th colspan="3" class="text-center thead-group-label hide-mobile thead-group-end">Interbroker</th>
                             </tr>
                             <!-- Row 2: Sub-Headers -->
                             <tr class="thead-group-row">
@@ -823,9 +980,22 @@
                                     title="Z-Score vs portofolio broker ini — outlier detection intra-broker">
                                     Z-Net <i class="fa-solid fa-sort small text-muted"></i>
                                 </th>
-                                <th class="text-center hide-mobile thead-group-end" data-sort="z_ind" style="cursor:pointer"
+                                <th class="text-center hide-mobile" data-sort="z_ind" style="cursor:pointer"
                                     title="Z-Score vs industry (semua broker di saham ini) — butuh ≥3 broker">
                                     Z-Ind <i class="fa-solid fa-sort small text-muted"></i>
+                                </th>
+                                <!-- Interbroker -->
+                                <th class="text-center hide-mobile thead-group-label" data-sort="cr_pct" style="cursor:pointer"
+                                    title="Concentration Ratio — share broker ini vs total |net| semua broker di saham ini">
+                                    CR% <i class="fa-solid fa-sort small text-muted"></i>
+                                </th>
+                                <th class="text-center hide-mobile" data-sort="persistence" style="cursor:pointer"
+                                    title="Persistence — rasio consecutive streak vs window (|streak| / days)">
+                                    Persist <i class="fa-solid fa-sort small text-muted"></i>
+                                </th>
+                                <th class="text-center hide-mobile thead-group-end" data-sort="herd_pct" style="cursor:pointer"
+                                    title="Herding — % broker yang searah (net buy/sell) di saham ini">
+                                    Herd <i class="fa-solid fa-sort small text-muted"></i>
                                 </th>
                             </tr>
                         </thead>

@@ -345,7 +345,20 @@
         }
 
         function openFeedDetail(item) {
-            const slug = String(item?.slug || '').trim() || buildFeedDetailSlug(item);
+            // Deprecated: redirect to broker-summary page instead of inline feed detail
+            const symbol = String(item?.symbol || '').toUpperCase();
+            if (symbol) {
+                window.location.href = `/idx/emiten/broker-summary.html?kode=${encodeURIComponent(symbol)}`;
+                return;
+            }
+            // Fallback: try to extract symbol from slug
+            const slug = String(item?.slug || '').trim();
+            const m = slug.match(/^\d{4}-\d{2}-\d{2}-([A-Z0-9]+)-/i);
+            if (m) {
+                window.location.href = `/idx/emiten/broker-summary.html?kode=${encodeURIComponent(m[1].toUpperCase())}`;
+                return;
+            }
+            // Last resort: old behavior
             const url = `${window.location.pathname}?feed=${encodeURIComponent(slug)}`;
             window.location.href = url;
         }
@@ -464,16 +477,25 @@
             const html = items.map((it, i) => {
                 const dotClass = i === 0 ? 'primary' : 'success';
                 const rawTitle = String(it?.title || 'AI Analysis');
-                const title = escapeHtml(rawTitle);
                 const titleClass = recommendationTitleClass(rawTitle);
                 const body = escapeHtml(it?.body || 'Analisis terbaru tersedia.');
                 const symbol = escapeHtml(it?.symbol || '');
                 const slug = encodeURIComponent(String(it?.slug || buildFeedDetailSlug(it)));
+                // Split title: "SYMBOL RATING: headline..." → colored prefix + white headline
+                const prefixMatch = rawTitle.match(/^([A-Z0-9]+\s+(?:STRONG[_ ])?(?:BUY|SELL|HOLD|AI Update))(?::\s*(.*))?$/i);
+                let titleHtml;
+                if (prefixMatch) {
+                    const prefix = escapeHtml(prefixMatch[1]);
+                    const headline = prefixMatch[2] ? escapeHtml(prefixMatch[2]) : '';
+                    titleHtml = `<span class="${titleClass}">${prefix}:</span>${headline ? ` ${headline}` : ''}`;
+                } else {
+                    titleHtml = `<span class="${titleClass}">${escapeHtml(rawTitle)}</span>`;
+                }
                 return `<div class="timeline-item">
                     ${timelineDotHtml(dotClass, symbol)}
                     <div class="timeline-time">${relativeTimeFrom(it?.created_at)}</div>
-                    <div class="timeline-card feed-clickable" data-feed-slug="${slug}" onclick="openFeedDetail({ slug: decodeURIComponent(this.dataset.feedSlug) })">
-                        <div class="timeline-title ${titleClass}">${title}</div>
+                    <div class="timeline-card feed-clickable" data-feed-slug="${slug}" data-symbol="${symbol}" onclick="openFeedDetail({ slug: decodeURIComponent(this.dataset.feedSlug), symbol: this.dataset.symbol })">
+                        <div class="timeline-title">${titleHtml}</div>
                         <p class="timeline-text">${body}</p>
                         <div class="timeline-tags">${symbol ? `<span>#${symbol}</span>` : ''}<span>#AI</span></div>
                     </div>

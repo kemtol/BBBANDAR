@@ -34,7 +34,7 @@
             --sticky-col-bg: #ffffff;
             --sticky-col-hover-bg: #eef2f7;
             --card-divider: rgba(148, 163, 184, 0.35);
-            --card-radius: 12px;
+            --card-radius: 0px;
             --legend-foreign: var(--accent-positive);
             --legend-retail: var(--accent-negative);
             --legend-local: var(--accent-info);
@@ -489,6 +489,111 @@
         #ai-analysis-content details>summary {
             user-select: none;
         }
+
+        /* ── AI Recommendation Panel ── */
+        #ai-reco-panel {
+            font-size: 0.85rem;
+            position: relative;
+        }
+        #ai-reco-panel .reco-heading {
+            line-height: 1.35;
+            padding-right: 8.5rem;
+        }
+        #ai-reco-panel .reco-badge {
+            display: inline;
+            font-size: 1rem;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+        }
+        #ai-reco-panel .reco-headline {
+            font-size: 0.92rem;
+            font-weight: 700;
+            color: var(--text);
+            line-height: 1.45;
+        }
+        #ai-reco-panel .reco-subtitle {
+            font-size: 0.9rem;
+            color: var(--text-muted);
+            letter-spacing: 0.3px;
+        }
+        #ai-reco-panel .reco-badge.buy  { color: var(--accent-positive); }
+        #ai-reco-panel .reco-badge.sell { color: var(--accent-negative); }
+        #ai-reco-panel .reco-badge.hold { color: var(--accent-warning); }
+        #ai-reco-panel .reco-badge.strong_buy  { color: var(--accent-positive); }
+        #ai-reco-panel .reco-badge.strong_sell { color: var(--accent-negative); }
+        #ai-reco-panel .reco-date-badge {
+            position: absolute;
+            top: 1rem;
+            right: 1rem;
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            opacity: 0.7;
+        }
+        #ai-reco-panel .reco-meta {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            line-height: 1.5;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            flex-wrap: wrap;
+        }
+        #ai-reco-panel .reco-summary {
+            line-height: 1.55;
+            color: var(--text-secondary);
+        }
+        #ai-reco-panel .reco-summary li {
+            margin-bottom: 1rem;
+        }
+        #ai-reco-panel .reco-section-title {
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: #eee;
+            margin-bottom: 1rem;
+        }
+        #ai-reco-panel .reco-loading {
+            text-align: center;
+            padding: 2rem 0;
+            color: var(--text-muted);
+        }
+        #ai-reco-panel .reco-empty {
+            text-align: center;
+            padding: 1.5rem 0;
+            color: var(--text-muted);
+            font-size: 0.8rem;
+        }
+
+        /* ── Stale AI Reco Overlay ── */
+        .reco-stale-wrapper {
+            position: relative;
+        }
+        .reco-stale-content {
+            opacity: 0.2;
+            filter: blur(2px);
+            pointer-events: none;
+            user-select: none;
+        }
+        .reco-stale-overlay {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 5;
+        }
+        .reco-stale-box {
+            text-align: center;
+            padding: 1.5rem 2rem;
+            color: var(--text);
+            max-width: 340px;
+        }
+
+        /* ── Z-Score grid: 3×2 when reco panel visible, 6×1 when not ── */
+        #ai-reco-row:not(.has-reco) .col-reco { display: none !important; }
+        #ai-reco-row:not(.has-reco) .col-metrics { flex: 0 0 100%; max-width: 100%; }
+        #ai-reco-row.has-reco .zscore-cell { flex: 0 0 33.333%; max-width: 33.333%; }
+        #ai-reco-row:not(.has-reco) .zscore-cell { flex: 0 0 auto; max-width: none; }
 
         .navbar {
             box-shadow: none;
@@ -1399,7 +1504,7 @@
                                 <th rowspan="2" class="text-center claude-score-header" data-sort="claude_score"
                                     style="cursor:pointer; white-space:nowrap;"
                                     title="Claude Score = AI-powered scoring (0-100).&#10;Klik icon Claude untuk generate score.">
-                                    <button type="button" class="claude-trigger-btn mb-3" id="btn-claude-score"
+                                    <button type="button" class="claude-trigger-btn mb-2" id="btn-claude-score"
                                         title="Click to generate AI scores"
                                         onclick="event.stopPropagation(); handleClaudeScoreClick();">
                                         <svg width="16" height="16" viewBox="0 0 512 512" fill="#d97706"
@@ -1701,40 +1806,55 @@
                     <!-- PROPORTIONAL BAR (Foreign / Local / Retail) -->
                     <div id="proportional-bar-container" class="mb-3"></div>
 
-                    <!-- Z-SCORE FEATURES CARD -->
-                    <div id="zscore-features-card" class="card card-swing mb-3">
-                        <div class="card-body py-2">
-                            <div class="row g-2 text-center">
-                                <div class="col py-2">
-                                    <div class="small text-white mb-2">Effort</div>
-                                    <div id="feat-effort" class="fw-bold">-</div>
-                                </div>
-                                <div class="col py-2">
-                                    <div class="small text-white mb-2">Price Response</div>
-                                    <div id="feat-response" class="fw-bold">-</div>
-                                </div>
-                                <div class="col py-2">
-                                    <div class="small text-white mb-2">Net Quality</div>
-                                    <div id="feat-quality" class="fw-bold">-</div>
-                                </div>
-                                <div class="col py-2">
-                                    <div class="small text-white mb-2">VWAP</div>
-                                    <div id="feat-vwap" class="fw-bold">-</div>
-                                </div>
-                                <div class="col py-2">
-                                    <div class="small text-white mb-2">Elasticity</div>
-                                    <div id="feat-elasticity" class="fw-bold">-</div>
-                                </div>
-                                <div class="col py-2">
-                                    <div class="small text-white mb-2">State</div>
-                                    <div id="feat-state" class="fw-bold">-</div>
+                    <!-- AI RECO + Z-SCORE + HORIZON: 3-column row -->
+                    <div class="row g-3 mb-3" id="ai-reco-row">
+                        <!-- LEFT: AI Recommendation Panel -->
+                        <div class="col-lg-7 col-md-12 col-reco">
+                            <div id="ai-reco-panel" class="card card-swing h-100">
+                                <div class="card-body">
+                                    <div class="reco-loading">
+                                        <i class="fa-solid fa-spinner fa-spin"></i>
+                                        <div class="small mt-1">Memuat rekomendasi...</div>
+                                    </div>
                                 </div>
                             </div>
                         </div>
-                    </div>
+                        <!-- RIGHT: Z-Score + Horizon stacked -->
+                        <div class="col-lg-5 col-md-12 col-metrics">
+                            <!-- Z-SCORE FEATURES CARD -->
+                            <div id="zscore-features-card" class="card card-swing mb-3">
+                                <div class="card-body py-2">
+                                    <div class="row g-2 text-center">
+                                        <div class="col zscore-cell py-2">
+                                            <div class="small text-white mb-2">Effort</div>
+                                            <div id="feat-effort" class="fw-bold">-</div>
+                                        </div>
+                                        <div class="col zscore-cell py-2">
+                                            <div class="small text-white mb-2">Price Response</div>
+                                            <div id="feat-response" class="fw-bold">-</div>
+                                        </div>
+                                        <div class="col zscore-cell py-2">
+                                            <div class="small text-white mb-2">Net Quality</div>
+                                            <div id="feat-quality" class="fw-bold">-</div>
+                                        </div>
+                                        <div class="col zscore-cell py-2">
+                                            <div class="small text-white mb-2">VWAP</div>
+                                            <div id="feat-vwap" class="fw-bold">-</div>
+                                        </div>
+                                        <div class="col zscore-cell py-2">
+                                            <div class="small text-white mb-2">Elasticity</div>
+                                            <div id="feat-elasticity" class="fw-bold">-</div>
+                                        </div>
+                                        <div class="col zscore-cell py-2">
+                                            <div class="small text-white mb-2">State</div>
+                                            <div id="feat-state" class="fw-bold">-</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
 
-                    <!-- HORIZON METRICS CARD -->
-                    <div id="horizon-metrics-card" class="card card-swing mb-3 d-none">
+                            <!-- HORIZON METRICS CARD -->
+                            <div id="horizon-metrics-card" class="card card-swing  d-none">
                         <div class="card-body py-2">
                             <div class="table-responsive">
                                 <table class="table table-sm table-orderflow table-borderless mb-0 align-middle">
@@ -1755,7 +1875,9 @@
                                 </table>
                             </div>
                         </div>
-                    </div>
+                        </div><!-- /horizon-metrics-card -->
+                        </div><!-- /col-lg-8 -->
+                    </div><!-- /row g-3 -->
 
                     <!-- BROKER TABLE -->
                     <div class="card card-swing mb-4">
@@ -1821,7 +1943,7 @@
     <script src="../js/component.js?v=73"></script>
 
     <!-- MAIN APP LOGIC -->
-    <script src="../js/broker-summary.js?v=92"></script>
+    <script src="../js/broker-summary.js?v=102"></script>
     <script defer
         src="https://static.cloudflareinsights.com/beacon.min.js/vcd15cbe7772f49c399c6a5babf22c1241717689176015"
         data-cf-beacon='{"version":"2024.11.0","token":"0e06ac31f3fc47b3ab72d7670102e368","r":1,"server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}'

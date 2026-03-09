@@ -244,12 +244,12 @@ html[data-theme="dark"] .timeline-card.variant-blue   { background: rgba(59,130,
 html[data-theme="dark"] .timeline-card.variant-red    { background: rgba(239,68,68,.12);  border-color: rgba(239,68,68,.35); }
 html[data-theme="dark"] .timeline-card.variant-purple { background: rgba(139,92,246,.12); border-color: rgba(139,92,246,.35); }
 .timeline-title { font-weight: 600; margin-bottom: 0.5rem; color: var(--text); }
-.timeline-title.primary { color: var(--primary); }
-.timeline-title.warning { color: var(--accent-warning); }
-.timeline-title.success { color: var(--accent-positive); }
-.timeline-title.variant-blue   { color: #3b82f6; }
-.timeline-title.variant-red    { color: #ef4444; }
-.timeline-title.variant-purple { color: #8b5cf6; }
+.timeline-title.primary, .timeline-title .primary { color: var(--primary); }
+.timeline-title.warning, .timeline-title .warning { color: var(--accent-warning); }
+.timeline-title.success, .timeline-title .success { color: var(--accent-positive); }
+.timeline-title.variant-blue, .timeline-title .variant-blue   { color: #3b82f6; }
+.timeline-title.variant-red, .timeline-title .variant-red    { color: #ef4444; }
+.timeline-title.variant-purple, .timeline-title .variant-purple { color: #8b5cf6; }
 .timeline-text {
     color: var(--text-secondary); margin-bottom: 0.75rem;
     line-height: 1.5; font-size: 0.9rem;

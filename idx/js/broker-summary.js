@@ -3647,6 +3647,211 @@ function getStateBadgeSimple(state) {
     return `<span class="${colors[state] || 'text-muted'}">${label}</span>`;
 }
 
+function dismissStaleOverlay(btn) {
+    const wrapper = btn.closest('.reco-stale-wrapper');
+    if (!wrapper) return;
+    wrapper.querySelector('.reco-stale-overlay')?.remove();
+    const content = wrapper.querySelector('.reco-stale-content');
+    if (content) content.style.opacity = '1';
+    if (content) content.style.filter = 'none';
+}
+
+// =========================================
+// AI RECOMMENDATION PANEL
+// =========================================
+async function loadAIRecommendation(symbol) {
+    const panel = document.getElementById('ai-reco-panel');
+    if (!panel) return;
+    const body = panel.querySelector('.card-body');
+
+    try {
+        const resp = await fetch(`${WORKER_BASE_URL}/dashboard/feed?symbol=${encodeURIComponent(symbol)}&limit=1`);
+        const data = await resp.json();
+        const items = data?.items || [];
+
+        if (!items.length) {
+            document.getElementById('ai-reco-row')?.classList.remove('has-reco');
+            body.innerHTML = `<div class="reco-empty">
+                <i class="fa-solid fa-robot mb-2" style="font-size:1.5rem;opacity:0.3"></i>
+                <div>Belum ada AI Analysis</div>
+                <div class="mt-1" style="font-size:0.7rem">Klik tombol <strong>AI Analysis</strong> untuk generate.</div>
+            </div>`;
+            return;
+        }
+
+        const item = items[0];
+        const reco = String(item.recommendation || 'AI Update').toUpperCase().replace(/\s+/g, '_');
+
+        // Show reco panel, switch z-score to 3×2 grid
+        document.getElementById('ai-reco-row')?.classList.add('has-reco');
+
+        // Fetch full detail from cache for rich content
+        let detail = null;
+        try {
+            const slug = item.slug || '';
+            if (slug) {
+                const detResp = await fetch(`${WORKER_BASE_URL}/dashboard/feed/detail?slug=${encodeURIComponent(slug)}`);
+                const detData = await detResp.json();
+                if (detData?.ok) detail = detData;
+            }
+        } catch (_) {}
+
+        const analysis = detail?.detail?.analysis || {};
+        const recObj = analysis?.recommendation || analysis?.kesimpulan_rekomendasi || {};
+        const ringkasan = typeof analysis?.ringkasan_eksekutif === 'string' ? analysis.ringkasan_eksekutif.trim() : '';
+        const execSum = analysis?.executive_summary || [];
+        const phase = recObj?.phase || recObj?.fase_saham || '';
+        const rationale = Array.isArray(recObj?.rationale) ? recObj.rationale
+            : Array.isArray(recObj?.alasan_rating) ? recObj.alasan_rating
+            : Array.isArray(recObj?.alasan) ? recObj.alasan : [];
+        const risks = Array.isArray(recObj?.risks) ? recObj.risks
+            : Array.isArray(recObj?.risiko) ? recObj.risiko : [];
+
+        // Confidence
+        const rawConf = recObj?.confidence ?? recObj?.tingkat_keyakinan ?? item?.meta?.confidence ?? 0;
+        let confLabel = '';
+        if (typeof rawConf === 'number' && rawConf > 0) {
+            confLabel = `${(rawConf > 1 ? rawConf : rawConf * 100).toFixed(0)}%`;
+        } else if (typeof rawConf === 'string' && rawConf) {
+            const pct = parseFloat(rawConf.replace('%', ''));
+            confLabel = !isNaN(pct) ? `${(pct > 1 ? pct : pct * 100).toFixed(0)}%` : rawConf;
+        }
+
+        // Badge class
+        const badgeCls = reco.includes('STRONG_BUY') ? 'strong_buy'
+            : reco.includes('STRONG_SELL') ? 'strong_sell'
+            : reco.includes('BUY') ? 'buy'
+            : reco.includes('SELL') ? 'sell'
+            : reco.includes('HOLD') ? 'hold' : '';
+
+        // Date
+        const dateLabel = item.created_at
+            ? new Date(item.created_at).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })
+            : '-';
+
+        // Provider & model
+        const provider = detail?.detail?.provider || item?.meta?.provider || '';
+        const model = detail?.detail?.model || item?.meta?.model || '';
+
+        // Headline from title (strip "SYMBOL RATING: ")
+        const headline = String(item.title || '').replace(/^[A-Z0-9]+\s+\S+:\s*/, '').trim();
+        const symbolLabel = escapeHTML(item.symbol || symbol);
+        const isAIUpdate = reco === 'AI_UPDATE';
+        const recoLabel = isAIUpdate ? '' : escapeHTML(reco.replace(/_/g, ' '));
+        // Official Claude logo SVG (same as screener table header)
+        const claudeIconSvg = `<svg width="16" height="16" viewBox="0 0 512 512" fill="#d97706" xmlns="http://www.w3.org/2000/svg" style="vertical-align:-2px"><path d="M100.4 340.5l100.7-56.5 1.7-4.9-1.7-2.7-4.9 0-16.8-1-57.5-1.6-49.9-2.1-48.3-2.6-12.2-2.6-11.4-15 1.2-7.5 10.2-6.9 14.7 1.3c18.9 1.3 45.9 3.1 81 5.6l35.2 2.1 52.2 5.4 8.3 0 1.2-3.4-2.8-2.1-2.2-2.1-50.3-34.1-54.4-36-28.5-20.7-15.4-10.5-7.8-9.8-3.4-21.5 14-15.4 18.8 1.3 4.8 1.3 19 14.7 40.7 31.5 53.1 39.1 7.8 6.5 3.1-2.2.4-1.6-3.5-5.8-28.9-52.2-30.8-53.1-13.7-22-3.6-13.2c-1.3-5.4-2.2-10-2.2-15.5l15.9-21.6 8.8-2.8 21.2 2.8 8.9 7.8 13.2 30.2 21.4 47.5 33.2 64.6 9.7 19.2 5.2 17.8 1.9 5.4 3.4 0 0-3.1 2.7-36.4 5-44.7 4.9-57.5 1.7-16.2 8-19.4 15.9-10.5 12.4 5.9 10.2 14.7-1.4 9.5-6.1 39.5-11.9 61.9-7.8 41.5 4.5 0 5.2-5.2 21-27.8 35.2-44.1 15.5-17.5 18.1-19.3 11.6-9.2 22 0 16.2 24.1-7.3 24.9-22.7 28.7-18.8 24.4-27 36.3-16.8 29 1.6 2.3 4-.4 60.9-13 32.9-5.9 39.3-6.7 17.8 8.3 1.9 8.4-7 17.2-42 10.4-49.2 9.8-73.3 17.3-.9.7 1 1.3 33 3.1 14.1.8 34.6 0 64.4 4.8 16.8 11.1 10.1 13.6-1.7 10.4-25.9 13.2c-15.5-3.7-54.4-12.9-116.6-27.7l-28-7-3.9 0 0 2.3 23.3 22.8 42.7 38.6 53.5 49.8 2.7 12.3-6.9 9.7-7.3-1-47-35.4-18.1-15.9-41.1-34.6-2.7 0 0 3.6 9.5 13.9 50 75.2 2.6 23-3.6 7.5-13 4.5-14.2-2.6-29.3-41.1-30.2-46.3-24.4-41.5-3 1.7-14.4 154.8-6.7 7.9-15.5 5.9-13-9.8-6.9-15.9 6.9-31.5 8.3-41.1 6.7-32.7 6.1-40.6 3.6-13.5-.2-.9-3 .4-30.6 42-46.5 62.9-36.8 39.4-8.8 3.5-15.3-7.9 1.4-14.1 8.5-12.6 50.9-64.8 30.7-40.2 19.8-23.2-.1-3.4-1.2 0-135.3 87.8-24.1 3.1-10.4-9.7 1.3-15.9 4.9-5.2z"/></svg>`;
+
+        // Build HTML
+        let html = '';
+
+        // Line 1: Claude icon + SYMBOL — RATING
+        const ratingDisplay = isAIUpdate ? 'AI Analysis' : recoLabel;
+        const badgeExtra = isAIUpdate ? '' : ` ${badgeCls}`;
+        html += `<div class="reco-heading mb-1">
+            ${claudeIconSvg}
+            <span class="reco-badge${badgeExtra}"${isAIUpdate ? ' style="color:#d97706"' : ''}>${escapeHTML(symbolLabel)} — ${ratingDisplay}</span>
+        </div>`;
+
+        // Line 2: Headline as separate bold paragraph
+        if (headline) {
+            html += `<div class="reco-headline mb-1">${escapeHTML(headline)}</div>`;
+        }
+
+        // Line 3: Confidence
+        if (confLabel) html += `<div class="reco-subtitle mb-2">Confidence ${escapeHTML(confLabel)}</div>`;
+
+        // Ringkasan Eksekutif (paragraph — distinct from headline)
+        if (ringkasan) {
+            html += `<div class="mb-3" style="font-size:0.88rem;color:var(--text-secondary);line-height:1.5">${escapeHTML(ringkasan)}</div>`;
+        }
+
+        // Phase
+        if (phase) {
+            html += `<div class="mb-2"><span class="reco-section-title">Fase</span><div class="mb-3" style="font-size:0.85rem;color:var(--text-secondary)">${escapeHTML(phase)}</div></div>`;
+        }
+
+        // Executive summary (max 2)
+        const execArr = Array.isArray(execSum) ? execSum : (execSum ? [execSum] : []);
+        if (execArr.length) {
+            html += `<div class="reco-section-title">Ringkasan</div><ul class="reco-summary ps-3 mb-2">`;
+            execArr.slice(0, 2).forEach(s => { html += `<li>${escapeHTML(String(s))}</li>`; });
+            html += `</ul>`;
+        }
+
+        // Rationale (max 3)
+        if (rationale.length) {
+            html += `<div class="reco-section-title">Alasan</div><ul class="reco-summary ps-3 mb-2">`;
+            rationale.slice(0, 3).forEach(s => { html += `<li>${escapeHTML(String(s))}</li>`; });
+            html += `</ul>`;
+        }
+
+        // Risks (max 2)
+        if (risks.length) {
+            html += `<div class="reco-section-title">Risiko</div><ul class="reco-summary ps-3 mb-2">`;
+            risks.slice(0, 2).forEach(s => { html += `<li>${escapeHTML(String(s))}</li>`; });
+            html += `</ul>`;
+        }
+
+        // Date badge — top-right corner (TTL indicator)
+        html = `<div class="reco-date-badge"><i class="fa-regular fa-clock me-1"></i>Generated at ${escapeHTML(dateLabel)}</div>` + html;
+
+        // Meta footer — model + refresh inline
+        html += `<div class="reco-meta mt-2 p-2 pb-0" style="border-top:1px solid var(--card-divider)">
+            ${provider ? `<span><i class="fa-solid fa-microchip me-1"></i>${escapeHTML(provider)}${model ? ' / ' + escapeHTML(model) : ''}</span>` : ''}
+            <span><a href="#" class="small" onclick="runAIAnalysis(); return false;"><i class="fa-solid fa-rotate-right me-1"></i>Refresh Analysis</a></span>
+        </div>`;
+
+        // ── TTL check: stale if > 3 business days old ──
+        const isStale = (() => {
+            if (!item.created_at) return false;
+            const created = new Date(item.created_at);
+            const now = new Date();
+            let bizDays = 0;
+            const d = new Date(created);
+            d.setHours(0,0,0,0);
+            const end = new Date(now);
+            end.setHours(0,0,0,0);
+            while (d < end) {
+                d.setDate(d.getDate() + 1);
+                const dow = d.getDay();
+                if (dow !== 0 && dow !== 6) bizDays++;
+            }
+            return bizDays > 3;
+        })();
+
+        if (isStale) {
+            // Wrap content in dimmed container with overlay
+            html = `<div class="reco-stale-wrapper">
+                <div class="reco-stale-content">${html}</div>
+                <div class="reco-stale-overlay">
+                    <div class="reco-stale-box">
+                        <div class="mb-2"><svg width="28" height="28" viewBox="0 0 512 512" fill="#d97706" xmlns="http://www.w3.org/2000/svg" style="opacity:0.6"><path d="M100.4 340.5l100.7-56.5 1.7-4.9-1.7-2.7-4.9 0-16.8-1-57.5-1.6-49.9-2.1-48.3-2.6-12.2-2.6-11.4-15 1.2-7.5 10.2-6.9 14.7 1.3c18.9 1.3 45.9 3.1 81 5.6l35.2 2.1 52.2 5.4 8.3 0 1.2-3.4-2.8-2.1-2.2-2.1-50.3-34.1-54.4-36-28.5-20.7-15.4-10.5-7.8-9.8-3.4-21.5 14-15.4 18.8 1.3 4.8 1.3 19 14.7 40.7 31.5 53.1 39.1 7.8 6.5 3.1-2.2.4-1.6-3.5-5.8-28.9-52.2-30.8-53.1-13.7-22-3.6-13.2c-1.3-5.4-2.2-10-2.2-15.5l15.9-21.6 8.8-2.8 21.2 2.8 8.9 7.8 13.2 30.2 21.4 47.5 33.2 64.6 9.7 19.2 5.2 17.8 1.9 5.4 3.4 0 0-3.1 2.7-36.4 5-44.7 4.9-57.5 1.7-16.2 8-19.4 15.9-10.5 12.4 5.9 10.2 14.7-1.4 9.5-6.1 39.5-11.9 61.9-7.8 41.5 4.5 0 5.2-5.2 21-27.8 35.2-44.1 15.5-17.5 18.1-19.3 11.6-9.2 22 0 16.2 24.1-7.3 24.9-22.7 28.7-18.8 24.4-27 36.3-16.8 29 1.6 2.3 4-.4 60.9-13 32.9-5.9 39.3-6.7 17.8 8.3 1.9 8.4-7 17.2-42 10.4-49.2 9.8-73.3 17.3-.9.7 1 1.3 33 3.1 14.1.8 34.6 0 64.4 4.8 16.8 11.1 10.1 13.6-1.7 10.4-25.9 13.2c-15.5-3.7-54.4-12.9-116.6-27.7l-28-7-3.9 0 0 2.3 23.3 22.8 42.7 38.6 53.5 49.8 2.7 12.3-6.9 9.7-7.3-1-47-35.4-18.1-15.9-41.1-34.6-2.7 0 0 3.6 9.5 13.9 50 75.2 2.6 23-3.6 7.5-13 4.5-14.2-2.6-29.3-41.1-30.2-46.3-24.4-41.5-3 1.7-14.4 154.8-6.7 7.9-15.5 5.9-13-9.8-6.9-15.9 6.9-31.5 8.3-41.1 6.7-32.7 6.1-40.6 3.6-13.5-.2-.9-3 .4-30.6 42-46.5 62.9-36.8 39.4-8.8 3.5-15.3-7.9 1.4-14.1 8.5-12.6 50.9-64.8 30.7-40.2 19.8-23.2-.1-3.4-1.2 0-135.3 87.8-24.1 3.1-10.4-9.7 1.3-15.9 4.9-5.2z"/></svg></div>
+                        <div class="fw-semibold mb-1">Analisis sudah lebih dari 3 hari kerja</div>
+                        <div class="small text-muted mb-3">Data mungkin sudah tidak relevan dengan kondisi pasar terkini</div>
+                        <div class="d-flex gap-2 justify-content-center">
+                            <button class="btn btn-sm btn-outline-primary" onclick="runAIAnalysis(); return false;">
+                                <i class="fa-solid fa-rotate-right me-1"></i>Refresh Analysis
+                            </button>
+                            <button class="btn btn-sm btn-outline-secondary" onclick="dismissStaleOverlay(this)">
+                                Tetap Buka
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>`;
+        }
+
+        body.innerHTML = html;
+    } catch (err) {
+        console.error('[AI Reco] Failed to load:', err);
+        document.getElementById('ai-reco-row')?.classList.remove('has-reco');
+        body.innerHTML = `<div class="reco-empty">
+            <i class="fa-solid fa-circle-exclamation mb-2" style="font-size:1.2rem;opacity:0.4"></i>
+            <div>Gagal memuat rekomendasi</div>
+        </div>`;
+    }
+}
+
 // =========================================
 // DETAIL MODE
 // =========================================
@@ -3669,6 +3874,9 @@ async function initDetailMode(symbol) {
 
     // Load Z-Score Features for this symbol
     loadZScoreFeatures(symbol);
+
+    // Load AI Recommendation panel (non-blocking)
+    loadAIRecommendation(symbol);
 
     let endDate = endParam ? new Date(endParam) : new Date();
     let startDate = startParam ? new Date(startParam) : new Date();
@@ -4807,73 +5015,32 @@ async function runAIAnalysis(forceRefresh = false) {
 
     // Reset UI
     btn.classList.add('analyzing');
-    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin me-1"></i> Capturing...';
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin me-1"></i> Analyzing...';
     refreshBtn.style.display = 'none';
     tokenInfo.textContent = '';
     analysisContent.innerHTML = `
         <div class="text-center py-4">
             <div class="spinner-border text-warning" role="status"></div>
-            <p class="small text-muted mt-2">Mengambil screenshot halaman...</p>
+            <p class="small text-muted mt-2">AI sedang mengambil screenshot & menganalisis...<br>Backend akan mengambil 5 screenshot otomatis.<br>Bisa memakan waktu 30-60 detik.</p>
         </div>
     `;
     modal.show();
 
     try {
-        // ── Step 1: Capture screenshots from DOM ──
-        console.log('[AI] Step 1: Capturing screenshots...');
-        const summaryPane = document.getElementById('summary-pane');
-
-        // Determine label based on current date range
         const fromDate = $('#date-from').val();
         const toDate = $('#date-to').val();
-        const daysDiff = Math.round((new Date(toDate) - new Date(fromDate)) / (1000*60*60*24));
-        const rangeLabel = `brokerflow-${daysDiff}d`;
-
-        // Capture both brokerflow (range chart) and intraday (current full pane) from DOM
-        // intraday = same element, just labelled differently so Claude gets both contexts
-        const [brokerflowBlob, intradayBlob] = await Promise.all([
-            captureElement(summaryPane),
-            captureElement(summaryPane)
-        ]);
-        console.log(`[AI] Captured brokerflow: ${(brokerflowBlob.size/1024).toFixed(0)}KB, intraday: ${(intradayBlob.size/1024).toFixed(0)}KB`);
-
-        // ── Step 2: Upload screenshots ──
-        analysisContent.innerHTML = `
-            <div class="text-center py-4">
-                <div class="spinner-border text-warning" role="status"></div>
-                <p class="small text-muted mt-2">Mengunggah screenshot...</p>
-            </div>
-        `;
-        btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin me-1"></i> Uploading...';
-
-        const [uploaded, uploadedIntraday] = await Promise.all([
-            uploadScreenshot(brokerflowBlob, symbol, rangeLabel),
-            uploadScreenshot(intradayBlob, symbol, 'intraday')
-        ]);
-        console.log(`[AI] Uploaded: ${uploaded.key} (${uploaded.size_kb}KB), ${uploadedIntraday.key} (${uploadedIntraday.size_kb}KB)`);
-
-        // ── Step 3: Call AI analysis ──
-        analysisContent.innerHTML = `
-            <div class="text-center py-4">
-                <div class="spinner-border text-warning" role="status"></div>
-                <p class="small text-muted mt-2">AI sedang menganalisis...<br>Bisa memakan waktu 15-30 detik.</p>
-            </div>
-        `;
-        btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin me-1"></i> Analyzing...';
 
         // Check ?ai=rebuild in URL to force cache rebuild
         const aiRebuild = new URLSearchParams(window.location.search).get('ai') === 'rebuild';
         const forceAI = forceRefresh || aiRebuild;
 
+        // Call backend — backend handles screenshot capture via Browser Rendering
+        console.log(`[AI] Calling backend for ${symbol} (${fromDate} → ${toDate}), force=${forceAI}`);
         const response = await fetch(`${WORKER_BASE_URL}/ai/analyze-broksum`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 symbol,
-                image_keys: [
-                    { key: uploaded.key, label: uploaded.label },
-                    { key: uploadedIntraday.key, label: uploadedIntraday.label }
-                ],
                 from: fromDate,
                 to: toDate,
                 force: forceAI
@@ -4904,13 +5071,14 @@ async function runAIAnalysis(forceRefresh = false) {
             return;
         }
 
-console.log(`[AI] Analysis complete. Tokens: ${result.usage?.total_tokens || 'N/A'}, Cached: ${result.cached || false}, Provider: ${result.provider || 'OpenAI'}`);
+console.log(`[AI] Analysis complete. Tokens: ${result.usage?.total_tokens || 'N/A'}, Cached: ${result.cached || false}, Provider: ${result.provider || 'claude'}`);
 
         // Update UI with provider
         const aiProviderBadge = document.getElementById('aiProvider');
         if (aiProviderBadge) {
-            aiProviderBadge.textContent = result.provider === 'grok' ? 'Grok (fallback)' : 'ChatGPT';
-            aiProviderBadge.classList.toggle('bg-warning', result.provider === 'grok');
+            const providerLabels = { claude: 'Claude Opus', openai: 'GPT-4.1 (fallback)', grok: 'Grok (fallback)' };
+            aiProviderBadge.textContent = providerLabels[result.provider] || result.provider || 'Claude Opus';
+            aiProviderBadge.classList.toggle('bg-warning', result.provider !== 'claude');
         }
 
         let analysisData = result.analysis;

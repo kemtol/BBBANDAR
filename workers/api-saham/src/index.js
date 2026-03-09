@@ -1107,26 +1107,62 @@ async function runIpotCatalystSync(env, { fromDate, toDate, includeDetail = true
 function buildFeedEventFromAnalysis(symbol, analysisJson, provider, modelUsed, fromDate, toDate, cacheKey) {
   const recID = analysisJson?.kesimpulan_rekomendasi || {};
   const recEN = analysisJson?.recommendation || {};
-  const titleCore = recID?.rating || recID?.rekomendasi || recEN?.position || "AI Update";
+  const rating = recID?.rating || recID?.rekomendasi || recEN?.rating || recEN?.position || "AI Update";
   const confidence = Number(recID?.confidence ?? recEN?.confidence ?? analysisJson?.meta?.confidence ?? 0) || 0;
 
+  // ── Build engaging headline ──
+  // Priority: 1) explicit headline field  2) executive_summary  3) smart_money assessment  4) first rationale
+  let headline = "";
+  if (typeof analysisJson?.headline === "string" && analysisJson.headline.trim()) {
+    headline = analysisJson.headline.trim();
+  } else if (Array.isArray(analysisJson?.executive_summary) && analysisJson.executive_summary.length > 0) {
+    headline = String(analysisJson.executive_summary[0]).trim();
+  } else if (typeof analysisJson?.smart_money?.assessment === "string" && analysisJson.smart_money.assessment.trim()) {
+    headline = analysisJson.smart_money.assessment.trim();
+  } else if (Array.isArray(recEN?.rationale) && recEN.rationale.length > 0) {
+    headline = String(recEN.rationale[0]).trim();
+  } else if (Array.isArray(recID?.alasan_rating) && recID.alasan_rating.length > 0) {
+    headline = String(recID.alasan_rating[0]).trim();
+  }
+  // Truncate headline to ~120 chars for readability
+  if (headline.length > 120) headline = headline.slice(0, 117) + "...";
+
+  const title = headline
+    ? `${symbol} ${rating}: ${headline}`
+    : `${symbol} ${rating}`;
+
+  // ── Body: executive summary (distinct from headline/rationale) ──
   let body = "Analisis terbaru tersedia.";
-  if (Array.isArray(recID?.alasan_rating) && recID.alasan_rating.length > 0) {
-    body = String(recID.alasan_rating[0]);
-  } else if (typeof recEN?.rationale === "string" && recEN.rationale.trim()) {
-    body = recEN.rationale.trim();
+  // Prefer exec summary (string or array) as it's a distinct paragraph from rationale
+  const execSumID = analysisJson?.ringkasan_eksekutif;
+  const execSumEN = analysisJson?.executive_summary;
+  if (typeof execSumID === "string" && execSumID.trim().length > 20) {
+    body = execSumID.trim();
+  } else if (typeof execSumEN === "string" && execSumEN.trim().length > 20) {
+    body = execSumEN.trim();
+  } else if (Array.isArray(execSumEN) && execSumEN.length > 0 && String(execSumEN[0]).trim().length > 20) {
+    body = String(execSumEN[0]).trim();
+  } else if (Array.isArray(execSumID) && execSumID.length > 0 && String(execSumID[0]).trim().length > 20) {
+    body = String(execSumID[0]).trim();
+  } else if (Array.isArray(recID?.alasan_rating) && recID.alasan_rating.length > 1) {
+    body = String(recID.alasan_rating[1]);
+  } else if (Array.isArray(recEN?.rationale) && recEN.rationale.length > 1) {
+    body = String(recEN.rationale[1]);
   } else if (typeof analysisJson?.summary === "string" && analysisJson.summary.trim()) {
     body = analysisJson.summary.trim();
   }
+  // Truncate body to ~250 chars for feed card readability
+  if (body.length > 250) body = body.slice(0, 247) + "...";
 
   return {
     event_type: "ai_analysis",
     symbol,
-    title: `${symbol} • ${titleCore}`,
+    title,
     body,
     meta_json: JSON.stringify({
       provider,
       model: modelUsed,
+      recommendation: rating,
       confidence,
       from: fromDate,
       to: toDate,
@@ -5366,10 +5402,10 @@ export default {
       }
 
       // POST /ai/analyze-broksum  — multi-image, cached per day
-      // POST /ai/analyze-broksum  — multi-image, cached per day
+      // Uses backend Browser Rendering screenshots (5 targets) with client fallback
       if (url.pathname === "/ai/analyze-broksum" && req.method === "POST") {
-        if (!env.OPENAI_API_KEY) {
-          return json({ ok: false, error: "Missing OPENAI_API_KEY in environment" }, 500);
+        if (!env.ANTHROPIC_API_KEY) {
+          return json({ ok: false, error: "Missing ANTHROPIC_API_KEY in environment" }, 500);
         }
 
         const contentType = req.headers.get("Content-Type") || "";
@@ -5378,13 +5414,12 @@ export default {
         }
 
         const body = await req.json();
-        const { symbol, image_keys } = body; // [{key,label}, ...]
+        const { symbol, image_keys } = body; // [{key,label}, ...] optional client fallback
         const forceRefresh = body.force === true;
 
         const normalizedSymbol = (symbol || "").toString().trim().toUpperCase();
-        const originalKeys = Array.isArray(image_keys) ? image_keys : [];
-        if (!normalizedSymbol || originalKeys.length === 0) {
-          return json({ ok: false, error: "Missing required fields: symbol, image_keys[]" }, 400);
+        if (!normalizedSymbol) {
+          return json({ ok: false, error: "Missing required field: symbol" }, 400);
         }
 
         // Cache key unique per symbol + date range so BBRI/14d and BBRI/30d are separate
@@ -5410,41 +5445,79 @@ export default {
           } catch (_) { }
         }
 
-        // --- de-dupe & normalize screenshot keys
-        const aggregatedMap = new Map();
-        originalKeys.forEach((ik) => {
-          if (!ik || typeof ik.key !== "string") return;
-          const key = ik.key;
-          const labelRaw = typeof ik.label === "string" ? ik.label.trim() : "screenshot";
-          const normalizedLabel = (labelRaw || "screenshot").toLowerCase();
-          aggregatedMap.set(key, { key, label: labelRaw || "screenshot", normalizedLabel });
-        });
+        // --- Step 1: Capture screenshots via backend Browser Rendering service
+        let aggregatedKeys = [];
+        let screenshotSource = "none";
 
-        // Frontend now uploads both brokerflow + intraday screenshots directly from DOM.
-        // We no longer call ensureScreenshotAvailability (which used a dummy mock service).
-        const labelPresence = new Set(Array.from(aggregatedMap.values()).map(x => x.normalizedLabel));
-        console.log(`[AI] Screenshots received from client: ${Array.from(labelPresence).join(', ')}`);
-        if (!labelPresence.has("intraday")) {
-          console.warn(`[AI] No intraday screenshot provided by client for ${normalizedSymbol}`);
+        // Try backend screenshot service first
+        if (env.AI_SCREENSHOT_SERVICE) {
+          try {
+            console.log(`[AI] Triggering backend screenshot batch for ${normalizedSymbol}...`);
+            const captureResp = await env.AI_SCREENSHOT_SERVICE.fetch(
+              new Request("https://ai-screenshot-service/capture/batch", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ symbol: normalizedSymbol, date: today })
+              })
+            );
+            const captureResult = await captureResp.json();
+            if (captureResult.ok && Array.isArray(captureResult.results)) {
+              const successItems = captureResult.results.filter(r => r.ok);
+              if (successItems.length > 0) {
+                aggregatedKeys = successItems.map(r => ({
+                  key: r.key,
+                  label: r.label,
+                  normalizedLabel: r.label.toLowerCase()
+                }));
+                screenshotSource = "browser-rendering";
+                console.log(`[AI] Backend screenshots: ${successItems.length}/${captureResult.results.length} succeeded`);
+              }
+            }
+          } catch (captureErr) {
+            console.warn(`[AI] Backend screenshot service failed: ${captureErr.message}`);
+          }
         }
 
-        const aggregatedKeys = Array.from(aggregatedMap.values());
+        // Fallback: use client-provided image_keys
+        if (aggregatedKeys.length === 0 && Array.isArray(image_keys) && image_keys.length > 0) {
+          console.log(`[AI] Falling back to client-provided screenshots`);
+          const aggregatedMap = new Map();
+          image_keys.forEach((ik) => {
+            if (!ik || typeof ik.key !== "string") return;
+            const key = ik.key;
+            const labelRaw = typeof ik.label === "string" ? ik.label.trim() : "screenshot";
+            const normalizedLabel = (labelRaw || "screenshot").toLowerCase();
+            aggregatedMap.set(key, { key, label: labelRaw || "screenshot", normalizedLabel });
+          });
+          aggregatedKeys = Array.from(aggregatedMap.values());
+          screenshotSource = "client";
+        }
+
         if (aggregatedKeys.length === 0) {
-          return json({ ok: false, error: "No valid screenshots available" }, 400);
+          return json({ ok: false, error: "No screenshots available — backend capture failed and no client images provided" }, 400);
         }
 
         // --- validate screenshot existence (HEAD)
+        const validatedKeys = [];
         for (const ik of aggregatedKeys) {
           try {
             const head = await env.SSSAHAM_EMITEN.head(ik.key);
-            if (!head) {
-              return json({ ok: false, error: `Screenshot not found: ${ik.label || ik.key}` }, 400);
+            if (head) {
+              validatedKeys.push(ik);
+            } else {
+              console.warn(`[AI] Screenshot not found in R2: ${ik.key}`);
             }
           } catch (headErr) {
-            console.error(`[AI] HEAD failed for ${ik.key}:`, headErr);
-            return json({ ok: false, error: `Cannot read screenshot: ${ik.label || ik.key}` }, 500);
+            console.warn(`[AI] HEAD failed for ${ik.key}:`, headErr.message);
           }
         }
+        aggregatedKeys = validatedKeys;
+
+        if (aggregatedKeys.length === 0) {
+          return json({ ok: false, error: "No valid screenshots found in storage" }, 400);
+        }
+
+        console.log(`[AI] Using ${aggregatedKeys.length} screenshots (source: ${screenshotSource}): ${aggregatedKeys.map(k => k.label).join(', ')}`);
 
         // --- load system prompt
         let systemPrompt = null;
@@ -5658,8 +5731,8 @@ export default {
             "Mulai langsung dengan karakter '{' dan akhiri dengan '}'.";
 
           const claudePayload = {
-            model: "claude-sonnet-4-5",
-            max_tokens: 4096,
+            model: "claude-opus-4-6",
+            max_tokens: 16000,
             system: claudeSystemPrompt,
             messages: [
               {
@@ -5708,8 +5781,8 @@ export default {
                 "Content-Type": "application/json"
               },
               body: JSON.stringify({
-                model: "claude-sonnet-4-5",
-                max_tokens: 4096,
+                model: "claude-opus-4-6",
+                max_tokens: 16000,
                 system: claudeSystemPrompt,
                 messages: [
                   { role: "user", content: userContent },
@@ -5731,48 +5804,48 @@ export default {
           }
         } // end callClaudeWithImages
 
-        // --- run provider with fallback chain: OpenAI → Grok → Claude
-        let provider = "openai";
-        let modelUsed = "gpt-4.1";
+        // --- run provider with fallback chain: Claude Opus → OpenAI → Grok
+        let provider = "claude";
+        let modelUsed = "claude-opus-4-6";
         let analysisJson = null;
         let rawContent = "";
         let usage = {};
 
         try {
-          console.log(`[AI] Calling OpenAI for ${normalizedSymbol} with ${aggregatedKeys.length} images`);
-          const out = await callOpenAIWithJsonRetry();
+          console.log(`[AI] Calling Claude Opus for ${normalizedSymbol} with ${aggregatedKeys.length} images`);
+          const out = await callClaudeWithImages();
           analysisJson = out.analysisJson;
           rawContent = out.rawContent;
           usage = out.usage || {};
-        } catch (openaiErr) {
-          console.warn(`[AI] OpenAI failed: ${openaiErr.message}. Falling back to Grok.`);
-          provider = "grok";
-          modelUsed = "grok-4";
+        } catch (claudeErr) {
+          console.warn(`[AI] Claude failed: ${claudeErr.message}. Falling back to OpenAI.`);
+          provider = "openai";
+          modelUsed = "gpt-4.1";
 
           try {
-            const out = await callGrokTextOnly();
+            const out = await callOpenAIWithJsonRetry();
             analysisJson = out.analysisJson;
             rawContent = out.rawContent;
             usage = out.usage || {};
-          } catch (grokErr) {
-            console.warn(`[AI] Grok fallback failed: ${grokErr.message}. Falling back to Claude.`);
-            provider = "claude";
-            modelUsed = "claude-sonnet-4-5";
+          } catch (openaiErr) {
+            console.warn(`[AI] OpenAI fallback failed: ${openaiErr.message}. Falling back to Grok.`);
+            provider = "grok";
+            modelUsed = "grok-4";
 
             try {
-              const out = await callClaudeWithImages();
+              const out = await callGrokTextOnly();
               analysisJson = out.analysisJson;
               rawContent = out.rawContent;
               usage = out.usage || {};
-            } catch (claudeErr) {
-              console.error("[AI] Claude fallback failed:", claudeErr.message);
+            } catch (grokErr) {
+              console.error("[AI] Grok fallback failed:", grokErr.message);
               return json(
                 {
                   ok: false,
                   error: "All AI providers failed",
+                  claude: claudeErr.message,
                   openai: openaiErr.message,
-                  grok: grokErr.message,
-                  claude: claudeErr.message
+                  grok: grokErr.message
                 },
                 502
               );
@@ -6239,6 +6312,79 @@ export default {
         }
       }
 
+      // 7.0 POST /admin/backfill-feed — Re-derive title & meta_json from R2 cache for all feed_events
+      if (url.pathname === "/admin/backfill-feed" && req.method === "POST") {
+        await ensureDashboardTables(env);
+
+        const dryRun = url.searchParams.get("dry") === "1";
+        const { results } = await env.SSSAHAM_DB.prepare(
+          `SELECT id, event_type, symbol, title, body, meta_json, created_at
+           FROM feed_events ORDER BY created_at DESC LIMIT 500`
+        ).all();
+
+        const rows = results || [];
+        const report = { total: rows.length, updated: 0, skipped: 0, errors: 0, details: [] };
+
+        for (const row of rows) {
+          const meta = parseFeedMeta(row.meta_json);
+          const cacheKey = meta?.cache_key;
+          if (!cacheKey) {
+            report.skipped++;
+            report.details.push({ id: row.id, symbol: row.symbol, status: "skip_no_cache_key" });
+            continue;
+          }
+
+          let payload = null;
+          try {
+            const obj = await env.SSSAHAM_EMITEN.get(cacheKey);
+            if (!obj) { report.skipped++; report.details.push({ id: row.id, symbol: row.symbol, status: "skip_r2_miss" }); continue; }
+            payload = await obj.json();
+          } catch (_) {
+            report.errors++;
+            report.details.push({ id: row.id, symbol: row.symbol, status: "error_r2_parse" });
+            continue;
+          }
+
+          const analysis = payload?.analysis || {};
+          const fromDate = payload?.date_range?.from || meta?.from || "unknown";
+          const toDate = payload?.date_range?.to || meta?.to || "unknown";
+          const provider = payload?.provider || meta?.provider || "unknown";
+          const model = payload?.model || meta?.model || "unknown";
+
+          const rebuilt = buildFeedEventFromAnalysis(
+            row.symbol, analysis, provider, model, fromDate, toDate, cacheKey
+          );
+
+          // Compare: skip if title, body, and meta_json all identical
+          if (rebuilt.title === row.title && rebuilt.body === row.body && rebuilt.meta_json === row.meta_json) {
+            report.skipped++;
+            report.details.push({ id: row.id, symbol: row.symbol, status: "skip_identical" });
+            continue;
+          }
+
+          if (!dryRun) {
+            try {
+              await env.SSSAHAM_DB.prepare(
+                `UPDATE feed_events SET title = ?, body = ?, meta_json = ? WHERE id = ?`
+              ).bind(rebuilt.title, rebuilt.body, rebuilt.meta_json, row.id).run();
+            } catch (upErr) {
+              report.errors++;
+              report.details.push({ id: row.id, symbol: row.symbol, status: "error_update", error: upErr.message });
+              continue;
+            }
+          }
+
+          report.updated++;
+          report.details.push({
+            id: row.id, symbol: row.symbol, status: dryRun ? "would_update" : "updated",
+            old_title: row.title, new_title: rebuilt.title,
+            old_reco: meta?.recommendation || "-", new_reco: JSON.parse(rebuilt.meta_json)?.recommendation || "-"
+          });
+        }
+
+        return json({ ok: true, dry_run: dryRun, report });
+      }
+
       // 7.1 GET /dashboard/feed/detail?slug=YYYY-MM-DD-SYMBOL-title
       if (url.pathname === "/dashboard/feed/detail" && req.method === "GET") {
         await ensureDashboardTables(env);
@@ -6371,21 +6517,43 @@ export default {
       if (url.pathname === "/dashboard/feed" && req.method === "GET") {
         await ensureDashboardTables(env);
         const limit = Math.min(Math.max(Number(url.searchParams.get("limit") || 30), 1), 200);
-        const { results } = await env.SSSAHAM_DB.prepare(
-          `SELECT id, event_type, symbol, title, body, meta_json, created_at
-           FROM feed_events
-           ORDER BY created_at DESC, id DESC
-           LIMIT ?`
-        ).bind(limit).all();
+        const symbolFilter = String(url.searchParams.get("symbol") || "").trim().toUpperCase();
+
+        let results;
+        if (symbolFilter) {
+          ({ results } = await env.SSSAHAM_DB.prepare(
+            `SELECT id, event_type, symbol, title, body, meta_json, created_at
+             FROM feed_events
+             WHERE symbol = ?
+             ORDER BY created_at DESC, id DESC
+             LIMIT ?`
+          ).bind(symbolFilter, limit).all());
+        } else {
+          ({ results } = await env.SSSAHAM_DB.prepare(
+            `SELECT id, event_type, symbol, title, body, meta_json, created_at
+             FROM feed_events
+             ORDER BY created_at DESC, id DESC
+             LIMIT ?`
+          ).bind(limit).all());
+        }
 
         const dbItems = (results || []).map((r) => {
+          const meta = parseFeedMeta(r.meta_json);
+          // Extract recommendation: from meta first, then parse from title for legacy records
+          let recommendation = meta?.recommendation || "";
+          if (!recommendation && r.title) {
+            const m = String(r.title).match(/^[A-Z0-9]+\s+(STRONG_BUY|STRONG_SELL|BUY|SELL|HOLD|AI Update)[:\s]/i)
+                   || String(r.title).match(/[•|]\s*(STRONG_BUY|STRONG_SELL|BUY|SELL|HOLD|AI Update)$/i);
+            if (m) recommendation = m[1].toUpperCase();
+          }
           const item = {
             id: r.id,
             event_type: r.event_type,
             symbol: r.symbol,
+            recommendation: recommendation || "AI Update",
             title: r.title,
             body: r.body,
-            meta: parseFeedMeta(r.meta_json),
+            meta,
             created_at: r.created_at
           };
           item.slug = buildFeedDetailSlug(item);
@@ -6400,7 +6568,8 @@ export default {
 
         const cacheItems = [];
         try {
-          const listed = await env.SSSAHAM_EMITEN.list({ prefix: "ai-cache/", limit: 80 });
+          const cachePrefix = symbolFilter ? `ai-cache/${symbolFilter}/` : "ai-cache/";
+          const listed = await env.SSSAHAM_EMITEN.list({ prefix: cachePrefix, limit: 80 });
           const objects = Array.isArray(listed?.objects) ? listed.objects : [];
           objects.sort((a, b) => {
             const ta = Date.parse(String(a?.uploaded || 0)) || 0;
@@ -6436,13 +6605,15 @@ export default {
               obj.key
             );
 
+            const cacheMeta = parseFeedMeta(event.meta_json);
             cacheItems.push({
               id: `cache-${obj.key}`,
               event_type: event.event_type,
               symbol: event.symbol,
+              recommendation: cacheMeta?.recommendation || "AI Update",
               title: event.title,
               body: event.body,
-              meta: parseFeedMeta(event.meta_json),
+              meta: cacheMeta,
               created_at: payload?.cached_at || payload?.analyzed_at || new Date(obj.uploaded || Date.now()).toISOString()
             });
 

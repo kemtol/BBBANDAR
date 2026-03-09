@@ -95,6 +95,16 @@ function fmtStreak(s) {
     return `<span class="${cls}">${icon}${abs}d</span>`;
 }
 
+function fmtPersist(p, streak) {
+    if (!Number.isFinite(p) || p === 0) return '<span class="text-muted">—</span>';
+    const pct = (p * 100).toFixed(0);
+    const isDistrib = (streak || 0) < 0;
+    const hi = isDistrib ? 'text-danger fw-bold' : 'text-success fw-bold';
+    const md = isDistrib ? 'text-danger' : 'text-success';
+    const cls = p >= 0.7 ? hi : p >= 0.4 ? md : 'text-muted';
+    return `<span class="${cls}">${pct}%</span>`;
+}
+
 function stockLogo(code) {
     return `<img src="${API_BASE}/logo?ticker=${code}" alt="${code}" class="stock-logo" loading="lazy" onerror="this.style.display='none'"> `;
 }
@@ -559,7 +569,10 @@ function getTopStocks(n) {
         const avg_buy_tx = totalBuyFreq > 0 ? s.total_buy / totalBuyFreq : 0;
         const avg_sell_tx = totalSellFreq > 0 ? s.total_sell / totalSellFreq : 0;
 
-        return { ...s, streak, momentum, avg_buy_tx, avg_sell_tx };
+        // Persistence: |streak| / activeDays — how consistent is accumulation/distribution
+        const persistence = s.days_active > 0 ? Math.abs(streak) / s.days_active : 0;
+
+        return { ...s, streak, momentum, avg_buy_tx, avg_sell_tx, persistence };
     });
 
     // Sort
@@ -819,6 +832,7 @@ function renderTable() {
             <td class="text-center hide-mobile">${s.days_active}</td>
             <td class="text-center hide-mobile">${fmtStreak(s.streak)}</td>
             <td class="text-center hide-mobile">${fmtMomentum(s.momentum)}</td>
+            <td class="text-center hide-mobile">${fmtPersist(s.persistence, s.streak)}</td>
         </tr>`;
     });
 
