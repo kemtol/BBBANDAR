@@ -344,6 +344,26 @@ function getRecentWibDates(maxDays = 5) {
   return dates;
 }
 
+/**
+ * Returns the most recent trading day in WIB timezone (YYYY-MM-DD).
+ * Skips weekends and IDX holidays, walking backwards from today.
+ */
+function getLastTradingDayWIB() {
+  for (let i = 0; i < 10; i++) {
+    const ts = Date.now() - (i * 86400000);
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Jakarta",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(new Date(ts));
+    const get = (t) => parts.find((p) => p.type === t)?.value || "";
+    const dateStr = `${get("year")}-${get("month")}-${get("day")}`;
+    if (!isNonTradingDayUTC(dateStr)) return dateStr;
+  }
+  return getRecentWibDates(1)[0]; // fallback
+}
+
 async function ensureDashboardTables(env) {
   const ddl = [
     `CREATE TABLE IF NOT EXISTS feed_events (
@@ -1830,157 +1850,118 @@ async function calculateRangeData(env, ctx, symbol, startDate, endDate) {
   const start = new Date(startDate);
   const end = new Date(endDate);
 
-  // Loop through dates
+  // Build list of trading days
+  const tradingDays = [];
   for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
     const dateStr = d.toISOString().split('T')[0];
-    // Skip weekends
-    if (isWeekendUTC(dateStr)) continue;
+    if (isNonTradingDayUTC(dateStr)) continue;
+    tradingDays.push(dateStr);
+  }
 
-    const key = `${symbol}/${dateStr}.json`; // Key format from scrapper
-
-    try {
-      const object = await env.RAW_BROKSUM.get(key);
-      if (object) {
+  // ── Parallel R2 reads for all trading days ──
+  const r2Results = await Promise.all(
+    tradingDays.map(async (dateStr) => {
+      const key = `${symbol}/${dateStr}.json`;
+      try {
+        const object = await env.RAW_BROKSUM.get(key);
+        if (!object) return { dateStr, data: null };
         const fullOuter = await object.json();
-        if (fullOuter && fullOuter.data) {
-          let bd = fullOuter.data.bandar_detector;
-          let bs = fullOuter.data.broker_summary;
-
-          // Live repair: if RAW exists but broker rows are empty, pull single-day snapshot from scraper.
-          if (!hasBrokerRows(bs)) {
-            const repaired = await fetchLiveBrokerSnapshot(env, symbol, dateStr);
-            if (hasBrokerRows(repaired?.broker_summary)) {
-              bs = repaired.broker_summary;
-              if (repaired.bandar_detector) bd = repaired.bandar_detector;
-            }
-          }
-
-          // 1. Calculate Daily Flow
-          let foreignBuy = 0, foreignSell = 0;
-          let retailBuy = 0, retailSell = 0;
-          let localBuy = 0, localSell = 0;
-
-          const isRetail = (code) => {
-            const b = brokersMap[code];
-            if (!b) return false;
-            const cat = (b.category || '').toLowerCase();
-            return cat.includes('retail');
-          };
-
-          // 2. Aggregate Broker Summary
-          if (bs) {
-            const process = (list, type) => {
-              if (list && Array.isArray(list)) {
-                list.forEach(b => {
-                  if (!b) return;
-                  const val = parseFloat(type === 'buy' ? b.bval : b.sval) || 0;
-                  const vol = parseFloat(type === 'buy' ? b.blotv || b.blot * 100 : b.slotv || b.slot * 100) || 0;
-                  const code = b.netbs_broker_code;
-
-                  if (type === 'buy') {
-                    if (isRetail(code)) retailBuy += val;
-                    else if (b.type === "Asing") foreignBuy += val;
-                    else localBuy += val;
-
-                    if (code) {
-                      if (!accBrokers[code]) accBrokers[code] = { bval: 0, sval: 0, bvol: 0, svol: 0, type: b.type };
-                      accBrokers[code].bval += val;
-                      accBrokers[code].bvol += vol;
-                    }
-                  } else {
-                    if (isRetail(code)) retailSell += val;
-                    else if (b.type === "Asing") foreignSell += val;
-                    else localSell += val;
-
-                    if (code) {
-                      if (!accBrokers[code]) accBrokers[code] = { bval: 0, sval: 0, bvol: 0, svol: 0, type: b.type };
-                      accBrokers[code].sval += val;
-                      accBrokers[code].svol += vol;
-                    }
-                  }
-                });
-              }
-            };
-            process(bs.brokers_buy, 'buy');
-            process(bs.brokers_sell, 'sell');
-          }
-
-          const summary = {
-            detector: bd,
-            price: bs?.stock_summary?.average_price ? parseInt(bs.stock_summary.average_price) : 0,
-            foreign: { buy_val: foreignBuy, sell_val: foreignSell, net_val: foreignBuy - foreignSell },
-            retail: { buy_val: retailBuy, sell_val: retailSell, net_val: retailBuy - retailSell },
-            local: { buy_val: localBuy, sell_val: localSell, net_val: localBuy - localSell }
-          };
-          results.push({ date: dateStr, data: summary });
-        }
-      } else {
-        // RAW missing for this trading day: try live scrape to avoid undercounted range totals.
-        const repaired = await fetchLiveBrokerSnapshot(env, symbol, dateStr);
-        if (repaired && hasBrokerRows(repaired.broker_summary)) {
-          const bd = repaired.bandar_detector;
-          const bs = repaired.broker_summary;
-
-          let foreignBuy = 0, foreignSell = 0;
-          let retailBuy = 0, retailSell = 0;
-          let localBuy = 0, localSell = 0;
-
-          const isRetail = (code) => {
-            const b = brokersMap[code];
-            if (!b) return false;
-            const cat = (b.category || '').toLowerCase();
-            return cat.includes('retail');
-          };
-
-          const process = (list, type) => {
-            if (list && Array.isArray(list)) {
-              list.forEach(b => {
-                if (!b) return;
-                const val = parseFloat(type === 'buy' ? b.bval : b.sval) || 0;
-                const vol = parseFloat(type === 'buy' ? b.blotv || b.blot * 100 : b.slotv || b.slot * 100) || 0;
-                const code = b.netbs_broker_code;
-
-                if (type === 'buy') {
-                  if (isRetail(code)) retailBuy += val;
-                  else if (b.type === "Asing") foreignBuy += val;
-                  else localBuy += val;
-
-                  if (code) {
-                    if (!accBrokers[code]) accBrokers[code] = { bval: 0, sval: 0, bvol: 0, svol: 0, type: b.type };
-                    accBrokers[code].bval += val;
-                    accBrokers[code].bvol += vol;
-                  }
-                } else {
-                  if (isRetail(code)) retailSell += val;
-                  else if (b.type === "Asing") foreignSell += val;
-                  else localSell += val;
-
-                  if (code) {
-                    if (!accBrokers[code]) accBrokers[code] = { bval: 0, sval: 0, bvol: 0, svol: 0, type: b.type };
-                    accBrokers[code].sval += val;
-                    accBrokers[code].svol += vol;
-                  }
-                }
-              });
-            }
-          };
-
-          process(bs.brokers_buy, 'buy');
-          process(bs.brokers_sell, 'sell');
-
-          const summary = {
-            detector: bd,
-            price: bs?.stock_summary?.average_price ? parseInt(bs.stock_summary.average_price) : 0,
-            foreign: { buy_val: foreignBuy, sell_val: foreignSell, net_val: foreignBuy - foreignSell },
-            retail: { buy_val: retailBuy, sell_val: retailSell, net_val: retailBuy - retailSell },
-            local: { buy_val: localBuy, sell_val: localSell, net_val: localBuy - localSell }
-          };
-          results.push({ date: dateStr, data: summary });
-        }
+        return { dateStr, data: fullOuter?.data || null };
+      } catch (e) {
+        return { dateStr, data: null };
       }
-    } catch (e) {
-      // ignore missing
+    })
+  );
+
+  // ── Live repair only for recent 3 days with missing data ──
+  const nowMs = Date.now();
+  const threeDaysMs = 3 * 86400000;
+  const liveRepairPromises = [];
+  for (const r of r2Results) {
+    if (r.data && hasBrokerRows(r.data.broker_summary)) continue;
+    // Only live-repair recent dates
+    const dateMs = new Date(r.dateStr + "T12:00:00Z").getTime();
+    if (nowMs - dateMs <= threeDaysMs) {
+      liveRepairPromises.push(
+        fetchLiveBrokerSnapshot(env, symbol, r.dateStr).then(repaired => {
+          if (repaired && hasBrokerRows(repaired.broker_summary)) {
+            r.data = {
+              bandar_detector: repaired.bandar_detector,
+              broker_summary: repaired.broker_summary
+            };
+          }
+        }).catch(() => {})
+      );
     }
+  }
+  if (liveRepairPromises.length > 0) {
+    await Promise.all(liveRepairPromises);
+  }
+
+  const isRetail = (code) => {
+    const b = brokersMap[code];
+    if (!b) return false;
+    const cat = (b.category || '').toLowerCase();
+    return cat.includes('retail');
+  };
+
+  // ── Process all results ──
+  for (const r of r2Results) {
+    if (!r.data) continue;
+    let bd = r.data.bandar_detector;
+    let bs = r.data.broker_summary;
+
+    if (!hasBrokerRows(bs)) continue;
+
+    let foreignBuy = 0, foreignSell = 0;
+    let retailBuy = 0, retailSell = 0;
+    let localBuy = 0, localSell = 0;
+
+    if (bs) {
+      const process = (list, type) => {
+        if (list && Array.isArray(list)) {
+          list.forEach(b => {
+            if (!b) return;
+            const val = parseFloat(type === 'buy' ? b.bval : b.sval) || 0;
+            const vol = parseFloat(type === 'buy' ? b.blotv || b.blot * 100 : b.slotv || b.slot * 100) || 0;
+            const code = b.netbs_broker_code;
+
+            if (type === 'buy') {
+              if (isRetail(code)) retailBuy += val;
+              else if (b.type === "Asing") foreignBuy += val;
+              else localBuy += val;
+
+              if (code) {
+                if (!accBrokers[code]) accBrokers[code] = { bval: 0, sval: 0, bvol: 0, svol: 0, type: b.type };
+                accBrokers[code].bval += val;
+                accBrokers[code].bvol += vol;
+              }
+            } else {
+              if (isRetail(code)) retailSell += val;
+              else if (b.type === "Asing") foreignSell += val;
+              else localSell += val;
+
+              if (code) {
+                if (!accBrokers[code]) accBrokers[code] = { bval: 0, sval: 0, bvol: 0, svol: 0, type: b.type };
+                accBrokers[code].sval += val;
+                accBrokers[code].svol += vol;
+              }
+            }
+          });
+        }
+      };
+      process(bs.brokers_buy, 'buy');
+      process(bs.brokers_sell, 'sell');
+    }
+
+    const summary = {
+      detector: bd,
+      price: bs?.stock_summary?.average_price ? parseInt(bs.stock_summary.average_price) : 0,
+      foreign: { buy_val: foreignBuy, sell_val: foreignSell, net_val: foreignBuy - foreignSell },
+      retail: { buy_val: retailBuy, sell_val: retailSell, net_val: retailBuy - retailSell },
+      local: { buy_val: localBuy, sell_val: localSell, net_val: localBuy - localSell }
+    };
+    results.push({ date: r.dateStr, data: summary });
   }
 
   // 6. On-Demand Backfill Trigger (If results empty)
@@ -4795,6 +4776,25 @@ export default {
         if (cacheMode === "default") {
           const cached = await env.SSSAHAM_EMITEN.get(key);
           if (cached) {
+            // ── Staleness check: if cache was generated before last market close, invalidate ──
+            let cacheIsStale = false;
+            try {
+              const genAt = cached.customMetadata?.generated_at;
+              if (genAt) {
+                const genMs = new Date(genAt).getTime();
+                const nowMs = Date.now();
+                const ageHours = (nowMs - genMs) / 3600000;
+                // If to-date covers today or the latest trading day and cache is >3h old,
+                // it likely misses today's data. Invalidate.
+                const lastTD = getLastTradingDayWIB();
+                if (to >= lastTD && ageHours > 3) {
+                  console.log(`[cache-summary] Cache STALE for ${symbol}: generated ${Math.round(ageHours)}h ago, lastTD=${lastTD}`);
+                  cacheIsStale = true;
+                }
+              }
+            } catch (_) { }
+
+            if (!cacheIsStale) {
             let cachedData = null;
             try {
               cachedData = await cached.json();
@@ -4828,7 +4828,8 @@ export default {
                 }
               }));
             }
-            // If missing, fallthrough to re-calculate (MISS/STALE)
+            } // end !cacheIsStale
+            // If stale or missing, fallthrough to re-calculate (MISS/STALE)
           }
         }
 
@@ -4954,6 +4955,21 @@ export default {
         if (cacheMode === "default") {
           const cached = await env.SSSAHAM_EMITEN.get(cacheKey);
           if (cached) {
+            // ── Staleness check: if cache was generated before last market close, invalidate ──
+            let cacheIsStale = false;
+            try {
+              const genAt = cached.customMetadata?.generated_at;
+              if (genAt) {
+                const ageHours = (Date.now() - new Date(genAt).getTime()) / 3600000;
+                const lastTD = getLastTradingDayWIB();
+                if (to >= lastTD && ageHours > 3) {
+                  console.log(`[broker-daily] Cache STALE for ${symbol}: generated ${Math.round(ageHours)}h ago, lastTD=${lastTD}`);
+                  cacheIsStale = true;
+                }
+              }
+            } catch (_) { }
+
+            if (!cacheIsStale) {
             try {
               const data = await cached.json();
               if (data && data.brokers && data.dates) {
@@ -4962,6 +4978,7 @@ export default {
                 }));
               }
             } catch (_) { /* stale cache, fallthrough */ }
+            } // end !cacheIsStale
           }
         }
 
@@ -4990,25 +5007,35 @@ export default {
         // perBroker[code] = { dailyNets: [net_day1, net_day2, ...], type: 'foreign'|'local'|'retail', ipotType: 'Asing' }
         const perBroker = {};
 
+        // Build list of trading days first
         for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
           const dateStr = d.toISOString().split('T')[0];
           if (isNonTradingDayUTC(dateStr)) continue;
           dateList.push(dateStr);
-          const dayIdx = dateList.length - 1;
+        }
 
-          const key = `${symbol}/${dateStr}.json`;
-          try {
-            const object = await env.RAW_BROKSUM.get(key);
-            if (!object) continue;
-            const fullOuter = await object.json();
-            if (!fullOuter?.data) continue;
-
-            let bs = fullOuter.data.broker_summary;
-            if (!hasBrokerRows(bs)) {
-              const repaired = await fetchLiveBrokerSnapshot(env, symbol, dateStr);
-              if (hasBrokerRows(repaired?.broker_summary)) bs = repaired.broker_summary;
-              else continue;
+        // ── Parallel R2 reads for all trading days ──
+        const bdR2Results = await Promise.all(
+          dateList.map(async (dateStr) => {
+            const key = `${symbol}/${dateStr}.json`;
+            try {
+              const object = await env.RAW_BROKSUM.get(key);
+              if (!object) return { dateStr, data: null };
+              const fullOuter = await object.json();
+              return { dateStr, data: fullOuter?.data || null };
+            } catch (e) {
+              return { dateStr, data: null };
             }
+          })
+        );
+
+        // Process each day's data
+        for (let dayIdx = 0; dayIdx < dateList.length; dayIdx++) {
+          const r = bdR2Results[dayIdx];
+          if (!r.data) continue;
+
+          let bs = r.data.broker_summary;
+          if (!hasBrokerRows(bs)) continue;
 
             // Process each broker on this day
             const dayBrokerNet = {}; // code -> net
@@ -5048,7 +5075,6 @@ export default {
                 info.dailyNets.push(0);
               }
             }
-          } catch (e) { /* skip date */ }
         }
 
         // 3. Select top brokers by abs(total net) — ranked globally, not per-category

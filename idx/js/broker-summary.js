@@ -5021,7 +5021,7 @@ async function runAIAnalysis(forceRefresh = false) {
     analysisContent.innerHTML = `
         <div class="text-center py-4">
             <div class="spinner-border text-warning" role="status"></div>
-            <p class="small text-muted mt-2">AI sedang mengambil screenshot & menganalisis...<br>Backend akan mengambil 5 screenshot otomatis.<br>Bisa memakan waktu 30-60 detik.</p>
+            <p class="small text-muted mt-2">AI sedang menganalisis...<br>Bisa memakan waktu 30-60 detik.</p>
         </div>
     `;
     modal.show();
