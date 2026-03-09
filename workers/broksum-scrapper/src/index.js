@@ -915,8 +915,9 @@ export default {
                             const key = `BYBROKER_${code}/${by}/${bm}/${bd}.json`;
                             try {
                                 const h = await env.RAW_BROKSUM.head(key);
-                                if (!h) {
-                                    baMissingJobs.push({ body: { type: "broker_activity", broker: code, date: baDate, overwrite: false, attempt: 0 } });
+                                // Treat missing OR suspiciously small files (empty scrape: breadth=0) as needing re-scrape
+                                if (!h || (h.size && h.size < 200)) {
+                                    baMissingJobs.push({ body: { type: "broker_activity", broker: code, date: baDate, overwrite: !h ? false : true, attempt: 0 } });
                                 }
                             } catch { 
                                 baMissingJobs.push({ body: { type: "broker_activity", broker: code, date: baDate, overwrite: false, attempt: 0 } });
@@ -1809,9 +1810,18 @@ export default {
                     const resultData = await result.json();
 
                     if (resultData.ok) {
-                        console.log(`[Queue:BA] ✅ ${broker}/${date} scraped (breadth: ${resultData.breadth})`);
-                        await this.updateBrokerActivityStatus(env, date, { success: true, broker });
-                        message.ack();
+                        // Treat breadth=0 (empty scrape) as a soft failure — retry if attempts remain
+                        if ((resultData.breadth || 0) === 0 && attempt < 2) {
+                            console.warn(`[Queue:BA] ⚠️ ${broker}/${date} empty (breadth=0), retrying (attempt ${attempt + 1})`);
+                            await env.SSSAHAM_QUEUE.send({
+                                type: "broker_activity", broker, date, overwrite, attempt: attempt + 1
+                            });
+                            message.ack();
+                        } else {
+                            console.log(`[Queue:BA] ✅ ${broker}/${date} scraped (breadth: ${resultData.breadth})`);
+                            await this.updateBrokerActivityStatus(env, date, { success: true, broker });
+                            message.ack();
+                        }
                     } else {
                         console.warn(`[Queue:BA] ❌ ${broker}/${date} failed: ${resultData.error}`);
                         if (attempt >= 2) {
@@ -2263,15 +2273,20 @@ export default {
 
             if (debug) output.debug_logs = debugLogs;
 
-            // Save to R2
+            // Save to R2 (only if we have actual stock data)
             if (save) {
-                const [sy, sm, sd] = date.split("-");
-                const r2Key = `BYBROKER_${broker}/${sy}/${sm.padStart(2, "0")}/${sd.padStart(2, "0")}.json`;
-                await env.RAW_BROKSUM.put(r2Key, JSON.stringify(output), {
-                    httpMetadata: { contentType: "application/json" }
-                });
-                output.saved_key = r2Key;
-                log(`Saved to R2: ${r2Key}`);
+                if (stocks.length === 0) {
+                    log(`Skipping R2 save: no stocks for ${broker}/${date} (empty scrape)`);
+                    output._skipped_save = true;
+                } else {
+                    const [sy, sm, sd] = date.split("-");
+                    const r2Key = `BYBROKER_${broker}/${sy}/${sm.padStart(2, "0")}/${sd.padStart(2, "0")}.json`;
+                    await env.RAW_BROKSUM.put(r2Key, JSON.stringify(output), {
+                        httpMetadata: { contentType: "application/json" }
+                    });
+                    output.saved_key = r2Key;
+                    log(`Saved to R2: ${r2Key}`);
+                }
             }
 
             return new Response(JSON.stringify(output), {

@@ -39,7 +39,7 @@ let apiData = null;
 let trailingChart = null;
 let momentumChart = null;
 let tableSortKey = 'total_net';
-let tableSortDir = -1;
+let tableSortDir = 1;
 let focusStock = '';  // From ?stock= param — scroll+highlight this stock in the table
 
 // Filters — persisted to URL params
@@ -333,7 +333,7 @@ $(document).ready(async function () {
     $('#holdings-table thead th[data-sort]').on('click', function () {
         const key = $(this).data('sort');
         if (tableSortKey === key) tableSortDir *= -1;
-        else { tableSortKey = key; tableSortDir = -1; }
+        else { tableSortKey = key; tableSortDir = 1; }
         renderCharts();
         renderTable();
     });
@@ -579,7 +579,6 @@ function getTopStocks(n) {
     enriched.sort((a, b) => {
         let va = a[tableSortKey], vb = b[tableSortKey];
         if (tableSortKey === 'stock_code') return tableSortDir * va.localeCompare(vb);
-        if (tableSortKey === 'total_net') return tableSortDir * (Math.abs(vb) - Math.abs(va)) || (vb - va);
         return tableSortDir * ((vb || 0) - (va || 0));
     });
 

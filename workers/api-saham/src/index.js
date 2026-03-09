@@ -7084,12 +7084,19 @@ export default {
         const broker = (url.searchParams.get("broker") || "").toUpperCase();
         const days = Math.max(1, Math.min(20, parseInt(url.searchParams.get("days")) || 1));
         const wibNow = new Date(Date.now() + 7 * 3600000);
+        const wibHour = wibNow.getUTCHours();
         const tradingDays = [];
         let d = new Date(wibNow); d.setUTCHours(0, 0, 0, 0);
+        // Skip today if before 17:00 WIB (scraper hasn't run yet)
+        if (wibHour < 17) {
+          d.setUTCDate(d.getUTCDate() - 1);
+        }
         let checked = 0;
         while (tradingDays.length < days && checked < days * 3) {
           const dow = d.getUTCDay();
-          if (dow !== 0 && dow !== 6) tradingDays.push(d.toISOString().slice(0, 10));
+          if (dow !== 0 && dow !== 6 && !IDX_HOLIDAYS.has(d.toISOString().slice(0, 10))) {
+            tradingDays.push(d.toISOString().slice(0, 10));
+          }
           d.setUTCDate(d.getUTCDate() - 1);
           checked++;
         }
@@ -7256,8 +7263,13 @@ export default {
 
         // Build trading-day list (newest first)
         const wibNow = new Date(Date.now() + 7 * 3600000);
+        const wibHourT = wibNow.getUTCHours();
         const tradingDays = [];
         let d = new Date(wibNow); d.setUTCHours(0, 0, 0, 0);
+        // Skip today if before 17:00 WIB (scraper hasn't run yet)
+        if (wibHourT < 17) {
+          d.setUTCDate(d.getUTCDate() - 1);
+        }
         let checked = 0;
         while (tradingDays.length < days && checked < days * 3) {
           const dow = d.getUTCDay();
