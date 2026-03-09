@@ -82,7 +82,7 @@ function json(data, status = 200) {
 async function captureScreenshot(browser, { url, selector, waitFor, clickBefore }, timeoutMs = 30000) {
   const page = await browser.newPage();
   try {
-    await page.setViewport({ width: 1440, height: 900, deviceScaleFactor: 2 });
+    await page.setViewport({ width: 1440, height: 900, deviceScaleFactor: 1 });
 
     // Disable animations for instant rendering
     await page.evaluateOnNewDocument(() => {
@@ -156,7 +156,7 @@ async function captureBatch(browser, targets, date, symbol, env) {
   for (const [url, urlTargets] of byUrl) {
     const page = await browser.newPage();
     try {
-      await page.setViewport({ width: 1440, height: 900, deviceScaleFactor: 2 });
+      await page.setViewport({ width: 1440, height: 900, deviceScaleFactor: 1 });
       console.log(`[Screenshot] Navigating to ${url}`);
 
       // Disable all animations/transitions so fadeIn() etc. complete instantly
