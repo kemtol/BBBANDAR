@@ -5471,12 +5471,48 @@ export default {
           } catch (_) { }
         }
 
-        // --- Step 1: Capture screenshots via backend Browser Rendering service
+        // --- Step 1: Obtain screenshots — check R2 cache first, then Browser Rendering
         let aggregatedKeys = [];
         let screenshotSource = "none";
 
-        // Try backend screenshot service first
-        if (env.AI_SCREENSHOT_SERVICE) {
+        // Expected screenshot labels (must match ai-screenshot-service targets)
+        const SCREENSHOT_LABELS = [
+          "smartmoney-chart", "broker-flow-chart", "zscore-horizon",
+          "broker-table", "intraday-footprint"
+        ];
+        const SCREENSHOT_PREFIX = `ai-screenshots/${normalizedSymbol}/${today}_`;
+        const MIN_SCREENSHOT_SIZE = 5000; // bytes — skip tiny/placeholder images
+        const SCREENSHOT_MAX_AGE_MS = 12 * 60 * 60 * 1000; // 12 hours
+
+        // 1a. Check if screenshots already exist in R2 (fast — avoids 60-90s Browser Rendering)
+        // Note: forceRefresh only applies to AI analysis cache, NOT screenshot assets
+        {
+          try {
+            const headChecks = SCREENSHOT_LABELS.map(async (label) => {
+              const key = `${SCREENSHOT_PREFIX}${label}.png`;
+              const head = await env.SSSAHAM_EMITEN.head(key);
+              if (!head || head.size < MIN_SCREENSHOT_SIZE) return null;
+              // Check freshness via uploaded timestamp
+              const uploadedAt = head.uploaded ? head.uploaded.getTime() : 0;
+              const age = Date.now() - uploadedAt;
+              if (age > SCREENSHOT_MAX_AGE_MS) return null; // stale
+              return { key, label, normalizedLabel: label.toLowerCase(), size: head.size };
+            });
+            const existing = (await Promise.all(headChecks)).filter(Boolean);
+            if (existing.length >= 3) {
+              aggregatedKeys = existing;
+              screenshotSource = "r2-cached";
+              console.log(`[AI] R2 cache HIT: ${existing.length}/${SCREENSHOT_LABELS.length} screenshots for ${normalizedSymbol} (${existing.map(e => e.label).join(', ')})`);
+            } else {
+              console.log(`[AI] R2 cache: only ${existing.length} valid screenshots — need fresh capture`);
+            }
+          } catch (r2Err) {
+            console.warn(`[AI] R2 screenshot cache check failed: ${r2Err.message}`);
+          }
+        }
+
+        // 1b. Capture via backend Browser Rendering only if R2 cache miss
+        if (aggregatedKeys.length === 0 && env.AI_SCREENSHOT_SERVICE) {
           try {
             console.log(`[AI] Triggering backend screenshot batch for ${normalizedSymbol}...`);
             const captureResp = await env.AI_SCREENSHOT_SERVICE.fetch(
@@ -5504,7 +5540,7 @@ export default {
           }
         }
 
-        // Fallback: use client-provided image_keys
+        // 1c. Fallback: use client-provided image_keys
         if (aggregatedKeys.length === 0 && Array.isArray(image_keys) && image_keys.length > 0) {
           console.log(`[AI] Falling back to client-provided screenshots`);
           const aggregatedMap = new Map();
@@ -5523,21 +5559,22 @@ export default {
           return json({ ok: false, error: "No screenshots available — backend capture failed and no client images provided" }, 400);
         }
 
-        // --- validate screenshot existence (HEAD)
-        const validatedKeys = [];
-        for (const ik of aggregatedKeys) {
-          try {
-            const head = await env.SSSAHAM_EMITEN.head(ik.key);
-            if (head) {
-              validatedKeys.push(ik);
-            } else {
+        // --- validate screenshot existence (HEAD) — skip for r2-cached (already validated)
+        if (screenshotSource !== "r2-cached") {
+          const validatedKeys = [];
+          const headPromises = aggregatedKeys.map(async (ik) => {
+            try {
+              const head = await env.SSSAHAM_EMITEN.head(ik.key);
+              if (head) return ik;
               console.warn(`[AI] Screenshot not found in R2: ${ik.key}`);
+              return null;
+            } catch (headErr) {
+              console.warn(`[AI] HEAD failed for ${ik.key}:`, headErr.message);
+              return null;
             }
-          } catch (headErr) {
-            console.warn(`[AI] HEAD failed for ${ik.key}:`, headErr.message);
-          }
+          });
+          aggregatedKeys = (await Promise.all(headPromises)).filter(Boolean);
         }
-        aggregatedKeys = validatedKeys;
 
         if (aggregatedKeys.length === 0) {
           return json({ ok: false, error: "No valid screenshots found in storage" }, 400);
@@ -5692,38 +5729,42 @@ export default {
           }
 
           const CLAUDE_URL = "https://api.anthropic.com/v1/messages";
-          const SCREENSHOT_BASE = "https://api-saham.mkemalw.workers.dev/ai/screenshot";
 
-          // Build image blocks using URL references (much smaller payload vs base64)
-          // Claude API supports type: "url" — Anthropic servers fetch the image directly
-          // This saves ~1.3MB of base64 data from the request body for 5 screenshots
-          const imageBlocks = [];
-          for (const ik of aggregatedKeys) {
-            // Quick HEAD check to verify the image exists and isn't a placeholder
+          // Read images from R2 directly and send as base64 inline
+          // URL-based delivery is unreliable — Claude servers may timeout fetching our URLs
+          // R2 reads from within the Worker are fast (~5ms each) and in same data center
+          const imageReadPromises = aggregatedKeys.map(async (ik) => {
             try {
-              const obj = await env.SSSAHAM_EMITEN.head(ik.key);
+              const obj = await env.SSSAHAM_EMITEN.get(ik.key);
               if (!obj) {
-                console.warn(`[Claude] Screenshot missing in R2: ${ik.key}, skipping`);
-                continue;
+                console.warn(`[Claude] Missing in R2: ${ik.key}`);
+                return null;
               }
-              if (obj.size < 5000) {
-                console.warn(`[Claude] Image ${ik.label} too small (${obj.size} bytes) — placeholder, skipping`);
-                continue;
+              const buf = await obj.arrayBuffer();
+              if (buf.byteLength < 5000) {
+                console.warn(`[Claude] Image ${ik.label} too small (${buf.byteLength} bytes)`);
+                return null;
               }
-              const imgUrl = `${SCREENSHOT_BASE}?key=${encodeURIComponent(ik.key)}`;
-              console.log(`[Claude] Image ${ik.label}: ${(obj.size / 1024).toFixed(0)} KB via URL`);
-              imageBlocks.push({
+              // Convert to base64 (Cloudflare Workers support btoa on binary strings)
+              const bytes = new Uint8Array(buf);
+              let binary = "";
+              for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+              const b64 = btoa(binary);
+              console.log(`[Claude] Image ${ik.label}: ${(buf.byteLength / 1024).toFixed(0)} KB via base64`);
+              return {
                 type: "image",
-                source: { type: "url", url: imgUrl }
-              });
+                source: { type: "base64", media_type: "image/png", data: b64 }
+              };
             } catch (e) {
-              console.warn(`[Claude] Failed to check ${ik.key}: ${e.message}`);
+              console.warn(`[Claude] Failed to read ${ik.key}: ${e.message}`);
+              return null;
             }
-          }
+          });
+          const imageBlocks = (await Promise.all(imageReadPromises)).filter(Boolean);
 
           // If no valid images, fall back to text-only analysis
           const hasImages = imageBlocks.length > 0;
-          console.log(`[Claude] ${hasImages ? imageBlocks.length + ' images via URL' : 'no valid images — text-only mode'}`);
+          console.log(`[Claude] ${hasImages ? imageBlocks.length + ' images via base64' : 'no valid images — text-only mode'}`);
 
           const userContent = hasImages
             ? [
