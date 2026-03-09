@@ -4130,7 +4130,7 @@ function renderBrokerTable(summary, isNet = true) {
             const avg = b.bvol ? Math.round(b.bval / b.bvol) : 0;
             const barHtml = `<div style="position: absolute; top: 0; bottom: 0; right: 0; width: ${percentage}%; background-color: rgba(13, 202, 240, 0.25); border-right: ${barWidth}px solid #0aa2c0; z-index: 0;"></div>`;
 
-            return `<tr style="${rowStyle}">
+            return `<tr style="${rowStyle} cursor: pointer;" onclick="window.location.href='/idx/broker/detail.html?kode=${b.code}&stock=${kodeParam}'" title="View ${b.code} broker detail">
                             <td class="text-end fw-bold d-none d-md-table-cell" style="${STYLE_BUY_TEXT}">${fmt(b.net)}</td>
                             <td class="text-end d-none d-md-table-cell text-muted">${fmt(avg)}</td>
                             <td class="text-end d-none d-md-table-cell" style="${STYLE_BUY_TEXT}">${fmt(b.bval)}</td>
@@ -4166,7 +4166,7 @@ function renderBrokerTable(summary, isNet = true) {
             const avg = s.svol ? Math.round(s.sval / s.svol) : 0;
             const barHtml = `<div style="position: absolute; top: 0; bottom: 0; left: 0; width: ${percentage}%; background-color: rgba(253, 126, 20, 0.25); border-left: ${barWidth}px solid #c66210; z-index: 0;"></div>`;
 
-            return `<tr style="${rowStyle}">
+            return `<tr style="${rowStyle} cursor: pointer;" onclick="window.location.href='/idx/broker/detail.html?kode=${s.code}&stock=${kodeParam}'" title="View ${s.code} broker detail">
                             <td style="position: relative; padding-left: 8px;">
                                 ${barHtml}
                                 <span class="fw-bold ${getTextClass(s.code)} d-none d-md-inline" style="position: relative; z-index: 2;">${getBrokerLabel(s.code)}</span>
@@ -4208,7 +4208,7 @@ function renderBrokerTable(summary, isNet = true) {
             const rowStyle = `background: linear-gradient(90deg, rgba(13, 202, 240, 0.25) ${percentage}%, transparent ${percentage}%) !important; vertical-align: middle; height: 35px;`;
             const borderStyle = `border-left: ${barWidth}px solid #0aa2c0; padding-left: 8px;`;
 
-            return `<tr style="${rowStyle}">
+            return `<tr style="${rowStyle} cursor: pointer;" onclick="window.location.href='/idx/broker/detail.html?kode=${b.code}&stock=${kodeParam}'" title="View ${b.code} broker detail">
                             <td style="${borderStyle}"><span class="fw-bold ${getTextClass(b.code)}">${getBrokerLabel(b.code)}</span></td>
                             <td class="text-end fw-bold" style="${STYLE_BUY_TEXT}">${fmt(buyVal)}</td>
                             <td class="text-end text-muted d-none d-md-table-cell">${fmt(avg)}</td>
@@ -4236,7 +4236,7 @@ function renderBrokerTable(summary, isNet = true) {
             const rowStyle = `background: linear-gradient(90deg, rgba(253, 126, 20, 0.25) ${percentage}%, transparent ${percentage}%) !important; vertical-align: middle; height: 35px;`;
             const borderStyle = `border-left: ${barWidth}px solid #c66210; padding-left: 8px;`;
 
-            return `<tr style="${rowStyle}">
+            return `<tr style="${rowStyle} cursor: pointer;" onclick="window.location.href='/idx/broker/detail.html?kode=${s.code}&stock=${kodeParam}'" title="View ${s.code} broker detail">
                             <td style="${borderStyle}"><span class="fw-bold ${getTextClass(s.code)}">${getBrokerLabel(s.code)}</span></td>
                             <td class="text-end fw-bold" style="${STYLE_SELL_TEXT}">${fmt(sellVal)}</td>
                             <td class="text-end text-muted d-none d-md-table-cell">${fmt(avg)}</td>

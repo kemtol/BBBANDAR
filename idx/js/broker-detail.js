@@ -40,6 +40,7 @@ let trailingChart = null;
 let momentumChart = null;
 let tableSortKey = 'total_net';
 let tableSortDir = -1;
+let focusStock = '';  // From ?stock= param — scroll+highlight this stock in the table
 
 // Filters — persisted to URL params
 const activeFilters = {
@@ -199,6 +200,7 @@ function saveFiltersToURL() {
     url.searchParams.set('kode', brokerCode);
     url.searchParams.set('days', currentDays);
     url.searchParams.set('topn', currentTopN);
+    if (focusStock) url.searchParams.set('stock', focusStock);
 
     // Enum filters
     ['net', 'buyval', 'sellval', 'streak', 'ams', 'days'].forEach(k => {
@@ -249,6 +251,7 @@ $(document).ready(async function () {
     // Restore persisted state
     if (params.get('days')) currentDays = Math.max(1, Math.min(30, parseInt(params.get('days')) || 10));
     if (params.get('topn')) currentTopN = parseInt(params.get('topn')) || 10;
+    focusStock = (params.get('stock') || '').toUpperCase();
     restoreFiltersFromURL(params);
 
     // Set header
@@ -801,7 +804,8 @@ function renderTable() {
 
     let html = '';
     enriched.forEach((s, i) => {
-        html += `<tr>
+        const isFocused = focusStock && s.stock_code === focusStock;
+        html += `<tr data-stock="${s.stock_code}" ${isFocused ? 'class="table-active"' : ''}>
             <td class="text-center">${i + 1}</td>
             <td class="fw-semibold">
                 ${stockLogo(s.stock_code)}
@@ -820,4 +824,22 @@ function renderTable() {
 
     $('#tbody-holdings').html(html);
     $('#holdings-count').text(`${enriched.length} stocks`);
+
+    // Auto-scroll to focused stock (from ?stock= param)
+    if (focusStock) {
+        const $focusRow = $(`#tbody-holdings tr[data-stock="${focusStock}"]`);
+        if ($focusRow.length) {
+            setTimeout(() => {
+                $focusRow[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
+                // Pulse animation
+                $focusRow.css({
+                    'animation': 'focusPulse 2s ease-out',
+                    'box-shadow': '0 0 0 2px rgba(13, 202, 240, 0.6)'
+                });
+                setTimeout(() => {
+                    $focusRow.css({ 'animation': '', 'box-shadow': '' });
+                }, 2500);
+            }, 300);
+        }
+    }
 }

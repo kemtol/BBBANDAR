@@ -192,6 +192,15 @@
             vertical-align: middle;
         }
 
+        /* Focus pulse for stock row highlight (from ?stock= param) */
+        @keyframes focusPulse {
+            0%   { background-color: rgba(13, 202, 240, 0.35); }
+            100% { background-color: transparent; }
+        }
+        tr.table-active td {
+            background-color: rgba(13, 202, 240, 0.15) !important;
+        }
+
         /* Pull indicator */
         #pull-indicator {
             position: fixed;
@@ -706,7 +715,7 @@
     <script src="../js/component.js?v=73"></script>
 
     <!-- BROKER DETAIL LOGIC -->
-    <script src="../js/broker-detail.js?v=7"></script>
+    <script src="../js/broker-detail.js?v=8"></script>
 
     <script defer
         src="https://static.cloudflareinsights.com/beacon.min.js/vcd15cbe7772f49c399c6a5babf22c1241717689176015"
