@@ -17,8 +17,8 @@
     <style>
         body {
             font-family: 'Inter', sans-serif;
-            background-color: #f8f9fa;
-            color: #343a40;
+            background-color: #0a0a12;
+            color: #c8c8d4;
         }
 
         .container {
@@ -47,20 +47,22 @@
 
         .nav-link.active,
         .nav-link:hover {
-            color: #0d6efd;
-            border-bottom-color: #0d6efd;
+            color: #a855f7;
+            border-bottom-color: #a855f7;
         }
 
         .card {
-            background-color: #ffffff;
+            background-color: rgba(255,255,255,0.04);
+            border: 1px solid rgba(255,255,255,0.08);
             border-radius: 0.75rem;
-            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
             transition: transform 0.3s ease, box-shadow 0.3s ease;
         }
 
         .card:hover {
             transform: translateY(-5px);
-            box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -2px rgb(0 0 0 / 0.1);
+            box-shadow: 0 10px 20px rgba(0,0,0,0.4);
+            border-color: rgba(168,85,247,0.2);
         }
 
         .modal-overlay {
@@ -69,39 +71,94 @@
 
         .modal-content {
             transition: transform 0.3s ease;
+            background-color: #1a1a24 !important;
+            color: #c8c8d4 !important;
         }
 
         .workflow-node {
             cursor: pointer;
-            transition: background-color 0.3s ease, transform 0.3s ease;
+            transition: background-color 0.3s ease, transform 0.3s ease, border-color 0.3s ease;
+            background-color: rgba(255,255,255,0.03);
+            border-color: rgba(255,255,255,0.08) !important;
         }
 
         .workflow-node:hover {
             transform: scale(1.03);
-            background-color: #e9ecef;
+            background-color: rgba(168,85,247,0.1);
+            border-color: rgba(168,85,247,0.25) !important;
         }
+
+        /* Dark overrides for Tailwind utility classes */
+        .text-gray-700 { color: #e0e0e8 !important; }
+        .text-gray-800 { color: #f0f0f5 !important; }
+        .text-gray-600 { color: rgba(255,255,255,0.55) !important; }
+        .text-gray-500 { color: rgba(255,255,255,0.45) !important; }
+        .text-gray-400 { color: rgba(255,255,255,0.3) !important; }
+        .text-gray-900 { color: #e0e0e8 !important; }
+        .bg-white { background-color: transparent !important; }
+        .bg-gray-50 { background-color: rgba(255,255,255,0.04) !important; }
+        .border-gray-200 { border-color: rgba(255,255,255,0.08) !important; }
+        .border-gray-300 { border-color: rgba(255,255,255,0.12) !important; }
+        .border-b { border-color: rgba(255,255,255,0.06) !important; }
+        .shadow-lg { box-shadow: 0 8px 24px rgba(0,0,0,0.4) !important; }
+
+        /* Table dark overrides */
+        table { color: #c8c8d4; }
+        thead { background-color: rgba(255,255,255,0.05) !important; }
+        thead th { color: rgba(255,255,255,0.6) !important; }
+        tr.bg-white, tr.bg-gray-50 { background-color: transparent !important; }
+        tr { border-color: rgba(255,255,255,0.06) !important; }
+        td { color: rgba(255,255,255,0.55) !important; }
+        td.font-medium { color: #e0e0e8 !important; }
+        code { color: #c084fc; background: rgba(168,85,247,0.1); padding: 2px 6px; border-radius: 4px; }
+
+        /* Select / form dark */
+        select { background-color: #14141a !important; color: #e0e0e8 !important; border-color: rgba(255,255,255,0.12) !important; }
+
+        /* Modal dark */
+        #modal-title { color: #f0f0f5 !important; }
+        #modal-body { color: rgba(255,255,255,0.6) !important; }
+        #modal-close { color: rgba(255,255,255,0.4) !important; }
+        #modal-close:hover { color: #fff !important; }
+
+        /* model explanation box */
+        #model-explanation { background-color: rgba(255,255,255,0.04) !important; color: rgba(255,255,255,0.55) !important; }
+
+        /* Border blue card */
+        .border-blue-500 { border-color: rgba(99,102,241,0.4) !important; }
+
+        /* Headings & strong text brighter */
+        h2, h3, h4, strong { color: #e8e8f0; }
+        .font-semibold { color: #e0e0e8; }
+
+        /* Green/blue check marks stay visible */
+        .text-green-500 { color: #4ade80 !important; }
+        .text-blue-500 { color: #818cf8 !important; }
+
+        /* list items in cards */
+        li { color: rgba(255,255,255,0.55); }
     </style>
 </head>
 
 <body class="antialiased">
 
-    <main class="bg-white container mx-auto px-4 sm:px-6 lg:px-8 py-8 md:py-12">
+    <main class="container mx-auto px-4 sm:px-6 lg:px-8 py-8 md:py-12" style="background-color: #0a0a12;">
         <section class="text-center">
-            <h2 style="font-family: georgia;" class="text-xl md:text-2xl text-gray-700">Research By</h2>
+            <h2 style="font-family: georgia; color: #f0f0f5;" class="text-xl md:text-2xl">Research By</h2>
             <p class="mt-4 text-lg text-gray-600 max-w-3xl mx-auto">Kami menggunakan forward testing selama hampir 2.5
                 tahun dan research akan terus berlanjut untuk kemajuan qunat financing di Indonesia.</p>
             <div class="grid md:grid-cols-2 items-center width: 85%;margin: auto;">
                 <!-- Kiri -->
                 <div class="d-flex flex-column align-items-center p-4 m-4">
                     <img src="idx/img/rani.jpg" class="mb-2" style="margin: auto;width:20%;border-radius: 50%;">
-                    <strong>Rani Sadiah F</strong>
-                    <div>Analyst</div>
+                    <strong style="color:#f0f0f5;">Rani Sadiah F</strong>
+                    <div style="color:rgba(255,255,255,0.5);">Analyst</div>
                 </div>
                 <!-- Kanan -->
                 <div class="d-flex flex-column align-items-center p-4 m-4">
                     <img src="idx/img/kemla.jpeg" class="mb-2" style="margin: auto;width:20%;;border-radius: 50%">
-                    <strong>Kemal Wiryawan</strong>
-                    <div>Quant Finance SME</div>
+                    <strong style="color:#f0f0f5;">Kemal Wiryawan</strong>
+                    <div style="color:rgba(255,255,255,0.5);">Quant Finance SME</div>
                 </div>
             </div>
         </section>
@@ -141,7 +198,7 @@
                     mentah hingga menjadi rekomendasi yang dapat ditindaklanjuti. Klik pada setiap komponen untuk
                     melihat detailnya.</p>
             </div>
-            <div class="bg-white p-8 rounded-xl shadow-lg">
+            <div class="p-8 rounded-xl" style="background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06);">
                 <div class="grid grid-cols-1 md:grid-cols-5 gap-4 items-center text-center">
                     <div class="workflow-node p-4 rounded-lg border border-gray-200" data-id="data-ingestion">
                         <div class="text-3xl mb-2">📥</div>
@@ -313,10 +370,10 @@
 
     <div id="modal"
         class="modal-overlay fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 hidden opacity-0 z-50">
-        <div class="modal-content bg-white rounded-lg shadow-xl w-full max-w-2xl p-6 transform scale-95">
+        <div class="modal-content rounded-lg shadow-xl w-full max-w-2xl p-6 transform scale-95" style="background:#1a1a24; border:1px solid rgba(255,255,255,0.08);">
             <div class="flex justify-between items-center mb-4">
-                <h3 id="modal-title" class="text-xl font-bold text-gray-800">Detail Komponen</h3>
-                <button id="modal-close" class="text-gray-500 hover:text-gray-800">&times;</button>
+                <h3 id="modal-title" class="text-xl font-bold" style="color:#f0f0f5;">Detail Komponen</h3>
+                <button id="modal-close" style="color:rgba(255,255,255,0.4); font-size:24px; cursor:pointer; background:none; border:none;">&times;</button>
             </div>
             <div id="modal-body" class="text-gray-600">
             </div>
@@ -412,6 +469,10 @@
                 }
             });
 
+            // Dark theme for Chart.js
+            Chart.defaults.color = 'rgba(255,255,255,0.6)';
+            Chart.defaults.borderColor = 'rgba(255,255,255,0.08)';
+
             const componentsData = {
                 labels: ['Akuisisi Data', 'Orkestrasi', 'Model Prediktif', 'Layanan Rekomendasi', 'Manajemen Data'],
                 datasets: [{
@@ -444,18 +505,22 @@
                     maintainAspectRatio: false,
                     scales: {
                         r: {
+                            grid: { color: 'rgba(255,255,255,0.06)' },
+                            ticks: { color: 'rgba(255,255,255,0.4)', backdropColor: 'transparent' },
                             pointLabels: {
                                 display: true,
                                 centerPointLabels: true,
                                 font: {
                                     size: 14
-                                }
+                                },
+                                color: 'rgba(255,255,255,0.6)'
                             }
                         }
                     },
                     plugins: {
                         legend: {
                             position: 'top',
+                            labels: { color: 'rgba(255,255,255,0.6)' }
                         },
                         tooltip: {
                             callbacks: {
@@ -506,7 +571,8 @@
                         },
                         title: {
                             display: true,
-                            text: 'Distribusi Probabilitas Keadaan Berikutnya'
+                            text: 'Distribusi Probabilitas Keadaan Berikutnya',
+                            color: 'rgba(255,255,255,0.7)'
                         },
                         tooltip: {
                             callbacks: {

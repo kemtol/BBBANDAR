@@ -1,10 +1,10 @@
 <!DOCTYPE html>
-<html lang="id" data-theme="dark">
+<html lang="id">
 
 <head>
 	<meta charset="UTF-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1.0">
-	<meta name="theme-color" content="#0a0a12" />
+	<meta name="theme-color" content="#ffffff" />
 	<!-- keep a single manifest file reference -->
 	<link rel="manifest" href="/site.webmanifest">
 	<link rel="apple-touch-icon" sizes="180x180" href="idx/img/apple-touch-icon.png">
@@ -37,784 +37,453 @@
 	<!-- App CSS -->
 	<link rel="stylesheet" href="theme.css?v=1.7.1">
 	<link rel="stylesheet" href="style.css?v=1.7.1">
+</head>
 <style>
-	/* ===== DIMENSION-INSPIRED DARK LANDING ===== */
-	body.dim-landing {
-		background: #0a0a12 !important;
-		color: #e0e0e8 !important;
-		overflow-x: hidden;
-		font-size: 0.9rem;
+	.hero-bg {
+		background: linear-gradient(135deg, #463CFF 0%, #7B68EE 50%, #463CFF 100%);
+		background-size: 200% 200%;
+		width: 100%;
+		height: 75vh;
+		position: absolute;
+		top: 0;
+		left: 0;
+		clip-path: polygon(0 0, 100% 0, 100% 80%, 0 100%);
+		animation: waveGradient 8s ease-in-out infinite;
 	}
 
-	/* ---------- NAVBAR ---------- */
-	.dim-navbar {
+	@keyframes waveGradient {
+		0% {
+			background-position: 0% 50%;
+		}
+
+		50% {
+			background-position: 100% 50%;
+		}
+
+		100% {
+			background-position: 0% 50%;
+		}
+	}
+
+	.hero-bg .dot {
+		width: 200px;
+		height: 200px;
+		position: absolute;
+		background: cyan;
+		top: 59px;
+		left: 65%;
+		transform: translateX(-50%);
+		border-radius: 999px;
+		animation: wobble 15s ease-in-out infinite;
+	}
+
+	@keyframes wobble {
+
+		0%,
+		100% {
+			transform: translateX(-50%) translateY(0);
+		}
+
+		25% {
+			transform: translateX(-52%) translateY(-4px);
+		}
+
+		50% {
+			transform: translateX(-48%) translateY(2px);
+		}
+
+		75% {
+			transform: translateX(-50%) translateY(-2px);
+		}
+	}
+
+	/* Wobble animation for feature images */
+	.wobble-img {
+		animation: wobbleImg 8s ease-in-out infinite;
+	}
+
+	@keyframes wobbleImg {
+
+		0%,
+		100% {
+			transform: translateY(0);
+		}
+
+		25% {
+			transform: translateY(-3px);
+		}
+
+		50% {
+			transform: translateY(2px);
+		}
+
+		75% {
+			transform: translateY(-2px);
+		}
+	}
+
+	.hero-title {
+		position: absolute;
+		display: block;
+		top: 3rem !important;
+		width: 700px;
+		max-width: 90%;
+		text-align: center;
+		left: 50%;
+		transform: translateX(-50%);
+		font-weight: 500;
+		font-variant: small-caps;
+		z-index: 100;
+		font-size: 1.85rem;
+		color: #fff;
+	}
+
+	.hero-title .highlight {
+		color: #fff;
+	}
+
+	.hero-title .highlight strong {
+		color: royalblue;
+		background: yellow;
+	}
+
+	.content-card {
+		position: relative;
+		margin-top: 13rem !important;
+		overflow: hidden;
+		color: #fff;
+		z-index: 5;
+	}
+
+	.content-card h3 {
+		font-weight: 900;
+	}
+
+	.divider {
+		border: 1px solid #ccc;
+		height: 1px;
+		width: 100%;
+	}
+
+	.about-embed {
+		box-shadow: none !important;
+		border-radius: 30px;
+		overflow: hidden;
+	}
+
+	.about-embed iframe {
+		box-shadow: none !important;
+		width: 100%;
+		min-height: 400px;
+		border: none;
+		overflow: hidden;
+	}
+
+	.container {
+		max-width: 640px;
+	}
+
+	/* Status Bar */
+	.status-bar {
 		position: sticky;
 		top: 0;
-		z-index: 100;
-		background: rgba(10, 10, 18, 0.85);
-		backdrop-filter: blur(16px);
-		-webkit-backdrop-filter: blur(16px);
-		border-bottom: 1px solid rgba(255,255,255,0.06);
-		padding: 0 24px;
-		height: 56px;
+		z-index: 60;
+		background:linear-gradient(135deg, #463CFF 0%, #7B68EE 50%, #463CFF 100%);
+		padding: 8px 16px;
 		display: flex;
-		align-items: center;
 		justify-content: space-between;
+		align-items: center;
+		height: 40px;
 	}
 
-	.dim-navbar .brand {
-		font-size: 18px;
-		font-weight: 800;
-		color: #fff;
+	.status-bar .brand {
+		font-size: 14px;
+		color: #644fe5;
+		font-weight: 700;
 		text-decoration: none;
-		letter-spacing: -0.02em;
 	}
 
-	.dim-nav-links {
+	.nav-menu {
 		display: flex;
-		gap: 28px;
+		gap: 16px;
 		align-items: center;
 	}
 
-	.dim-nav-links a {
-		color: rgba(255,255,255,0.6);
+	.nav-item {
+		position: relative;
+	}
+
+	.nav-item>a {
+		color: #1f2937;
 		text-decoration: none;
-		font-size: 14px;
-		font-weight: 500;
-		transition: color 0.2s;
+		font-size: 12px;
+		font-weight: 700;
+		cursor: pointer;
+		white-space: nowrap;
 	}
 
-	.dim-nav-links a:hover {
-		color: #fff;
+	.nav-item:hover .dropdown {
+		display: block;
 	}
 
-	.dim-nav-cta {
-		background: #fff !important;
-		color: #0a0a12 !important;
-		border: none !important;
-		border-radius: 8px !important;
-		padding: 7px 18px !important;
-		font-size: 13px !important;
-		font-weight: 700 !important;
-		transition: opacity 0.2s;
+	.dropdown {
+		display: none;
+		position: absolute;
+		top: 100%;
+		right: 0;
+		background: #fff;
+		border-radius: 8px;
+		box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+		min-width: 180px;
+		padding: 8px 0;
+		z-index: 100;
 	}
 
-	.dim-nav-cta:hover {
-		opacity: 0.85;
+	.dropdown a {
+		display: block;
+		padding: 8px 16px;
+		color: #374151;
+		text-decoration: none;
+		font-size: 13px;
+		font-weight: 600;
+		text-align: center;
 	}
 
-	/* Burger */
-	.dim-burger {
+	.dropdown a:hover {
+		background: #f3f4f6;
+	}
+
+	/* Burger Menu */
+	.burger-btn {
 		display: none;
 		background: none;
 		border: none;
-		color: #fff;
-		font-size: 20px;
+		font-size: 18px;
+		color: #374151;
 		cursor: pointer;
+		padding: 4px 8px;
 	}
 
-	@media (max-width: 768px) {
-		.dim-nav-links { display: none; }
-		.dim-burger { display: block; }
-	}
-
-	/* Mobile menu */
-	.dim-mobile-menu {
+	.mobile-menu {
 		display: none;
 		position: fixed;
-		top: 56px;
+		top: 40px;
 		right: 0;
-		width: 260px;
-		height: calc(100vh - 56px);
-		background: #111119;
-		border-left: 1px solid rgba(255,255,255,0.06);
-		z-index: 200;
+		width: 250px;
+		height: calc(100vh - 40px);
+		background: #fff;
+		box-shadow: -4px 0 12px rgba(0, 0, 0, 0.1);
+		z-index: 100;
 		padding: 16px 0;
 		overflow-y: auto;
 	}
 
-	.dim-mobile-menu.active { display: block; }
-
-	.dim-mobile-menu .menu-section {
-		padding: 10px 20px;
-		font-size: 11px;
-		font-weight: 700;
-		color: rgba(255,255,255,0.35);
-		text-transform: uppercase;
-		letter-spacing: 0.08em;
+	.mobile-menu.active {
+		display: block;
 	}
 
-	.dim-mobile-menu a {
+	.mobile-menu .menu-section {
+		padding: 8px 16px;
+		font-weight: 700;
+		color: #1f2937;
+		font-size: 13px;
+		border-bottom: 1px solid #e5e7eb;
+	}
+
+	.mobile-menu a {
 		display: block;
-		padding: 12px 20px;
-		color: rgba(255,255,255,0.7);
+		padding: 12px 24px;
+		color: #374151;
 		text-decoration: none;
 		font-size: 14px;
-		font-weight: 500;
-		transition: background 0.15s;
 	}
 
-	.dim-mobile-menu a:hover { background: rgba(255,255,255,0.04); }
+	.mobile-menu a:hover {
+		background: #f3f4f6;
+	}
 
-	.dim-overlay {
+	.menu-overlay {
 		display: none;
 		position: fixed;
-		inset: 0;
-		top: 56px;
-		background: rgba(0,0,0,0.5);
-		z-index: 199;
-	}
-
-	.dim-overlay.active { display: block; }
-
-	/* ---------- HERO ---------- */
-	.dim-hero {
-		position: relative;
-		text-align: center;
-		padding: 80px 20px 40px;
-		overflow: visible;
-	}
-
-	/* Glow orb behind hero */
-	.dim-hero::before {
-		content: '';
-		position: absolute;
-		width: 600px;
-		height: 600px;
-		top: -100px;
-		left: 50%;
-		transform: translateX(-50%);
-		background: radial-gradient(circle, rgba(168, 85, 247, 0.35) 0%, rgba(236, 72, 153, 0.18) 40%, transparent 70%);
-		border-radius: 50%;
-		filter: blur(80px);
-		pointer-events: none;
-		z-index: 0;
-		animation: glowPulse 6s ease-in-out infinite;
-	}
-
-	@keyframes glowPulse {
-		0%, 100% { opacity: 0.7; transform: translateX(-50%) scale(1); }
-		50% { opacity: 1; transform: translateX(-50%) scale(1.08); }
-	}
-
-	.dim-badge {
-		display: inline-block;
-		background: rgba(168, 85, 247, 0.15);
-		border: 1px solid rgba(168, 85, 247, 0.3);
-		color: #c084fc;
-		font-size: 13px;
-		font-weight: 600;
-		padding: 6px 18px;
-		border-radius: 999px;
-		margin-bottom: 28px;
-		position: relative;
-		z-index: 1;
-	}
-
-	.dim-hero h1 {
-		position: relative;
-		z-index: 1;
-		font-size: clamp(2.2rem, 5.5vw, 4rem);
-		font-weight: 800;
-		line-height: 1.1;
-		letter-spacing: -0.03em;
-		color: #fff;
-		margin-bottom: 20px;
-	}
-
-	.dim-hero h1 .gradient-text {
-		background: linear-gradient(135deg, #a855f7 0%, #ec4899 50%, #f97316 100%);
-		-webkit-background-clip: text;
-		-webkit-text-fill-color: transparent;
-		background-clip: text;
-	}
-
-	.dim-hero .subtitle {
-		position: relative;
-		z-index: 1;
-		font-size: clamp(1rem, 2vw, 1.15rem);
-		color: rgba(255,255,255,0.55);
-		max-width: 520px;
-		margin: 0 auto 36px;
-		line-height: 1.6;
-	}
-
-	/* CTA form */
-	.dim-cta-row {
-		position: relative;
-		z-index: 1;
-		display: flex;
-		gap: 10px;
-		max-width: 440px;
-		margin: 0 auto;
-		justify-content: center;
-	}
-
-	.dim-cta-row input {
-		flex: 1;
-		background: rgba(255,255,255,0.06);
-		border: 1px solid rgba(255,255,255,0.12);
-		border-radius: 10px;
-		padding: 12px 16px;
-		color: #fff;
-		font-size: 14px;
-		outline: none;
-		transition: border-color 0.2s;
-	}
-
-	.dim-cta-row input::placeholder {
-		color: rgba(255,255,255,0.35);
-	}
-
-	.dim-cta-row input:focus {
-		border-color: rgba(168, 85, 247, 0.5);
-	}
-
-	.dim-phone-wrap:focus-within {
-		border-color: rgba(168, 85, 247, 0.5) !important;
-	}
-
-	.dim-cta-btn {
-		background: linear-gradient(135deg, #a855f7, #ec4899) !important;
-		color: #fff !important;
-		border: none !important;
-		border-radius: 10px !important;
-		padding: 12px 24px !important;
-		font-weight: 700 !important;
-		font-size: 14px !important;
-		white-space: nowrap;
-		transition: opacity 0.2s;
-	}
-
-	.dim-cta-btn:hover { opacity: 0.9; }
-
-	/* ---------- PRODUCT SCREENSHOT ---------- */
-	.dim-screenshot-wrap {
-		position: relative;
-		max-width: 960px;
-		margin: 0 auto;
-		padding: 0 20px 60px;
-	}
-
-	.dim-screenshot-wrap::before {
-		content: '';
-		position: absolute;
-		width: 100%;
-		height: 60%;
-		bottom: 0;
+		top: 40px;
 		left: 0;
-		background: linear-gradient(to top, #0a0a12, transparent);
-		pointer-events: none;
-		z-index: 2;
+		right: 0;
+		bottom: 0;
+		background: rgba(0, 0, 0, 0.3);
+		z-index: 99;
 	}
 
-	.dim-screenshot {
-		width: 100%;
-		border-radius: 16px;
-		border: 1px solid rgba(255,255,255,0.08);
-		box-shadow: 0 32px 80px rgba(0,0,0,0.6), 0 0 60px rgba(168, 85, 247, 0.12);
-		position: relative;
-		z-index: 1;
-	}
-
-	/* ---------- FEATURES SECTION ---------- */
-	.dim-features {
-		padding: 60px 20px 80px;
-		max-width: 960px;
-		margin: 0 auto;
-	}
-
-	.dim-features .section-label {
-		text-align: center;
-		font-size: 12px;
-		font-weight: 700;
-		text-transform: uppercase;
-		letter-spacing: 0.12em;
-		color: #a855f7;
-		margin-bottom: 12px;
-	}
-
-	.dim-features .section-title {
-		text-align: center;
-		font-size: clamp(1.5rem, 3vw, 2.2rem);
-		font-weight: 800;
-		color: #fff;
-		margin-bottom: 48px;
-		letter-spacing: -0.02em;
-	}
-
-	.dim-feature-card {
-		background: rgba(255,255,255,0.03);
-		border: 1px solid rgba(255,255,255,0.06);
-		border-radius: 16px;
-		padding: 0;
-		overflow: hidden;
-		transition: border-color 0.25s, background 0.25s;
-		height: 100%;
-	}
-
-	.dim-feature-card:hover {
-		border-color: rgba(168, 85, 247, 0.25);
-		background: rgba(255,255,255,0.05);
-	}
-
-	.dim-feature-card .card-body {
-		padding: 24px 28px;
-		display: flex;
-		flex-direction: column;
-		justify-content: center;
-	}
-
-	.dim-feature-card .card-img {
-		width: 100%;
-		height: 180px;
-		object-fit: cover;
+	.menu-overlay.active {
 		display: block;
-		opacity: 0.85;
-		transition: opacity 0.3s;
 	}
 
-	.dim-feature-card:hover .card-img {
-		opacity: 1;
-	}
+	/* Responsive - Tablet & Phone */
+	@media (max-width: 768px) {
+		.nav-menu {
+			display: none;
+		}
 
-	.dim-feature-icon {
-		width: 40px;
-		height: 40px;
-		border-radius: 10px;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		font-size: 18px;
-		margin-bottom: 12px;
-	}
-
-	.dim-feature-card h5 {
-		font-size: 16px;
-		font-weight: 700;
-		color: #fff;
-		margin-bottom: 6px;
-	}
-
-	.dim-feature-card p {
-		font-size: 13px;
-		color: rgba(255,255,255,0.5);
-		line-height: 1.55;
-		margin: 0;
-	}
-
-	.dim-feature-card .feature-badge {
-		display: inline-block;
-		font-size: 11px;
-		font-weight: 700;
-		padding: 3px 10px;
-		border-radius: 999px;
-		margin-top: 10px;
-		margin-bottom: 8px;
-	}
-
-	.dim-feature-card .feature-link {
-		display: inline-block;
-		margin-top: 6px;
-		font-size: 13px;
-		font-weight: 600;
-		color: #a855f7;
-		text-decoration: none;
-		transition: color 0.2s;
-	}
-
-	.dim-feature-card .feature-link:hover { color: #c084fc; }
-
-	/* ---------- LOGIN STEPS ---------- */
-	.dim-login-steps {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		gap: 12px;
-		position: relative;
-		z-index: 1;
-	}
-
-	.dim-login-steps .step {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-	}
-
-	.dim-login-steps .step-num {
-		width: 26px;
-		height: 26px;
-		border-radius: 50%;
-		background: rgba(168,85,247,0.15);
-		border: 1px solid rgba(168,85,247,0.3);
-		color: #c084fc;
-		font-size: 11px;
-		font-weight: 700;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		flex-shrink: 0;
-	}
-
-	.dim-login-steps .step span {
-		font-size: 13px;
-		color: rgba(255,255,255,0.5);
-		font-weight: 500;
-	}
-
-	.dim-login-steps .step-arrow {
-		color: rgba(255,255,255,0.2);
-		font-size: 14px;
-	}
-
-	/* ---------- TRAINING SECTION ---------- */
-	.dim-training {
-		padding: 60px 20px 40px;
-		max-width: 700px;
-		margin: 0 auto;
-		text-align: center;
-	}
-
-	.dim-training h2 {
-		font-size: clamp(1.5rem, 3vw, 2rem);
-		font-weight: 800;
-		color: #fff;
-		margin-bottom: 16px;
-	}
-
-	.dim-training p {
-		color: rgba(255,255,255,0.5);
-		font-size: 15px;
-		line-height: 1.7;
-	}
-
-	.dim-tags {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 10px;
-		justify-content: center;
-		margin: 28px 0 36px;
-	}
-
-	.dim-tag {
-		padding: 6px 14px;
-		border-radius: 20px;
-		font-size: 13px;
-		font-weight: 600;
-		text-decoration: none;
-		color: #fff;
-		transition: transform 0.2s, opacity 0.2s;
-		border: 1px solid rgba(255,255,255,0.1);
-	}
-
-	.dim-tag:hover {
-		transform: scale(1.05);
-		opacity: 0.85;
-		color: #fff;
-	}
-
-	.dim-tag.blue { background: rgba(59,130,246,0.2); border-color: rgba(59,130,246,0.3); color: #93bbfd; }
-	.dim-tag.green { background: rgba(34,197,94,0.2); border-color: rgba(34,197,94,0.3); color: #86efac; }
-	.dim-tag.orange { background: rgba(249,115,22,0.2); border-color: rgba(249,115,22,0.3); color: #fdba74; }
-	.dim-tag.purple { background: rgba(168,85,247,0.2); border-color: rgba(168,85,247,0.3); color: #c4b5fd; }
-	.dim-tag.red { background: rgba(239,68,68,0.2); border-color: rgba(239,68,68,0.3); color: #fca5a5; }
-	.dim-tag.teal { background: rgba(20,184,166,0.2); border-color: rgba(20,184,166,0.3); color: #5eead4; }
-	.dim-tag.pink { background: rgba(236,72,153,0.2); border-color: rgba(236,72,153,0.3); color: #f9a8d4; }
-
-	/* ---------- HOW IT WORKS ---------- */
-	.dim-how {
-		max-width: 800px;
-		margin: 0 auto;
-		padding: 40px 20px 60px;
-		text-align: center;
-	}
-
-	.dim-how h2 {
-		font-size: clamp(1.4rem, 3vw, 1.8rem);
-		font-weight: 800;
-		color: #fff;
-		margin-bottom: 8px;
-	}
-
-	.dim-how > p {
-		color: rgba(255,255,255,0.5);
-		font-size: 15px;
-		margin-bottom: 32px;
-	}
-
-	.dim-about-embed {
-		border-radius: 16px;
-		overflow: hidden;
-		border: 1px solid rgba(255,255,255,0.06);
-		background: rgba(255,255,255,0.02);
-	}
-
-	.dim-about-embed iframe {
-		width: 100%;
-		min-height: 400px;
-		border: none;
-	}
-
-	/* ---------- SPLASH LAYOUT OVERRIDES ---------- */
-	#splash-page {
-		height: auto !important;
-		overflow: visible !important;
-		display: block !important;
-		align-items: initial !important;
-		justify-content: initial !important;
-	}
-
-	/* ---------- LOGIN / LIVENESS DARK OVERRIDES ---------- */
-	body.dim-landing .this-page {
-		background: #14141a !important;
-		border-color: rgba(255,255,255,0.06) !important;
-		color: #e0e0e8 !important;
-	}
-
-	body.dim-landing .form-control {
-		background: rgba(255,255,255,0.05);
-		border-color: rgba(255,255,255,0.1);
-		color: #fff;
-	}
-
-	body.dim-landing .form-label {
-		color: rgba(255,255,255,0.7) !important;
-	}
-
-	body.dim-landing .btn-primary {
-		background: linear-gradient(135deg, #a855f7, #ec4899) !important;
-		border: none !important;
-	}
-
-	body.dim-landing .btn-outline-primary {
-		border-color: #a855f7 !important;
-		color: #c084fc !important;
-	}
-
-	body.dim-landing .btn-outline-primary:hover {
-		background: #a855f7 !important;
-		color: #fff !important;
-	}
-
-	body.dim-landing #login-page small {
-		background-color: rgba(168, 85, 247, 0.1) !important;
-		color: #c084fc !important;
-	}
-
-	/* Container override for splash - full width */
-	body.dim-landing #app.container {
-		max-width: 100%;
-		padding: 0;
-	}
-
-	/* Keep login/liveness/error centered */
-	body.dim-landing #login-page .this-page,
-	body.dim-landing #liveness-check .this-page,
-	body.dim-landing #error-page .this-page {
-		max-width: 480px;
-		margin-left: auto;
-		margin-right: auto;
-	}
-
-	/* Price banner */
-	.dim-price-note {
-		position: relative;
-		z-index: 1;
-		margin-top: 16px;
-		font-size: 14px;
-		color: rgba(255,255,255,0.4);
-	}
-
-	.dim-price-note s { color: rgba(255,255,255,0.25); }
-	.dim-price-note strong { color: #4ade80; }
-
-	/* Footer area */
-	.dim-footer {
-		border-top: 1px solid rgba(255,255,255,0.06);
-		padding: 32px 20px;
-		text-align: center;
-		max-width: 960px;
-		margin: 0 auto;
-	}
-
-	.dim-footer p {
-		font-size: 13px;
-		color: rgba(255,255,255,0.3);
-		margin: 0;
+		.burger-btn {
+			display: block;
+		}
 	}
 </style>
 </head>
-<body class="dim-landing">
-	<!-- ========== NAVBAR ========== -->
-	<nav class="dim-navbar">
+
+<body>
+	<!-- Status Bar -->
+	<nav class="status-bar">
 		<a href="/" class="brand">SSSAHAM</a>
-		<div class="dim-nav-links">
-			<a href="idx/emiten/broker-summary.html">Broker Summary</a>
-			<a href="idx/index.html">AI Recs</a>
-			<a href="idx/emiten/index.html">Real-Time API</a>
-			<a href="about-us.html">About</a>
-			<a href="register.html" class="btn dim-nav-cta d-none">Get Started</a>
+		<div class="nav-menu">
+			<div class="nav-item">
+				<a href="idx/emiten/broker-summary.html?kode=AADI">AI Broker Summary</a>
+			</div>
+			<div class="nav-item">
+				<a href="idx/index.html">AI Recommendation</a>
+			</div>
+			<div class="nav-item">
+				<a href="idx/emiten/index.html">Real Time API</a>
+			</div>
+			<div class="nav-item">
+				<a href="register.html" style="color: #644fe5">Gabung Komunitas</a>
+			</div>
 		</div>
-		<button class="dim-burger" onclick="toggleMobileMenu()">
+		<button class="burger-btn" onclick="toggleMobileMenu()">
 			<i class="fa-solid fa-bars"></i>
 		</button>
 	</nav>
 
-	<!-- Mobile Menu -->
-	<div class="dim-overlay" id="menuOverlay" onclick="toggleMobileMenu()"></div>
-	<div class="dim-mobile-menu" id="mobileMenu">
+	<!-- Mobile Menu Overlay -->
+	<div class="menu-overlay" id="menuOverlay" onclick="toggleMobileMenu()"></div>
+	<div class="mobile-menu" id="mobileMenu">
 		<div class="menu-section">Layanan</div>
 		<a href="idx/emiten/broker-summary.html">AI Broker Summary</a>
 		<a href="idx/index.html">AI Recommendation</a>
-		<a href="idx/emiten/index.html">Real-Time API</a>
+		<a href="idx/emiten/index.html">Real Time API</a>
 		<div class="menu-section">Komunitas</div>
 		<a href="register.html">Gabung Sekarang</a>
 	</div>
 
 	<div id="app" class="container">
-		<!-- ========== SPLASH PAGE ========== -->
-		<section id="splash-page">
-
-			<!-- HERO -->
-			<div class="dim-hero">
-				<div class="dim-badge">Platform Quant &middot; Saham Indonesia &middot; AI-Powered &middot; Gratis</div>
-				<h1>
-					SSSAHAM is the new<br>
-					<span class="gradient-text">standard for</span> investing
+		<!-- halaman splash -->
+		<section id="splash-page" style="height: max-content;">
+			<!-- Hero Background -->
+			<div class="hero-bg" style="top: 40px;">
+				<span class="dot"></span>
+				<h1 class="hero-title">
+					<span class="highlight">Platform Quant <strong>Berbasis AI</strong></span><br>
+					<span class="highlight">Untuk Retail</span><br>
+					<span class="highlight">Pasar Saham Indonesia</span>
 				</h1>
-				<p class="subtitle">
-					Pantau rekomendasi saham berbasis data, skor, orderflow dan pergerakan asing yang mudah dibaca.
+			</div>
+
+			<!-- Box 1: Intro / Dare To Step Ahead -->
+			<div class="this-page content-card w-100 d-flex flex-column align-items-center p-4 my-4">
+				<h5 class="text-center mb-3 mt-4">Bingung Broker Summary <br>& Bandarmology?<br><br>Dengan AI gabung
+					dan jadilah 1%</h5>
+				<p class="text-center my-4">Pantau rekomendasi saham berbasis data, skor, orderflow<br> dan pergerakan
+					asing
+					yang mudah dibaca.</p>
+
+				<a href="register.html" class="btn btn-lg fw-bold mb-2"
+					style="font-size: 1.25rem; background: linear-gradient(135deg, #463CFF 0%, #7B68EE 50%, #463CFF 100%); color: #fff; border: none;">Klaim
+					dan Pakai Gratis!</a>
+				<p class="text-center mb-0 text-muted" style="font-size: 0.85rem;">
+					<s style="color: #666;">Rp 15.000.000</s><br>
+					<strong style="color: #28a745;">GRATIS SELAMANYA</strong>
 				</p>
-				<div class="dim-cta-row">
-					<div style="flex:1; display:flex; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:10px; overflow:hidden; transition:border-color 0.2s;" class="dim-phone-wrap">
-						<span style="padding:12px 12px; color:rgba(255,255,255,0.5); font-size:14px; font-weight:600; border-right:1px solid rgba(255,255,255,0.1); white-space:nowrap; user-select:none;">+62</span>
-						<input type="tel" placeholder="8xx-xxxx-xxxx" pattern="[0-9]{8,13}" style="flex:1; background:transparent; border:none; padding:12px 16px; color:#fff; font-size:14px; outline:none;">
-					</div>
-					<a href="register.html" class="btn dim-cta-btn">Gabung Gratis</a>
-				</div>
-				<div class="dim-price-note">
-					<s>Rp 15.000.000</s> &nbsp;
-					<strong>GRATIS SELAMANYA</strong>
-				</div>
-
-				<!-- Login Flow Steps -->
-				<div class="dim-login-steps mt-4">
-					<div class="step"><div class="step-num">1</div><span>Masukkan No. HP</span></div>
-					<div class="step-arrow">→</div>
-					<div class="step"><div class="step-num">2</div><span>Join Telegram</span></div>
-					<div class="step-arrow">→</div>
-					<div class="step"><div class="step-num">3</div><span>Ketik /login</span></div>
-				</div>
 			</div>
 
-			<!-- PRODUCT SCREENSHOT -->
-			<div class="dim-screenshot-wrap">
-				<img src="idx/img/landing.png" alt="SSSAHAM Dashboard" class="dim-screenshot" loading="lazy">
-			</div>
-
-			<!-- FEATURES -->
-			<div class="dim-features">
-				<div class="section-label">Fitur Utama</div>
-				<div class="section-title">Semua yang Anda butuhkan, satu platform.</div>
-
-				<div class="row g-4">
-					<!-- Feature 1: AI Broker Summary -->
-					<div class="col-md-4">
-						<div class="dim-feature-card">
-							<img src="idx/img/broker-summary.jpg" alt="AI Broker Summary" class="card-img">
-							<div class="card-body">
-								<div class="dim-feature-icon" style="background: rgba(168,85,247,0.15);">
-									<i class="fa-solid fa-chart-pie" style="color: #a855f7;"></i>
-								</div>
-								<h5>AI Broker Summary</h5>
-								<p>Analisis ringkasan broker berbasis AI untuk mengetahui pergerakan bandar secara real-time.</p>
-								<span class="feature-badge" style="background:rgba(168,85,247,0.15); border:1px solid rgba(168,85,247,0.3); color:#c4b5fd;">⚡ AI-POWERED</span>
-								<br>
-								<a href="idx/emiten/broker-summary.html?kode=AADI" class="feature-link">Biarkan AI Bekerja →</a>
-							</div>
-						</div>
-					</div>
-					<!-- Feature 2: AI Recommendation -->
-					<div class="col-md-4">
-						<div class="dim-feature-card">
-							<img src="idx/img/ai-recomendation.jpg" alt="AI Recommendation" class="card-img">
-							<div class="card-body">
-								<div class="dim-feature-icon" style="background: rgba(236,72,153,0.15);">
-									<i class="fa-solid fa-brain" style="color: #ec4899;"></i>
-								</div>
-								<h5>AI Recommendation</h5>
-								<p>Rekomendasi saham berbasis LSTM Machine Learning presisi tinggi dengan analisis sentimen dan Z-Score.</p>
-								<span class="feature-badge" style="background:rgba(236,72,153,0.15); border:1px solid rgba(236,72,153,0.3); color:#f9a8d4;">🧠 MACHINE LEARNING</span>
-								<br>
-								<a href="idx/index.html" class="feature-link">Entry Presisi →</a>
-							</div>
-						</div>
-					</div>
-					<!-- Feature 3: Real-Time API -->
-					<div class="col-md-4">
-						<div class="dim-feature-card">
-							<img src="idx/img/realtime-api.jpg" alt="Real-Time API" class="card-img">
-							<div class="card-body">
-								<div class="dim-feature-icon" style="background: rgba(249,115,22,0.15);">
-									<i class="fa-solid fa-bolt" style="color: #f97316;"></i>
-								</div>
-								<h5>Real-Time API</h5>
-								<p>Single API data pasar saham secara real-time. Live orderflow, pressure index, CVD dan lainnya.</p>
-								<span class="feature-badge" style="background:rgba(34,197,94,0.15); border:1px solid rgba(34,197,94,0.3); color:#4ade80;">● LIVE DATA</span>
-								<br>
-								<a href="idx/emiten/index.html" class="feature-link">Lihat Dokumentasi →</a>
-							</div>
-						</div>
+			<!-- Feature 1: AI Broker Summary -->
+			<div class="this-page w-100 d-flex flex-column align-items-center p-4 my-4">
+				<div class="d-flex align-items-center gap-4 w-100 text-start">
+					<img src="idx/img/bitcoin-ai.jpg" alt="AI Broker Summary" class="img-fluid wobble-img"
+						style="width: 35%; border-radius: 12px;">
+					<div class="flex-fill">
+						<a href="idx/emiten/broker-summary.html?kode=AADI" class="link-features">AI Broker Summary ⟶</a>
+						<p class="mb-2 mt-2 small">Analisis ringkasan broker berbasis AI untuk mengetahui pergerakan
+							bandar.</p>
+						<a href="idx/emiten/broker-summary.html?kode=AADI" class="btn btn-sm fw-bold w-100"
+							style="background: linear-gradient(135deg, #463CFF 0%, #7B68EE 50%, #7B68EE 100%); color: #fff; padding: 0.45rem; margin: 1rem 0;">Biarkan
+							AI Bekerja ⟶</a>
 					</div>
 				</div>
 			</div>
 
-			<!-- TRAINING -->
-			<div class="dim-training">
-				<h2>Training & Syllabus</h2>
-				<p>
-					Alat tanpa pengetahuan bukanlah alat.<br>
-					Anda bisa saja memiliki palu, namun tanpa tahu cara menggunakannya,<br>
+			<!-- Feature 2: AI Recs -->
+			<div class="this-page w-100 d-flex flex-column align-items-center p-4 my-4">
+				<div class="d-flex align-items-center gap-4 w-100 flex-row-reverse text-end">
+					<img src="idx/img/orderflow.jpg" alt="AI Recommendation" class="img-fluid wobble-img"
+						style="width: 35%; border-radius: 12px;">
+					<div class="flex-fill">
+						<a href="idx/index.html" class="link-features">AI Recommendation ⟶</a>
+						<p class="mb-2 mt-2 small">Rekomendasi saham berbasis LSTM (Long Short-Term Memory) Machine
+							Learning.</p>
+						<a href="idx/index.html" class="btn btn-sm fw-bold w-100"
+							style="background: linear-gradient(135deg, #463CFF 0%, #7B68EE 50%, #7B68EE 100%); color: #fff; padding: 0.45rem; margin: 1rem 0;">Entry
+							Presisi ⟶</a>
+					</div>
+				</div>
+			</div>
+
+			<!-- Feature 3: Real Time API -->
+			<div class="this-page w-100 d-flex flex-column align-items-center p-4 my-4">
+				<div class="d-flex align-items-center gap-4 w-100 text-start">
+					<img src="idx/img/realtime-api.jpg" alt="Real Time API" class="img-fluid wobble-img"
+						style="width: 35%; border-radius: 12px;">
+					<div class="flex-fill">
+						<a href="idx/emiten/index.html" class="link-features">Real Time API ⟶</a>
+						<p class="mb-2 mt-2 small">Single API data pasar saham secara real-time untuk integrasi sistem
+							anda.</p>
+						<a href="idx/emiten/index.html" class="btn btn-sm fw-bold w-100"
+							style="background: linear-gradient(135deg, #463CFF 0%, #7B68EE 50%, #7B68EE 100%); color: #fff; padding: 0.45rem; margin: 1rem 0;">Lihat
+							Dokumentasi ⟶</a>
+					</div>
+				</div>
+			</div>
+
+			<!-- Training & Login Section -->
+			<div class="this-page w-100 d-flex flex-column align-items-center p-4 my-4">
+				<h3>Training dan Syllabus</h3>
+				<p class="text-center mt-3">
+					Alat tanpa pengetahuan bukanlah alat.
+					<br>
+					Anda bisa saja memiliki palu, namun tanpa tahu cara menggunakannya,
+					<br>
 					ia hanyalah sebongkah logam.
 				</p>
-				<div class="dim-tags">
-					<a href="/training-quant-finance-saham/index.html" class="dim-tag blue">#QuantitativeTrading</a>
-					<a href="/training-quant-finance-saham/index.html" class="dim-tag green">#MarkovChain</a>
-					<a href="/training-quant-finance-saham/index.html" class="dim-tag orange">#BSJP</a>
-					<a href="/training-quant-finance-saham/index.html" class="dim-tag purple">#BPJS</a>
-					<a href="/training-quant-finance-saham/index.html" class="dim-tag red">#RiskManagement</a>
-					<a href="/training-quant-finance-saham/index.html" class="dim-tag teal">#MachineLearning</a>
-					<a href="/training-quant-finance-saham/index.html" class="dim-tag pink">#DataDriven</a>
+				<div class="tags my-5 text-center">
+					<a href="/training-quant-finance-saham/index.html" class="tag blue">#QuantitativeTrading</a>
+					<a href="/training-quant-finance-saham/index.html" class="tag green">#MarkovChain</a>
+					<a href="/training-quant-finance-saham/index.html" class="tag orange">#BSJP</a>
+					<a href="/training-quant-finance-saham/index.html" class="tag purple">#BPJS</a>
+					<a href="/training-quant-finance-saham/index.html" class="tag red">#RiskManagement</a>
+					<a href="/training-quant-finance-saham/index.html" class="tag teal">#MachineLearning</a>
+					<a href="/training-quant-finance-saham/index.html" class="tag pink">#DataDriven</a>
 				</div>
-				<div class="d-flex gap-3 justify-content-center">
+
+				<div class="d-flex gap-2 w-75">
 					<a href="#login-page" onclick="navigate('login-page'); return false;"
-						class="btn btn-primary px-4 py-2">Masuk</a>
-					<a href="register.html" id="start-onboard"
-						class="btn btn-outline-primary px-4 py-2">Gabung Komunitas</a>
+						class="btn btn-primary flex-fill w-50">Masuk</a>
+					<a href="register.html" id="start-onboard" class="btn btn-outline-primary w-50 flex-fill">Gabung
+						Komunitas</a>
 				</div>
 			</div>
 
-			<!-- HOW IT WORKS -->
-			<div class="dim-how">
-				<h2>Bagaimana SSSAHAM Bekerja?</h2>
-				<p>Menggunakan Pendekatan Machine Learning dan AI yang Auditable</p>
-				<div class="dim-about-embed">
-					<iframe id="about-us-embed" src="about-us.html#model" loading="lazy" scrolling="no"></iframe>
-				</div>
-			</div>
+			<h2 class="text-center mt-5 mb-2" style="font-size: larger; font-weight: 700;">Bagaimana SSSAHAM Bekerja?
+			</h2>
+			<p class="text-center mb-5">SSSAHAM Menggunakan Pendekatan Machine Learning dan AI yang Auditable</p>
 
-			<!-- FOOTER -->
-			<div class="dim-footer">
-				<p>&copy; 2025 SSSAHAM — Bandar Saham Kolektif Untuk Para Ritel</p>
+			<div class="this-page about-embed w-100 d-flex flex-column my-4 mt-2">
+				<iframe id="about-us-embed" src="about-us.html#model" loading="lazy" scrolling="no"></iframe>
 			</div>
-
 		</section>
 
-		<!-- ========== LOGIN PAGE ========== -->
+		<!-- halaman login -->
 		<section id="login-page">
 			<div class="this-page d-flex flex-column align-items-center p-4 my-4 w-100">
 				<h3 class="text-center mb-4 fw-700">Masuk</h3>
-				<small class="p-3 m-3 w-100 text-center" style="border-radius: 8px;">Masuk
+				<small class="p-3 m-3 w-100 text-center" style="background-color: aliceblue; border-radius: 8px;">Masuk
 					tanpa biaya OTP</small>
 				<form id="login-form-page-main" class="w-100">
 					<div class="mb-3" id="noHp" style="position: relative;">
