@@ -259,12 +259,16 @@ class TokenEngine extends EventEmitter {
             ? info.custcodes.map(String).filter(Boolean)
             : info.custcodes ? [String(info.custcodes)] : [];
         const main = info.main ? String(info.main) : (custcodes[0] || null);
+        const name = info.name ? String(info.name) : null;
+        const lid = info.lid ? String(info.lid) : null;
         this.accounts[key] = {
             custcodes,
             main,
+            name,
+            lid,
             updatedAt: Date.now()
         };
-        this.emit('account-info-ready', { broker: key, custcodes, main });
+        this.emit('account-info-ready', { broker: key, custcodes, main, name, lid });
     }
 
     /**

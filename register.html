@@ -124,14 +124,43 @@
                 <form id="register-form" class="w-100">
                     <div class="mb-3">
                         <label for="phone" class="form-label small fw-bold">Nomor Handphone</label>
-                        <input type="tel" class="form-control" id="phone" required placeholder="08xxxx..."
-                            style="background: rgba(255,255,255,0.1); border-radius: 10px; padding: 0.75rem;">
+                        <div style="display:flex; background:#f8f7ff; border:1.5px solid #c4b8ff; border-radius:10px; overflow:hidden; transition:border-color 0.2s;">
+                            <span style="padding:11px 12px; color:#463CFF; font-size:14px; font-weight:700; border-right:1px solid #e0dcff; white-space:nowrap; user-select:none; background:#f0edff;">+62</span>
+                            <input type="tel" class="form-control" id="phone" required placeholder="8xx-xxxx-xxxx"
+                                style="flex:1; background:transparent; border:none; box-shadow:none; padding:0.65rem 1rem;">
+                        </div>
                     </div>
                     <button type="submit" id="register-btn" class="btn btn-primary w-100">
                         <span class="spinner-border spinner-border-sm d-none me-2"></span>
-                        <span class="btn-text">Daftar Sekarang</span>
+                        <span class="btn-text">Daftar &amp; Dapatkan OTP</span>
                     </button>
                 </form>
+
+                <!-- Telegram step (muncul setelah register berhasil) -->
+                <div id="tg-step" style="display:none;" class="mt-4">
+                    <div style="background:#f0f9ff; border:1.5px solid #bae6fd; border-radius:14px; padding:16px 18px; margin-bottom:16px;">
+                        <div class="d-flex align-items-center gap-2 mb-2">
+                            <i class="fa-brands fa-telegram" style="color:#229ed9; font-size:22px;"></i>
+                            <strong style="font-size:15px; color:#0c4a6e;">Buka Bot Telegram untuk OTP</strong>
+                        </div>
+                        <p class="text-muted small mb-3">
+                            Klik tombol di bawah &rarr; bot akan langsung mengirimkan kode OTP ke chat Telegram kamu.
+                        </p>
+                        <a id="tg-deep-link" href="#" target="_blank" rel="noopener"
+                            style="display:flex; align-items:center; justify-content:center; gap:8px; background:linear-gradient(135deg,#229ed9,#1a8fc7); color:#fff; font-weight:700; font-size:14px; border-radius:10px; padding:11px 16px; text-decoration:none; transition:opacity 0.2s; margin-bottom:10px;"
+                            onclick="document.getElementById('tg-step').querySelector('.tg-continue-hint').style.display='block'">
+                            <i class="fa-brands fa-telegram" style="font-size:18px;"></i>
+                            Buka @SSSAHAMBot di Telegram
+                        </a>
+                        <div class="tg-continue-hint" style="display:none; font-size:13px; color:#374151; text-align:center;">
+                            Sudah dapat OTP?
+                            <a href="otp.html" style="color:#463CFF; font-weight:600;">Lanjut verifikasi &rarr;</a>
+                        </div>
+                    </div>
+                    <a href="otp.html" class="btn btn-outline-primary w-100" style="border-radius:10px; font-weight:600;">
+                        Sudah dapat OTP, lanjutkan &rarr;
+                    </a>
+                </div>
             </div>
 
             <div class="auth-footer">
@@ -186,6 +215,18 @@
                 }
 
                 // ===============================
+                // 3b. PRE-FILL dari hero input (jika ada)
+                // ===============================
+                try {
+                    const heroPhone = localStorage.getItem("sssaham_hero_phone");
+                    if (heroPhone) {
+                        const phoneEl = document.getElementById("phone");
+                        if (phoneEl) phoneEl.value = heroPhone;
+                        localStorage.removeItem("sssaham_hero_phone");
+                    }
+                } catch (e) { /* ignore */ }
+
+                // ===============================
                 // 4. (DISABLED) OPTIONAL GUARD LOGIN
                 // ===============================
                 // checkLoggedIn(AUTH_BASE);
@@ -194,6 +235,7 @@
                 // 5. DOM REFS
                 // ===============================
                 const PENDING_KEY = "sssaham_pending_register";
+                const BOT_USERNAME = "SSSAHAMBot"; // ganti username bot kamu
 
                 const alertArea = document.getElementById("alert-area");
                 const form = document.getElementById("register-form");
@@ -284,7 +326,7 @@
                     try {
                         const data = await requestTempPassword(phone);
 
-                        // simpan state → otp.html
+                        // Simpan state → otp.html
                         savePendingRegister({
                             phone,
                             user_id: data.user_id || null,
@@ -292,8 +334,23 @@
                             expires_at: Date.now() + (data.expires_in_sec || 300) * 1000,
                         });
 
-                        // redirect ke OTP
-                        window.location.href = "otp.html";
+                        // Sembunyikan form, tampilkan Telegram step
+                        form.style.display = "none";
+                        const tgStep = document.getElementById("tg-step");
+                        const tgLink = document.getElementById("tg-deep-link");
+                        if (tgStep && tgLink) {
+                            // Encode phone ke base64 (bot akan decode ini)
+                            const encoded = btoa(phone);
+                            tgLink.href = `https://t.me/${BOT_USERNAME}?start=${encoded}`;
+                            tgStep.style.display = "block";
+                        }
+
+                        showAlert(
+                            `✅ Nomor <strong>${phone}</strong> berhasil didaftarkan! ` +
+                            `Buka bot Telegram di bawah untuk mendapatkan OTP.`,
+                            "success"
+                        );
+
                     } catch (err) {
                         console.error(err);
                         showAlert(err.message || "Terjadi kesalahan saat meminta kode.");

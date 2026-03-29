@@ -29,6 +29,10 @@
             {
                 "queue": "sssaham-queue",
                 "binding": "SSSAHAM_QUEUE"
+            },
+            {
+                "queue": "broksum-backfill-queue",
+                "binding": "BACKFILL_QUEUE"
             }
         ],
         "consumers": [
@@ -36,6 +40,12 @@
                 "queue": "sssaham-queue",
                 "max_batch_size": 10,
                 "max_batch_timeout": 30
+            },
+            {
+                "queue": "broksum-backfill-queue",
+                "max_batch_size": 1,
+                "max_batch_timeout": 5,
+                "max_concurrency": 50
             }
         ]
     },

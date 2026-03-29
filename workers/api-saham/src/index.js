@@ -1923,7 +1923,26 @@ async function calculateRangeData(env, ctx, symbol, startDate, endDate) {
           list.forEach(b => {
             if (!b) return;
             const val = parseFloat(type === 'buy' ? b.bval : b.sval) || 0;
-            const vol = parseFloat(type === 'buy' ? b.blotv || b.blot * 100 : b.slotv || b.slot * 100) || 0;
+            // Use raw volume (untruncated shares) when available, then fall back to
+            // reconstructing from value / avg_price, and lastly to lot-rounded blotv/slotv
+            let vol = 0;
+            if (type === 'buy') {
+              const rawVol = parseFloat(b.buy_vol_raw);
+              if (rawVol > 0) {
+                vol = rawVol;
+              } else {
+                const avgPrice = parseFloat(b.netbs_buy_avg_price) || 0;
+                vol = avgPrice > 0 ? val / avgPrice : parseFloat(b.blotv || b.blot * 100) || 0;
+              }
+            } else {
+              const rawVol = parseFloat(b.sell_vol_raw);
+              if (rawVol > 0) {
+                vol = rawVol;
+              } else {
+                const avgPrice = parseFloat(b.netbs_sell_avg_price) || 0;
+                vol = avgPrice > 0 ? val / avgPrice : parseFloat(b.slotv || b.slot * 100) || 0;
+              }
+            }
             const code = b.netbs_broker_code;
 
             if (type === 'buy') {
@@ -2022,7 +2041,9 @@ async function calculateRangeData(env, ctx, symbol, startDate, endDate) {
     .slice(0, 20);
 
   const allNet = Object.keys(accBrokers).map(k => ({
-    code: k, ...accBrokers[k], net: accBrokers[k].bval - accBrokers[k].sval
+    code: k, ...accBrokers[k],
+    net: accBrokers[k].bval - accBrokers[k].sval,
+    net_vol: accBrokers[k].bvol - accBrokers[k].svol
   }));
 
   // Calculate Aggregated Stats for the Range
@@ -2057,8 +2078,9 @@ async function calculateRangeData(env, ctx, symbol, startDate, endDate) {
     summary: {
       top_buyers: format('bval'),
       top_sellers: format('sval'),
-      top_net_buyers: allNet.filter(b => b.net > 0).sort((a, b) => b.net - a.net).slice(0, 20),
-      top_net_sellers: allNet.filter(b => b.net < 0).sort((a, b) => a.net - b.net).slice(0, 20),
+      // Sort by net VOLUME (lot-based) to match IPOT ordering
+      top_net_buyers: allNet.filter(b => b.net_vol > 0).sort((a, b) => b.net_vol - a.net_vol).slice(0, 20),
+      top_net_sellers: allNet.filter(b => b.net_vol < 0).sort((a, b) => a.net_vol - b.net_vol).slice(0, 20),
       // Added Aggregates for Frontend Summary
       foreign: { buy_val: aggForeign.buy, sell_val: aggForeign.sell, net_val: aggForeign.net },
       retail: { buy_val: aggRetail.buy, sell_val: aggRetail.sell, net_val: aggRetail.net },

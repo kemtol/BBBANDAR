@@ -317,11 +317,49 @@ export default {
             }
 
             // ROUTE 4.5: Init Backfill (All Active Emiten from D1)
+            // Optional: ?symbol=BFIN to dispatch only 1 symbol
             if (path === "/init") {
                 const days = parseInt(url.searchParams.get("days") || "5"); // Default safe limit
                 const overwrite = url.searchParams.get("overwrite") === "true";
                 const fromDate = url.searchParams.get("from"); // Optional start date
-                return await this.backfillActiveEmiten(env, days, overwrite, fromDate);
+                const targetSymbol = url.searchParams.get("symbol"); // Optional: single symbol
+                return await this.backfillActiveEmiten(env, days, overwrite, fromDate, targetSymbol);
+            }
+
+            // ROUTE 4.55: Queue Report — Check scraping_logs from D1
+            if (path === "/queue/report") {
+                const symbol = url.searchParams.get("symbol");
+                const since = url.searchParams.get("since"); // ISO timestamp
+                const limit = parseInt(url.searchParams.get("limit") || "500");
+                try {
+                    let query, params;
+                    if (symbol && since) {
+                        query = "SELECT * FROM scraping_logs WHERE symbol = ? AND timestamp >= ? ORDER BY timestamp DESC LIMIT ?";
+                        params = [symbol.toUpperCase(), since, limit];
+                    } else if (symbol) {
+                        query = "SELECT * FROM scraping_logs WHERE symbol = ? ORDER BY timestamp DESC LIMIT ?";
+                        params = [symbol.toUpperCase(), limit];
+                    } else if (since) {
+                        query = "SELECT * FROM scraping_logs WHERE timestamp >= ? ORDER BY timestamp DESC LIMIT ?";
+                        params = [since, limit];
+                    } else {
+                        query = "SELECT * FROM scraping_logs ORDER BY timestamp DESC LIMIT ?";
+                        params = [limit];
+                    }
+                    const { results } = await env.SSSAHAM_DB.prepare(query).bind(...params).all();
+                    const summary = {};
+                    for (const r of results) {
+                        summary[r.status] = (summary[r.status] || 0) + 1;
+                    }
+                    return new Response(JSON.stringify({
+                        total: results.length, summary,
+                        logs: results
+                    }), { headers: withCors({ "Content-Type": "application/json" }) });
+                } catch (e) {
+                    return new Response(JSON.stringify({ error: e.message }), {
+                        status: 500, headers: withCors({ "Content-Type": "application/json" })
+                    });
+                }
             }
 
             // ROUTE 4.6: Automated Backfill Control (Cursor Based)
@@ -1571,7 +1609,8 @@ export default {
         try {
             const existing = await env.SSSAHAM_EMITEN.get(key);
             if (existing) {
-                history = await existing.json();
+                const parsed = await existing.json();
+                history = Array.isArray(parsed) ? parsed : [];
             }
         } catch (e) { }
 
@@ -1716,13 +1755,19 @@ export default {
     },
 
     // Helper: Backfill Active Emiten (D1 source, N days)
-    async backfillActiveEmiten(env, days = 5, overwrite = false, fromDate = null) {
-        const startMsg = `🚀 **Starting INIT Backfill**\nDays: ${days}\nOverwrite: ${overwrite}\nStart Date: ${fromDate || 'Today'}\nSource: D1 (Active Emiten)`;
+    async backfillActiveEmiten(env, days = 5, overwrite = false, fromDate = null, targetSymbol = null) {
+        const label = targetSymbol ? targetSymbol.toUpperCase() : 'ALL';
+        const startMsg = `🚀 **Starting INIT Backfill**\nSymbol: ${label}\nDays: ${days}\nOverwrite: ${overwrite}\nStart Date: ${fromDate || 'Today'}\nSource: D1 (Active Emiten)`;
         console.log(startMsg);
         await this.sendWebhook(env, startMsg);
 
         // USE THE NEW D1 HELPER (User Requested Fallback)
-        const watchlist = await this.getAllEmitenFromDB(env);
+        let watchlist;
+        if (targetSymbol) {
+            watchlist = [targetSymbol.toUpperCase()];
+        } else {
+            watchlist = await this.getAllEmitenFromDB(env);
+        }
 
         if (watchlist.length === 0) {
             await this.sendWebhook(env, "⚠️ **Backfill Aborted**: No active emiten found in D1.");
@@ -1734,6 +1779,11 @@ export default {
         let totalDispatched = 0;
         let totalSkipped = 0;
         const batchSize = 100; // Queue batch size
+
+        // Use dedicated backfill queue (BACKFILL_QUEUE) if available, else fallback to SSSAHAM_QUEUE
+        const queue = env.BACKFILL_QUEUE || env.SSSAHAM_QUEUE;
+        const queueName = env.BACKFILL_QUEUE ? 'broksum-backfill-queue' : 'sssaham-queue';
+        console.log(`[INIT] Using queue: ${queueName}`);
 
         // Process day by day.
         for (const date of tradingDays) {
@@ -1755,7 +1805,7 @@ export default {
             if (messages.length > 0) {
                 for (let i = 0; i < messages.length; i += batchSize) {
                     const chunk = messages.slice(i, i + batchSize);
-                    await env.SSSAHAM_QUEUE.sendBatch(chunk);
+                    await queue.sendBatch(chunk);
                 }
                 totalDispatched += messages.length;
                 console.log(`Date ${date}: dispatched ${messages.length} jobs`);
@@ -1767,13 +1817,14 @@ export default {
 
         return new Response(JSON.stringify({
             message: `Init Backfill completed for ${days} trading days`,
+            queue: queueName,
             total_dispatched: totalDispatched,
             total_skipped: totalSkipped,
             trading_days: tradingDays.length,
             symbols_count: watchlist.length,
             overwrite: overwrite
         }), {
-            headers: { "Content-Type": "application/json" }
+            headers: withCors({ "Content-Type": "application/json" })
         });
     },
 
@@ -1903,12 +1954,10 @@ export default {
                 } else {
                     console.log(`[Queue] ✅ ${symbol}/${date} scraped via IPOT`);
 
-                    // Post-process: aggregate broker flow into D1 for screener-accum
                     try {
                         await aggregateAndStore(env, symbol, date, resultData);
                     } catch (aggErr) {
                         console.error(`[Queue] Flow aggregation failed for ${symbol}/${date}:`, aggErr);
-                        // Non-blocking: scrape succeeded, flow aggregation is best-effort
                     }
 
                     message.ack();
@@ -2773,12 +2822,16 @@ export default {
                         const p = parseRecord(line);
                         if (!p) continue;
                         if (brokerMap.has(p.broker)) {
+                            // Each IPOT record already contains complete buy+sell data.
+                            // Both buy-sorted and sell-sorted queries return the same
+                            // underlying data — DO NOT add values or we double-count.
+                            // Keep the record with higher total value (more complete).
                             const ex = brokerMap.get(p.broker);
-                            const add = (a, b) => (BigInt(a) + BigInt(b)).toString();
-                            ex.bval = add(ex.bval, p.bval);
-                            ex.bvol = add(ex.bvol, p.bvol);
-                            ex.sval = add(ex.sval, p.sval);
-                            ex.svol = add(ex.svol, p.svol);
+                            const exTotal = BigInt(ex.bval) + BigInt(ex.sval);
+                            const pTotal = BigInt(p.bval) + BigInt(p.sval);
+                            if (pTotal > exTotal) {
+                                brokerMap.set(p.broker, p);
+                            }
                         } else {
                             brokerMap.set(p.broker, p);
                         }
@@ -2814,9 +2867,9 @@ export default {
                         };
 
                         if (side === 'buy') {
-                            return { ...common, blot: lotStr, blotv: vol100, bval: valStr, bvalv: valStr, netbs_buy_avg_price: avg };
+                            return { ...common, blot: lotStr, blotv: vol100, bval: valStr, bvalv: valStr, netbs_buy_avg_price: avg, buy_vol_raw: volStr };
                         } else {
-                            return { ...common, slot: lotStr, slotv: vol100, sval: valStr, svalv: valStr, netbs_sell_avg_price: avg };
+                            return { ...common, slot: lotStr, slotv: vol100, sval: valStr, svalv: valStr, netbs_sell_avg_price: avg, sell_vol_raw: volStr };
                         }
                     };
 
@@ -2881,7 +2934,8 @@ export default {
                                 httpMetadata: { contentType: "application/json" }
                             });
                             if (debug || save) dailyOutput.saved_key = key;
-                            await this.recordAuditTrail(env, symbol, d, "SCRAPE_BROKSUM", "SUCCESS", "IPOT");
+                            // DISABLED FOR BACKFILL SPEED: audit trail
+                            // try { await this.recordAuditTrail(env, symbol, d, "SCRAPE_BROKSUM", "SUCCESS", "IPOT"); } catch (e) { console.error(`Audit trail error (non-blocking): ${e.message}`); }
 
                         } else if (validation.severity === 'CRITICAL') {
                             // CRITICAL (e.g. empty brokers): check if R2 already has valid data
@@ -2897,7 +2951,8 @@ export default {
                                     httpMetadata: { contentType: "application/json" }
                                 });
                                 if (debug || save) dailyOutput.saved_key = key;
-                                await this.recordAuditTrail(env, symbol, d, "SCRAPE_BROKSUM", "WARN", `IPOT (${validation.issues.join('; ')})`);
+                                // DISABLED FOR BACKFILL SPEED: audit trail
+                                // try { await this.recordAuditTrail(env, symbol, d, "SCRAPE_BROKSUM", "WARN", `IPOT (${validation.issues.join('; ')})`); } catch (e) { console.error(`Audit trail error (non-blocking): ${e.message}`); }
                             }
 
                         } else {
@@ -2907,7 +2962,8 @@ export default {
                                 httpMetadata: { contentType: "application/json" }
                             });
                             if (debug || save) dailyOutput.saved_key = key;
-                            await this.recordAuditTrail(env, symbol, d, "SCRAPE_BROKSUM", "WARN", `IPOT (${validation.issues.join('; ')})`);
+                            // DISABLED FOR BACKFILL SPEED: audit trail
+                            // try { await this.recordAuditTrail(env, symbol, d, "SCRAPE_BROKSUM", "WARN", `IPOT (${validation.issues.join('; ')})`); } catch (e) { console.error(`Audit trail error (non-blocking): ${e.message}`); }
                         }
                     }
 

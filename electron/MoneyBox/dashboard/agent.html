@@ -1,0 +1,615 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OpenClaw — Agent Personas</title>
+<link rel="stylesheet" href="css/themes.css">
+<link rel="stylesheet" href="css/style.css">
+
+<script>if (window.self !== window.top) document.documentElement.classList.add('in-iframe');</script>
+</head>
+<body>
+
+<!-- ── Sidebar (standalone mode only) ──────────────── -->
+<nav class="sidebar">
+  <div class="logo">OC</div>
+  <a class="nav-item" href="index.html?page=overview" title="Overview">⌗</a>
+  <div class="nav-item active" title="Agents">◈</div>
+  <div class="nav-item" title="Memory">◉</div>
+  <div class="nav-item" title="RAG / Qdrant">◇</div>
+  <div class="nav-item" title="Logs">≡</div>
+  <div class="nav-item" title="Cron">⏱</div>
+  <a class="nav-item" href="index.html?page=kanban" title="Project Management">⊞</a>
+  <div class="spacer"></div>
+  <div class="nav-item" title="Settings">⚙</div>
+</nav>
+
+<!-- ── Main ────────────────────────────────────────── -->
+<div class="main">
+
+  <!-- Topbar -->
+  <div class="topbar">
+    <div class="topbar-left">
+      <h1>Agent Personas</h1>
+      <span class="updated-tag">4 agents</span>
+    </div>
+    <div class="topbar-right">
+      <span id="save-status" style="font-size:0.6875rem;color:var(--muted)"></span>
+      <button class="btn btn-ghost" id="ai-toggle-btn" onclick="toggleAIPanel()">✦ AI Assist</button>
+      <button class="btn btn-ghost" id="save-btn" onclick="saveFile()" disabled>↑ Save</button>
+    </div>
+  </div>
+
+  <!-- Body -->
+  <div class="agents-layout">
+
+    <!-- Left: agent list -->
+    <div class="agent-list">
+      <div class="agent-list-title">Active Agents</div>
+
+      <button class="agent-card-btn active" data-agent="main" onclick="selectAgent('main')">
+        <div class="agent-avatar avatar-main">A</div>
+        <div class="agent-info">
+          <div class="name">main</div>
+          <div class="role">Director / Orchestrator</div>
+          <div class="model">deepseek-v3</div>
+        </div>
+        <div class="agent-status-dot dot-green"></div>
+      </button>
+
+      <button class="agent-card-btn" data-agent="elsa" onclick="selectAgent('elsa')">
+        <div class="agent-avatar avatar-elsa">E</div>
+        <div class="agent-info">
+          <div class="name">elsa</div>
+          <div class="role">Librarian / RAG Manager</div>
+          <div class="model">deepseek-v3</div>
+        </div>
+        <div class="agent-status-dot dot-green"></div>
+      </button>
+
+      <button class="agent-card-btn" data-agent="ditesh" onclick="selectAgent('ditesh')">
+        <div class="agent-avatar avatar-ditesh">D</div>
+        <div class="agent-info">
+          <div class="name">ditesh</div>
+          <div class="role">Ops / Infrastructure</div>
+          <div class="model">claude-sonnet-4.5</div>
+        </div>
+        <div class="agent-status-dot dot-green"></div>
+      </button>
+
+      <button class="agent-card-btn" data-agent="newton" onclick="selectAgent('newton')">
+        <div class="agent-avatar avatar-newton">N</div>
+        <div class="agent-info">
+          <div class="name">newton</div>
+          <div class="role">Quant Researcher</div>
+          <div class="model">claude-sonnet-4</div>
+        </div>
+        <div class="agent-status-dot dot-yellow"></div>
+      </button>
+
+      <div class="list-divider"></div>
+      <div class="agent-list-title mt-4">File index</div>
+      <div class="file-index-wrap">
+        <div id="file-index-list" style="color:var(--muted);font-size:0.625rem">Select agent…</div>
+      </div>
+    </div>
+
+    <!-- Right: viewer / editor -->
+    <div class="agent-viewer">
+
+      <!-- Agent header -->
+      <div class="agent-header">
+        <div class="agent-header-avatar" id="ah-avatar">A</div>
+        <div class="agent-header-info">
+          <div class="agent-full-name" id="ah-name">main (Albert)</div>
+          <div class="agent-subtitle"  id="ah-subtitle">Director · deepseek-v3 · VPS 213.199.49.18</div>
+        </div>
+        <div class="agent-header-chips" id="ah-chips"></div>
+      </div>
+
+      <!-- File tabs (built dynamically from VPS) -->
+      <div class="file-tabs" id="file-tabs">
+        <span style="padding:0 12px;font-size:0.75rem;align-self:center;color:var(--muted)">Loading…</span>
+      </div>
+
+      <!-- Raw markdown editor -->
+      <div class="editor-wrap">
+        <textarea
+          class="md-editor"
+          id="md-editor"
+          spellcheck="false"
+          disabled
+          placeholder="Select an agent to load persona files…"
+        ></textarea>
+      </div>
+
+    </div>
+
+    <!-- Right: AI assistant -->
+    <div class="ai-panel hidden" id="ai-panel">
+      <div class="ai-panel-header">
+        <span class="ai-panel-title">✦ AI Assist</span>
+        <select id="ai-agent-sel" style="background:var(--card);border:1px solid var(--border);color:var(--text);font-size:0.625rem;padding:2px 6px;border-radius:6px;outline:none;">
+          <option value="main">Albert (main)</option>
+          <option value="elsa">ELSA</option>
+          <option value="ditesh">Ditesh</option>
+          <option value="newton">Newton</option>
+        </select>
+      </div>
+      <div class="ai-panel-body">
+        <div>
+          <span class="ai-label">Quick Prompts</span>
+          <div class="ai-presets">
+            <button class="ai-preset" onclick="setPreset('Enrich dan perjelas persona markdown ini. Buat lebih detail dan actionable. Return ONLY raw improved markdown, tanpa penjelasan:')">Enrich</button>
+            <button class="ai-preset" onclick="setPreset('Tambahkan behavior rules yang lebih spesifik dan actionable. Return ONLY the improved markdown:')">+ Rules</button>
+            <button class="ai-preset" onclick="setPreset('Review clarity dan konsistensi dari persona ini, perbaiki jika perlu. Return ONLY improved markdown:')">Review</button>
+            <button class="ai-preset" onclick="setPreset('Terjemahkan ke Bahasa Indonesia jika dalam English, atau sebaliknya. Return ONLY translated markdown:')">Translate</button>
+            <button class="ai-preset" onclick="setPreset('Buatkan versi singkat / summary dari persona ini dalam 5-10 baris. Return ONLY raw markdown:')">Summarize</button>
+          </div>
+        </div>
+        <div>
+          <span class="ai-label">Instruction</span>
+          <textarea class="ai-prompt" id="ai-prompt" placeholder="Tulis instruksi untuk AI, atau pilih quick prompt di atas…"></textarea>
+        </div>
+        <button class="btn btn-primary" id="ai-gen-btn" onclick="generateAI()" style="justify-content:center;font-size:0.6875rem;padding:6px 10px">
+          <span id="ai-gen-icon">✦</span> Generate
+        </button>
+        <div class="ai-output-wrap">
+          <span class="ai-label">Output <span id="ai-out-note" style="color:var(--muted);font-weight:400;text-transform:none;letter-spacing:0"></span></span>
+          <textarea class="ai-output" id="ai-output" readonly placeholder="Output AI akan muncul di sini…"></textarea>
+          <div class="ai-output-btns">
+            <button class="btn btn-ghost" id="ai-copy-btn" onclick="copyAIOutput()">⎘ Copy</button>
+            <button class="btn btn-ghost" onclick="applyToEditor()">↙ Apply</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Statusbar -->
+  <div class="statusbar">
+    <span>◈ Agent Personas · OpenClaw</span>
+    <span id="sb-file" class="text-muted">—</span>
+    <span id="sb-bytes" class="text-muted ml-auto">—</span>
+    <span id="agent-clock">--:-- UTC</span>
+  </div>
+</div>
+
+<script>
+// ── Config ─────────────────────────────────────────
+const API = '/api/dispatcher';
+
+const AGENTS_META = {
+  main:   { label:'main (Albert)', subtitle:'Director · Orchestrator · deepseek-chat (v3) · VPS 213.199.49.18', initial:'A', chips:['deepseek-v3','director','PMO'] },
+  elsa:   { label:'elsa (ELSA)',   subtitle:'Librarian · RAG Pipeline Manager · deepseek-chat (v3)',           initial:'E', chips:['deepseek-v3','librarian','RAG'] },
+  ditesh: { label:'ditesh (DITESH)', subtitle:'Ops · Infrastructure Engineer · claude-sonnet-4.5',              initial:'D', chips:['sonnet-4.5','ops','infra'] },
+  newton: { label:'newton (NEWTON)', subtitle:'Quant Researcher · claude-sonnet-4',                            initial:'N', chips:['sonnet-4','quant','research'] },
+};
+
+// Map filename (lowercase) → icon
+const FILE_ICONS = {
+  // agent/ — system prompt files
+  'soul.md':      '👤',
+  'heartbeat.md': '♡',
+  'skills.md':    '⚙',
+  'spawn.md':     '⚡',
+  'identity.md':  '🆔',
+  'tools.md':     '🔧',
+  // workspace/ — persona files (uppercase on disk, matched lowercase)
+  'soul.md':      '👤',  // workspace/SOUL.md
+  'boot.md':      '🚀',
+  'spawn.md':     '⚡',
+  'bootstrap.md': '🐣',
+  'user.md':      '🧑',
+  'agents.md':    '🤝',
+  'memory.md':    '🧠',
+  'context.md':   '📋',
+  'heartbeat.md': '♡',
+  'smart_model_guide.md': '🗺️',
+};
+
+// Files to exclude from the sidebar (session dumps, reports, temp files)
+const FILE_EXCLUDE = /^(session_compaction|xauusd_integration|ditesh_agent_memory_rag|ditesh_rag_implementation|t-\d+_|newton_gold|quick_gold|gold_)/i;
+
+// ── State ───────────────────────────────────────────
+let currentAgent = null;
+let currentFile  = null;
+let isDirty      = false;
+let currentTree  = null;  // {agent: [...], workspace: [...]}
+let currentGroup = 'agent'; // active group: 'agent' | 'workspace' | 'memories'
+
+// ── Clock ───────────────────────────────────────────
+function updateClock() {
+  const el = document.getElementById('agent-clock');
+  if (el) el.textContent = new Date().toUTCString().split(' ')[4] + ' UTC';
+}
+updateClock(); setInterval(updateClock, 1000);
+
+// ── API helpers ─────────────────────────────────────
+async function apiFetchFiles(agent) {
+  const r = await fetch(`${API}/agent-files?agent=${agent}`);
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  const data = await r.json();
+  currentTree = data.tree || null;
+  return data.files || [];
+}
+
+async function apiFetchFile(agent, file) {
+  const r = await fetch(`${API}/agent-file?agent=${agent}&file=${encodeURIComponent(file)}`);
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return (await r.json()).content || '';
+}
+
+async function apiSaveFile(agent, file, content) {
+  const r = await fetch(`${API}/agent-file`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ agent, file, content }),
+  });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return r.json();
+}
+
+// ── UI helpers ──────────────────────────────────────
+function updateHeader(agent) {
+  const m = AGENTS_META[agent];
+  if (!m) return;
+  const av = document.getElementById('ah-avatar');
+  av.textContent = m.initial;
+  av.className = 'agent-header-avatar avatar-' + agent;
+  document.getElementById('ah-name').textContent     = m.label;
+  document.getElementById('ah-subtitle').textContent = m.subtitle;
+  document.getElementById('ah-chips').innerHTML      = m.chips.map(c => `<div class="chip">${c}</div>`).join('');
+}
+
+function buildTabs(agent, files) {
+  const container = document.getElementById('file-tabs');
+  const ct = currentTree || {};
+  const groups = [
+    { key: 'agent',     icon: '⚙',  label: 'agent/',     count: (ct.agent     || []).filter(f => !FILE_EXCLUDE.test(f)).length },
+    { key: 'workspace', icon: '📁', label: 'workspace/', count: (ct.workspace || []).filter(f => !FILE_EXCLUDE.test(f)).length },
+    { key: 'memories',  icon: '🧠', label: 'memories/',  count: 0 },
+  ];
+  container.innerHTML = groups.map(g =>
+    `<button class="group-tab${g.key === currentGroup ? ' active' : ''}" data-group="${g.key}" onclick="selectGroup('${g.key}')">${g.icon} ${g.label} <span class="group-count" id="gc-${g.key}">${g.count}</span></button>`
+  ).join('');
+  updateGroupIndex(agent);
+  // fetch memory count async
+  fetch(`${API}/agent-memories?agent=${agent}`)
+    .then(r => r.json())
+    .then(d => { const el = document.getElementById('gc-memories'); if (el) el.textContent = d.count || 0; })
+    .catch(() => {});
+}
+
+function selectGroup(group) {
+  currentGroup = group;
+  document.querySelectorAll('.group-tab').forEach(t =>
+    t.classList.toggle('active', t.dataset.group === group));
+  updateGroupIndex(currentAgent);
+  if (group !== 'memories' && currentTree) {
+    const gFiles = (currentTree[group] || []).filter(f => !FILE_EXCLUDE.test(f));
+    if (gFiles.length > 0) selectFile(gFiles[0]);
+  }
+}
+
+function updateGroupIndex(agent) {
+  const idx = document.getElementById('file-index-list');
+  if (currentGroup === 'memories') { loadMemoriesList(agent); return; }
+  const groupFiles = (currentTree?.[currentGroup] || []).filter(f => !FILE_EXCLUDE.test(f));
+  if (!groupFiles.length) {
+    idx.innerHTML = '<span class="file-tree-empty">(empty)</span>';
+    return;
+  }
+  idx.innerHTML = groupFiles.map(f => {
+    const icon = FILE_ICONS[f.toLowerCase()] || '📄';
+    return `<span class="file-index-item" data-file="${f}" onclick="selectFile('${f}')">${icon} ${f}</span>`;
+  }).join('');
+}
+
+async function loadMemoriesList(agent) {
+  const idx = document.getElementById('file-index-list');
+  idx.innerHTML = '<span style="color:var(--muted);font-size:0.625rem">Loading…</span>';
+  try {
+    const r = await fetch(`${API}/agent-memories?agent=${agent}`);
+    const data = await r.json();
+    const entries = data.entries || [];
+    const el = document.getElementById('gc-memories');
+    if (el) el.textContent = data.count || 0;
+    if (!entries.length) {
+      idx.innerHTML = '<span class="file-tree-empty">(no memories yet)</span>';
+      return;
+    }
+    idx.innerHTML = entries.map(e =>
+      `<div class="mem-card" data-file="${e.filename}" onclick="showMemory('${agent}','${e.filename}')">`+
+      `<div class="mem-ts">${e.ts_human}</div>`+
+      `<div class="mem-ctx">${e.context_snippet}</div>`+
+      `<div class="mem-meta">${e.decisions_count}d · ${e.insights_count}i${e.keywords.length ? ' · '+e.keywords.slice(0,2).join(', ') : ''}</div>`+
+      `</div>`
+    ).join('');
+    await showMemory(agent, entries[0].filename);
+  } catch(e) {
+    idx.innerHTML = `<span style="color:var(--red);font-size:0.625rem">⚠ ${e.message}</span>`;
+  }
+}
+
+async function showMemory(agent, filename) {
+  document.querySelectorAll('.mem-card').forEach(c =>
+    c.classList.toggle('active', c.dataset.file === filename));
+  currentFile = filename;
+  const editor = document.getElementById('md-editor');
+  editor.value = ''; editor.disabled = true;
+  editor.placeholder = `Loading ${filename}…`;
+  document.getElementById('sb-file').textContent = `${agent} → memories/${filename}`;
+  try {
+    const r = await fetch(`${API}/agent-memories?agent=${agent}&file=${encodeURIComponent(filename)}`);
+    const data = await r.json();
+    const m = data.entry || {};
+    editor.value = [
+      `# Memory · ${m.timestamp || filename}`, '',
+      '## Context', m.context || '—', '',
+      '## Decisions', ...(m.decisions||[]).map(d=>`- ${d}`), '',
+      '## In Progress', ...(m.in_progress||[]).map(d=>`- ${d}`), '',
+      '## Insights', ...(m.insights||[]).map(i=>`- ${i}`), '',
+      '## Keywords', (m.keywords||[]).join(', '),
+    ].join('\n');
+    editor.disabled = false;
+    updateByteCount(editor.value);
+    document.getElementById('save-status').textContent = '(read only)';
+    document.getElementById('save-status').style.color = 'var(--muted)';
+  } catch(e) {
+    editor.placeholder = `Error: ${e.message}`;
+  }
+}
+
+function setTabActive(file) {
+  document.querySelectorAll('.file-index-item').forEach(t =>
+    t.classList.toggle('active', t.dataset.file === file));
+}
+
+function updateByteCount(content) {
+  const bytes = new TextEncoder().encode(content).length;
+  const lines = content.split('\n').length;
+  document.getElementById('sb-bytes').textContent = `${lines} lines · ${(bytes / 1024).toFixed(1)} KB`;
+}
+
+function markDirty(dirty) {
+  isDirty = dirty;
+  const btn = document.getElementById('save-btn');
+  if (dirty) {
+    btn.className   = 'btn btn-success';
+    btn.textContent = '↑ Save';
+    btn.disabled    = false;
+  } else {
+    btn.className   = 'btn btn-ghost';
+    btn.textContent = '↑ Save';
+    btn.disabled    = true;
+  }
+}
+
+// ── Core actions ────────────────────────────────────
+async function selectAgent(agent) {
+  if (agent === currentAgent) return;
+  if (isDirty && !confirm(`Discard unsaved changes to ${currentFile}?`)) return;
+
+  currentAgent = agent;
+  currentFile  = null;
+  isDirty      = false;
+
+  document.querySelectorAll('.agent-card-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.agent === agent));
+
+  updateHeader(agent);
+
+  const editor = document.getElementById('md-editor');
+  editor.value       = '';
+  editor.disabled    = true;
+  editor.placeholder = 'Loading files…';
+
+  document.getElementById('sb-file').textContent      = agent;
+  document.getElementById('sb-bytes').textContent     = '—';
+  document.getElementById('save-btn').disabled        = true;
+  document.getElementById('save-status').textContent  = '';
+  document.getElementById('file-tabs').innerHTML      =
+    '<span style="padding:0 12px;font-size:0.75rem;align-self:center;color:var(--muted)">Loading…</span>';
+  document.getElementById('file-index-list').innerHTML = '';
+
+  try {
+    const files = await apiFetchFiles(agent);
+    currentGroup = 'agent';
+    buildTabs(agent, files);
+    const agentFiles = (currentTree?.agent || []).filter(f => !FILE_EXCLUDE.test(f));
+    if (agentFiles.length > 0) await selectFile(agentFiles[0]);
+  } catch (e) {
+    document.getElementById('file-tabs').innerHTML =
+      `<span style="padding:0 12px;font-size:0.75rem;color:var(--red)">⚠ ${e.message}</span>`;
+    editor.placeholder = `Cannot reach ${API}\n\nCheck:\n1. VPS running\n2. nginx proxy /api/dispatcher/\n3. agent-dispatcher.service active`;
+    document.getElementById('sb-file').textContent = 'connection error';
+  }
+}
+
+async function selectFile(file) {
+  if (isDirty && currentFile && file !== currentFile) {
+    if (!confirm(`Discard unsaved changes to ${currentFile}?`)) return;
+  }
+  currentFile = file;
+  isDirty     = false;
+  markDirty(false);
+  setTabActive(file);
+
+  const editor = document.getElementById('md-editor');
+  editor.value       = '';
+  editor.disabled    = true;
+  editor.placeholder = `Loading ${file}…`;
+  document.getElementById('sb-file').textContent = `${currentAgent} → ${file}`;
+
+  try {
+    const content = await apiFetchFile(currentAgent, file);
+    editor.value    = content;
+    editor.disabled = false;
+    editor.focus();
+    updateByteCount(content);
+    document.getElementById('save-status').textContent = '';
+    document.getElementById('save-status').style.color = '';
+  } catch (e) {
+    editor.placeholder = `Error loading ${file}: ${e.message}`;
+    document.getElementById('sb-file').textContent = `error: ${file}`;
+  }
+}
+
+async function saveFile() {
+  if (!currentFile || !currentAgent) return;
+  const content = document.getElementById('md-editor').value;
+  const btn     = document.getElementById('save-btn');
+  const status  = document.getElementById('save-status');
+
+  btn.disabled    = true;
+  btn.textContent = '↑ Saving…';
+  status.textContent = '';
+
+  try {
+    const res = await apiSaveFile(currentAgent, currentFile, content);
+    markDirty(false);
+    btn.className   = 'btn btn-saved';
+    btn.textContent = '✓ Saved';
+    status.textContent = `saved ${(res.bytes / 1024).toFixed(1)} KB`;
+    status.style.color = 'var(--green)';
+    updateByteCount(content);
+    setTimeout(() => {
+      btn.className   = 'btn btn-ghost';
+      btn.textContent = '↑ Save';
+      btn.disabled    = true;
+      status.textContent = '';
+    }, 2500);
+  } catch (e) {
+    btn.className   = 'btn btn-error';
+    btn.textContent = '✗ Failed';
+    btn.disabled    = false;
+    status.textContent = e.message;
+    status.style.color = 'var(--red)';
+    setTimeout(() => {
+      btn.className   = 'btn btn-ghost';
+      btn.textContent = '↑ Save';
+    }, 3000);
+  }
+}
+
+// ── Editor events ───────────────────────────────────
+document.getElementById('md-editor').addEventListener('input', () => {
+  if (!isDirty) markDirty(true);
+  updateByteCount(document.getElementById('md-editor').value);
+});
+
+// Ctrl+S / Cmd+S
+document.addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+    e.preventDefault();
+    if (!document.getElementById('save-btn').disabled) saveFile();
+  }
+});
+
+// ── AI Assistant ─────────────────────────────────────
+let aiPanelOpen = false;
+
+function toggleAIPanel() {
+  aiPanelOpen = !aiPanelOpen;
+  document.getElementById('ai-panel').classList.toggle('hidden', !aiPanelOpen);
+  const btn = document.getElementById('ai-toggle-btn');
+  btn.className = aiPanelOpen ? 'btn btn-primary' : 'btn btn-ghost';
+}
+
+function setPreset(text) {
+  document.getElementById('ai-prompt').value = text;
+  document.getElementById('ai-prompt').focus();
+}
+
+async function generateAI() {
+  const prompt  = document.getElementById('ai-prompt').value.trim();
+  const content = document.getElementById('md-editor').value;
+  if (!prompt) { alert('Tulis instruksi dulu.'); return; }
+
+  const agentId = document.getElementById('ai-agent-sel').value;
+  const ctx     = content
+    ? `\n\n---\nFILE: ${currentFile || 'untitled'}\n\n${content}`
+    : '';
+  const fullMsg = prompt + ctx;
+
+  const btn    = document.getElementById('ai-gen-btn');
+  const icon   = document.getElementById('ai-gen-icon');
+  const output = document.getElementById('ai-output');
+  const note   = document.getElementById('ai-out-note');
+
+  btn.disabled       = true;
+  icon.innerHTML     = '<span class="ai-spinner"></span>';
+  output.value       = '';
+  output.placeholder = 'Generating… (may take up to 60s)';
+  note.textContent   = '';
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 120000);
+
+  try {
+    const r = await fetch(`${API}/agent-sync`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ agent: agentId, message: fullMsg }),
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+    output.value       = data.response || '';
+    output.placeholder = 'Output AI akan muncul di sini…';
+    const lines = (data.response || '').split('\n').length;
+    const kb    = (new TextEncoder().encode(data.response || '').length / 1024).toFixed(1);
+    note.textContent = `${lines} lines · ${kb} KB`;
+  } catch (e) {
+    clearTimeout(timer);
+    output.value       = e.name === 'AbortError' ? 'Error: request timed out (120s)' : `Error: ${e.message}`;
+    output.placeholder = '';
+    note.textContent   = 'error';
+  } finally {
+    btn.disabled   = false;
+    icon.innerHTML = '✦';
+  }
+}
+
+function copyAIOutput() {
+  const val = document.getElementById('ai-output').value;
+  if (!val) return;
+  const btn  = document.getElementById('ai-copy-btn');
+  const orig = btn.textContent;
+  navigator.clipboard.writeText(val)
+    .then(() => { btn.textContent = '✓ Copied!'; setTimeout(() => btn.textContent = orig, 1500); })
+    .catch(() => { document.getElementById('ai-output').select(); document.execCommand('copy'); });
+}
+
+function applyToEditor() {
+  const val = document.getElementById('ai-output').value;
+  if (!val) return;
+  if (isDirty && !confirm('Replace current editor content with AI output?')) return;
+  const editor = document.getElementById('md-editor');
+  editor.value = val;
+  markDirty(true);
+  updateByteCount(val);
+  editor.focus();
+}
+
+// ── Boot ────────────────────────────────────────────
+selectAgent('main');
+
+// Expose for inline onclick
+window.selectAgent  = selectAgent;
+window.selectFile   = selectFile;
+window.selectGroup  = selectGroup;
+window.showMemory   = showMemory;
+window.saveFile     = saveFile;
+window.toggleAIPanel = toggleAIPanel;
+window.setPreset    = setPreset;
+window.generateAI   = generateAI;
+window.copyAIOutput = copyAIOutput;
+window.applyToEditor = applyToEditor;
+</script>
+</body>
+</html>

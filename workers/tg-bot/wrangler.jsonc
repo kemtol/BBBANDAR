@@ -1,0 +1,20 @@
+{
+    "name": "tg-bot",
+    "main": "src/index.js",
+    "compatibility_date": "2025-01-01",
+    "observability": {
+        "enabled": true
+    },
+    "vars": {
+        "AUTH_BASE": "https://auth-uid.mkemalw.workers.dev",
+        "BOT_USERNAME": "SSSAHAMBot",
+        "APP_BASE": "https://sssaham.com"
+    }
+    // Setelah buat worker, isi secrets via wrangler CLI:
+    //   wrangler secret put BOT_TOKEN
+    //   wrangler secret put BOT_SECRET
+    //   wrangler secret put GROUP_INVITE_LINK
+    //
+    // Dan di auth-uid juga set secret yang sama:
+    //   cd ../auth-uid && wrangler secret put BOT_SECRET
+}

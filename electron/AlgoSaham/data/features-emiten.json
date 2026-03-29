@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-02-12T01:50:55.067Z",
+  "generatedAt": "2026-03-11T08:00:16.346Z",
   "totalEmitens": 101,
   "results": {
     "BBCA": {
@@ -7,707 +7,707 @@
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:21.711Z"
+      "fetchedAt": "2026-03-11T07:59:42.785Z"
     },
     "BBRI": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:22.003Z"
+      "fetchedAt": "2026-03-11T07:59:43.099Z"
     },
     "BMRI": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:22.306Z"
+      "fetchedAt": "2026-03-11T07:59:43.384Z"
     },
     "ANTM": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:22.603Z"
+      "fetchedAt": "2026-03-11T07:59:43.689Z"
     },
     "BRPT": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:22.913Z"
+      "fetchedAt": "2026-03-11T07:59:44.239Z"
     },
     "TLKM": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:23.203Z"
+      "fetchedAt": "2026-03-11T07:59:44.537Z"
     },
     "BBNI": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:23.508Z"
+      "fetchedAt": "2026-03-11T07:59:44.833Z"
     },
     "BRMS": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:23.823Z"
+      "fetchedAt": "2026-03-11T07:59:45.139Z"
     },
     "PTRO": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:24.107Z"
+      "fetchedAt": "2026-03-11T07:59:45.432Z"
     },
     "ASII": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:24.408Z"
+      "fetchedAt": "2026-03-11T07:59:45.738Z"
     },
     "DSSA": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:24.712Z"
+      "fetchedAt": "2026-03-11T07:59:46.053Z"
     },
     "CUAN": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:25.018Z"
+      "fetchedAt": "2026-03-11T07:59:46.349Z"
     },
     "MDKA": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:25.312Z"
+      "fetchedAt": "2026-03-11T07:59:46.626Z"
     },
     "ADRO": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:25.611Z"
+      "fetchedAt": "2026-03-11T07:59:46.929Z"
     },
     "WIFI": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:25.927Z"
+      "fetchedAt": "2026-03-11T07:59:47.244Z"
     },
     "PGEO": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:26.203Z"
+      "fetchedAt": "2026-03-11T07:59:47.527Z"
     },
     "PANI": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:26.513Z"
+      "fetchedAt": "2026-03-11T07:59:47.826Z"
     },
     "MBMA": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:26.812Z"
+      "fetchedAt": "2026-03-11T07:59:48.149Z"
     },
     "UNTR": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:27.115Z"
+      "fetchedAt": "2026-03-11T07:59:48.462Z"
     },
     "BRIS": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:27.413Z"
+      "fetchedAt": "2026-03-11T07:59:48.747Z"
     },
     "AADI": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:27.709Z"
+      "fetchedAt": "2026-03-11T07:59:49.062Z"
     },
     "AMRT": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:28.014Z"
+      "fetchedAt": "2026-03-11T07:59:49.362Z"
     },
     "RAJA": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:28.322Z"
+      "fetchedAt": "2026-03-11T07:59:49.636Z"
     },
     "PGAS": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:28.617Z"
+      "fetchedAt": "2026-03-11T07:59:49.943Z"
     },
     "RATU": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:28.919Z"
+      "fetchedAt": "2026-03-11T07:59:50.247Z"
     },
     "INDF": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:29.215Z"
+      "fetchedAt": "2026-03-11T07:59:50.573Z"
     },
     "DEWA": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:29.522Z"
+      "fetchedAt": "2026-03-11T07:59:50.841Z"
     },
     "KLBF": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:29.817Z"
+      "fetchedAt": "2026-03-11T07:59:51.155Z"
     },
     "TCPI": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:30.117Z"
+      "fetchedAt": "2026-03-11T07:59:51.448Z"
     },
     "PSAB": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:30.421Z"
+      "fetchedAt": "2026-03-11T07:59:51.743Z"
     },
     "INCO": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:30.720Z"
+      "fetchedAt": "2026-03-11T07:59:52.049Z"
     },
     "TOBA": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:31.022Z"
+      "fetchedAt": "2026-03-11T07:59:52.348Z"
     },
     "MEDC": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:31.315Z"
+      "fetchedAt": "2026-03-11T07:59:52.650Z"
     },
     "JPFA": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:31.623Z"
+      "fetchedAt": "2026-03-11T07:59:52.954Z"
     },
     "UNVR": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:31.923Z"
+      "fetchedAt": "2026-03-11T07:59:53.258Z"
     },
     "INKP": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:32.227Z"
+      "fetchedAt": "2026-03-11T07:59:53.580Z"
     },
     "PTBA": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:32.518Z"
+      "fetchedAt": "2026-03-11T07:59:53.877Z"
     },
     "CBDK": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:32.826Z"
+      "fetchedAt": "2026-03-11T07:59:54.149Z"
     },
     "ITMG": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:33.126Z"
+      "fetchedAt": "2026-03-11T07:59:54.470Z"
     },
     "ISAT": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:33.428Z"
+      "fetchedAt": "2026-03-11T07:59:54.759Z"
     },
     "BBTN": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:33.729Z"
+      "fetchedAt": "2026-03-11T07:59:55.062Z"
     },
     "PNLF": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:34.038Z"
+      "fetchedAt": "2026-03-11T07:59:55.364Z"
     },
     "COIN": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:34.437Z"
+      "fetchedAt": "2026-03-11T07:59:55.668Z"
     },
     "ADMR": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:34.653Z"
+      "fetchedAt": "2026-03-11T07:59:55.968Z"
     },
     "SMGR": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:35.052Z"
+      "fetchedAt": "2026-03-11T07:59:56.272Z"
     },
     "ERAA": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:35.232Z"
+      "fetchedAt": "2026-03-11T07:59:56.564Z"
     },
     "SMIL": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:35.625Z"
+      "fetchedAt": "2026-03-11T07:59:56.847Z"
     },
     "DKFT": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:35.934Z"
+      "fetchedAt": "2026-03-11T07:59:57.158Z"
     },
     "CMNT": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:36.227Z"
+      "fetchedAt": "2026-03-11T07:59:57.459Z"
     },
     "AKRA": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:36.441Z"
+      "fetchedAt": "2026-03-11T07:59:57.762Z"
     },
     "ACES": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:36.842Z"
+      "fetchedAt": "2026-03-11T07:59:58.070Z"
     },
     "SCMA": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:37.054Z"
+      "fetchedAt": "2026-03-11T07:59:58.401Z"
     },
     "MAPI": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:37.337Z"
+      "fetchedAt": "2026-03-11T07:59:58.662Z"
     },
     "MIKA": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:37.638Z"
+      "fetchedAt": "2026-03-11T07:59:58.961Z"
     },
     "INET": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:37.938Z"
+      "fetchedAt": "2026-03-11T07:59:59.261Z"
     },
     "TINS": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:38.235Z"
+      "fetchedAt": "2026-03-11T07:59:59.613Z"
     },
     "SSIA": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:38.541Z"
+      "fetchedAt": "2026-03-11T07:59:59.880Z"
     },
     "EXCL": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:38.841Z"
+      "fetchedAt": "2026-03-11T08:00:00.173Z"
     },
     "MSIN": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:39.149Z"
+      "fetchedAt": "2026-03-11T08:00:00.470Z"
     },
     "MAPA": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:39.439Z"
+      "fetchedAt": "2026-03-11T08:00:00.771Z"
     },
     "CTRA": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:39.739Z"
+      "fetchedAt": "2026-03-11T08:00:01.091Z"
     },
     "MERI": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:40.045Z"
+      "fetchedAt": "2026-03-11T08:00:01.366Z"
     },
     "ITMA": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:40.346Z"
+      "fetchedAt": "2026-03-11T08:00:01.666Z"
     },
     "ENRG": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:40.640Z"
+      "fetchedAt": "2026-03-11T08:00:01.982Z"
     },
     "HRTA": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:40.974Z"
+      "fetchedAt": "2026-03-11T08:00:02.282Z"
     },
     "CYBR": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:41.248Z"
+      "fetchedAt": "2026-03-11T08:00:02.590Z"
     },
     "SMRA": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:41.555Z"
+      "fetchedAt": "2026-03-11T08:00:02.873Z"
     },
     "INDY": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:41.842Z"
+      "fetchedAt": "2026-03-11T08:00:03.179Z"
     },
     "HEAL": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:42.170Z"
+      "fetchedAt": "2026-03-11T08:00:03.509Z"
     },
     "EMTK": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:42.450Z"
+      "fetchedAt": "2026-03-11T08:00:03.784Z"
     },
     "DSNG": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:42.750Z"
+      "fetchedAt": "2026-03-11T08:00:04.105Z"
     },
     "TAPG": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:43.057Z"
+      "fetchedAt": "2026-03-11T08:00:04.388Z"
     },
     "FILM": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:43.352Z"
+      "fetchedAt": "2026-03-11T08:00:04.716Z"
     },
     "MARK": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:43.654Z"
+      "fetchedAt": "2026-03-11T08:00:04.978Z"
     },
     "JSMR": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:43.964Z"
+      "fetchedAt": "2026-03-11T08:00:05.286Z"
     },
     "INTP": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:44.274Z"
+      "fetchedAt": "2026-03-11T08:00:05.590Z"
     },
     "ESSA": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:44.553Z"
+      "fetchedAt": "2026-03-11T08:00:05.884Z"
     },
     "UNIQ": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:44.861Z"
+      "fetchedAt": "2026-03-11T08:00:06.184Z"
     },
     "BTPS": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:45.172Z"
+      "fetchedAt": "2026-03-11T08:00:06.488Z"
     },
     "SIDO": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:45.457Z"
+      "fetchedAt": "2026-03-11T08:00:06.817Z"
     },
     "PTPP": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:45.760Z"
+      "fetchedAt": "2026-03-11T08:00:07.110Z"
     },
     "PWON": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:46.064Z"
+      "fetchedAt": "2026-03-11T08:00:07.382Z"
     },
     "FORE": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:46.375Z"
+      "fetchedAt": "2026-03-11T08:00:07.725Z"
     },
     "ARTO": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:46.673Z"
+      "fetchedAt": "2026-03-11T08:00:08.004Z"
     },
     "LSIP": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:46.968Z"
+      "fetchedAt": "2026-03-11T08:00:08.293Z"
     },
     "HRUM": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:47.270Z"
+      "fetchedAt": "2026-03-11T08:00:08.612Z"
     },
     "SSMS": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:47.576Z"
+      "fetchedAt": "2026-03-11T08:00:08.913Z"
     },
     "PSAT": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:47.870Z"
+      "fetchedAt": "2026-03-11T08:00:09.190Z"
     },
     "ELSA": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:48.175Z"
+      "fetchedAt": "2026-03-11T08:00:09.533Z"
     },
     "BLOG": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:48.477Z"
+      "fetchedAt": "2026-03-11T08:00:09.788Z"
     },
     "STAA": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:48.774Z"
+      "fetchedAt": "2026-03-11T08:00:10.108Z"
     },
     "DATA": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:49.081Z"
+      "fetchedAt": "2026-03-11T08:00:10.401Z"
     },
     "KPIG": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:49.436Z"
+      "fetchedAt": "2026-03-11T08:00:10.706Z"
     },
     "BSDE": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:49.675Z"
+      "fetchedAt": "2026-03-11T08:00:11.011Z"
     },
     "ARCI": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:49.980Z"
+      "fetchedAt": "2026-03-11T08:00:11.308Z"
     },
     "BNGA": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:50.341Z"
+      "fetchedAt": "2026-03-11T08:00:11.604Z"
     },
     "PACK": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:50.582Z"
+      "fetchedAt": "2026-03-11T08:00:11.923Z"
     },
     "NICL": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:50.883Z"
+      "fetchedAt": "2026-03-11T08:00:12.213Z"
     },
     "BBYB": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:51.185Z"
+      "fetchedAt": "2026-03-11T08:00:12.514Z"
     },
     "HATM": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:51.483Z"
+      "fetchedAt": "2026-03-11T08:00:12.810Z"
     },
     "CLEO": {
       "data": {
         "status": "HOLD",
         "msg": "Waiting for the result..."
       },
-      "fetchedAt": "2026-02-12T01:50:51.806Z"
+      "fetchedAt": "2026-03-11T08:00:13.114Z"
     }
   }
 }

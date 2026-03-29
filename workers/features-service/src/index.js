@@ -30,6 +30,13 @@
  */
 import { SmartMoney } from './smart-money';
 
+// Simple in-memory cache for D1 context queries (reduces reads by ~80% for repeated calls)
+const contextCache = {
+    data: null,
+    timestamp: 0,
+    ttlMs: 5 * 60 * 1000  // Cache for 5 minutes
+};
+
 export default {
     async scheduled(event, env, ctx) {
         // CRON HANDLER
@@ -1384,7 +1391,7 @@ export default {
         } else {
             try {
                 const { results } = await env.SSSAHAM_DB.prepare(
-                    "SELECT ticker FROM emiten"  // No status filter - get ALL tickers
+                    "SELECT ticker FROM emiten LIMIT 1000"  // Added LIMIT for safety
                 ).all();
                 if (results) {
                     targetTickers = results
@@ -1566,6 +1573,13 @@ export default {
     },
 
     async fetchLatestContext(env, date) {
+        // Check cache first (reduces D1 reads for repeated calls within 5 minutes)
+        const now = Date.now();
+        if (contextCache.data && (now - contextCache.timestamp) < contextCache.ttlMs) {
+            console.log(`[Context] Using cached z-score data (age: ${Math.round((now - contextCache.timestamp)/1000)}s)`);
+            return contextCache.data;
+        }
+
         // Find latest date with data up to and including 'date'
         // Changed from < to <= to include same-day data
         const dateRow = await env.SSSAHAM_DB.prepare(`
@@ -1583,7 +1597,11 @@ export default {
             WHERE date = ?
         `).bind(ctxDate).all();
 
-        return results || [];
+        // Store in cache
+        contextCache.data = results || [];
+        contextCache.timestamp = now;
+        
+        return contextCache.data;
     },
 
     normalize(value, min, max) {
@@ -1923,8 +1941,8 @@ export default {
 
         let tickers = [];
         try {
-            // Get ALL tickers regardless of status
-            const { results } = await env.SSSAHAM_DB.prepare("SELECT ticker FROM emiten").all();
+            // Get ALL tickers regardless of status (with safety LIMIT)
+            const { results } = await env.SSSAHAM_DB.prepare("SELECT ticker FROM emiten LIMIT 1000").all();
             if (results) tickers = results.map(r => r.ticker.replace(/\.JK$/, ''));
         } catch (e) {
             console.error("Error fetching tickers:", e);
@@ -2552,7 +2570,7 @@ export default {
         console.log("Starting System-Wide Integrity Scan (D-1 to D-90)...");
         let results = [];
         try {
-            const dbRes = await env.SSSAHAM_DB.prepare("SELECT ticker FROM emiten").all();  // No status filter - scan ALL tickers
+            const dbRes = await env.SSSAHAM_DB.prepare("SELECT ticker FROM emiten LIMIT 1000").all();  // Added LIMIT for safety
             results = dbRes.results;
         } catch (e) { console.error("DB Error:", e); return; }
 
@@ -2688,10 +2706,10 @@ export default {
         console.log(`[FOREIGN-FLOW] Starting scanner with ${lookbackDays} day lookback...`);
         const startTime = Date.now();
 
-        // 1. Get all tickers from emiten table
+        // 1. Get all tickers from emiten table (with safety LIMIT)
         let tickers = [];
         try {
-            const { results } = await env.SSSAHAM_DB.prepare("SELECT ticker FROM emiten").all();
+            const { results } = await env.SSSAHAM_DB.prepare("SELECT ticker FROM emiten LIMIT 1000").all();
             if (results) tickers = results.map(r => r.ticker.replace(/\.JK$/, '')).filter(t => this.isValidTicker(t));
         } catch (e) {
             console.error("[FOREIGN-FLOW] Failed to get tickers:", e);

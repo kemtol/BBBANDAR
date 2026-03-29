@@ -73,7 +73,7 @@ const WORKERS = [
         url: 'https://livetrade-taping.mkemalw.workers.dev',
         endpoint: '/status', // Keep-alive / Resurrection
         schedule: {
-            interval: 60, // 1 minute in seconds
+            interval: 300, // 5 minutes (reduced from 1 min to save D1 reads)
             unit: 'seconds'
         },
         enabled: true

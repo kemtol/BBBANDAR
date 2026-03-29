@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cron — OpenClaw</title>
+<link rel="stylesheet" href="css/themes.css">
+<link rel="stylesheet" href="css/style.css">
+<style>
+body { overflow: hidden; height: 100vh; }
+.main { min-height: 0; }
+html.in-iframe .sidebar { display: none; }
+html.in-iframe .main    { margin-left: 0; }
+
+/* ── Cron layout ── */
+.cron-layout {
+  flex: 1; min-height: 0; overflow-y: auto;
+  padding: 16px 20px; display: flex; flex-direction: column; gap: 20px;
+}
+.cron-section-title {
+  font-size: 0.625rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .08em; color: var(--muted); margin-bottom: 8px;
+}
+
+/* ── Heartbeat cards ── */
+.hb-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px;
+}
+.hb-card {
+  background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+  padding: 14px 16px; display: flex; flex-direction: column; gap: 8px;
+}
+.hb-card-top { display: flex; align-items: center; gap: 10px; }
+.hb-avatar {
+  width: 34px; height: 34px; border-radius: 8px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 800; font-size: 0.875rem;
+}
+.hb-name   { font-size: 0.8125rem; font-weight: 600; color: var(--text); }
+.hb-label  { font-size: 0.625rem; color: var(--muted); margin-top: 1px; }
+.hb-props  { display: flex; gap: 5px; flex-wrap: wrap; }
+.hb-next {
+  margin-top: 2px; display: flex; align-items: center; gap: 6px;
+  font-size: 0.6875rem; color: var(--muted);
+}
+.hb-next-bar-wrap {
+  flex: 1; height: 3px; background: var(--border); border-radius: 6px; overflow: hidden;
+}
+.hb-next-bar { height: 100%; border-radius: 6px; background: var(--accent); transition: width .5s; }
+.hb-next-label { font-size: 0.625rem; white-space: nowrap; }
+
+/* ── Compact scheduler row ── */
+.compact-row {
+  background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+  padding: 12px 16px; display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+}
+.compact-icon {
+  width: 34px; height: 34px; border-radius: 8px; flex-shrink: 0;
+  background: color-mix(in srgb,var(--accent) 15%,var(--surface));
+  color: var(--accent); display: flex; align-items: center; justify-content: center;
+  font-size: 1rem;
+}
+.compact-info { flex: 1; min-width: 0; }
+.compact-title { font-size: 0.8125rem; font-weight: 600; color: var(--text); }
+.compact-sub   { font-size: 0.6875rem; color: var(--muted); margin-top: 2px; }
+.compact-agents { display: flex; gap: 5px; flex-wrap: wrap; }
+
+/* ── System cron table ── */
+.cron-table-wrap { background: var(--card); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+.cron-table { width: 100%; border-collapse: collapse; }
+.cron-table th {
+  text-align: left; font-size: 0.625rem; font-weight: 700; color: var(--muted);
+  text-transform: uppercase; letter-spacing: .05em; padding: 8px 14px;
+  border-bottom: 1px solid var(--border); background: var(--surface);
+}
+.cron-table td { font-size: 0.75rem; padding: 10px 14px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.cron-table tr:last-child td { border-bottom: none; }
+.cron-table tr:hover td { background: rgba(99,102,241,.04); }
+.cron-sched { font-family: 'JetBrains Mono', monospace; font-size: 0.6875rem; color: var(--cyan); white-space: nowrap; }
+.cron-cmd   { font-family: 'JetBrains Mono', monospace; font-size: 0.65rem; color: var(--muted); max-width: 500px; word-break: break-all; }
+.cron-label { font-size: 0.6875rem; font-weight: 600; color: var(--text); white-space: nowrap; }
+</style>
+<script>if (window.self !== window.top) document.documentElement.classList.add('in-iframe');</script>
+</head>
+<body>
+
+<nav class="sidebar">
+  <div class="logo">OC</div>
+  <a class="nav-item" href="index.html?page=overview" title="Overview">⌗</a>
+  <a class="nav-item" href="index.html?page=agents" title="Agents">◈</a>
+  <div class="nav-item" title="Memory">◉</div>
+  <a class="nav-item" href="index.html?page=rag" title="RAG / Qdrant">◇</a>
+  <a class="nav-item" href="index.html?page=logs" title="Logs">≡</a>
+  <div class="nav-item active" title="Cron">⏱</div>
+  <a class="nav-item" href="index.html?page=kanban" title="Project Management">⊞</a>
+  <div class="spacer"></div>
+  <div class="nav-item" title="Settings">⚙</div>
+</nav>
+
+<div class="main">
+
+  <div class="topbar">
+    <div class="topbar-left">
+      <h1>Cron &amp; Schedulers</h1>
+      <span class="badge" id="jobCount">—</span>
+    </div>
+    <div class="topbar-right">
+      <div class="status-inline">
+        <div class="status-dot" id="cron-statusDot"></div>
+        <span class="status-label" id="cron-statusText">Loading…</span>
+      </div>
+      <button class="btn-sm" id="btnRefresh" style="background:var(--card);border:1px solid var(--border);border-radius:6px;padding:4px 10px;color:var(--text);font-size:0.6875rem;cursor:pointer;">↻ Refresh</button>
+    </div>
+  </div>
+
+  <div class="cron-layout" id="cronLayout">
+    <div style="padding:40px;text-align:center;color:var(--muted);font-size:0.75rem;">Loading schedulers…</div>
+  </div>
+
+  <div class="statusbar">
+    <span>⏱ Cron &amp; Schedulers · OpenClaw</span>
+    <span class="text-muted" id="sbTs">—</span>
+    <span class="ml-auto text-muted" id="sbClock">--:-- UTC</span>
+  </div>
+
+</div>
+
+<script>
+// ── Clock ──────────────────────────────────────
+function updateClock() {
+  const el = document.getElementById('sbClock');
+  if (el) el.textContent = new Date().toUTCString().split(' ')[4] + ' UTC';
+}
+updateClock(); setInterval(updateClock, 1000);
+
+const API = '/api/dispatcher';
+
+const AGENT_META = {
+  main:   { label: 'Albert',  color: '#6366f1', initial: 'A' },
+  elsa:   { label: 'ELSA',    color: '#10b981', initial: 'E' },
+  ditesh: { label: 'Ditesh',  color: '#f59e0b', initial: 'D' },
+  newton: { label: 'Newton',  color: '#06b6d4', initial: 'N' },
+};
+
+function agentMeta(name) {
+  return AGENT_META[name] || { label: name, color: '#64748b', initial: name[0]?.toUpperCase() || '?' };
+}
+
+function escHtml(s) {
+  const el = document.createElement('span');
+  el.textContent = String(s);
+  return el.innerHTML;
+}
+
+function setStatus(text, color) {
+  document.getElementById('cron-statusText').textContent = text;
+  document.getElementById('cron-statusDot').style.background = color || '';
+}
+
+// ── Render ─────────────────────────────────────
+function render(data) {
+  const now = new Date();
+  const layout = document.getElementById('cronLayout');
+
+  let html = '';
+
+  // ── Heartbeats section ──
+  if (data.heartbeats && data.heartbeats.length) {
+    html += '<div>';
+    html += '<div class="cron-section-title">⏱ Dispatcher Heartbeats</div>';
+    html += '<div class="hb-grid">';
+    for (const hb of data.heartbeats) {
+      const m   = agentMeta(hb.agent);
+      const pct = Math.max(5, Math.round((hb.interval - hb.next_min) / hb.interval * 100));
+      const tags = [
+        hb.ephemeral ? '<span class="chip">ephemeral</span>' : '',
+        hb.rag       ? '<span class="chip chip-cyan">rag</span>' : '',
+        hb.memory    ? '<span class="chip chip-green">memory</span>' : '',
+      ].filter(Boolean).join('');
+      html += `<div class="hb-card">
+        <div class="hb-card-top">
+          <div class="hb-avatar" style="background:color-mix(in srgb,${m.color} 18%,var(--surface));color:${m.color}">${escHtml(m.initial)}</div>
+          <div>
+            <div class="hb-name">${escHtml(hb.label || m.label)}</div>
+            <div class="hb-label">${escHtml(m.label)} · every ${hb.interval}m @:${String(hb.offset).padStart(2,'0')}</div>
+          </div>
+        </div>
+        <div class="hb-props">${tags || '<span class="chip">default</span>'}</div>
+        <div class="hb-next">
+          <div class="hb-next-bar-wrap"><div class="hb-next-bar" style="width:${pct}%"></div></div>
+          <span class="hb-next-label">next ~${hb.next_min}m</span>
+        </div>
+      </div>`;
+    }
+    html += '</div></div>';
+  }
+
+  // ── Compact scheduler ──
+  if (data.compact) {
+    const c = data.compact;
+    html += '<div>';
+    html += '<div class="cron-section-title">⚙ Compact Scheduler</div>';
+    html += `<div class="compact-row">
+      <div class="compact-icon">⚙</div>
+      <div class="compact-info">
+        <div class="compact-title">Compact All Agents</div>
+        <div class="compact-sub">${escHtml(c.schedule)} · urgent at ${c.urgent_pct}% context fill</div>
+      </div>
+      <div class="compact-agents">`;
+    for (const ag of (c.agents || [])) {
+      const m = agentMeta(ag);
+      html += `<span class="chip" style="background:color-mix(in srgb,${m.color} 15%,var(--surface));color:${m.color};border-color:color-mix(in srgb,${m.color} 30%,var(--border))">${escHtml(m.label)}</span>`;
+    }
+    html += `</div></div></div>`;
+  }
+
+  // ── System crons ──
+  if (data.system_crons && data.system_crons.length) {
+    html += '<div>';
+    html += '<div class="cron-section-title">🖥 System Crontab</div>';
+    html += '<div class="cron-table-wrap"><table class="cron-table">';
+    html += '<thead><tr><th>Schedule</th><th>Label</th><th>Command</th></tr></thead><tbody>';
+    for (const row of data.system_crons) {
+      html += `<tr>
+        <td><span class="cron-sched">${escHtml(row.schedule)}</span></td>
+        <td><span class="cron-label">${escHtml(row.label || '—')}</span></td>
+        <td><span class="cron-cmd">${escHtml(row.command)}</span></td>
+      </tr>`;
+    }
+    html += '</tbody></table></div></div>';
+  }
+
+  if (!html) html = '<div style="padding:40px;text-align:center;color:var(--muted);font-size:0.75rem;">No schedulers found</div>';
+
+  layout.innerHTML = html;
+
+  // Job count
+  const total = (data.heartbeats?.length || 0) + (data.system_crons?.length || 0) + (data.compact ? 1 : 0);
+  document.getElementById('jobCount').textContent = total + ' job' + (total !== 1 ? 's' : '');
+  document.getElementById('sbTs').textContent = data.ts ? 'Updated ' + data.ts.replace('T', ' ').replace('Z', ' UTC') : '';
+}
+
+// ── Load ───────────────────────────────────────
+async function load() {
+  setStatus('Loading…', '#f59e0b');
+  try {
+    const r = await fetch(`${API}/cron`);
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error || 'API error');
+    render(d);
+    setStatus('● Live', '#10b981');
+  } catch (e) {
+    console.error('[CRON]', e);
+    setStatus('⚠ ' + e.message, '#ef4444');
+    document.getElementById('cronLayout').innerHTML =
+      `<div style="padding:40px;text-align:center;color:var(--muted);font-size:0.75rem;">Failed to load: ${escHtml(e.message)}</div>`;
+  }
+}
+
+document.getElementById('btnRefresh').addEventListener('click', load);
+setInterval(load, 60000); // auto-refresh every 60s
+load();
+</script>
+</body>
+</html>

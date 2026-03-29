@@ -21,6 +21,10 @@ let waitingForUserDecision = false;
 let tokenSignalSent = false;
 let lastAccountInfoHash = null;
 
+// --- WS FRAME DUMP ---
+let wsTapActive = true;
+let wsTapSeq = 0;
+
 function broadcastLoginLog(level, message) {
     ipcRenderer.send('login-log', {
         broker: currentBroker,
@@ -68,7 +72,9 @@ function relayAccountInfo(accountData) {
     const payload = {
         broker: currentBroker,
         custcodes,
-        main: typeof accountData.main === 'string' ? accountData.main : null
+        main: typeof accountData.main === 'string' ? accountData.main : null,
+        name: typeof accountData.name === 'string' ? accountData.name : null,
+        lid: typeof accountData.lid === 'string' ? accountData.lid : null
     };
 
     if (!payload.main && custcodes.length > 0) {
@@ -196,6 +202,17 @@ function instrumentSocket(socket) {
         } catch (err) {
             logLoginError(`Failed parsing outbound frame: ${err.message}`);
         }
+        if (wsTapActive) {
+            if (wsTapSeq === 0) console.log('[PRELOAD] WS tap: sending first SEND frame');
+            ipcRenderer.send('ws-frame-dump', {
+                seq: ++wsTapSeq,
+                dir: 'SEND',
+                socketId,
+                url: socket.__algoWsUrl || null,
+                ts: Date.now(),
+                raw: typeof data === 'string' ? data : null
+            });
+        }
         return originalSend(data, ...rest);
     };
 
@@ -204,6 +221,16 @@ function instrumentSocket(socket) {
             handleInboundMessage(socketId, event.data);
         } catch (err) {
             logLoginError(`Failed parsing inbound frame: ${err.message}`);
+        }
+        if (wsTapActive) {
+            ipcRenderer.send('ws-frame-dump', {
+                seq: ++wsTapSeq,
+                dir: 'RECV',
+                socketId,
+                url: socket.__algoWsUrl || null,
+                ts: Date.now(),
+                raw: typeof event.data === 'string' ? event.data : null
+            });
         }
     });
 
@@ -230,6 +257,12 @@ const _WS = function (url, protocols) {
     }
 
     const socket = new OriginalWebSocket(url, protocols);
+    socket.__algoWsUrl = (() => {
+        try {
+            const raw = typeof url === 'string' ? url : String(url);
+            return raw.replace(/appsession=[^&\s#]+/g, 'appsession=***');
+        } catch (_) { return null; }
+    })();
     try {
         instrumentSocket(socket);
     } catch (err) {
@@ -244,6 +277,74 @@ _WS.OPEN = OriginalWebSocket.OPEN;
 _WS.CLOSING = OriginalWebSocket.CLOSING;
 _WS.CLOSED = OriginalWebSocket.CLOSED;
 window.WebSocket = _WS;
+
+// --- HTTP (XHR/Fetch) INTERCEPTOR for order placement ---
+const OriginalXHR = window.XMLHttpRequest;
+const OriginalFetch = window.fetch;
+
+const _XHR = function () {
+    const xhr = new OriginalXHR();
+    let _method = '';
+    let _url = '';
+    let _body = null;
+
+    const origOpen = xhr.open.bind(xhr);
+    xhr.open = function (method, url, ...rest) {
+        _method = method;
+        _url = typeof url === 'string' ? url : String(url);
+        return origOpen(method, url, ...rest);
+    };
+
+    const origSend = xhr.send.bind(xhr);
+    xhr.send = function (body) {
+        _body = body;
+        if (wsTapActive && _url && !_url.includes('/socketcluster/')) {
+            ipcRenderer.send('ws-frame-dump', {
+                seq: ++wsTapSeq,
+                dir: 'HTTP_SEND',
+                socketId: 0,
+                ts: Date.now(),
+                raw: JSON.stringify({
+                    method: _method,
+                    url: _url.replace(/appsession=[^&\s#]+/g, 'appsession=***'),
+                    body: typeof body === 'string' ? body : null
+                })
+            });
+        }
+        return origSend(body);
+    };
+
+    return xhr;
+};
+_XHR.prototype = OriginalXHR.prototype;
+Object.keys(OriginalXHR).forEach(k => { _XHR[k] = OriginalXHR[k]; });
+window.XMLHttpRequest = _XHR;
+
+window.fetch = function (input, init) {
+    if (wsTapActive) {
+        const url = typeof input === 'string' ? input
+            : input instanceof Request ? input.url : String(input);
+        if (!url.includes('/socketcluster/')) {
+            const method = (init && init.method) || 'GET';
+            let body = null;
+            if (init && init.body && typeof init.body === 'string') {
+                body = init.body;
+            }
+            ipcRenderer.send('ws-frame-dump', {
+                seq: ++wsTapSeq,
+                dir: 'HTTP_SEND',
+                socketId: 0,
+                ts: Date.now(),
+                raw: JSON.stringify({
+                    method,
+                    url: url.replace(/appsession=[^&\s#]+/g, 'appsession=***'),
+                    body
+                })
+            });
+        }
+    }
+    return OriginalFetch.apply(this, arguments);
+};
 
 // Data sniffer bridge
 contextBridge.exposeInMainWorld('sniffer', {
@@ -418,6 +519,11 @@ ipcRenderer.on('login-timeout-response', (event, payload = {}) => {
         logLoginError('User chose to close application after login timeout.');
         window.close();
     }
+});
+
+ipcRenderer.on('ws-tap-toggle', (event, enabled) => {
+    wsTapActive = Boolean(enabled);
+    console.log(`[PRELOAD] WS tap ${wsTapActive ? 'ENABLED' : 'DISABLED'}`);
 });
 
 window.addEventListener('beforeunload', () => {

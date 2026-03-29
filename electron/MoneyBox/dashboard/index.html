@@ -1,0 +1,679 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OpenClaw — Dashboard</title>
+<link rel="stylesheet" href="css/themes.css">
+<link rel="stylesheet" href="css/style.css">
+<style>
+  body { overflow: hidden; }
+  .tab-bar-actions { margin-left: auto; display: flex; align-items: center; gap: 4px; padding-right: 4px; }
+  .btn-logout {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    padding: 4px 10px;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: background .15s, color .15s;
+    white-space: nowrap;
+  }
+  .btn-logout:hover { background: rgba(239,68,68,.12); color: var(--red); border-color: rgba(239,68,68,.25); }
+</style>
+<script src="auth.js"></script>
+</head>
+<body>
+<script>checkSession();</script>
+
+<!-- ── Sidebar ─────────────────────────────────────── -->
+<nav class="sidebar">
+  <div class="logo">OC</div>
+  <button class="nav-item active" data-tab="overview" title="Overview">⌗</button>
+  <button class="nav-item" data-tab="kanban"  title="Project Management">⊞</button>
+  <button class="nav-item" data-tab="agents"  title="Agents">◈</button>
+  <button class="nav-item" data-tab="rag"     title="RAG / Qdrant">◇</button>
+  <button class="nav-item" data-tab="logs"    title="Logs">≡</button>
+  <button class="nav-item" data-tab="cron"    title="Cron">⏱</button>
+  <div class="spacer"></div>
+  <button class="nav-item" data-tab="settings" title="Settings">⚙</button>
+</nav>
+
+<!-- ── Shell main ──────────────────────────────────── -->
+<div class="shell-main">
+
+  <!-- Tab bar -->
+  <div class="tab-bar">
+    <button class="tab-item active" data-tab="overview">
+      <span class="tab-icon">⌗</span> Overview
+    </button>
+    <button class="tab-item" data-tab="kanban">
+      <span class="tab-icon">⊞</span> Project Management
+    </button>
+    <button class="tab-item" data-tab="agents">
+      <span class="tab-icon">◈</span> Agents
+    </button>
+    <button class="tab-item" data-tab="rag">
+      <span class="tab-icon">◇</span> RAG / Qdrant
+    </button>
+    <button class="tab-item" data-tab="logs">
+      <span class="tab-icon">≡</span> Logs
+    </button>
+    <button class="tab-item" data-tab="cron">
+      <span class="tab-icon">⏱</span> Cron
+    </button>
+    <div class="tab-bar-actions">
+      <button class="btn-logout" onclick="logout()" title="Sign out">⎋ Sign out</button>
+    </div>
+  </div>
+
+  <!-- Page panels (component containers) -->
+  <div class="page-area">
+    <div class="page-panel" id="page-overview">
+
+  <!-- Topbar -->
+  <div class="topbar">
+    <div class="topbar-left">
+      <h1>Overview</h1>
+      <span class="badge">v4</span>
+    </div>
+    <div class="topbar-right">
+      <div class="status-inline">
+        <div class="status-dot" id="conn-dot"></div>
+        <span class="status-label" id="conn-label">Connecting…</span>
+      </div>
+      <div class="topbar-clock" id="clock">--:--:--</div>
+    </div>
+  </div>
+
+  <!-- Content -->
+  <div class="content">
+
+    <!-- ── Stat row ──────────────────────────────────── -->
+    <div class="stat-row">
+      <div class="stat-card">
+        <div class="label">Active Agents</div>
+        <div class="value green" id="stat-agents">—</div>
+        <div class="sub" id="stat-agents-sub">loading…</div>
+      </div>
+      <div class="stat-card">
+        <div class="label">Session Memory</div>
+        <div class="value yellow" id="stat-session">—</div>
+        <div class="sub" id="stat-session-sub">loading…</div>
+      </div>
+      <div class="stat-card">
+        <div class="label">Qdrant Points</div>
+        <div class="value blue" id="stat-qdrant">—</div>
+        <div class="sub" id="stat-qdrant-sub">loading…</div>
+      </div>
+      <div class="stat-card">
+        <div class="label">Compact Runs</div>
+        <div class="value purple" id="stat-compact">—</div>
+        <div class="sub" id="stat-compact-sub">loading…</div>
+      </div>
+    </div>
+
+    <!-- ── Agents ─────────────────────────────────────── -->
+    <div>
+      <div class="section-label">Agents</div>
+      <div class="agents-grid" id="agents-grid">
+        <!-- filled by renderAgentCards() -->
+      </div>
+    </div>
+
+    <!-- ── System health + Services ───────────────────── -->
+    <div class="grid2">
+      <div class="panel">
+        <div class="section-label">System Health</div>
+        <div class="health-row health-grid-3" id="health-grid">
+          <div class="health-metric"><div class="h-label">RAM</div><div class="h-val" id="h-ram">—</div><div class="h-sub" id="h-ram-sub">loading</div></div>
+          <div class="health-metric"><div class="h-label">Disk</div><div class="h-val" id="h-disk">—</div><div class="h-sub" id="h-disk-sub">loading</div></div>
+          <div class="health-metric"><div class="h-label">Uptime</div><div class="h-val h-val-lg" id="h-uptime">—</div><div class="h-sub">since boot</div></div>
+          <div class="health-metric"><div class="h-label">Threads</div><div class="h-val h-val-lg" id="h-threads">—</div><div class="h-sub">dispatcher</div></div>
+          <div class="health-metric"><div class="h-label">Compact KiB</div><div class="h-val h-val-lg text-yellow" id="h-thresh">150</div><div class="h-sub">trigger threshold</div></div>
+          <div class="health-metric"><div class="h-label">VPS</div><div class="h-val h-val-lg text-green" style="font-size:13px">213.199</div><div class="h-sub">vmi3141055</div></div>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="section-label">Services</div>
+        <div id="services-list">
+          <div class="list-row"><div class="lr-left"><div class="dot" id="svc-dispatcher-dot"></div><div><div class="lr-title">agent-dispatcher</div><div class="lr-sub" id="svc-dispatcher-sub">checking…</div></div></div><div class="lr-right tag-green" id="svc-dispatcher-tag">—</div></div>
+          <div class="list-row"><div class="lr-left"><div class="dot green"></div><div><div class="lr-title">openclaw-gateway</div><div class="lr-sub">main + elsa + ditesh bots</div></div></div><div class="lr-right tag-green">Running</div></div>
+          <div class="list-row"><div class="lr-left"><div class="dot" id="svc-rag-dot"></div><div><div class="lr-title">rag-api</div><div class="lr-sub" id="svc-rag-sub">checking…</div></div></div><div class="lr-right" id="svc-rag-tag">—</div></div>
+          <div class="list-row"><div class="lr-left"><div class="dot" id="svc-qdrant-dot"></div><div><div class="lr-title">qdrant</div><div class="lr-sub" id="svc-qdrant-sub">checking…</div></div></div><div class="lr-right" id="svc-qdrant-tag">—</div></div>
+          <div class="list-row"><div class="lr-left"><div class="dot yellow"></div><div><div class="lr-title">n8n</div><div class="lr-sub">port 5678 · workflows deactivated</div></div></div><div class="lr-right tag-yellow">Standby</div></div>
+          <div class="list-row"><div class="lr-left"><div class="dot green"></div><div><div class="lr-title">nginx</div><div class="lr-sub">port 80 · serving dashboard</div></div></div><div class="lr-right tag-green">Running</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Heartbeat + RAG ─────────────────────────────── -->
+    <div class="grid2">
+      <div class="panel">
+        <div class="section-label">Heartbeat Schedule</div>
+        <div id="heartbeat-list"><!-- filled by renderHeartbeats() --></div>
+        <div class="list-row list-row-separator"><div class="lr-left lr-note">⏱ Compact scheduler at :15 and :45</div><div class="lr-right"><span class="tag-muted" id="next-compact">—</span></div></div>
+      </div>
+      <div class="panel">
+        <div class="section-label">RAG Collections (Qdrant)</div>
+        <div id="rag-list"><!-- filled by renderRAG() --></div>
+      </div>
+    </div>
+
+    <!-- ── Quick Actions ───────────────────────────────── -->
+    <div class="panel">
+      <div class="section-label">Quick Actions</div>
+      <div class="actions-grid">
+        <button class="action-btn primary" data-action="compact-all">⚡ Compact All Agents</button>
+        <button class="action-btn primary" data-action="restart-dispatcher">🔄 Restart Dispatcher</button>
+        <button class="action-btn" data-action="restart-gateway">🔄 Restart Gateway</button>
+        <button class="action-btn" data-action="heartbeat-main">📤 Heartbeat → Albert</button>
+        <button class="action-btn warn" data-action="compact-main">🗜️ Compact → main</button>
+        <button class="action-btn warn" data-action="compact-elsa">🗜️ Compact → elsa</button>
+        <button class="action-btn warn" data-action="compact-ditesh">🗜️ Compact → ditesh</button>
+        <button class="action-btn warn" data-action="compact-newton">🗜️ Compact → newton</button>
+        <button class="action-btn" data-action="heartbeat-elsa">📤 Heartbeat → ELSA</button>
+        <button class="action-btn" data-action="heartbeat-ditesh">📤 Heartbeat → Ditesh</button>
+        <button class="action-btn" data-action="heartbeat-newton">📤 Heartbeat → Newton</button>
+        <button class="action-btn danger" data-action="noop">⚠️ (more actions soon)</button>
+      </div>
+    </div>
+
+    <!-- ── Activity log ────────────────────────────────── -->
+    <div class="panel">
+      <div class="section-label">Activity Log <span style="font-size:10px;color:var(--text-muted);font-weight:400;margin-left:6px" id="log-status">loading…</span></div>
+      <div class="log-wrap" id="log-wrap">
+        <div class="log-line"><span class="log-ts">--:--:--</span><span class="log-agent log-agent-sys">sys</span><span class="log-msg">Connecting to dispatcher…</span></div>
+      </div>
+    </div>
+
+  </div><!-- /content -->
+
+  <!-- Statusbar -->
+  <div class="statusbar">
+    <span><div class="status-dot-sm" id="sb-dot"></div> <span id="sb-conn">Connecting</span></span>
+    <span>Uptime: <span id="sb-uptime">—</span></span>
+    <span>Threads: <span id="sb-threads">—</span></span>
+    <span id="home-clock">--:--:--</span>
+    <span>Last update: <span id="sb-last">—</span></span>
+  </div>
+
+    </div>
+    <div class="page-panel" id="page-kanban"></div>
+    <div class="page-panel" id="page-agents"></div>
+    <div class="page-panel" id="page-rag"></div>
+    <div class="page-panel" id="page-logs"></div>
+    <div class="page-panel" id="page-cron"></div>
+    <div class="page-panel" id="page-settings"></div>
+  </div>
+
+</div>
+
+<script>
+  // ── Page map ──────────────────────────────────────
+  const PAGES = {
+    kanban:   'kanban.html',
+    agents:   'agent.html',
+    rag:      'rag.html',
+    logs:     'log.html',
+    cron:     'cron.html',
+    settings: 'settings.html'
+  };
+  const VALID_PAGES = ['overview', ...Object.keys(PAGES)];
+  const loaded = { overview: true }; // overview is inlined, no fetch needed
+
+  // ── Navigate to agent and select it ─────────────
+  function goToAgent(agentName) {
+    switchTab('agents');
+    function trySelect(n) {
+      if (typeof window.selectAgent === 'function') {
+        window.selectAgent(agentName);
+      } else if (n > 0) {
+        setTimeout(() => trySelect(n - 1), 100);
+      }
+    }
+    setTimeout(() => trySelect(20), 50);
+  }
+
+  // ── URL helpers ───────────────────────────────────
+  function getPageFromURL() {
+    const p = new URLSearchParams(location.search).get('page');
+    return VALID_PAGES.includes(p) ? p : 'overview';
+  }
+
+  // ── Tab switching ─────────────────────────────────
+  function switchTab(name, pushState = true) {
+    if (!VALID_PAGES.includes(name)) name = 'overview';
+
+    // Update tab bar highlights
+    document.querySelectorAll('.tab-item[data-tab]').forEach(t =>
+      t.classList.toggle('active', t.dataset.tab === name));
+
+    // Update sidebar highlights
+    document.querySelectorAll('.sidebar .nav-item[data-tab]').forEach(b =>
+      b.classList.toggle('active', b.dataset.tab === name));
+
+    // Show active panel, hide others
+    document.querySelectorAll('.page-panel').forEach(p =>
+      p.classList.toggle('active', p.id === 'page-' + name));
+
+    // Lazy-load page content on first visit (overview is pre-inlined)
+    if (!loaded[name]) loadPage(name);
+
+    if (pushState) {
+      const url = new URL(location.href);
+      url.searchParams.set('page', name);
+      history.pushState({ page: name }, '', url);
+    }
+  }
+
+  // ── Dynamic page loader ───────────────────────────
+  async function loadPage(name) {
+    loaded[name] = true; // mark immediately to prevent double-load
+    const panel = document.getElementById('page-' + name);
+    panel.innerHTML = '<div class="page-loading">Loading…</div>';
+
+    try {
+      const resp = await fetch(PAGES[name]);
+      if (!resp.ok) throw new Error(resp.status);
+      const text = await resp.text();
+      const doc = new DOMParser().parseFromString(text, 'text/html');
+
+      // 1. Extract page-specific <style> blocks (strip body/html rules)
+      doc.querySelectorAll('head > style').forEach(el => {
+        let css = el.textContent;
+        css = css.replace(/\bbody\b\s*\{[^}]*\}/g, '');
+        css = css.replace(/html\.in-iframe[^{]*\{[^}]*\}/g, '');
+        css = css.trim();
+        if (css) {
+          const style = document.createElement('style');
+          style.dataset.page = name;
+          style.textContent = css;
+          document.head.appendChild(style);
+        }
+      });
+
+      // 2. Extract body content (remove sidebar + scripts)
+      const body = doc.body.cloneNode(true);
+      body.querySelectorAll('nav.sidebar, script').forEach(el => el.remove());
+      panel.innerHTML = body.innerHTML;
+
+      // 3. Execute page scripts (IIFE-wrapped for scope isolation)
+      doc.querySelectorAll('body > script').forEach(el => {
+        const code = el.textContent.trim();
+        if (!code || code.includes('in-iframe')) return;
+        const script = document.createElement('script');
+        script.textContent = '(function(){' + code + '})();';
+        panel.appendChild(script);
+      });
+
+    } catch (err) {
+      panel.innerHTML = '<div class="page-error">Failed to load page</div>';
+      loaded[name] = false; // allow retry
+    }
+  }
+
+  // ── Event bindings ────────────────────────────────
+  document.querySelectorAll('.tab-item[data-tab]').forEach(t =>
+    t.addEventListener('click', () => switchTab(t.dataset.tab)));
+
+  document.querySelectorAll('.sidebar .nav-item[data-tab]').forEach(b =>
+    b.addEventListener('click', () => switchTab(b.dataset.tab)));
+
+  window.addEventListener('popstate', e => {
+    const page = (e.state && e.state.page) ? e.state.page : getPageFromURL();
+    switchTab(page, false);
+  });
+
+  // ── Boot ──────────────────────────────────────────
+  const initialPage = getPageFromURL();
+  switchTab(initialPage, false);
+  history.replaceState({ page: initialPage }, '', '?page=' + initialPage);
+</script>
+
+<!-- ── Overview live data ────────────────────────── -->
+<script type="module">
+import { bus } from './worker/worker-bus.js';
+
+// ── Clock ─────────────────────────────────────────
+function updateClock() {
+  const t = new Date().toLocaleTimeString('en-GB', { timeZone: 'UTC', hour12: false });
+  const s = t + ' UTC';
+  const el = document.getElementById('clock');
+  const hb = document.getElementById('home-clock');
+  if (el) el.textContent = s;
+  if (hb) hb.textContent = s;
+}
+updateClock();
+setInterval(updateClock, 1000);
+
+// ── Helpers ───────────────────────────────────────
+function $id(id) { return document.getElementById(id); }
+function set(id, val) { const el = $id(id); if (el) el.textContent = val; }
+function setClass(id, cls) { const el = $id(id); if (el) { el.className = el.className.replace(/text-\w+/,''); el.classList.add(cls); } }
+
+function fmtUptime(sec) {
+  if (!sec || sec < 0) return '—';
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  return h > 0 ? `${h}h ${m}m` : `${m}m`;
+}
+
+function colorPct(pct) {
+  if (pct == null) return '';
+  if (pct >= 90) return 'text-red';
+  if (pct >= 70) return 'text-yellow';
+  return 'text-green';
+}
+
+function nextFireStr(nextMin) {
+  if (nextMin == null || nextMin < 0) return '—';
+  if (nextMin === 0) return 'now';
+  return `in ${nextMin}m`;
+}
+
+// ── Action button API calls ───────────────────────
+const ACTION_MAP = {
+  'compact-all':          () => Promise.all(['main','elsa','ditesh','newton'].map(ag =>
+                            fetch('/api/dispatcher/compact', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({agent:ag})}))),
+  'compact-main':         () => fetch('/api/dispatcher/compact', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({agent:'main'})}),
+  'compact-elsa':         () => fetch('/api/dispatcher/compact', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({agent:'elsa'})}),
+  'compact-ditesh':       () => fetch('/api/dispatcher/compact', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({agent:'ditesh'})}),
+  'compact-newton':       () => fetch('/api/dispatcher/compact', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({agent:'newton'})}),
+  'heartbeat-main':       () => fetch('/api/dispatcher/agent',   {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({agent:'main',   message:'Lakukan tidy-up sekarang.', inject_memory:true})}),
+  'heartbeat-elsa':       () => fetch('/api/dispatcher/agent',   {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({agent:'elsa',   message:'Pipeline audit sekarang.', inject_memory:false})}),
+  'heartbeat-ditesh':     () => fetch('/api/dispatcher/agent',   {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({agent:'ditesh', message:'Infrastructure check sekarang.', inject_memory:false})}),
+  'heartbeat-newton':     () => fetch('/api/dispatcher/agent',   {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({agent:'newton', message:'Research pulse sekarang.', inject_memory:true})}),
+  'restart-dispatcher':   null,   // not safe to call from UI — no-op
+  'restart-gateway':      null,
+  'noop':                 null,
+};
+
+document.querySelectorAll('#page-overview .action-btn[data-action]').forEach(btn => {
+  btn.addEventListener('click', async function() {
+    const action = this.dataset.action;
+    const fn = ACTION_MAP[action];
+    if (!fn) return;
+    const orig = this.textContent;
+    this.disabled = true;
+    this.textContent = 'Running…';
+    try {
+      await fn();
+      this.textContent = '✓ Done';
+    } catch(e) {
+      this.textContent = '✗ Error';
+    }
+    setTimeout(() => { this.textContent = orig; this.disabled = false; }, 2000);
+  });
+});
+
+// ── Toggle switches (heartbeat on/off UI only) ────
+document.querySelectorAll('#page-overview .toggle').forEach(t => {
+  t.addEventListener('click', () => { t.classList.toggle('on'); t.classList.toggle('off'); });
+});
+
+// ── Render agent cards ────────────────────────────
+const AGENT_COLORS  = { main:'card-main', elsa:'card-elsa', ditesh:'card-ditesh', newton:'card-newton' };
+const AGENT_DOTS    = { main:'agent-main', elsa:'agent-elsa', ditesh:'agent-ditesh', newton:'agent-newton' };
+const AGENT_DISPLAY = { main:'Albert', elsa:'ELSA', ditesh:'Ditesh', newton:'Newton' };
+
+function pillClass(pct) {
+  if (pct >= 90) return 'busy';
+  if (pct > 0)   return 'active';
+  return 'idle';
+}
+function pillLabel(pct) {
+  if (pct >= 90) return 'High Load';
+  if (pct > 0)   return 'Active';
+  return 'Idle';
+}
+
+function renderAgentCards(agents) {
+  const grid = $id('agents-grid');
+  if (!grid) return;
+  const order = ['main','elsa','ditesh','newton'];
+  grid.innerHTML = order.map(ag => {
+    const d   = agents[ag];
+    if (!d) return '';
+    const pct = d.context_pct ?? 0;
+    const pill = pillClass(pct);
+    const pctColor = pct >= 80 ? 'text-red' : pct >= 50 ? 'text-yellow' : 'text-green';
+    const modelShort = (d.model || '?').split('/').pop().replace('deepseek-','ds-').replace('claude-','claude-');
+    const nextMin = d.heartbeat_next_min;
+    const nextStr = nextMin != null ? `next <strong>${nextFireStr(nextMin)}</strong>` : '';
+    const hbOffset = d.heartbeat_offset != null ? `@:${String(d.heartbeat_offset).padStart(2,'0')}` : '';
+    return `<div class="agent-card ${AGENT_COLORS[ag]||''}" onclick="goToAgent('${ag}')">
+      <div class="agent-header">
+        <div><div class="agent-name">${AGENT_DISPLAY[ag]||ag}</div><div class="agent-alias">${ag} · ${modelShort}</div></div>
+        <div class="agent-pill ${pill}">${pillLabel(pct)}</div>
+      </div>
+      <div class="metric-row">
+        <div class="metric"><div class="m-label">Session</div><div class="m-val">${d.session_kb > 1024 ? (d.session_kb/1024).toFixed(1)+'<span class="m-unit">MB</span>' : d.session_kb+'<span class="m-unit">KB</span>'}</div></div>
+        <div class="metric"><div class="m-label">Memories</div><div class="m-val">${d.memories}</div></div>
+        <div class="metric"><div class="m-label">Context</div><div class="m-val ${pctColor}">${pct}%</div></div>
+      </div>
+      <div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div>
+      <div class="hb-row"><div class="hb-dot"></div><span>Heartbeat ${hbOffset} · ${nextStr}</span></div>
+    </div>`;
+  }).join('');
+
+  // Animate progress fills
+  setTimeout(() => {
+    grid.querySelectorAll('.progress-fill').forEach(el => {
+      const w = el.style.width; el.style.width = '0';
+      setTimeout(() => { el.style.transition = 'width .6s ease'; el.style.width = w; }, 60);
+    });
+  }, 50);
+}
+
+// ── Render heartbeat schedule ─────────────────────
+function renderHeartbeats(agents) {
+  const el = $id('heartbeat-list');
+  if (!el) return;
+  const order = ['main','elsa','ditesh','newton'];
+  el.innerHTML = order.map(ag => {
+    const d = agents[ag]; if (!d) return '';
+    const dotCls = AGENT_DOTS[ag] || '';
+    const label  = d.heartbeat_label || ag;
+    const offset = d.heartbeat_offset != null ? `@:${String(d.heartbeat_offset).padStart(2,'0')}` : '';
+    const intv   = d.heartbeat_interval ? `every ${d.heartbeat_interval}m` : '';
+    const rag    = d.use_rag_context ? '· rag_ctx' : (d.inject_memory === false ? '' : '· inject_mem');
+    const next   = d.heartbeat_next_min != null ? nextFireStr(d.heartbeat_next_min) : '—';
+    return `<div class="list-row">
+      <div class="lr-left"><div class="dot ${dotCls}"></div>
+      <div><div class="lr-title">${label}</div><div class="lr-sub">${ag} · ${intv} ${offset} ${rag}</div></div></div>
+      <div class="lr-right"><span class="tag-muted">${next}</span><div class="toggle on"></div></div>
+    </div>`;
+  }).join('');
+  document.querySelectorAll('#heartbeat-list .toggle').forEach(t => {
+    t.addEventListener('click', () => { t.classList.toggle('on'); t.classList.toggle('off'); });
+  });
+}
+
+// ── Render RAG rows ───────────────────────────────
+const RAG_ICONS = {
+  agent_memory_main:   '🔵', agent_memory_elsa:   '🟢',
+  agent_memory_ditesh: '🟠', agent_memory_newton: '⚪',
+  system_retrospective:'📜', strategy_general:    '📈',
+  research_memory:     '🧠', market_events:       '📰',
+  product_discussion_summary: '💬',
+  moneybox_rag:        '🗄️', moneybox_rag_all:    '💜',
+  agent_memory_optimized:'🔷', agent_memory:       '💜',
+};
+let _maxPoints = 1;
+
+function renderRAG(payload) {
+  const el = $id('rag-list');
+  if (!el) return;
+
+  // Compute max for bar scaling
+  const points = Object.values(payload).map(d => d.points_count || d.vectors_count || 0);
+  _maxPoints = Math.max(1, ...points);
+
+  let total = 0;
+  const rows = Object.entries(payload).map(([name, d]) => {
+    const pts = d.points_count ?? d.vectors_count ?? 0;
+    total += pts;
+    const bar = Math.round(pts / _maxPoints * 100);
+    const icon = RAG_ICONS[name] || '◇';
+    const st = d.status;
+    const statusCls = st === 'green' ? 'text-green' : st === 'error' || st === 'missing' ? 'text-red' : '';
+    return `<div class="rag-row">
+      <div class="rag-icon">${icon}</div>
+      <div class="rag-name">${name}</div>
+      <div class="rag-bar-wrap"><div class="rag-bar-fill ${statusCls.replace('text-','rag-fill-')}" style="width:${bar}%"></div></div>
+      <div class="rag-pts ${statusCls}">${pts || '—'}</div>
+    </div>`;
+  }).join('');
+  el.innerHTML = rows;
+
+  // Stat card
+  const colCount = Object.keys(payload).length;
+  set('stat-qdrant', String(total));
+  set('stat-qdrant-sub', `${colCount} collections`);
+  // Service indicator
+  const allOk = !Object.values(payload).some(d => d.status === 'error');
+  const dot = $id('svc-qdrant-dot'); const tag = $id('svc-qdrant-tag'); const sub = $id('svc-qdrant-sub');
+  if (dot) dot.className = `dot ${allOk ? 'green' : 'red'}`;
+  if (tag) { tag.className = `lr-right ${allOk ? 'tag-green' : 'tag-red'}`; tag.textContent = allOk ? 'Running' : 'Error'; }
+  if (sub) sub.textContent = `port 6333 · ${colCount} collections · ${total} pts`;
+}
+
+// ── Render log ring ───────────────────────────────
+const AGENT_LOG_CLASS = { main:'log-agent-main', elsa:'log-agent-elsa', ditesh:'log-agent-ditesh', newton:'log-agent-newton', sys:'log-agent-sys' };
+let _logLineCount = 0;
+
+function appendLogs(lines) {
+  const wrap = $id('log-wrap');
+  if (!wrap) return;
+  lines.forEach(l => {
+    const ts   = (l.ts || '').slice(11,19);
+    const ag   = l.agent || 'sys';
+    const lvl  = (l.level || 'INFO').toUpperCase();
+    const msg  = l.msg || '';
+    const cls  = AGENT_LOG_CLASS[ag] || 'log-agent-sys';
+    const msgCls = lvl === 'ERROR' ? 'log-err' : lvl === 'WARNING' ? 'log-warn' : msg.includes('compacted') || msg.includes('indexed') ? 'log-ok' : '';
+    const row = document.createElement('div');
+    row.className = 'log-line';
+    row.innerHTML = `<span class="log-ts">${ts}</span><span class="log-agent ${cls}">${ag}</span><span class="log-msg ${msgCls}">${msg}</span>`;
+    wrap.insertBefore(row, wrap.firstChild);
+    _logLineCount++;
+  });
+
+  // Keep max 150 rows
+  while (wrap.children.length > 150) wrap.removeChild(wrap.lastChild);
+  set('log-status', `${wrap.children.length} lines`);
+}
+
+// ── Update metrics ────────────────────────────────
+let _compactCount = 0;
+let _lastMetricsTs = null;
+
+function applyMetrics(payload) {
+  const agents = payload.agents || {};
+
+  // Connection indicator
+  const dot = $id('conn-dot'); const lbl = $id('conn-label');
+  if (dot) dot.className = 'status-dot connected';
+  set('conn-label', 'Connected');
+  const sbDot = $id('sb-dot'); if (sbDot) sbDot.className = 'status-dot-sm connected';
+  set('sb-conn', 'Connected');
+
+  // Stat cards — agents
+  const agList = Object.entries(agents);
+  const withSession = agList.filter(([,d]) => d.session_kb > 0);
+  set('stat-agents', String(agList.length));
+  set('stat-agents-sub', `${agList.length} total · ${withSession.length} with sessions`);
+
+  // Session total
+  const totalKb = agList.reduce((s,[,d]) => s + (d.session_kb||0), 0);
+  const totalMb = (totalKb / 1024).toFixed(1);
+  set('stat-session', totalMb);
+  const el = $id('stat-session'); if (el) el.innerHTML = `${totalMb}<span class="stat-unit">MB</span>`;
+  const subParts = agList.filter(([,d]) => d.session_kb > 0).map(([ag,d]) => `${ag} ${(d.session_kb/1024).toFixed(1)}M`);
+  set('stat-session-sub', subParts.join(' · ') || 'no active sessions');
+
+  // Compact count (track log mentions)
+  set('stat-compact', String(_compactCount));
+  set('stat-compact-sub', `Today · thresh ${payload.compact_thresh_kb}KB`);
+
+  // System health
+  const ram = payload.ram_pct;
+  const disk = payload.disk_pct;
+  const el_ram = $id('h-ram');
+  if (el_ram) { el_ram.innerHTML = `${ram ?? '—'}<span class="h-unit">%</span>`; el_ram.className = 'h-val ' + colorPct(ram); }
+  set('h-ram-sub', ram != null ? `${ram}% used` : '—');
+  const el_disk = $id('h-disk');
+  if (el_disk) { el_disk.innerHTML = `${disk ?? '—'}<span class="h-unit">%</span>`; el_disk.className = 'h-val ' + colorPct(disk); }
+  set('h-disk-sub', disk != null ? `${disk}% of /` : '—');
+  set('h-uptime', fmtUptime(payload.uptime_seconds));
+  set('h-threads', String(payload.thread_count || '—'));
+  set('h-thresh', String(payload.compact_thresh_kb || 150));
+
+  // Statusbar
+  set('sb-uptime', fmtUptime(payload.uptime_seconds));
+  set('sb-threads', String(payload.thread_count || '—'));
+  const now = new Date().toLocaleTimeString('en-GB', {hour12:false});
+  set('sb-last', now);
+
+  // Dispatcher service
+  const dDot = $id('svc-dispatcher-dot'); const dTag = $id('svc-dispatcher-tag'); const dSub = $id('svc-dispatcher-sub');
+  if (dDot) dDot.className = 'dot green';
+  if (dTag) { dTag.className = 'lr-right tag-green'; dTag.textContent = 'Running'; }
+  if (dSub) dSub.textContent = `port 19191 · ${payload.thread_count || '?'} threads`;
+
+  // Next compact time
+  const nowUtc = new Date();
+  const m = nowUtc.getUTCMinutes();
+  const next15 = (15 - m + 60) % 60 || 60;
+  const next45 = (45 - m + 60) % 60 || 60;
+  const nextCompact = Math.min(next15, next45);
+  set('next-compact', `next in ${nextCompact}m`);
+
+  renderAgentCards(agents);
+  renderHeartbeats(agents);
+
+  _lastMetricsTs = payload.ts;
+}
+
+// ── Bus subscribers ───────────────────────────────
+bus.on('metrics', ({ payload }) => {
+  if (payload) applyMetrics(payload);
+});
+
+bus.on('qdrant', ({ payload }) => {
+  if (payload) renderRAG(payload);
+  // Check RAG API health separately
+  fetch('/api/rag/').then(r => r.json()).then(d => {
+    const ok = d.status === 'operational';
+    const dot = $id('svc-rag-dot'); const tag = $id('svc-rag-tag'); const sub = $id('svc-rag-sub');
+    if (dot) dot.className = `dot ${ok ? 'green' : 'yellow'}`;
+    if (tag) { tag.className = `lr-right ${ok ? 'tag-green' : 'tag-yellow'}`; tag.textContent = ok ? 'Running' : 'Degraded'; }
+    if (sub) sub.textContent = `FastAPI · port 8000 · v${d.version || '?'}`;
+  }).catch(() => {
+    const dot = $id('svc-rag-dot'); if (dot) dot.className = 'dot red';
+    const tag = $id('svc-rag-tag'); if (tag) { tag.className = 'lr-right tag-red'; tag.textContent = 'Down'; }
+  });
+});
+
+bus.on('logs', ({ lines }) => {
+  if (lines && lines.length) {
+    appendLogs(lines);
+    _compactCount += lines.filter(l => l.msg && l.msg.includes('compacted')).length;
+    set('stat-compact', String(_compactCount));
+  }
+});
+
+bus.on('error', ({ source, message }) => {
+  if (source === 'metrics') {
+    const dot = $id('conn-dot'); if (dot) dot.className = 'status-dot error';
+    set('conn-label', 'Disconnected');
+    const sbDot = $id('sb-dot'); if (sbDot) sbDot.className = 'status-dot-sm error';
+    set('sb-conn', 'Disconnected');
+  }
+});
+</script>
+</body>
+</html>
+

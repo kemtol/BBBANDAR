@@ -1,0 +1,23 @@
+{
+    "name": "auth-uid",
+    "main": "src/index.js",
+    "compatibility_date": "2025-01-01",
+    "observability": {
+        "enabled": true
+    },
+    "d1_databases": [
+        {
+            "binding": "DB",
+            "database_name": "sssaham-db",
+            "database_id": "98cd91eb-5666-4284-8845-8e8b6d7a1b8f"
+        }
+    ],
+    "vars": {
+        "APP_BASE": "https://sssaham.xyz",
+        "BOT_USERNAME": "Sssaham_bot"
+    }
+    // Secrets (set via wrangler secret put):
+    //   BOT_TOKEN   → token dari BotFather
+    //   JWT_SECRET  → secret untuk JWT
+    //   BOT_SECRET  → shared secret internal
+}

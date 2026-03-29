@@ -11,8 +11,110 @@ const tapeStream = require('./core/tns/stream');
 const whaleTracker = require('./core/features/whale');
 const tokenEngine = require('./core/engine/token-engine');
 const executionEngine = require('./core/engine/execution');
+const capitalChecker = require('./core/engine/capital');
+const portfolioManager = require('./core/engine/portfolio');
 const featuresChannel = require('./core/channel/features');
 const liveTradeStream = require('./core/channel/livetrade');
+
+// ============================================================
+// WS FRAME DUMP — raw tap semua frame ke data/ws-dump.json
+// ============================================================
+const WS_DUMP_PATH = path.join(__dirname, 'data', 'ws-dump.json');
+const WS_DUMP_MAX_ENTRIES = 5000;
+const wsDumpBuffer = [];
+let wsDumpFlushTimer = null;
+let wsDumpEnabled = true;
+
+// Direction filter: 'both', 'SEND', 'RECV'
+let wsDumpDirFilter = 'SEND';
+
+// Noise events/rtypes to skip — only keep cmd, responses (rid), handshake, order-related
+const WS_DUMP_SKIP_EVENTS = new Set(['stream', 'notif']);
+const WS_DUMP_SKIP_RTYPES = new Set(['LT', 'SS2', 'OB2', 'BAR1']);
+
+function isNoisyFrame(parsed) {
+  if (!parsed) return false;
+  const ev = parsed.event;
+  // Skip ping/pong/#1/#2 socketcluster internals
+  if (ev === '#1' || ev === '#2' || ev === 'ping' || ev === 'pong') return true;
+  if (WS_DUMP_SKIP_EVENTS.has(ev)) {
+    // But keep if it has rid (it's a response to our cmd)
+    if (parsed.rid !== undefined) return false;
+    const d = parsed.data;
+    if (d && typeof d === 'object' && WS_DUMP_SKIP_RTYPES.has(d.rtype)) return true;
+    // skip generic stream/notif
+    return true;
+  }
+  return false;
+}
+
+function flushWsDump() {
+  try {
+    fs.writeFileSync(WS_DUMP_PATH, JSON.stringify(wsDumpBuffer, null, 2), 'utf8');
+  } catch (err) {
+    console.warn('[WS-DUMP] Write failed:', err.message);
+  }
+}
+
+// Clear dump file on startup
+try { fs.writeFileSync(WS_DUMP_PATH, '[]', 'utf8'); } catch (_) {}
+
+ipcMain.on('ws-frame-dump', (event, frame) => {
+  if (!wsDumpEnabled || !frame) return;
+
+  let parsed = null;
+  if (typeof frame.raw === 'string' && frame.raw.trim()) {
+    try { parsed = JSON.parse(frame.raw); } catch (_) {}
+  }
+
+  // ── Always feed CASHINFO & STOCKPOS into modules (regardless of dump direction filter) ──
+  if (parsed && frame.dir === 'RECV') {
+    const d = parsed.data;
+    if (d && typeof d === 'object') {
+      if (d.rtype === 'CASHINFO' && Array.isArray(d.rec)) {
+        capitalChecker.parseCashInfo(d.rec);
+      } else if (d.rtype === 'STOCKPOS' && Array.isArray(d.rec)) {
+        portfolioManager.updateFromStockPos(d.code || '', d.rec);
+      }
+    }
+    // Also catch CASHINFO in rid-matched responses
+    if (parsed.rid && d && d.status === 'OK' && d.data && d.data.rec) {
+      if (Array.isArray(d.data.rec) && d.data.rec.length >= 40) {
+        capitalChecker.parseCashInfo(d.data.rec);
+      }
+    }
+  }
+
+  // Direction filter for dump file only (modules already fed above)
+  if (wsDumpDirFilter !== 'both') {
+    if (frame.dir === 'HTTP_SEND') {
+      if (wsDumpDirFilter !== 'SEND') return;
+    } else if (frame.dir !== wsDumpDirFilter) {
+      return;
+    }
+  }
+
+  // Skip noisy market data frames
+  if (parsed && isNoisyFrame(parsed)) return;
+
+  if (wsDumpBuffer.length === 0) {
+    console.log(`[WS-DUMP] First relevant frame: dir=${frame.dir} seq=${frame.seq}`);
+  }
+  const entry = {
+    seq: frame.seq,
+    dir: frame.dir,
+    socketId: frame.socketId,
+    ts: frame.ts,
+    tsHuman: new Date(frame.ts).toISOString(),
+    parsed
+  };
+  wsDumpBuffer.push(entry);
+  if (wsDumpBuffer.length > WS_DUMP_MAX_ENTRIES) {
+    wsDumpBuffer.splice(0, wsDumpBuffer.length - WS_DUMP_MAX_ENTRIES);
+  }
+  if (wsDumpFlushTimer) clearTimeout(wsDumpFlushTimer);
+  wsDumpFlushTimer = setTimeout(flushWsDump, 500);
+});
 
 function createWindow() {
   const iconPath = path.join(__dirname, 'icon.png'); // Adjust path if needed
@@ -67,7 +169,8 @@ function createWindow() {
   const leftView = new BrowserView({
     webPreferences: {
       partition: 'persist:broker',
-      preload: path.join(__dirname, 'preload.js') // Register sniffer bridge
+      preload: path.join(__dirname, 'preload.js'), // Register sniffer bridge
+      contextIsolation: false  // Required: agar window.WebSocket hook di preload berlaku di main world IPOT
     }
   });
   win.addBrowserView(leftView); // Use addBrowserView instead of setBrowserView
@@ -201,6 +304,20 @@ function createWindow() {
   if (executionEngine.listenerCount('connected') === 0) {
     executionEngine.on('connected', () => {
       relaySystemLog('🤝 Execution engine connected and ready.');
+
+      // Auto-request CASHINFO for capital adequacy check
+      try {
+        const custcode = tokenEngine.getPrimaryCustcode('ipot');
+        if (custcode) {
+          const cashPayload = capitalChecker.buildRequest(0, 0, custcode);
+          // sendCmd will auto-assign cid
+          delete cashPayload.cid;
+          executionEngine.sendCmd(cashPayload);
+          relaySystemLog('[CAPITAL] Auto-requesting CASHINFO...');
+        }
+      } catch (err) {
+        relaySystemLog(`[CAPITAL] Auto-request CASHINFO failed: ${err.message}`);
+      }
     });
     executionEngine.on('disconnected', ({ code } = {}) => {
       const suffix = typeof code !== 'undefined' ? ` (code ${code})` : '';
@@ -232,6 +349,56 @@ function createWindow() {
       const priceLabel = Number.isFinite(update.price) ? update.price : '-';
       const volLabel = Number.isFinite(update.vol) ? update.vol : '-';
       relaySystemLog(`[ORDER][UPDATE] ${update.cmd} ${update.code} status=${update.status} price=${priceLabel} vol=${volLabel} ref=${update.jatsorderno || '-'}`);
+    });
+
+    // Portfolio → Risk: feed price ticks for TP/SL phantom stop evaluation
+    portfolioManager.on('position-update', (pos) => {
+      if (pos && pos.code && Number.isFinite(pos.lastPrice) && pos.lastPrice > 0) {
+        riskManager.onPriceTick(pos.code, pos.lastPrice);
+      }
+    });
+
+    // Execution engine → capital/portfolio: process cmd-response and push from own WS
+    executionEngine.on('cmd-response', (resp) => {
+      if (!resp || !resp.data) return;
+      const d = resp.data;
+      // CASHINFO response from a cmd request
+      if (d.status === 'OK' && d.data && Array.isArray(d.data.rec) && d.data.rec.length >= 40) {
+        capitalChecker.parseCashInfo(d.data.rec);
+      }
+    });
+
+    executionEngine.on('push', (pushData) => {
+      if (!pushData) return;
+      const rtype = pushData.rtype;
+      if (rtype === 'CASHINFO' && Array.isArray(pushData.rec)) {
+        capitalChecker.parseCashInfo(pushData.rec);
+      } else if (rtype === 'STOCKPOS' && Array.isArray(pushData.rec)) {
+        portfolioManager.updateFromStockPos(pushData.code || '', pushData.rec);
+      }
+    });
+
+    // Capital update → print summary to dashboard (deduplicated)
+    let lastCapitalBp = null;
+    capitalChecker.on('update', (snap) => {
+      if (snap.buyingPower === lastCapitalBp) return; // skip duplicate
+      lastCapitalBp = snap.buyingPower;
+      const acctLabel = snap.isMargin ? 'Margin' : 'Regular';
+      const bp = snap.buyingPower.toLocaleString('id-ID');
+      const cash = snap.cashBalance.toLocaleString('id-ID');
+      const pending = snap.pendingBuy.toLocaleString('id-ID');
+      relaySystemLog(`💰 Capital: BuyingPower=Rp${bp} | Cash=Rp${cash} | Pending=Rp${pending} | Type=${acctLabel}`);
+    });
+
+    // Risk: log phantom triggers and alerts to dashboard
+    riskManager.on('phantom-trigger', (info) => {
+      relaySystemLog(`[RISK][${info.reason}] ${info.code} @${info.triggerPrice} x${info.lot} (cid=${info.cid})`);
+    });
+    riskManager.on('risk-alert', (info) => {
+      relaySystemLog(`[RISK][ALERT] ${info.code} ${info.reason} @${info.triggerPrice} — ${info.error}`);
+    });
+    riskManager.on('position-change', (info) => {
+      relaySystemLog(`[RISK][POS] ${info.cmd} ${info.code} x${info.lot} @${info.price} remaining=${info.remaining}`);
     });
   }
 
@@ -409,20 +576,44 @@ function createWindow() {
 
     tokenEngine.setAccountInfo('ipot', {
       custcodes: payload.custcodes,
-      main: payload.main
+      main: payload.main,
+      name: payload.name,
+      lid: payload.lid
     });
 
     const primary = tokenEngine.getPrimaryCustcode('ipot');
+    const accountInfo = tokenEngine.getAccountInfo('ipot');
+    const displayName = accountInfo && accountInfo.name ? accountInfo.name : null;
+    const displayLid = accountInfo && accountInfo.lid ? accountInfo.lid : null;
+
+    // Print login identity banner
+    if (displayName || displayLid) {
+      const namePart = displayName || '(unknown)';
+      const lidPart = displayLid ? ` (${displayLid})` : '';
+      relaySystemLog(`👤 Welcome, ${namePart}${lidPart}`);
+    }
     if (primary) {
-      relaySystemLog(`[ACCOUNT] Custcode ready (${maskCustcode(primary)}).`);
-    } else {
-      relaySystemLog('[ACCOUNT] Custcode info received.');
+      const acctType = primary.startsWith('M') ? 'Margin' : primary.startsWith('R') ? 'Regular' : 'Unknown';
+      relaySystemLog(`🏦 Account: ${maskCustcode(primary)} [${acctType}]`);
     }
 
     executionEngine.setActiveBroker('ipot');
     ensureExecutionConnection().catch((err) => {
       relaySystemLog(`[EXEC] Ensure execution connection failed: ${err.message}`);
     });
+
+    // Retry execution connection after delay if agent token wasn't ready
+    if (!executionEngine.isConnected() && !executionEngine.isConnecting()) {
+      const retryDelays = [3000, 6000, 12000];
+      for (const delay of retryDelays) {
+        setTimeout(async () => {
+          if (executionEngine.isConnected() || executionEngine.isConnecting()) return;
+          try {
+            await ensureExecutionConnection();
+          } catch (_) { /* logged inside */ }
+        }, delay);
+      }
+    }
   });
 
   // Pane Kanan (Signal Dashboard)
@@ -574,6 +765,37 @@ function createWindow() {
     }
   });
 
+  ipcMain.on('ws-dump-control', (event, action) => {
+    if (action === 'clear') {
+      wsDumpBuffer.splice(0);
+      flushWsDump();
+      relaySystemLog('[WS-DUMP] Buffer cleared.');
+    } else if (action === 'disable') {
+      wsDumpEnabled = false;
+      const views = win.getBrowserViews();
+      if (views[0] && !views[0].webContents.isDestroyed()) {
+        views[0].webContents.send('ws-tap-toggle', false);
+      }
+      relaySystemLog('[WS-DUMP] Tap disabled.');
+    } else if (action === 'enable') {
+      wsDumpEnabled = true;
+      const views = win.getBrowserViews();
+      if (views[0] && !views[0].webContents.isDestroyed()) {
+        views[0].webContents.send('ws-tap-toggle', true);
+      }
+      relaySystemLog('[WS-DUMP] Tap enabled.');
+    } else if (action === 'send-only') {
+      wsDumpDirFilter = 'SEND';
+      relaySystemLog('[WS-DUMP] Direction filter: SEND only');
+    } else if (action === 'recv-only') {
+      wsDumpDirFilter = 'RECV';
+      relaySystemLog('[WS-DUMP] Direction filter: RECV only');
+    } else if (action === 'both') {
+      wsDumpDirFilter = 'both';
+      relaySystemLog('[WS-DUMP] Direction filter: both (SEND+RECV)');
+    }
+  });
+
   ipcMain.on('test-order', async (event, payload = {}) => {
     const activeBroker = (global.activeBroker || 'ipot').toLowerCase();
     if (activeBroker !== 'ipot') {
@@ -615,6 +837,16 @@ function createWindow() {
       }
 
       const orderParams = { code, price, lot };
+
+      // Pre-order capital check for BUY
+      if (side === 'BUY' && capitalChecker.isReady()) {
+        const afford = capitalChecker.canAfford(price, lot);
+        if (!afford.ok) {
+          relaySystemLog(`[ORDER][BLOCKED] ${side} ${code} @${price} x${lot} — ${afford.reason} (available=${afford.available}, need=${afford.required})`);
+          return;
+        }
+      }
+
       const cid = side === 'SELL'
         ? executionEngine.placeSell(orderParams)
         : executionEngine.placeBuy(orderParams);
@@ -732,6 +964,8 @@ function createWindow() {
 app.whenReady().then(createWindow);
 
 app.on('window-all-closed', () => {
+  if (wsDumpFlushTimer) clearTimeout(wsDumpFlushTimer);
+  if (wsDumpBuffer.length > 0) flushWsDump();
   try {
     executionEngine.disconnect();
   } catch (_) {

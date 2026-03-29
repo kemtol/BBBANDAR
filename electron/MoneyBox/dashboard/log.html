@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Logs — OpenClaw</title>
+<link rel="stylesheet" href="css/themes.css">
+<link rel="stylesheet" href="css/style.css">
+<style>body { display: block; overflow-y: auto; }</style>
+</head>
+<body>
+
+  <!-- Topbar -->
+  <div class="topbar">
+    <div class="topbar-left">
+      <h1>Logs</h1>
+    </div>
+    <div class="topbar-right">
+      <div id="connStatus" class="status-inline">
+        <div class="status-dot" id="log-statusDot"></div>
+        <span class="status-label" id="log-statusText">Mock data</span>
+      </div>
+      <button class="btn btn-ghost" id="btnClear" title="Clear logs">✕ Clear</button>
+      <button class="btn btn-ghost" id="btnExport" title="Export visible logs">↓ Export</button>
+    </div>
+  </div>
+
+  <!-- Content -->
+  <div class="content">
+
+    <!-- Error banner -->
+    <div class="error-banner hidden" id="errorBanner"></div>
+
+    <!-- Filters -->
+    <div class="controls-row">
+      <div class="filter-bar">
+        <select id="filterAgent">
+          <option value="">All agents</option>
+          <option value="main">Albert (main)</option>
+          <option value="elsa">ELSA</option>
+          <option value="ditesh">Ditesh</option>
+          <option value="newton">Newton</option>
+          <option value="dispatcher">Dispatcher</option>
+        </select>
+        <div class="filter-pills">
+          <button class="filter-pill pill-all active" data-level="">All</button>
+          <button class="filter-pill pill-info" data-level="INFO">INFO</button>
+          <button class="filter-pill pill-warn" data-level="WARN">WARN</button>
+          <button class="filter-pill pill-error" data-level="ERROR">ERROR</button>
+        </div>
+        <input type="text" id="filterSearch" placeholder="Search log messages…">
+      </div>
+      <div class="controls-right">
+        <div class="log-stats">
+          <span id="logTotal">0 entries</span>
+          <span id="logVisible">0 visible</span>
+        </div>
+        <label class="auto-toggle">
+          <input type="checkbox" id="autoScroll" checked> Auto-scroll
+        </label>
+      </div>
+    </div>
+
+    <!-- Log output -->
+    <div class="log-container">
+      <div class="log-scroll" id="logScroll">
+        <div id="logBody">
+
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+<script>
+// ── Mock data (static UI — no live API) ────────
+const MOCK_LOGS = [
+  { ts: '2026-03-13T10:14:51Z', agent: 'main',       level: 'INFO',  msg: 'Heartbeat fired — context at 61%, below threshold' },
+  { ts: '2026-03-13T10:14:52Z', agent: 'elsa',        level: 'INFO',  msg: 'Scanning LQ45 unusual volume — found 3 candidates' },
+  { ts: '2026-03-13T10:14:53Z', agent: 'dispatcher',  level: 'INFO',  msg: 'Compact scheduler: next run at :15 UTC' },
+  { ts: '2026-03-13T10:15:00Z', agent: 'dispatcher',  level: 'INFO',  msg: 'Running compact cycle for all agents' },
+  { ts: '2026-03-13T10:15:01Z', agent: 'main',        level: 'INFO',  msg: 'Compact: session 3.8MB → saved 12 memories to snapshot' },
+  { ts: '2026-03-13T10:15:02Z', agent: 'elsa',        level: 'WARN',  msg: 'Context at 100% — triggering RAG ingestion' },
+  { ts: '2026-03-13T10:15:03Z', agent: 'elsa',        level: 'INFO',  msg: 'Ingested 4.4KB to agent_memory_elsa (3 snapshots)' },
+  { ts: '2026-03-13T10:15:04Z', agent: 'ditesh',      level: 'INFO',  msg: 'Compact skipped — context below 70% (34%)' },
+  { ts: '2026-03-13T10:15:10Z', agent: 'newton',      level: 'INFO',  msg: 'Scraping IDX disclosures — 4 new filings' },
+  { ts: '2026-03-13T10:15:12Z', agent: 'newton',      level: 'INFO',  msg: 'Indexing 4 documents to idx_disclosures collection' },
+  { ts: '2026-03-13T10:15:15Z', agent: 'dispatcher',  level: 'INFO',  msg: 'Heartbeat check: main=OK, elsa=OK, ditesh=OK, newton=OK' },
+  { ts: '2026-03-13T10:20:00Z', agent: 'main',        level: 'INFO',  msg: 'Reviewing BBCA technical setup — RSI oversold on daily' },
+  { ts: '2026-03-13T10:20:05Z', agent: 'main',        level: 'INFO',  msg: 'Decision: Hold position, wait for reversal confirmation' },
+  { ts: '2026-03-13T10:20:10Z', agent: 'elsa',        level: 'INFO',  msg: 'BBRI large block buy detected at 5450 — institutional pattern' },
+  { ts: '2026-03-13T10:25:00Z', agent: 'newton',      level: 'INFO',  msg: 'News scrape: 5 global articles, 3 indonesia articles indexed' },
+  { ts: '2026-03-13T10:25:02Z', agent: 'newton',      level: 'WARN',  msg: 'Duplicate detected: reuters.com/fed-signals-pause — skipping' },
+  { ts: '2026-03-13T10:30:00Z', agent: 'elsa',        level: 'INFO',  msg: 'Heartbeat fired — context at 88%, approaching threshold' },
+  { ts: '2026-03-13T10:30:01Z', agent: 'dispatcher',  level: 'INFO',  msg: 'Telegram: sent daily digest to ARIA chat' },
+  { ts: '2026-03-13T10:30:05Z', agent: 'main',        level: 'INFO',  msg: 'Foreign flow update: net buy Rp 450M in BBRI today' },
+  { ts: '2026-03-13T10:35:00Z', agent: 'dispatcher',  level: 'ERROR', msg: 'Telegram polling timeout — retrying in 5s' },
+  { ts: '2026-03-13T10:35:05Z', agent: 'dispatcher',  level: 'INFO',  msg: 'Telegram polling reconnected' },
+  { ts: '2026-03-13T10:40:00Z', agent: 'ditesh',      level: 'INFO',  msg: 'Risk assessment: portfolio VaR at 2.1%, within tolerance' },
+  { ts: '2026-03-13T10:40:02Z', agent: 'ditesh',      level: 'WARN',  msg: 'High correlation alert: BBCA-BMRI at 0.87 — consider diversifying' },
+  { ts: '2026-03-13T10:45:00Z', agent: 'main',        level: 'INFO',  msg: 'Heartbeat fired — context at 65%, below threshold' },
+  { ts: '2026-03-13T10:45:01Z', agent: 'elsa',        level: 'INFO',  msg: 'Volume scanner: ANTM +340% avg vol, INCO +210% avg vol' },
+  { ts: '2026-03-13T10:45:05Z', agent: 'newton',      level: 'INFO',  msg: 'Economic calendar: BI rate decision at 14:00 WIB — hold expected' },
+  { ts: '2026-03-13T10:50:00Z', agent: 'dispatcher',  level: 'INFO',  msg: 'System health: CPU 23%, RAM 4.1GB/8GB, disk 67%' },
+  { ts: '2026-03-13T10:50:01Z', agent: 'dispatcher',  level: 'WARN',  msg: 'Qdrant disk usage 67% — consider cleanup of old points' },
+  { ts: '2026-03-13T10:55:00Z', agent: 'main',        level: 'INFO',  msg: 'Adding TLKM to watchlist — sector rotation signal confirmed' },
+  { ts: '2026-03-13T10:55:02Z', agent: 'elsa',        level: 'ERROR', msg: 'Failed to fetch orderbook for BUMI — HTTP 503, retrying' },
+  { ts: '2026-03-13T10:55:05Z', agent: 'elsa',        level: 'INFO',  msg: 'Orderbook retry successful for BUMI' },
+  { ts: '2026-03-13T11:00:00Z', agent: 'main',        level: 'INFO',  msg: 'Heartbeat fired — context at 72%, above threshold' },
+  { ts: '2026-03-13T11:00:01Z', agent: 'main',        level: 'INFO',  msg: 'RAG ingestion triggered — 2 snapshots sent to agent_memory_main' },
+  { ts: '2026-03-13T11:00:03Z', agent: 'dispatcher',  level: 'INFO',  msg: 'Compact scheduler: all agents processed, next at :15' },
+];
+
+const MAX_LINES = 500;
+
+let allLogs      = [...MOCK_LOGS];
+let filterAgent  = '';
+let filterLevel  = '';
+let filterSearch = '';
+let autoScroll   = true;
+
+// ── DOM refs ───────────────────────────────────
+const $logBody      = document.getElementById('logBody');
+const $logScroll    = document.getElementById('logScroll');
+const $filterAgent  = document.getElementById('filterAgent');
+const $filterSearch = document.getElementById('filterSearch');
+const $autoScroll   = document.getElementById('autoScroll');
+const $statusDot    = document.getElementById('log-statusDot');
+const $statusText   = document.getElementById('log-statusText');
+const $errorBanner  = document.getElementById('errorBanner');
+const $logTotal     = document.getElementById('logTotal');
+const $logVisible   = document.getElementById('logVisible');
+const $btnClear     = document.getElementById('btnClear');
+const $btnExport    = document.getElementById('btnExport');
+const levelPills    = document.querySelectorAll('.filter-pill[data-level]');
+
+// ── Helpers ────────────────────────────────────
+function setStatus(ok, text) {
+  $statusDot.className = 'status-dot' + (ok ? '' : ' err');
+  $statusText.textContent = text;
+}
+
+function fmtTime(ts) {
+  if (!ts) return '--:--:--';
+  const d = new Date(ts);
+  return [d.getHours(), d.getMinutes(), d.getSeconds()]
+    .map(n => String(n).padStart(2, '0')).join(':');
+}
+
+function escHtml(s) {
+  const el = document.createElement('span');
+  el.textContent = s;
+  return el.innerHTML;
+}
+
+function highlightSearch(text, q) {
+  if (!q) return escHtml(text);
+  const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp('(' + escaped + ')', 'gi');
+  return escHtml(text).replace(re, '<mark>$1</mark>');
+}
+
+// ── Filtering ──────────────────────────────────
+function getFiltered() {
+  return allLogs.filter(l => {
+    if (filterAgent && l.agent !== filterAgent) return false;
+    if (filterLevel && (l.level || '').toUpperCase() !== filterLevel) return false;
+    if (filterSearch) {
+      const q = filterSearch.toLowerCase();
+      if (!l.msg.toLowerCase().includes(q) &&
+          !(l.agent || '').toLowerCase().includes(q)) return false;
+    }
+    return true;
+  });
+}
+
+function renderLogs() {
+  const filtered = getFiltered();
+
+  $logTotal.textContent = allLogs.length + ' entries';
+  $logVisible.textContent = filtered.length + ' visible';
+
+  if (filtered.length === 0) {
+    $logBody.innerHTML = '<div class="empty-state"><div class="empty-icon">◇</div><div class="empty-text">No matching logs</div></div>';
+    return;
+  }
+
+  const html = filtered.map(l => {
+    const agClass = 'ag-' + (l.agent || 'main');
+    const lvClass = 'lv-' + (l.level || 'info').toLowerCase();
+    return `<div class="log-entry">
+      <span class="le-ts">${fmtTime(l.ts)}</span>
+      <span class="le-agent ${agClass}">${l.agent || '—'}</span>
+      <span class="le-level ${lvClass}">${(l.level || 'INFO').toUpperCase()}</span>
+      <span class="le-msg">${highlightSearch(l.msg || '', filterSearch)}</span>
+    </div>`;
+  }).join('');
+
+  $logBody.innerHTML = html;
+
+  if (autoScroll) {
+    $logScroll.scrollTop = $logScroll.scrollHeight;
+  }
+}
+
+// ── Events ─────────────────────────────────────
+$filterAgent.addEventListener('change', () => {
+  filterAgent = $filterAgent.value;
+  renderLogs();
+});
+
+levelPills.forEach(pill => {
+  pill.addEventListener('click', () => {
+    levelPills.forEach(p => p.classList.remove('active'));
+    pill.classList.add('active');
+    filterLevel = pill.dataset.level;
+    renderLogs();
+  });
+});
+
+let searchTimer;
+$filterSearch.addEventListener('input', () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => {
+    filterSearch = $filterSearch.value.trim();
+    renderLogs();
+  }, 200);
+});
+
+$autoScroll.addEventListener('change', () => {
+  autoScroll = $autoScroll.checked;
+  if (autoScroll) $logScroll.scrollTop = $logScroll.scrollHeight;
+});
+
+$btnClear.addEventListener('click', () => {
+  allLogs = [];
+  renderLogs();
+  $logBody.innerHTML = '<div class="empty-state"><div class="empty-icon">≡</div><div class="empty-text">Logs cleared</div></div>';
+});
+
+$btnExport.addEventListener('click', () => {
+  const filtered = getFiltered();
+  const text = filtered.map(l =>
+    `${l.ts || ''}\t${l.agent || ''}\t${(l.level || 'INFO').toUpperCase()}\t${l.msg || ''}`
+  ).join('\n');
+  const blob = new Blob([text], { type: 'text/plain' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'openclaw-logs-' + new Date().toISOString().slice(0,10) + '.txt';
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
+
+$logScroll.addEventListener('scroll', () => {
+  const atBottom = $logScroll.scrollHeight - $logScroll.scrollTop - $logScroll.clientHeight < 40;
+  if (!atBottom && autoScroll) {
+    autoScroll = false;
+    $autoScroll.checked = false;
+  }
+});
+
+// ── Boot ───────────────────────────────────────
+setStatus(true, 'Mock data');
+renderLogs();
+</script>
+</body>
+</html>

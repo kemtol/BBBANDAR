@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>API Services — OpenClaw</title>
+<link rel="stylesheet" href="css/themes.css">
+<link rel="stylesheet" href="css/style.css">
+<link rel="stylesheet" href="/vendor/swagger-ui-dist/swagger-ui.css?v=20260315">
+<style>
+body { overflow: hidden; height: 100vh; }
+.main { min-height: 0; }
+html.in-iframe .sidebar { display: none; }
+html.in-iframe .main    { margin-left: 0; }
+
+/* ── Layout ── */
+.svc-layout {
+  display: flex;
+  height: calc(100vh - 52px - 32px);
+  overflow: hidden;
+}
+
+/* ── Left pane ── */
+.svc-list {
+  width: 260px;
+  min-width: 220px;
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+  padding: 8px 0;
+  flex-shrink: 0;
+}
+.svc-list-title {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  padding: 12px 16px 4px;
+}
+.svc-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  cursor: pointer;
+  border-left: 3px solid transparent;
+  transition: background .12s, border-color .12s;
+}
+.svc-item:hover  { background: var(--hover-bg, rgba(255,255,255,.04)); }
+.svc-item.active {
+  background: var(--active-bg, rgba(124,92,252,.08));
+  border-left-color: var(--accent, #7c5cfc);
+}
+.svc-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--border);
+  flex-shrink: 0;
+  transition: background .3s;
+}
+.svc-dot.green  { background: #3dd68c; }
+.svc-dot.red    { background: #e55; }
+.svc-info { flex: 1; min-width: 0; }
+.svc-name {
+  font-size: 13px; font-weight: 500;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.svc-ver  { opacity: .5; font-weight: 400; font-size: 10px; }
+.svc-meta { font-size: 10px; color: var(--text-muted); margin-top: 2px; }
+.svc-badge {
+  font-size: 9px; padding: 2px 6px; border-radius: 3px;
+  background: rgba(124,92,252,.15); color: var(--accent, #7c5cfc);
+  font-weight: 600; text-transform: uppercase; flex-shrink: 0;
+}
+.svc-endpoints {
+  font-size: 10px; color: var(--text-muted); margin-top: 2px;
+}
+
+/* ── Right pane ── */
+.svc-viewer {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.svc-viewer-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--text-muted);
+  background: var(--card-bg, #1a1a2e);
+  flex-shrink: 0;
+}
+.svc-viewer-bar .bar-url {
+  flex: 1; font-family: monospace;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* Swagger container */
+#swagger-wrap {
+  flex: 1;
+  overflow-y: auto;
+  background: #fff;
+}
+/* Swagger UI overrides for readability */
+#swagger-wrap .swagger-ui .topbar { display: none; }
+#swagger-wrap .swagger-ui .info  { margin: 16px 0 8px; }
+
+/* Loading / error states */
+.svc-loading {
+  display: flex; align-items: center; justify-content: center;
+  height: 100%; color: #666; font-size: 14px; gap: 8px;
+}
+.svc-error {
+  padding: 24px; color: #e55; font-size: 13px;
+  font-family: monospace; white-space: pre-wrap;
+}
+
+/* Placeholder */
+.svc-placeholder {
+  flex: 1;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  color: var(--text-muted); gap: 10px;
+  font-size: 13px;
+}
+.svc-placeholder .ph-icon { font-size: 34px; opacity: .25; }
+</style>
+<script>if (window.self !== window.top) document.documentElement.classList.add('in-iframe');</script>
+</head>
+<body>
+
+<!-- ── Sidebar (standalone) ────────────────────────── -->
+<nav class="sidebar">
+  <div class="logo">OC</div>
+  <a class="nav-item" href="index.html" title="Overview">⌗</a>
+  <div class="nav-item" title="Project Management">⊞</div>
+  <div class="nav-item" title="Agents">◈</div>
+  <a class="nav-item" href="rag.html" title="RAG / Qdrant">◇</a>
+  <a class="nav-item" href="log.html" title="Logs">≡</a>
+  <div class="nav-item" title="Cron">⏱</div>
+  <div class="nav-item active" title="Services">⬡</div>
+  <div class="spacer"></div>
+  <div class="nav-item" title="Settings">⚙</div>
+</nav>
+
+<!-- ── Main ────────────────────────────────────────── -->
+<div class="main">
+
+  <!-- Topbar -->
+  <div class="topbar">
+    <div class="topbar-left">
+      <h1>API Services</h1>
+      <span class="badge" id="svcCountBadge">— services</span>
+    </div>
+    <div class="topbar-right">
+      <div class="status-inline">
+        <div class="status-dot" id="healthDot"></div>
+        <span class="status-label" id="healthText">Checking…</span>
+      </div>
+      <button class="btn btn-ghost" onclick="refreshHealth()">↻</button>
+    </div>
+  </div>
+
+  <!-- Body -->
+  <div class="svc-layout">
+
+    <!-- Left: service list -->
+    <div class="svc-list" id="svcList">
+      <div class="svc-list-title">API Services</div>
+      <!-- filled by JS -->
+    </div>
+
+    <!-- Right: swagger viewer -->
+    <div class="svc-viewer" id="svcViewer">
+
+      <div class="svc-placeholder" id="viewPlaceholder">
+        <div class="ph-icon">⬡</div>
+        Select a service to view its Swagger documentation
+      </div>
+
+      <div class="svc-viewer-bar" id="viewerBar" style="display:none">
+        <span>⬡</span>
+        <span class="bar-url" id="viewerUrl"></span>
+      </div>
+
+      <div id="swagger-wrap" style="display:none">
+        <div id="swagger-ui"></div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Statusbar -->
+  <div class="statusbar">
+    <span>⬡ API Services · MONEYBOX</span>
+    <span class="text-green" id="sb-healthy">—</span>
+    <span class="text-muted" id="sb-total">—</span>
+    <span id="svc-clock" class="ml-auto">--:-- UTC</span>
+  </div>
+
+</div><!-- /main -->
+
+<script>
+const SWAGGER_CSS_URL = '/vendor/swagger-ui-dist/swagger-ui.css?v=20260315';
+const SWAGGER_BUNDLE_URL = '/vendor/swagger-ui-dist/swagger-ui-bundle.js?v=20260315';
+let swaggerLoadPromise = null;
+
+function ensureSwaggerAssets() {
+  if (typeof SwaggerUIBundle !== 'undefined') {
+    return Promise.resolve();
+  }
+  if (swaggerLoadPromise) {
+    return swaggerLoadPromise;
+  }
+
+  // Ensure CSS is present when this page is injected dynamically.
+  if (!document.querySelector('link[data-swagger-ui="1"]')) {
+    const css = document.createElement('link');
+    css.rel = 'stylesheet';
+    css.href = SWAGGER_CSS_URL;
+    css.setAttribute('data-swagger-ui', '1');
+    document.head.appendChild(css);
+  }
+
+  swaggerLoadPromise = new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = SWAGGER_BUNDLE_URL;
+    script.async = true;
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error('Failed loading ' + SWAGGER_BUNDLE_URL));
+    document.head.appendChild(script);
+  });
+
+  return swaggerLoadPromise;
+}
+
+// ── Clock ──────────────────────────────────────────────────
+(function tickClock() {
+  const el = document.getElementById('svc-clock');
+  if (el) el.textContent = new Date().toUTCString().split(' ')[4] + ' UTC';
+  setTimeout(tickClock, 1000);
+})();
+
+// ── Service definitions (only APIs with OpenAPI/Swagger) ───
+const SERVICES = [
+  {
+    id: 'rag',
+    name: 'RAG API',
+    version: 'v2.0',
+    desc: 'Port 8000 · moneybox_rag',
+    healthUrl: '/api/rag/health',
+    specUrl: '/api/rag/openapi.json'
+  },
+  {
+    id: 'pm',
+    name: 'Project Management API',
+    version: 'v1.0',
+    desc: 'Port 8001 · pm-api',
+    healthUrl: '/api/pm/openapi.json',
+    specUrl: '/api/pm/openapi.json'
+  }
+];
+
+const healthStatus = {};
+let activeSwagger = null;
+
+// ── Health check ───────────────────────────────────────────
+async function checkHealth(svc) {
+  try {
+    const r = await fetch(svc.healthUrl, { signal: AbortSignal.timeout(4000) });
+    healthStatus[svc.id] = { ok: r.ok };
+  } catch {
+    healthStatus[svc.id] = { ok: false };
+  }
+  updateDot(svc.id);
+  updateStatusBar();
+}
+
+async function refreshHealth() {
+  document.getElementById('healthText').textContent = 'Checking…';
+  SERVICES.forEach(s => { healthStatus[s.id] = null; updateDot(s.id); });
+  await Promise.all(SERVICES.map(checkHealth));
+}
+
+function updateDot(id) {
+  const el = document.querySelector(`.svc-item[data-id="${id}"] .svc-dot`);
+  if (!el) return;
+  const h = healthStatus[id];
+  el.className = 'svc-dot' + (h === null ? '' : h && h.ok ? ' green' : ' red');
+}
+
+function updateStatusBar() {
+  const healthy = Object.values(healthStatus).filter(h => h && h.ok).length;
+  const total = SERVICES.length;
+  document.getElementById('sb-healthy').textContent = healthy + ' healthy';
+  document.getElementById('sb-total').textContent = total + ' total';
+  document.getElementById('svcCountBadge').textContent = total + ' services';
+  const dot = document.getElementById('healthDot');
+  const txt = document.getElementById('healthText');
+  dot.style.background = healthy === total ? '#3dd68c' : healthy > 0 ? '#f6c90e' : '#e55';
+  txt.textContent = healthy + '/' + total + ' healthy';
+}
+
+// ── Render list ────────────────────────────────────────────
+function renderList() {
+  const list = document.getElementById('svcList');
+  const titleEl = list.querySelector('.svc-list-title');
+
+  SERVICES.forEach(svc => {
+    const item = document.createElement('div');
+    item.className = 'svc-item';
+    item.dataset.id = svc.id;
+    item.innerHTML = `
+      <div class="svc-dot"></div>
+      <div class="svc-info">
+        <div class="svc-name">${svc.name} <span class="svc-ver">${svc.version}</span></div>
+        <div class="svc-meta">${svc.desc}</div>
+      </div>
+      <span class="svc-badge">Swagger</span>`;
+    item.onclick = () => selectService(svc.id);
+    list.appendChild(item);
+  });
+}
+
+// ── Select service → render Swagger UI ─────────────────────
+async function selectService(id) {
+  document.querySelectorAll('.svc-item').forEach(el => el.classList.remove('active'));
+  const item = document.querySelector(`.svc-item[data-id="${id}"]`);
+  if (item) item.classList.add('active');
+
+  const svc = SERVICES.find(s => s.id === id);
+  if (!svc) return;
+
+  document.getElementById('viewPlaceholder').style.display = 'none';
+  document.getElementById('viewerBar').style.display = 'flex';
+  document.getElementById('swagger-wrap').style.display = 'block';
+  document.getElementById('viewerUrl').textContent = svc.specUrl;
+
+  const container = document.getElementById('swagger-ui');
+  container.innerHTML = '<div class="svc-loading">Loading OpenAPI spec…</div>';
+
+  try {
+    await ensureSwaggerAssets();
+
+    if (typeof SwaggerUIBundle === 'undefined') {
+      throw new Error('SwaggerUIBundle is unavailable after loading assets');
+    }
+
+    // Fetch spec manually to catch errors early
+    const resp = await fetch(svc.specUrl);
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const spec = await resp.json();
+
+    container.innerHTML = '';
+    activeSwagger = SwaggerUIBundle({
+      spec: spec,
+      dom_id: '#swagger-ui',
+      presets: [ SwaggerUIBundle.presets.apis ],
+      layout: 'BaseLayout',
+      deepLinking: false,
+      defaultModelsExpandDepth: -1,
+      tryItOutEnabled: true
+    });
+  } catch (err) {
+    container.innerHTML = '<div class="svc-error">Failed to load: ' + svc.specUrl + '\n' + err.message + '</div>';
+  }
+}
+
+// ── Init ───────────────────────────────────────────────────
+renderList();
+refreshHealth();
+setInterval(refreshHealth, 30000);
+
+// Expose for shell IIFE wrapper
+window.refreshHealth  = refreshHealth;
+window.selectService  = selectService;
+</script>
+</body>
+</html>

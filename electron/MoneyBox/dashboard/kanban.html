@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OpenClaw — Project Management</title>
+<link rel="stylesheet" href="css/themes.css">
+<link rel="stylesheet" href="css/style.css">
+<style>
+  body { display: block; overflow-y: auto; }
+  /* When rendered inside the shell iframe, hide the duplicate sidebar */
+  html.in-iframe .sidebar { display: none; }
+  html.in-iframe .main    { margin-left: 0; }
+</style>
+<script>
+  if (window.self !== window.top) document.documentElement.classList.add('in-iframe');
+</script>
+</head>
+<body>
+
+<!-- ── Sidebar ─────────────────────────────────────── -->
+<nav class="sidebar">
+  <div class="logo">OC</div>
+  <a class="nav-item" href="index.html" title="Overview">⌗</a>
+  <div class="nav-item" title="Agents">◈</div>
+  <div class="nav-item" title="Memory">◉</div>
+  <div class="nav-item" title="RAG / Qdrant">◇</div>
+  <div class="nav-item" title="Logs">≡</div>
+  <div class="nav-item" title="Cron">⏱</div>
+  <div class="nav-item active" title="Project Management">⊞</div>
+  <div class="spacer"></div>
+  <div class="nav-item" title="Settings">⚙</div>
+</nav>
+
+<!-- ── Main ────────────────────────────────────────── -->
+<div class="main">
+
+  <!-- Topbar -->
+  <div class="topbar">
+    <div class="topbar-left">
+      <h1>Project Management</h1>
+      <span class="updated-tag" id="updated-tag">Updated just now</span>
+      <div class="search-wrap">
+        <span class="search-icon">🔍</span>
+        <input type="text" id="search-input" placeholder="Search tasks…">
+      </div>
+    </div>
+    <div class="topbar-right">
+      <button class="btn btn-ghost" onclick="refreshBoard()">↻</button>
+      <button class="btn btn-ghost" id="filter-btn">⊟ Filter</button>
+      <button class="btn btn-primary" onclick="openNewTask()">+ New Task</button>
+    </div>
+  </div>
+
+  <!-- Board -->
+  <div class="board-wrap" id="board">
+
+    <!-- PLANNING -->
+    <div class="col">
+      <div class="col-header col-planning">
+        <div class="col-title">Planning</div>
+        <div class="col-header-actions">
+          <div class="col-count" id="cnt-planning">0</div>
+          <div class="col-add" onclick="openNewTask('planning')">+</div>
+        </div>
+      </div>
+      <div class="col-cards" id="col-planning"></div>
+    </div>
+
+    <!-- TO DO -->
+    <div class="col">
+      <div class="col-header col-todo">
+        <div class="col-title">To Do</div>
+        <div class="col-header-actions">
+          <div class="col-count" id="cnt-todo">0</div>
+          <div class="col-add" onclick="openNewTask('todo')">+</div>
+        </div>
+      </div>
+      <div class="col-cards" id="col-todo"></div>
+    </div>
+
+    <!-- IN PROGRESS -->
+    <div class="col">
+      <div class="col-header col-inprogress">
+        <div class="col-title">In Progress</div>
+        <div class="col-header-actions">
+          <div class="col-count" id="cnt-inprogress">0</div>
+          <div class="col-add" onclick="openNewTask('inprogress')">+</div>
+        </div>
+      </div>
+      <div class="col-cards" id="col-inprogress"></div>
+    </div>
+
+    <!-- DONE -->
+    <div class="col">
+      <div class="col-header col-done">
+        <div class="col-title">Done</div>
+        <div class="col-header-actions">
+          <div class="col-count" id="cnt-done">0</div>
+          <div class="col-add">+</div>
+        </div>
+      </div>
+      <div class="col-cards" id="col-done"></div>
+    </div>
+
+  </div><!-- /board-wrap -->
+
+  <!-- Statusbar -->
+  <div class="statusbar">
+    <span>⊞ Kanban · MONEYBOX</span>
+    <span id="sb-total">— tasks</span>
+    <span class="text-green" id="sb-done">— done</span>
+    <span class="text-yellow" id="sb-inprogress">— in progress</span>
+    <span class="text-muted" id="sb-queued">— queued</span>
+    <span id="kanban-clock" class="ml-auto">--:-- UTC</span>
+  </div>
+</div>
+
+<!-- ── Task detail panel ────────────────────────────── -->
+<div class="overlay" id="detail-overlay" onclick="closeDetail(event)">
+  <div class="detail-panel" id="detail-panel">
+    <div class="detail-close" onclick="document.getElementById('detail-overlay').classList.remove('open')">✕</div>
+    <div class="detail-title" id="dp-title">Task detail</div>
+    <div class="detail-row"><span class="detail-label">Status</span><span class="detail-val" id="dp-status">—</span></div>
+    <div class="detail-row"><span class="detail-label">Agent</span><span class="detail-val" id="dp-agent">—</span></div>
+    <div class="detail-row"><span class="detail-label">Priority</span><span class="detail-val" id="dp-priority">—</span></div>
+    <div class="detail-row"><span class="detail-label">Epic</span><span class="detail-val" id="dp-epic">—</span></div>
+    <div class="detail-sub mt-8">Description</div>
+    <div class="detail-desc" id="dp-desc">—</div>
+    <div class="detail-sub mt-8">Checklist</div>
+    <div class="detail-todo" id="dp-todos"></div>
+    <div id="dp-move"></div>
+  </div>
+</div>
+
+<!-- ── New Task modal ──────────────────────────────── -->
+<div class="modal-wrap" id="new-task-modal" onclick="closeModal(event)">
+  <div class="modal">
+    <h2>+ New Task</h2>
+    <div class="form-group">
+      <label>Title</label>
+      <input type="text" id="nt-title" placeholder="Task title…">
+    </div>
+    <div class="form-group">
+      <label>Description</label>
+      <textarea id="nt-desc" rows="3" placeholder="What needs to be done?"></textarea>
+    </div>
+    <div class="modal-grid-2">
+      <div class="form-group">
+        <label>Column</label>
+        <select id="nt-col">
+          <option value="planning">Planning</option>
+          <option value="todo">To Do</option>
+          <option value="inprogress">In Progress</option>
+          <option value="done">Done</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Priority</label>
+        <select id="nt-priority">
+          <option value="high">↑ High</option>
+          <option value="med" selected>→ Medium</option>
+          <option value="low">↓ Low</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Agent</label>
+        <select id="nt-agent">
+          <option>main (Albert)</option>
+          <option>elsa</option>
+          <option>ditesh</option>
+          <option>newton</option>
+          <option>—</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Tags (comma sep)</label>
+        <input type="text" id="nt-tags" placeholder="e.g. rag, api">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="document.getElementById('new-task-modal').classList.remove('open')">Cancel</button>
+      <button class="btn btn-primary" onclick="addTask()">Create Task</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── Clock ──────────────────────────────────────────
+function updateClock() {
+  const t = new Date().toUTCString().split(' ')[4] + ' UTC';
+  const el = document.getElementById('kanban-clock');
+  if (el) el.textContent = t;
+}
+updateClock(); setInterval(updateClock, 1000);
+// ── API + local cache ────────────────────────────────────────
+const API_BASE = '/api/dispatcher';
+let TASKS = {};  // id → task object (local cache)
+
+function escHtml(s) {
+  return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+function statusLabel(s) {
+  return {planning:'Planning', todo:'To Do', inprogress:'In Progress', done:'Done'}[s] || s;
+}
+
+// ── Board render ──────────────────────────────────────────
+function renderCard(id, t) {
+  const isDone  = t.status === 'done';
+  const pRaw    = t.priority || '\u2192 Medium';
+  const pClass  = pRaw.includes('High') ? 'p-high' : pRaw.includes('Low') ? 'p-low' : 'p-med';
+  const agChars = (t.agent || '').split('/').map(a => a.trim()[0] || '?').slice(0, 3);
+  const avatars = agChars.map(l => `<div class="avatar">${escHtml(l)}</div>`).join('');
+  const tagsHtml = (t.tags || []).map(tag => `<span class="tag">${escHtml(tag)}</span>`).join('');
+  const icon     = isDone ? '\u2705' : '\u23f0';
+  const epicNum  = (t.epic || '').replace(/\D/g, '');
+  const epicHtml = epicNum ? `<div class="epic-badge epic-${epicNum}">Epic \u00b7 ${escHtml(t.epic)}</div>` : '';
+
+  const card = document.createElement('div');
+  card.className = `task-card${isDone ? ' task-card-done' : ''}`;
+  card.dataset.id = id;
+  card.onclick = () => openDetail(id);
+  card.innerHTML = `
+    <div class="card-top">
+      <div class="task-id">${icon} ${id}</div>
+      ${epicHtml}
+    </div>
+    <div class="title">${escHtml(t.title)}</div>
+    ${t.description ? `<div class="desc">${escHtml(t.description)}</div>` : ''}
+    ${tagsHtml ? `<div class="tags">${tagsHtml}</div>` : ''}
+    <div class="card-footer">
+      <div class="avatars">${avatars}</div>
+      <div class="priority ${pClass}">${escHtml(pRaw)}</div>
+    </div>`;
+
+  const col = document.getElementById('col-' + t.status);
+  if (col) col.appendChild(card);
+}
+
+async function loadBoard() {
+  document.getElementById('updated-tag').textContent = 'Loading\u2026';
+  try {
+    const r = await fetch(`${API_BASE}/kanban/tasks`);
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error || 'API error');
+    ['planning','todo','inprogress','done'].forEach(col => {
+      document.getElementById('col-' + col).innerHTML = '';
+    });
+    TASKS = {};
+    (d.tasks || []).forEach(t => { TASKS[t.id] = t; renderCard(t.id, t); });
+    updateCounts();
+    document.getElementById('updated-tag').textContent = 'Updated just now';
+  } catch (e) {
+    console.error('loadBoard:', e);
+    document.getElementById('updated-tag').textContent = '\u26a0\ufe0f Load failed';
+  }
+}
+
+// ── Counts ──────────────────────────────────────────────────
+function updateCounts() {
+  let total = 0;
+  ['planning','todo','inprogress','done'].forEach(col => {
+    const n = document.getElementById('col-' + col).children.length;
+    const el = document.getElementById('cnt-' + col);
+    if (el) el.textContent = n;
+    total += n;
+  });
+  const doneN   = document.getElementById('col-done').children.length;
+  const inpN    = document.getElementById('col-inprogress').children.length;
+  const queuedN = total - doneN - inpN;
+  if (document.getElementById('sb-total'))      document.getElementById('sb-total').textContent      = total + ' tasks';
+  if (document.getElementById('sb-done'))       document.getElementById('sb-done').textContent       = doneN + ' done';
+  if (document.getElementById('sb-inprogress')) document.getElementById('sb-inprogress').textContent = inpN + ' in progress';
+  if (document.getElementById('sb-queued'))     document.getElementById('sb-queued').textContent     = queuedN + ' queued';
+}
+
+// ── Detail panel ──────────────────────────────────────────
+function openDetail(id) {
+  const t = TASKS[id]; if (!t) return;
+  document.getElementById('dp-title').textContent    = id + ': ' + t.title;
+  document.getElementById('dp-status').textContent   = statusLabel(t.status);
+  document.getElementById('dp-agent').textContent    = t.agent || '\u2014';
+  document.getElementById('dp-priority').textContent = t.priority || '\u2192 Medium';
+  document.getElementById('dp-epic').textContent     = t.epic || '\u2014';
+  document.getElementById('dp-desc').textContent     = t.description || '';
+
+  const todosEl = document.getElementById('dp-todos');
+  todosEl.innerHTML = '';
+  (t.todos || []).forEach(todo => {
+    const done = todo.startsWith('\u2705');
+    const text = done ? todo.replace('\u2705 ', '') : todo;
+    todosEl.innerHTML += `<div class="todo-item">
+      <div class="todo-cb ${done?'done':''}"></div>
+      <span class="todo-text ${done?'done':''}">${escHtml(text)}</span>
+    </div>`;
+  });
+
+  // Move + delete controls
+  const moveEl = document.getElementById('dp-move');
+  if (moveEl) {
+    const COLS = [['planning','Planning'],['todo','To Do'],['inprogress','In Progress'],['done','Done']];
+    moveEl.innerHTML = `
+      <div class="detail-sub mt-8">Move to</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">
+        ${COLS.map(([col, label]) =>
+          `<button class="btn btn-ghost btn-sm" style="${t.status===col?'border-color:var(--accent,#7c5cfc)':''}"
+            onclick="moveTask('${id}','${col}')">${label}</button>`
+        ).join('')}
+        <button class="btn btn-ghost btn-sm" style="color:var(--red,#e55);margin-left:auto"
+          onclick="deleteTask('${id}')">\u2715 Delete</button>
+      </div>`;
+  }
+  document.getElementById('detail-overlay').classList.add('open');
+}
+
+function closeDetail(e) {
+  if (e.target === document.getElementById('detail-overlay'))
+    document.getElementById('detail-overlay').classList.remove('open');
+}
+
+async function moveTask(id, newStatus) {
+  try {
+    await fetch(`${API_BASE}/kanban/tasks`, {
+      method: 'PATCH',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({id, status: newStatus})
+    });
+    document.getElementById('detail-overlay').classList.remove('open');
+    await loadBoard();
+  } catch (e) { console.error('moveTask:', e); }
+}
+
+async function deleteTask(id) {
+  if (!confirm(`Delete ${id}?`)) return;
+  try {
+    await fetch(`${API_BASE}/kanban/tasks?id=${encodeURIComponent(id)}`, {method: 'DELETE'});
+    document.getElementById('detail-overlay').classList.remove('open');
+    await loadBoard();
+  } catch (e) { console.error('deleteTask:', e); }
+}
+
+// ── New task modal ──────────────────────────────────────────
+let _targetCol = 'planning';
+function openNewTask(col) {
+  _targetCol = col || 'planning';
+  document.getElementById('nt-col').value = _targetCol;
+  document.getElementById('new-task-modal').classList.add('open');
+  setTimeout(() => document.getElementById('nt-title').focus(), 100);
+}
+function closeModal(e) {
+  if (e.target === document.getElementById('new-task-modal'))
+    document.getElementById('new-task-modal').classList.remove('open');
+}
+
+async function addTask() {
+  const title = document.getElementById('nt-title').value.trim();
+  if (!title) { document.getElementById('nt-title').focus(); return; }
+  const col      = document.getElementById('nt-col').value;
+  const priority = document.getElementById('nt-priority').value;
+  const agentVal = document.getElementById('nt-agent').value;
+  const tagsStr  = document.getElementById('nt-tags').value;
+  const desc     = document.getElementById('nt-desc').value.trim();
+  const tags     = tagsStr.split(',').map(s => s.trim()).filter(Boolean);
+  const pMap     = {high:'\u2191 High', med:'\u2192 Medium', low:'\u2193 Low'};
+  try {
+    const r = await fetch(`${API_BASE}/kanban/tasks`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        title, description: desc, status: col,
+        agent: agentVal, priority: pMap[priority] || '\u2192 Medium',
+        epic: '\u2014', tags, todos: []
+      })
+    });
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error || 'create failed');
+    document.getElementById('new-task-modal').classList.remove('open');
+    document.getElementById('nt-title').value = '';
+    document.getElementById('nt-desc').value  = '';
+    document.getElementById('nt-tags').value  = '';
+    await loadBoard();
+  } catch (e) {
+    console.error('addTask:', e);
+    alert('Error: ' + e.message);
+  }
+}
+
+// ── Search ──────────────────────────────────────────────────
+document.getElementById('search-input').addEventListener('input', function() {
+  const q = this.value.toLowerCase();
+  document.querySelectorAll('.task-card').forEach(card => {
+    card.style.display = card.innerText.toLowerCase().includes(q) ? '' : 'none';
+  });
+});
+
+// ── Refresh ─────────────────────────────────────────────────
+function refreshBoard() { loadBoard(); }
+
+// Keyboard shortcuts
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    document.getElementById('detail-overlay').classList.remove('open');
+    document.getElementById('new-task-modal').classList.remove('open');
+  }
+  if ((e.ctrlKey || e.metaKey) && e.key === 'k') { e.preventDefault(); document.getElementById('search-input').focus(); }
+});
+
+// Expose for inline onclick handlers (component mode)
+window.refreshBoard = refreshBoard;
+window.openNewTask  = openNewTask;
+window.openDetail   = openDetail;
+window.closeDetail  = closeDetail;
+window.closeModal   = closeModal;
+window.addTask      = addTask;
+window.moveTask     = moveTask;
+window.deleteTask   = deleteTask;
+
+// ── Initial load ──────────────────────────────────────────────
+loadBoard();
+</script>
+</body>
+</html>

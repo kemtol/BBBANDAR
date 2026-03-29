@@ -9,7 +9,9 @@ const ENGINE_EVENT_NAMES = [
   'order-ack',
   'order-error',
   'order-update',
-  'auth-token-updated'
+  'auth-token-updated',
+  'cmd-response',
+  'push'
 ];
 
 class ExecutionRegistry extends EventEmitter {
@@ -105,6 +107,13 @@ class ExecutionRegistry extends EventEmitter {
       throw new Error('Active execution engine does not support placeSell');
     }
     return this._activeEngine.placeSell(params);
+  }
+
+  sendCmd(cmdPayload) {
+    if (!this._activeEngine || typeof this._activeEngine.sendCmd !== 'function') {
+      throw new Error('Active execution engine does not support sendCmd');
+    }
+    return this._activeEngine.sendCmd(cmdPayload);
   }
 
   _wireEngineEvents(engine) {

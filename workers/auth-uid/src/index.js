@@ -151,6 +151,227 @@ function generateTempPassword() {
 }
 
 // =======================
+// Generate Unique Password untuk bot (format: SAHAM-XXXX-XXXX)
+// =======================
+function generateUniquePassword() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no O,0,I,1
+  const rand = (n) => Array.from(
+    crypto.getRandomValues(new Uint8Array(n)),
+    b => chars[b % chars.length]
+  ).join('');
+  return `SAHAM-${rand(4)}-${rand(4)}`;
+}
+
+// =======================
+// Normalize phone → 62xxx (Indonesian format)
+// Accepts: 08xxx / 628xxx / +628xxx / 8xxx
+// =======================
+function normalizePhone(raw) {
+  let p = String(raw || '').replace(/[\s\-().+]/g, '');
+  if (p.startsWith('62')) {
+    // already has country code — keep as is
+  } else if (p.startsWith('0')) {
+    p = '62' + p.slice(1);   // 08xxx → 628xxx
+  } else if (p.startsWith('8')) {
+    p = '62' + p;            // 8xxx  → 628xxx
+  } else {
+    return null;
+  }
+  if (/^628\d{8,11}$/.test(p)) return p;
+  return null;
+}
+
+// =======================
+// Kirim pesan Telegram
+// =======================
+async function sendTgMessage(botToken, chatId, text, extra = {}) {
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, text, ...extra }),
+    });
+    if (!res.ok) {
+      const err = await res.text();
+      console.error('[tg] sendMessage failed', res.status, err);
+    }
+  } catch (e) {
+    console.error('[tg] sendMessage error', e.message);
+  }
+}
+
+// =======================
+// TELEGRAM WEBHOOK HANDLER
+// =======================
+async function handleTgWebhook(request, env) {
+  let update;
+  try { update = await request.json(); } catch { return new Response('OK'); }
+
+  const msg = update.message;
+  if (!msg) return new Response('OK');
+
+  const chatId    = msg.chat.id;
+  const threadId  = msg.message_thread_id;   // ada jika forum topics aktif
+  const text      = (msg.text || '').trim();
+  const isGroup   = msg.chat.type === 'group' || msg.chat.type === 'supergroup';
+  const APP_URL   = env.APP_BASE || 'https://sssaham.xyz';
+  const BOT_USERNAME = env.BOT_USERNAME || 'Sssaham_bot';
+
+  // Helper: kirim pesan, otomatis reply ke thread yang sama jika ada
+  const reply = (text, extra = {}) => {
+    const opts = threadId ? { message_thread_id: threadId, ...extra } : extra;
+    return sendTgMessage(env.BOT_TOKEN, chatId, text, opts);
+  };
+
+  // ── Member baru join grup ──────────────────────────────────────────────────
+  if (msg.new_chat_members && msg.new_chat_members.length > 0) {
+    for (const member of msg.new_chat_members) {
+      if (member.is_bot) continue;
+      const name = member.first_name || 'Sobat';
+      await reply(
+        `👋 Selamat datang *${name}* di SSSAHAM Algotrade!\n\n` +
+        `Untuk akses dashboard, DM *@${BOT_USERNAME}* dan tap tombol *Bagikan Nomor HP*.\n\n` +
+        `📊 AI Recs, Broker Summary & Real-Time API — *Gratis!* 🚀`,
+        {
+          parse_mode: 'Markdown',
+          reply_markup: JSON.stringify({
+            inline_keyboard: [[
+              { text: '🤖 DM Bot Sekarang', url: `https://t.me/${BOT_USERNAME}` },
+              { text: '🌐 Buka Dashboard',  url: APP_URL }
+            ]]
+          })
+        }
+      );
+    }
+    return new Response('OK');
+  }
+
+  // ── Hanya proses pesan private (DM ke bot) ────────────────────────────────
+  if (isGroup) return new Response('OK');
+
+  // ── /start ─────────────────────────────────────────────────────────────────
+  if (text === '/start' || text.startsWith('/start ')) {
+    await reply(
+      `Halo! 👋 Selamat datang di *SSSAHAM Bot*.\n\n` +
+      `Ketik perintah berikut untuk mendapatkan password akses dashboard:\n\n` +
+      `\`/login 628xxxxxxxxxx\`\n\n` +
+      `Ganti \`628xxxxxxxxxx\` dengan nomor HP yang kamu daftarkan di website.\n\n` +
+      `💡 Belum daftar? Kunjungi ${env.APP_BASE || 'https://sssaham.xyz'} dulu.`,
+      { parse_mode: 'Markdown' }
+    );
+    return new Response('OK');
+  }
+
+  // ── /help ──────────────────────────────────────────────────────────────────
+  if (text === '/help') {
+    await reply(
+      `📌 *SSSAHAM Bot*\n\n` +
+      `• Kirim nomor HP → dapat password akses\n` +
+      `• /start — mulai ulang\n` +
+      `• /help — tampilkan pesan ini\n\n` +
+      `🌐 Dashboard: ${env.APP_BASE || 'https://sssaham.xyz'}`,
+      { parse_mode: 'Markdown' }
+    );
+    return new Response('OK');
+  }
+
+  // ── /login <phone> ──────────────────────────────────────────────────────────
+  if (text.startsWith('/login')) {
+    const parts = text.trim().split(/\s+/);
+    const rawPhone = parts[1] || '';
+    const phone = normalizePhone(rawPhone);
+
+    if (!phone) {
+      await reply(
+        `❌ Format salah. Gunakan:\n\`/login 628xxxxxxxxxx\`\n\nContoh: \`/login 6281234567890\``,
+        { parse_mode: 'Markdown' }
+      );
+      return new Response('OK');
+    }
+
+    const row = await env.DB
+      .prepare('SELECT temp_password_plain, temp_password_expires_at FROM users WHERE phone = ?')
+      .bind(phone).first();
+
+    if (!row || !row.temp_password_plain) {
+      await reply(
+        `❌ Nomor *${phone}* belum terdaftar.\n\nDaftar dulu di website: ${env.APP_BASE || 'https://sssaham.xyz'}`,
+        { parse_mode: 'Markdown' }
+      );
+      return new Response('OK');
+    }
+
+    if (Number(row.temp_password_expires_at) < Date.now()) {
+      await reply(
+        `⏰ Password sudah kadaluarsa.\n\nSilakan daftar ulang di: ${env.APP_BASE || 'https://sssaham.xyz'}`,
+        { parse_mode: 'Markdown' }
+      );
+      return new Response('OK');
+    }
+
+    // Simpan chat_id + extend expiry 10 menit untuk login
+    await env.DB
+      .prepare('UPDATE users SET telegram_chat_id = ?, temp_password_expires_at = ? WHERE phone = ?')
+      .bind(String(chatId), Date.now() + 10 * 60 * 1000, phone)
+      .run();
+
+    await reply(
+      `✅ *Password kamu ditemukan!*\n\n` +
+      `📱 Nomor: \`${phone}\`\n` +
+      `🔑 Password: \`${row.temp_password_plain}\`\n\n` +
+      `⚠️ *Berlaku 10 menit — segera login!*\n\n` +
+      `🔗 Login di: ${env.APP_BASE || 'https://sssaham.xyz'}`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: JSON.stringify({
+          inline_keyboard: [[
+            { text: '🚀 Login Sekarang', url: env.APP_BASE || 'https://sssaham.xyz' }
+          ]]
+        })
+      }
+    );
+    return new Response('OK');
+  }
+
+  // ── Input nomor HP langsung (fallback lama → arahkan ke /login) ────────────
+  const phone = normalizePhone(text);
+  if (phone) {
+    // Arahkan ke /login command
+    await reply(
+      `Gunakan perintah ini untuk login:\n\n\`/login ${phone}\``,
+      { parse_mode: 'Markdown' }
+    );
+    return new Response('OK');
+  }
+
+  // ── Default fallback ───────────────────────────────────────────────────────
+  await reply(
+    `Kirimkan nomor HP kamu untuk mendapatkan password.\nContoh: \`08123456789\`\n\nAtau ketik /help untuk bantuan.`,
+    { parse_mode: 'Markdown' }
+  );
+  return new Response('OK');
+}
+
+// =======================
+// SET WEBHOOK HELPER (panggil sekali saja via browser)
+// =======================
+async function handleTgSetWebhook(request, env) {
+  const url   = new URL(request.url);
+  const workerUrl = url.searchParams.get('url') ||
+    `https://auth-uid.mkemalw.workers.dev/tg/webhook`;
+  const resp = await fetch(
+    `https://api.telegram.org/bot${env.BOT_TOKEN}/setWebhook`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: workerUrl, allowed_updates: ['message', 'contact'] }),
+    }
+  );
+  const data = await resp.json().catch(() => ({}));
+  return new Response(JSON.stringify(data), { headers: { 'Content-Type': 'application/json' } });
+}
+
+// =======================
 // LEGACY REGISTER: phone + password
 // =======================
 async function handleRegisterLegacy(request, env) {
@@ -240,13 +461,13 @@ async function handleRegisterTemp(request, env) {
 
     const temp = generateTempPassword();
     const tempHash = await hash(temp);
-    const expiresAt = Date.now() + 5 * 60 * 1000; // 5 menit
+    const expiresAt = Date.now() + 30 * 60 * 1000; // 30 menit (user perlu waktu join Telegram)
 
     await env.DB
       .prepare(
-        "UPDATE users SET temp_password_hash = ?, temp_password_expires_at = ? WHERE phone = ?"
+        "UPDATE users SET temp_password_hash = ?, temp_password_plain = ?, temp_password_expires_at = ? WHERE phone = ?"
       )
-      .bind(tempHash, expiresAt, phone)
+      .bind(tempHash, temp, expiresAt, phone)
       .run();
 
     console.log("[auth-uid] temp password for", phone, "=", temp);
@@ -255,7 +476,7 @@ async function handleRegisterTemp(request, env) {
       {
         ok: true,
         user_id: userId,
-        mock_temp_password: temp, // simulasi WA
+        mock_temp_password: temp, // simulasi / fallback
         expires_in_sec: 300,
       },
       200,
@@ -322,7 +543,7 @@ async function handleVerifyTemp(request, env) {
 
     await env.DB
       .prepare(
-        "UPDATE users SET temp_password_hash = NULL, temp_password_expires_at = NULL, must_update_profile = 1 WHERE user_id = ?"
+        "UPDATE users SET temp_password_hash = NULL, temp_password_plain = NULL, temp_password_expires_at = NULL, must_update_profile = 1 WHERE user_id = ?"
       )
       .bind(row.user_id)
       .run();
@@ -549,6 +770,156 @@ async function handleProfileUpdate(request, env) {
 }
 
 // =======================
+// /tg/get-otp  – dipanggil tg-bot untuk ambil OTP plaintext (internal)
+// =======================
+async function handleTgGetOtp(request, env) {
+  const origin = request.headers.get("Origin");
+  try {
+    const { phone, bot_secret } = await request.json();
+
+    if (!phone || !bot_secret) {
+      return json({ ok: false, reason: "missing_fields" }, 400, {}, origin);
+    }
+    if (bot_secret !== env.BOT_SECRET) {
+      return json({ ok: false, reason: "unauthorized" }, 401, {}, origin);
+    }
+
+    const row = await env.DB
+      .prepare(
+        "SELECT temp_password_plain, temp_password_expires_at FROM users WHERE phone = ?"
+      )
+      .bind(phone)
+      .first();
+
+    if (!row || !row.temp_password_plain) {
+      return json({ ok: false, reason: "no_active_otp" }, 404, {}, origin);
+    }
+
+    if (Number(row.temp_password_expires_at) < Date.now()) {
+      return json({ ok: false, reason: "otp_expired" }, 410, {}, origin);
+    }
+
+    return json(
+      { ok: true, temp_password: row.temp_password_plain },
+      200, {}, origin
+    );
+  } catch (err) {
+    return json({ ok: false, error: err.message }, 500, {}, origin);
+  }
+}
+
+// =======================
+// /tg/trigger-invite  – dipanggil web (authed user) setelah OTP verify
+//   auth-uid forward ke tg-bot /send-invite dengan BOT_SECRET
+// =======================
+async function handleTgTriggerInvite(request, env) {
+  const origin = request.headers.get("Origin");
+  try {
+    // Harus sudah login (punya cookie)
+    const cookie = request.headers.get("Cookie") || "";
+    const token = cookie.match(/bpjs_jwt=([^;]+)/)?.[1];
+    if (!token) {
+      return json({ ok: false, reason: "not_logged_in" }, 401, {}, origin);
+    }
+
+    let payload;
+    try {
+      payload = await verifyJWT(token, env.JWT_SECRET);
+    } catch {
+      return json({ ok: false, reason: "not_logged_in" }, 401, {}, origin);
+    }
+
+    // Ambil phone dari DB berdasarkan user_id
+    const userRow = await env.DB
+      .prepare("SELECT phone FROM users WHERE user_id = ?")
+      .bind(payload.sub)
+      .first();
+
+    if (!userRow) {
+      return json({ ok: false, reason: "user_not_found" }, 404, {}, origin);
+    }
+
+    // Forward ke tg-bot
+    if (!env.TG_BOT_BASE || !env.BOT_SECRET) {
+      // Tidak dikonfigurasi — skip silently
+      return json({ ok: true, telegram_triggered: false }, 200, {}, origin);
+    }
+
+    const tgResp = await fetch(`${env.TG_BOT_BASE}/send-invite`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ phone: userRow.phone, bot_secret: env.BOT_SECRET }),
+    });
+    const tgData = await tgResp.json().catch(() => ({ ok: false }));
+
+    return json(
+      { ok: true, telegram_triggered: !!tgData.ok, telegram_linked: tgData.telegram_linked },
+      200, {}, origin
+    );
+  } catch (err) {
+    // Fire-and-forget — jangan error ke user
+    console.error("[auth-uid] tg/trigger-invite error", err.message);
+    return json({ ok: true, telegram_triggered: false }, 200, {}, origin);
+  }
+}
+
+// =======================
+// /tg/get-chat-id  – tg-bot ambil telegram_chat_id untuk phone tertentu
+// =======================
+async function handleTgGetChatId(request, env) {
+  const origin = request.headers.get("Origin");
+  try {
+    const { phone, bot_secret } = await request.json();
+
+    if (!phone || !bot_secret) {
+      return json({ ok: false, reason: "missing_fields" }, 400, {}, origin);
+    }
+    if (bot_secret !== env.BOT_SECRET) {
+      return json({ ok: false, reason: "unauthorized" }, 401, {}, origin);
+    }
+
+    const row = await env.DB
+      .prepare("SELECT telegram_chat_id FROM users WHERE phone = ?")
+      .bind(phone)
+      .first();
+
+    if (!row || !row.telegram_chat_id) {
+      return json({ ok: false, reason: "no_telegram_linked" }, 404, {}, origin);
+    }
+
+    return json({ ok: true, telegram_chat_id: row.telegram_chat_id }, 200, {}, origin);
+  } catch (err) {
+    return json({ ok: false, error: err.message }, 500, {}, origin);
+  }
+}
+
+// =======================
+// /tg/store-chat  – tg-bot menyimpan chat_id user agar bisa dikirim invite
+// =======================
+async function handleTgStoreChat(request, env) {
+  const origin = request.headers.get("Origin");
+  try {
+    const { phone, telegram_chat_id, bot_secret } = await request.json();
+
+    if (!phone || !telegram_chat_id || !bot_secret) {
+      return json({ ok: false, reason: "missing_fields" }, 400, {}, origin);
+    }
+    if (bot_secret !== env.BOT_SECRET) {
+      return json({ ok: false, reason: "unauthorized" }, 401, {}, origin);
+    }
+
+    await env.DB
+      .prepare("UPDATE users SET telegram_chat_id = ? WHERE phone = ?")
+      .bind(String(telegram_chat_id), phone)
+      .run();
+
+    return json({ ok: true }, 200, {}, origin);
+  } catch (err) {
+    return json({ ok: false, error: err.message }, 500, {}, origin);
+  }
+}
+
+// =======================
 // Router
 // =======================
 async function router(request, env) {
@@ -587,6 +958,34 @@ async function router(request, env) {
 
   if (url.pathname === "/profile/update" && request.method === "POST") {
     return handleProfileUpdate(request, env);
+  }
+
+  // Telegram bot internal endpoints (secured by BOT_SECRET)
+  if (url.pathname === "/tg/get-otp" && request.method === "POST") {
+    return handleTgGetOtp(request, env);
+  }
+
+  if (url.pathname === "/tg/store-chat" && request.method === "POST") {
+    return handleTgStoreChat(request, env);
+  }
+
+  if (url.pathname === "/tg/get-chat-id" && request.method === "POST") {
+    return handleTgGetChatId(request, env);
+  }
+
+  // Dipanggil web (authed) setelah OTP verify berhasil — forward ke tg-bot
+  if (url.pathname === "/tg/trigger-invite" && request.method === "POST") {
+    return handleTgTriggerInvite(request, env);
+  }
+
+  // Telegram Bot webhook (terima update dari Telegram)
+  if (url.pathname === "/tg/webhook" && request.method === "POST") {
+    return handleTgWebhook(request, env);
+  }
+
+  // Setup webhook (panggil sekali: /tg/set-webhook?url=https://...)
+  if (url.pathname === "/tg/set-webhook") {
+    return handleTgSetWebhook(request, env);
   }
 
   return new Response("auth worker ready", { headers: corsHeaders(origin) });

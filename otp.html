@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html lang="id">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#ffffff" />
+
+    <link rel="apple-touch-icon" sizes="180x180" href="idx/img/apple-touch-icon.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="idx/img/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="idx/img/favicon-16x16.png">
+
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css" rel="stylesheet" />
+    <link rel="stylesheet" href="theme.css?v=1.7.1">
+    <link rel="stylesheet" href="style.css?v=1.7.1">
+
+    <title>SSSAHAM – Verifikasi OTP</title>
+
+    <style>
+        body {
+            background: #000;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .hero-bg {
+            background: linear-gradient(135deg, #463CFF 0%, #7B68EE 50%, #463CFF 100%);
+            background-size: 200% 200%;
+            width: 100%;
+            height: 100vh;
+            position: absolute;
+            top: 0;
+            left: 0;
+            animation: waveGradient 8s ease-in-out infinite;
+            z-index: -1;
+        }
+
+        @keyframes waveGradient {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+
+        .auth-card {
+            border-radius: 2rem;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            background: white;
+            backdrop-filter: blur(10px);
+            z-index: 10;
+            width: 100%;
+            max-width: 420px;
+        }
+
+        .auth-header {
+            padding: 2rem 1.5rem 1rem;
+        }
+
+        .auth-body {
+            padding: 1.5rem;
+        }
+
+        .auth-footer {
+            border-top: 1px solid rgba(0, 0, 0, 0.07);
+            background: rgba(0, 0, 0, 0.02);
+            border-radius: 0 0 2rem 2rem;
+            padding: 1.5rem;
+            text-align: center;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #463CFF 0%, #7B68EE 100%);
+            border: none;
+            border-radius: 12px;
+            padding: 0.75rem;
+            font-weight: 700;
+        }
+
+        /* ── Steps ── */
+        .otp-steps {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            margin-bottom: 28px;
+        }
+
+        .otp-step {
+            display: flex;
+            align-items: flex-start;
+            gap: 14px;
+            padding: 14px 16px;
+            border-radius: 14px;
+            background: #f8f7ff;
+            border: 1.5px solid #e0dcff;
+            transition: border-color 0.2s, background 0.2s;
+        }
+
+        .otp-step.active {
+            background: #f0edff;
+            border-color: #7B68EE;
+        }
+
+        .otp-step.done {
+            background: #f0fff6;
+            border-color: #4ade80;
+        }
+
+        .step-icon {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            background: #e5e1ff;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 15px;
+            color: #463CFF;
+            flex-shrink: 0;
+            font-weight: 700;
+        }
+
+        .otp-step.done .step-icon {
+            background: #d1fae5;
+            color: #16a34a;
+        }
+
+        .step-text strong {
+            display: block;
+            font-size: 14px;
+            color: #1a1a2e;
+            font-weight: 600;
+        }
+
+        .step-text span {
+            font-size: 12px;
+            color: #6b7280;
+        }
+
+        /* ── Telegram button ── */
+        .btn-telegram {
+            background: linear-gradient(135deg, #229ed9, #1a8fc7) !important;
+            border: none !important;
+            border-radius: 12px !important;
+            padding: 0.75rem !important;
+            font-weight: 700 !important;
+            color: #fff !important;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            text-decoration: none;
+            transition: opacity 0.2s;
+            width: 100%;
+        }
+
+        .btn-telegram:hover { opacity: 0.88; color: #fff; }
+
+        /* ── OTP input ── */
+        .otp-input-wrap {
+            position: relative;
+        }
+
+        #otp-input {
+            text-align: center;
+            font-size: 1.8rem;
+            letter-spacing: 0.35em;
+            font-weight: 700;
+            border-radius: 14px;
+            background: #f8f7ff;
+            border: 2px solid #c4b8ff;
+            padding: 1rem;
+            transition: border-color 0.2s;
+        }
+
+        #otp-input:focus {
+            border-color: #7B68EE;
+            box-shadow: 0 0 0 3px rgba(123, 104, 238, 0.12);
+            outline: none;
+        }
+
+        /* ── Success state ── */
+        #success-panel {
+            display: none;
+            text-align: center;
+            padding: 1rem 0;
+        }
+
+        .success-icon {
+            font-size: 4rem;
+            margin-bottom: 12px;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="hero-bg"></div>
+
+    <div class="container d-flex justify-content-center px-3">
+        <div class="auth-card">
+            <div class="auth-header text-center">
+                <h3 class="mb-1 fw-bold">Verifikasi OTP</h3>
+                <p class="text-muted small mb-0">Ikuti langkah-langkah di bawah</p>
+            </div>
+
+            <div class="auth-body">
+                <!-- Alert -->
+                <div id="alert-area"></div>
+
+                <!-- ── Panel Utama ── -->
+                <div id="main-panel">
+                    <!-- Steps -->
+                    <div class="otp-steps">
+                        <!-- Step 1: Sudah selesai (user sudah masukkan phone) -->
+                        <div class="otp-step done" id="step-1">
+                            <div class="step-icon"><i class="fa-solid fa-check"></i></div>
+                            <div class="step-text">
+                                <strong>Nomor HP Terdaftar</strong>
+                                <span id="step1-phone">—</span>
+                            </div>
+                        </div>
+                        <!-- Step 2: Buka Telegram -->
+                        <div class="otp-step active" id="step-2">
+                            <div class="step-icon">2</div>
+                            <div class="step-text">
+                                <strong>Buka Bot Telegram</strong>
+                                <span>Klik tombol di bawah &rarr; bot akan kirim OTP</span>
+                            </div>
+                        </div>
+                        <!-- Step 3: Masukkan OTP -->
+                        <div class="otp-step" id="step-3">
+                            <div class="step-icon">3</div>
+                            <div class="step-text">
+                                <strong>Masukkan Kode OTP</strong>
+                                <span>6 digit dari Telegram Bot</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Telegram CTA -->
+                    <a id="tg-btn" href="#" target="_blank" rel="noopener" class="btn btn-telegram mb-4"
+                        onclick="markStep2Done()">
+                        <i class="fa-brands fa-telegram" style="font-size:20px;"></i>
+                        Buka SSSAHAM Bot di Telegram
+                    </a>
+
+                    <!-- Divider -->
+                    <div class="d-flex align-items-center my-3">
+                        <hr class="flex-grow-1 opacity-15">
+                        <span class="mx-3 small text-muted">masukkan OTP dari Telegram</span>
+                        <hr class="flex-grow-1 opacity-15">
+                    </div>
+
+                    <!-- OTP Form -->
+                    <form id="otp-form">
+                        <div class="otp-input-wrap mb-3">
+                            <input type="tel" id="otp-input" class="form-control"
+                                maxlength="6" placeholder="000000"
+                                inputmode="numeric" autocomplete="one-time-code"
+                                required>
+                        </div>
+
+                        <button type="submit" id="verify-btn" class="btn btn-primary w-100">
+                            <span class="spinner-border spinner-border-sm d-none me-2" id="verify-spinner"></span>
+                            <span id="verify-btn-text">Verifikasi OTP</span>
+                        </button>
+                    </form>
+
+                    <!-- Resend -->
+                    <div class="text-center mt-3">
+                        <small class="text-muted">OTP belum datang?
+                            <a href="register.html" class="fw-semibold" style="color:#7B68EE;">Minta OTP baru</a>
+                        </small>
+                    </div>
+                </div><!-- /#main-panel -->
+
+                <!-- ── Success Panel ── -->
+                <div id="success-panel">
+                    <div class="success-icon">🎉</div>
+                    <h4 class="fw-bold mb-2">Verifikasi Berhasil!</h4>
+                    <p class="text-muted small mb-4">
+                        Cek Telegram kamu — bot sudah mengirimkan link untuk bergabung ke grup SSSAHAM.
+                    </p>
+                    <a href="idx/index.html" class="btn btn-primary w-100 mb-3">
+                        <i class="fa-solid fa-chart-line me-2"></i>Buka Dashboard
+                    </a>
+                    <a id="success-tg-btn" href="#" target="_blank" rel="noopener"
+                        class="btn btn-telegram">
+                        <i class="fa-brands fa-telegram" style="font-size:18px;"></i>
+                        Gabung Grup di Telegram
+                    </a>
+                </div><!-- /#success-panel -->
+            </div><!-- /.auth-body -->
+
+            <div class="auth-footer">
+                <small class="text-muted">
+                    Butuh bantuan?
+                    <a href="https://t.me/SSSAHAMBot" class="fw-semibold" style="color:#229ed9;">
+                        Chat Bot
+                    </a>
+                </small>
+            </div>
+        </div>
+    </div>
+
+    <!--------------------------------->
+    <!--------- LOGIC HERE ------------>
+    <!--------------------------------->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        (function () {
+            // ── Config ──────────────────────────────────────────────────────
+            const isLocal = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+            const AUTH_BASE  = isLocal ? 'http://127.0.0.1:8786' : 'https://auth-uid.mkemalw.workers.dev';
+            const TG_BOT_BASE = isLocal ? 'http://127.0.0.1:8788' : 'https://tg-bot.mkemalw.workers.dev';
+            const BOT_USERNAME = 'SSSAHAMBot'; // ganti dengan username bot kamu
+
+            const PENDING_KEY = 'sssaham_pending_register';
+
+            // ── Load pending state dari localStorage ────────────────────────
+            let pending = {};
+            try {
+                const raw = localStorage.getItem(PENDING_KEY);
+                if (raw) pending = JSON.parse(raw);
+            } catch (e) {
+                console.warn('[otp] failed to read pending', e);
+            }
+
+            const phone = pending.phone || '';
+            const expiresAt = pending.expires_at || 0;
+
+            // ── DOM Refs ────────────────────────────────────────────────────
+            const alertArea   = document.getElementById('alert-area');
+            const step1Phone  = document.getElementById('step1-phone');
+            const step2El     = document.getElementById('step-2');
+            const step3El     = document.getElementById('step-3');
+            const tgBtn       = document.getElementById('tg-btn');
+            const otpForm     = document.getElementById('otp-form');
+            const otpInput    = document.getElementById('otp-input');
+            const verifyBtn   = document.getElementById('verify-btn');
+            const verifySpinner = document.getElementById('verify-spinner');
+            const verifyBtnText = document.getElementById('verify-btn-text');
+            const mainPanel   = document.getElementById('main-panel');
+            const successPanel = document.getElementById('success-panel');
+            const successTgBtn = document.getElementById('success-tg-btn');
+
+            // ── Tampilkan nomor HP ───────────────────────────────────────────
+            if (phone) {
+                step1Phone.textContent = phone;
+            } else {
+                // Tidak ada pending registration — redirect ke register
+                window.location.href = 'register.html';
+                return;
+            }
+
+            // ── Set Telegram deep link ───────────────────────────────────────
+            // encode phone ke base64 (sama seperti di register.html)
+            const encodedPhone = btoa(phone);
+            const tgDeepLink = `https://t.me/${BOT_USERNAME}?start=${encodedPhone}`;
+            tgBtn.href = tgDeepLink;
+            successTgBtn.href = tgDeepLink;
+
+            // ── Check expired ────────────────────────────────────────────────
+            if (expiresAt && Date.now() > expiresAt) {
+                showAlert(
+                    '⏰ Kode OTP sudah kedaluwarsa. ' +
+                    '<a href="register.html" class="alert-link">Minta OTP baru</a>.',
+                    'warning'
+                );
+            }
+
+            // ── Helpers ──────────────────────────────────────────────────────
+            function showAlert(msg, type = 'danger') {
+                alertArea.innerHTML = `
+                    <div class="alert alert-${type} alert-dismissible fade show" role="alert">
+                        ${msg}
+                        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                    </div>`;
+            }
+
+            function clearAlert() { alertArea.innerHTML = ''; }
+
+            function setLoading(loading) {
+                verifyBtn.disabled = loading;
+                if (loading) {
+                    verifySpinner.classList.remove('d-none');
+                    verifyBtnText.textContent = 'Memverifikasi...';
+                } else {
+                    verifySpinner.classList.add('d-none');
+                    verifyBtnText.textContent = 'Verifikasi OTP';
+                }
+            }
+
+            // ── Mark step 2 done (user sudah buka bot) ────────────────────────
+            window.markStep2Done = function () {
+                step2El.classList.remove('active');
+                step2El.classList.add('done');
+                step2El.querySelector('.step-icon').innerHTML = '<i class="fa-solid fa-check"></i>';
+                step3El.classList.add('active');
+                // Fokus ke input setelah delay kecil
+                setTimeout(() => otpInput.focus(), 300);
+            };
+
+            // Otomatis mark step2 done kalau user sudah pernah klik sebelumnya
+            try {
+                if (localStorage.getItem('sssaham_tg_opened') === phone) markStep2Done();
+            } catch (e) { /* ignore */ }
+
+            tgBtn.addEventListener('click', () => {
+                try { localStorage.setItem('sssaham_tg_opened', phone); } catch (e) { /* ignore */ }
+            });
+
+            // ── Only allow numeric input ─────────────────────────────────────
+            otpInput.addEventListener('input', () => {
+                otpInput.value = otpInput.value.replace(/\D/g, '').slice(0, 6);
+            });
+
+            // ── Submit OTP ────────────────────────────────────────────────────
+            otpForm.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                clearAlert();
+
+                const otp = otpInput.value.trim();
+                if (!otp || otp.length < 6) {
+                    showAlert('Masukkan 6 digit kode OTP.', 'warning');
+                    return;
+                }
+
+                setLoading(true);
+                try {
+                    // 1. Verify OTP via auth-uid
+                    const verifyResp = await fetch(AUTH_BASE + '/verify-temp', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        credentials: 'include',
+                        body: JSON.stringify({ phone, temp_password: otp }),
+                    });
+                    const verifyData = await verifyResp.json().catch(() => ({}));
+
+                    if (!verifyResp.ok || !verifyData.ok) {
+                        const reason = verifyData.reason || '';
+                        if (reason === 'invalid_or_expired_temp_password') {
+                            throw new Error('Kode OTP salah atau sudah kedaluwarsa. Periksa kembali.');
+                        }
+                        throw new Error(verifyData.error || 'Gagal memverifikasi OTP.');
+                    }
+
+                    // 2. Bersihkan pending state
+                    try { localStorage.removeItem(PENDING_KEY); } catch (e) { /* ignore */ }
+                    try { localStorage.removeItem('sssaham_tg_opened'); } catch (e) { /* ignore */ }
+
+                    // 3. Panggil tg-bot /send-invite (best-effort, tidak block UI)
+                    // BOT_SECRET diambil dari env di server — di sini kita tidak punya BOT_SECRET
+                    // Solusi: buat endpoint di auth-uid yang trigger bot, atau kirim via API
+                    // Untuk sekarang: auth-uid /tg/trigger-invite (akan kita tambahkan)
+                    fetch(AUTH_BASE + '/tg/trigger-invite', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        credentials: 'include',
+                        body: JSON.stringify({ phone }),
+                    }).catch(() => { /* fire-and-forget */ });
+
+                    // 4. Tampilkan success
+                    mainPanel.style.display = 'none';
+                    successPanel.style.display = 'block';
+
+                    // 5. Simpan status login
+                    try { localStorage.setItem('sssaham_phone', phone); } catch (e) { /* ignore */ }
+
+                } catch (err) {
+                    console.error('[otp] verify error', err);
+                    showAlert(err.message || 'Terjadi kesalahan. Coba lagi.');
+                } finally {
+                    setLoading(false);
+                }
+            });
+
+        })();
+    </script>
+</body>
+
+</html>

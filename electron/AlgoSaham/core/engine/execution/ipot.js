@@ -300,6 +300,26 @@ class ExecutionEngine extends EventEmitter {
     return cid;
   }
 
+  /**
+   * Send a generic cmd payload (for CASHINFO, STOCKPOS, etc.)
+   * @param {Object} cmdPayload - Full WS payload with event, data, cid
+   * @returns {number} cid used
+   */
+  sendCmd(cmdPayload) {
+    if (!this.isConnected()) {
+      throw new Error('Execution socket is not connected');
+    }
+    if (!cmdPayload.cid) {
+      cmdPayload.cid = this._nextCid();
+    }
+    // Auto-set cmdid to match cid if not provided
+    if (cmdPayload.data && !cmdPayload.data.cmdid) {
+      cmdPayload.data.cmdid = cmdPayload.cid;
+    }
+    this._sendJSON(cmdPayload, false);
+    return cmdPayload.cid;
+  }
+
   _sendHandshake() {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       return;
@@ -361,8 +381,15 @@ class ExecutionEngine extends EventEmitter {
       return;
     }
 
-    if (msg.event === 'push' && msg.data && msg.data.rtype === 'ORDER') {
-      this._handleOrderUpdate(msg.data);
+    // Handle push events (ORDER, CASHINFO, STOCKPOS, etc.)
+    if (msg.event === 'push' && msg.data) {
+      const rtype = msg.data.rtype;
+      if (rtype === 'ORDER') {
+        this._handleOrderUpdate(msg.data);
+        return;
+      }
+      // Emit generic push for capital/portfolio modules to pick up
+      this.emit('push', msg.data);
       return;
     }
 
@@ -376,6 +403,8 @@ class ExecutionEngine extends EventEmitter {
     const cid = msg.rid;
     const orderCtx = this._pendingOrders.get(cid);
     if (!orderCtx) {
+      // Not a tracked order — emit generic cmd-response for CASHINFO etc.
+      this.emit('cmd-response', { cid, data: msg.data, raw: msg });
       return;
     }
 

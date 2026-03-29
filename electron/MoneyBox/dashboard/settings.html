@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OpenClaw — Settings</title>
+<link rel="stylesheet" href="css/themes.css">
+<link rel="stylesheet" href="css/style.css">
+<style>
+  body { display: block; overflow-y: auto; }
+  html.in-iframe .sidebar { display: none; }
+  html.in-iframe .main    { margin-left: 0; }
+
+  /* ── Settings page layout ─────────────────────── */
+  .settings-wrap {
+    max-width: 640px;
+    margin: 0 auto;
+    padding: 16px 0 40px;
+  }
+
+  .settings-section {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    margin-bottom: 16px;
+    overflow: hidden;
+  }
+
+  .settings-section-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 18px;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: .06em;
+  }
+
+  .settings-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 13px 18px;
+    border-bottom: 1px solid var(--border);
+    gap: 16px;
+  }
+
+  .settings-row:last-child { border-bottom: none; }
+
+  .settings-row-label {
+    font-size: 0.875rem;
+    color: var(--text);
+    font-weight: 500;
+    min-width: 140px;
+  }
+
+  .settings-row-value {
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    text-align: right;
+    word-break: break-all;
+  }
+
+  .settings-row-value.mask {
+    letter-spacing: .12em;
+    filter: blur(4px);
+    cursor: pointer;
+    transition: filter .2s;
+    user-select: none;
+  }
+  .settings-row-value.mask.revealed { filter: none; }
+
+  /* ── Toggle switch ────────────────────────────── */
+  .toggle-row { align-items: center; }
+
+  .toggle {
+    position: relative;
+    width: 36px; height: 20px;
+    flex-shrink: 0;
+  }
+
+  .toggle input { opacity: 0; width: 0; height: 0; }
+
+  .toggle-slider {
+    position: absolute;
+    inset: 0;
+    background: var(--border);
+    border-radius: 999px;
+    transition: background .2s;
+    cursor: pointer;
+  }
+
+  .toggle-slider::before {
+    content: '';
+    position: absolute;
+    width: 14px; height: 14px;
+    left: 3px; bottom: 3px;
+    background: var(--text-muted);
+    border-radius: 50%;
+    transition: transform .2s, background .2s;
+  }
+
+  .toggle input:checked + .toggle-slider { background: var(--accent); }
+  .toggle input:checked + .toggle-slider::before { transform: translateX(16px); background: #fff; }
+
+  /* ── Session info badge ───────────────────────── */
+  .sess-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .05em;
+  }
+
+  .sess-badge.active { background: rgba(16,185,129,.15); color: var(--green); }
+  .sess-badge.expiry { background: rgba(245,158,11,.12); color: var(--yellow); }
+
+  /* ── Danger zone ──────────────────────────────── */
+  .btn-danger {
+    background: rgba(239,68,68,.1);
+    color: var(--red);
+    border: 1px solid rgba(239,68,68,.3);
+    border-radius: 6px;
+    padding: 7px 14px;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background .15s;
+  }
+
+  .btn-danger:hover { background: rgba(239,68,68,.2); }
+</style>
+</head>
+<body>
+<script src="auth.js"></script>
+<script>checkSession();</script>
+
+<div class="main">
+  <!-- topbar -->
+  <div class="topbar">
+    <div class="topbar-left">
+      <h1>Settings</h1>
+    </div>
+  </div>
+
+  <div class="content">
+    <div class="settings-wrap">
+
+      <!-- ── Profile ───────────────────────────── -->
+      <div class="settings-section">
+        <div class="settings-section-header">◉ Profile</div>
+        <div class="settings-row">
+          <div class="settings-row-label">Email</div>
+          <div class="settings-row-value" id="profile-email">—</div>
+        </div>
+        <div class="settings-row">
+          <div class="settings-row-label">Password</div>
+          <div class="settings-row-value mask" id="profile-pass" title="Click to reveal" onclick="this.classList.toggle('revealed')">••••••••••••••</div>
+        </div>
+      </div>
+
+      <!-- ── Session ───────────────────────────── -->
+      <div class="settings-section">
+        <div class="settings-section-header">⏱ Session</div>
+        <div class="settings-row">
+          <div class="settings-row-label">Status</div>
+          <div class="settings-row-value"><span class="sess-badge active" id="sess-status">Active</span></div>
+        </div>
+        <div class="settings-row">
+          <div class="settings-row-label">Signed in</div>
+          <div class="settings-row-value" id="sess-ts">—</div>
+        </div>
+        <div class="settings-row">
+          <div class="settings-row-label">Remember me</div>
+          <div class="settings-row-value" id="sess-remember">—</div>
+        </div>
+        <div class="settings-row">
+          <div class="settings-row-label">Expires</div>
+          <div class="settings-row-value" id="sess-expiry">—</div>
+        </div>
+      </div>
+
+      <!-- ── VPS Connection ─────────────────────── -->
+      <div class="settings-section">
+        <div class="settings-section-header">⌖ VPS Connection</div>
+        <div class="settings-row">
+          <div class="settings-row-label">Host</div>
+          <div class="settings-row-value">213.199.49.18</div>
+        </div>
+        <div class="settings-row">
+          <div class="settings-row-label">Dispatcher port</div>
+          <div class="settings-row-value">19191</div>
+        </div>
+        <div class="settings-row">
+          <div class="settings-row-label">Qdrant port</div>
+          <div class="settings-row-value">6333</div>
+        </div>
+        <div class="settings-row">
+          <div class="settings-row-label">RAG API port</div>
+          <div class="settings-row-value">8000</div>
+        </div>
+        <div class="settings-row">
+          <div class="settings-row-label">nginx proxy</div>
+          <div class="settings-row-value">port 80 · /api/dispatcher/ · /api/qdrant/ · /api/rag/</div>
+        </div>
+        <div class="settings-row">
+          <div class="settings-row-label">Dashboard root</div>
+          <div class="settings-row-value">/var/www/openclaw-dashboard/</div>
+        </div>
+      </div>
+
+      <!-- ── Appearance ─────────────────────────── -->
+      <div class="settings-section">
+        <div class="settings-section-header">◑ Appearance</div>
+        <div class="settings-row toggle-row">
+          <div class="settings-row-label">Dark mode</div>
+          <label class="toggle">
+            <input type="checkbox" id="theme-toggle" onchange="toggleTheme(this)">
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+      </div>
+
+      <!-- ── Danger zone ────────────────────────── -->
+      <div class="settings-section">
+        <div class="settings-section-header">⚠ Account</div>
+        <div class="settings-row">
+          <div class="settings-row-label">Sign out</div>
+          <button class="btn-danger" onclick="logout()">⎋ Sign out</button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script>
+  // ── Populate session info ─────────────────────
+  (function() {
+    const s = getSessionInfo();
+    if (!s) return;
+
+    const ts = new Date(s.ts);
+    document.getElementById('sess-ts').textContent = ts.toLocaleString();
+    document.getElementById('sess-remember').textContent = s.remember ? 'Yes — persistent' : 'No — expires in 8h';
+
+    if (!s.remember) {
+      const exp = new Date(s.ts + 8 * 60 * 60 * 1000);
+      const remaining = Math.max(0, exp - Date.now());
+      const h = Math.floor(remaining / 3600000);
+      const m = Math.floor((remaining % 3600000) / 60000);
+      document.getElementById('sess-expiry').textContent = `${exp.toLocaleString()} (${h}h ${m}m remaining)`;
+    } else {
+      document.getElementById('sess-expiry').textContent = 'Never (remember me on)';
+    }
+  })();
+
+  // ── Profile (masked email) ────────────────────
+  document.getElementById('profile-email').textContent = 'mkemalw@gmail.com';
+
+  // ── Theme toggle ─────────────────────────────
+  const themeKey = 'oc_theme';
+  const savedTheme = localStorage.getItem(themeKey) || 'dark';
+  applyTheme(savedTheme);
+  document.getElementById('theme-toggle').checked = (savedTheme === 'dark');
+
+  function applyTheme(t) {
+    document.documentElement.setAttribute('data-theme', t);
+    localStorage.setItem(themeKey, t);
+  }
+
+  function toggleTheme(cb) {
+    applyTheme(cb.checked ? 'dark' : 'light');
+    // propagate to parent frame if inside iframe
+    try {
+      if (window.parent && window.parent.document) {
+        window.parent.document.documentElement.setAttribute('data-theme', cb.checked ? 'dark' : 'light');
+        window.parent.localStorage.setItem('oc_theme', cb.checked ? 'dark' : 'light');
+      }
+    } catch {}
+  }
+</script>
+</body>
+</html>

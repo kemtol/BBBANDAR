@@ -1,0 +1,51 @@
+/* ─────────────────────────────────────────────────────────────
+   themes.css  —  OpenClaw Dashboard colour tokens & themes
+   ───────────────────────────────────────────────────────────── */
+
+/* ── Dark theme (default) ──────────────────────── */
+:root,
+[data-theme="dark"] {
+  --bg:        #0d0f14;
+  --surface:   #131720;
+  --card:      #181e2a;
+  --border:    #232b3a;
+  --text:      #e2e8f0;
+  --muted:     #64748b;
+  --green:     #10b981;
+  --yellow:    #f59e0b;
+  --red:       #ef4444;
+  --blue:      #3b82f6;
+  --purple:    #8b5cf6;
+  --cyan:      #06b6d4;
+  --accent:    #6366f1;
+  --orange:    #f97316;
+
+  /* agent palette */
+  --color-main:   #6366f1;
+  --color-elsa:   #10b981;
+  --color-ditesh: #f59e0b;
+  --color-newton: #06b6d4;
+}
+
+/* ── Light theme (optional override) ───────────── */
+[data-theme="light"] {
+  --bg:        #f1f5f9;
+  --surface:   #ffffff;
+  --card:      #f8fafc;
+  --border:    #e2e8f0;
+  --text:      #0f172a;
+  --muted:     #94a3b8;
+  --green:     #059669;
+  --yellow:    #d97706;
+  --red:       #dc2626;
+  --blue:      #2563eb;
+  --purple:    #7c3aed;
+  --cyan:      #0891b2;
+  --accent:    #4f46e5;
+  --orange:    #ea580c;
+
+  --color-main:   #4f46e5;
+  --color-elsa:   #059669;
+  --color-ditesh: #d97706;
+  --color-newton: #0891b2;
+}

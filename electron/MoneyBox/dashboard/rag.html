@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RAG Collections — OpenClaw</title>
+<link rel="stylesheet" href="css/themes.css">
+<link rel="stylesheet" href="css/style.css">
+<style>
+body { overflow: hidden; height: 100vh; }
+.main { min-height: 0; }
+html.in-iframe .sidebar { display: none; }
+html.in-iframe .main    { margin-left: 0; }
+.coll-btn.disabled { opacity: 0.55; cursor: not-allowed; }
+</style>
+<script>if (window.self !== window.top) document.documentElement.classList.add('in-iframe');</script>
+</head>
+<body>
+
+<!-- ── Sidebar (standalone mode only) ──────────────── -->
+<nav class="sidebar">
+  <div class="logo">OC</div>
+  <a class="nav-item" href="index.html?page=overview" title="Overview">⌗</a>
+  <a class="nav-item" href="index.html?page=agents" title="Agents">◈</a>
+  <div class="nav-item" title="Memory">◉</div>
+  <div class="nav-item active" title="RAG / Qdrant">◇</div>
+  <a class="nav-item" href="index.html?page=logs" title="Logs">≡</a>
+  <div class="nav-item" title="Cron">⏱</div>
+  <a class="nav-item" href="index.html?page=kanban" title="Project Management">⊞</a>
+  <div class="spacer"></div>
+  <div class="nav-item" title="Settings">⚙</div>
+</nav>
+
+<!-- ── Main ────────────────────────────────────────── -->
+<div class="main">
+
+  <!-- Topbar -->
+  <div class="topbar">
+    <div class="topbar-left">
+      <h1>RAG / Qdrant</h1>
+      <span class="badge" id="collCount">12 collections</span>
+    </div>
+    <div class="topbar-right">
+      <div class="status-inline">
+        <div class="status-dot" id="rag-statusDot"></div>
+        <span class="status-label" id="rag-statusText">Connecting…</span>
+      </div>
+      <div class="badge">Qdrant</div>
+    </div>
+  </div>
+
+  <!-- Body -->
+  <div class="rag-layout">
+
+    <!-- Left: collection list -->
+    <div class="coll-list" id="collList">
+      <div class="coll-list-title">Agent Memory</div>
+      <!-- filled by JS -->
+    </div>
+
+    <!-- Right: viewer -->
+    <div class="coll-viewer">
+
+      <!-- Placeholder (default) -->
+      <div class="placeholder" id="viewPlaceholder">
+        <div class="ph-icon">◇</div>
+        Select a collection to browse its points
+      </div>
+
+      <!-- Active collection view (hidden by default) -->
+      <div id="viewActive" class="view-active">
+
+        <!-- Search toolbar -->
+        <div class="points-toolbar">
+          <input type="text" id="pointsSearch" placeholder="Search content, source, metadata…">
+          <span class="points-count" id="pointsCount"></span>
+        </div>
+
+        <!-- Points table -->
+        <div class="points-scroll" id="pointsScroll">
+          <table class="points-table">
+            <thead><tr><th class="col-id">ID</th><th class="col-source">Source</th><th>Content</th><th class="col-meta">Metadata</th></tr></thead>
+            <tbody id="pointsBody"></tbody>
+          </table>
+        </div>
+
+        <!-- Pagination -->
+        <div class="pagination">
+          <button id="btnPrev" disabled>← Prev</button>
+          <span class="page-info" id="pageInfo">Page 1</span>
+          <button id="btnNext">Next →</button>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- Statusbar -->
+  <div class="statusbar">
+    <span>◇ RAG / Qdrant · OpenClaw</span>
+    <span id="sbColl" class="text-muted">No collection selected</span>
+    <span class="ml-auto text-muted" id="sbClock">--:-- UTC</span>
+  </div>
+
+</div>
+
+<script>
+// ── Clock ──────────────────────────────────────
+function updateClock() {
+  const el = document.getElementById('sbClock');
+  if (el) el.textContent = new Date().toUTCString().split(' ')[4] + ' UTC';
+}
+updateClock(); setInterval(updateClock, 1000);
+
+// ── API + display metadata ─────────────────────
+const API = '/api/dispatcher';
+const ENABLE_COLLECTION_VIEWER = true;
+
+// Known collection display metadata (name → override)
+const COLL_META = {
+  'agent_memory_main':          { label: 'Albert (main)',      color: '#6366f1', initial: 'A', group: 'agent' },
+  'agent_memory_elsa':          { label: 'ELSA',               color: '#10b981', initial: 'E', group: 'agent' },
+  'agent_memory_ditesh':        { label: 'Ditesh',             color: '#f59e0b', initial: 'D', group: 'agent' },
+  'agent_memory_newton':        { label: 'Newton',             color: '#06b6d4', initial: 'N', group: 'agent' },
+  'agent_memory':               { label: 'Agent Memory (legacy)', color: '#64748b', initial: 'L', group: 'agent' },
+  'agent_memory_optimized':     { label: 'Memory Optimized',  color: '#64748b', initial: 'O', group: 'agent' },
+  'moneybox_rag':               { label: 'MoneyBox RAG',       color: '#8b5cf6', initial: 'M', group: 'data' },
+  'moneybox_rag_all':           { label: 'MoneyBox RAG All',   color: '#7c3aed', initial: 'R', group: 'data' },
+  'system_retrospective':       { label: 'Retrospective',      color: '#3b82f6', initial: 'S', group: 'data' },
+  'strategy_general':           { label: 'Strategy General',   color: '#f97316', initial: 'T', group: 'data' },
+  'market_events':              { label: 'Market Events',      color: '#ef4444', initial: 'K', group: 'data' },
+  'product_discussion_summary': { label: 'Product Discussions',color: '#06b6d4', initial: 'P', group: 'data' },
+  'research_memory':            { label: 'Research Memory',    color: '#10b981', initial: 'N', group: 'data' },
+};
+
+function collMeta(name) {
+  if (COLL_META[name]) return COLL_META[name];
+  const COLORS = ['#8b5cf6','#3b82f6','#f97316','#ef4444','#06b6d4','#10b981','#f59e0b'];
+  const initial = (name.replace(/_/g,' ').split(' ').map(w => w[0]?.toUpperCase() || '?').join('') || '?').slice(0, 2);
+  return { label: name, color: COLORS[name.length % COLORS.length], initial, group: 'data' };
+}
+
+// ── State ──────────────────────────────────────
+const PAGE_SIZE = 20;
+let COLLS       = [];
+let activeColl  = null;
+let activeCollObj = null;
+let pointsCache = [];
+let pointsPage  = 0;
+let searchQuery = '';
+
+// ── DOM refs ───────────────────────────────────
+const $collList        = document.getElementById('collList');
+const $viewPlaceholder = document.getElementById('viewPlaceholder');
+const $viewActive      = document.getElementById('viewActive');
+const $pointsSearch    = document.getElementById('pointsSearch');
+const $pointsCount     = document.getElementById('pointsCount');
+const $pointsBody      = document.getElementById('pointsBody');
+const $pageInfo        = document.getElementById('pageInfo');
+const $btnPrev         = document.getElementById('btnPrev');
+const $btnNext         = document.getElementById('btnNext');
+const $sbColl          = document.getElementById('sbColl');
+const $collCount       = document.getElementById('collCount');
+const $statusDot       = document.getElementById('rag-statusDot');
+const $statusText      = document.getElementById('rag-statusText');
+
+// ── Helpers ────────────────────────────────────
+function escHtml(s) {
+  const el = document.createElement('span');
+  el.textContent = s;
+  return el.innerHTML;
+}
+
+function setStatus(text, color) {
+  $statusText.textContent = text;
+  $statusDot.style.background = color || '';
+}
+
+// ── Load collections from live API ─────────────
+async function loadCollections() {
+  setStatus('Loading…', '#f59e0b');
+  try {
+    const r = await fetch(`${API}/qdrant/collections`);
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error || 'API error');
+
+    COLLS = d.collections.map(c => ({
+      ...collMeta(c.name),
+      name:         c.name,
+      points_count: c.points_count,
+      status:       c.status || 'green',
+    }));
+
+    renderCollList();
+    $collCount.textContent = COLLS.length + ' collections';
+    setStatus('● Live · Qdrant', '#10b981');
+    if (!ENABLE_COLLECTION_VIEWER) {
+      $viewPlaceholder.innerHTML = '<div class="ph-icon">◇</div>Collection viewer is disabled by admin';
+      $viewPlaceholder.classList.remove('hidden');
+      $viewActive.classList.remove('visible');
+      $sbColl.textContent = 'Viewer disabled';
+    }
+  } catch (e) {
+    console.error('loadCollections:', e);
+    setStatus('⚠ ' + e.message, '#ef4444');
+    $collList.innerHTML = `<div style="padding:12px;color:var(--muted,#888);font-size:12px">Failed to load collections</div>`;
+  }
+}
+
+// ── Render left list ───────────────────────────
+function renderCollList() {
+  const agents = COLLS.filter(c => c.group === 'agent');
+  const data   = COLLS.filter(c => c.group === 'data');
+
+  let html = '<div class="coll-list-title">Agent Memory</div>';
+  html += agents.map(collBtnHtml).join('');
+  if (data.length) {
+    html += '<div class="list-divider"></div>';
+    html += '<div class="coll-list-title">Data Collections</div>';
+    html += data.map(collBtnHtml).join('');
+  }
+
+  $collList.innerHTML = html;
+  if (!ENABLE_COLLECTION_VIEWER) return;
+  $collList.querySelectorAll('.coll-btn').forEach(el => {
+    el.addEventListener('click', () => {
+      console.log('[RAG] click:', el.dataset.name);
+      selectCollection(el.dataset.name).catch(err => {
+        console.error('[RAG] selectCollection error:', err);
+        $viewPlaceholder.innerHTML = `<div class="ph-icon">⚠</div><div style="color:var(--red,#ef4444);font-size:0.75rem;max-width:280px;text-align:center">${err.message}</div>`;
+        $viewPlaceholder.style.display = 'flex';
+        $viewActive.style.display = 'none';
+      });
+    });
+  });
+}
+
+function collBtnHtml(c) {
+  const active = activeColl === c.name ? ' active' : '';
+  const disabled = ENABLE_COLLECTION_VIEWER ? '' : ' disabled';
+  const dotCls = c.status === 'green' ? 'dot-green' : c.status === 'yellow' ? 'dot-yellow' : 'dot-gray';
+  return `<button class="coll-btn${active}${disabled}" data-name="${escHtml(c.name)}" ${ENABLE_COLLECTION_VIEWER ? '' : 'disabled'}>
+    <div class="coll-icon" style="background:color-mix(in srgb,${c.color} 20%,var(--surface));color:${c.color};">${escHtml(c.initial)}</div>
+    <div class="coll-info">
+      <div class="name">${escHtml(c.label)}</div>
+      <div class="sub">${c.points_count} pts</div>
+    </div>
+    <div class="coll-status-dot ${dotCls}"></div>
+  </button>`;
+}
+
+// ── Select + load points ───────────────────────
+async function selectCollection(name) {
+  if (!ENABLE_COLLECTION_VIEWER) return;
+  const c = COLLS.find(x => x.name === name);
+  if (!c) return;
+
+  activeColl    = name;
+  activeCollObj = c;
+  pointsPage    = 0;
+  searchQuery   = '';
+  $pointsSearch.value = '';
+
+  $collList.querySelectorAll('.coll-btn').forEach(el => {
+    el.classList.toggle('active', el.dataset.name === name);
+  });
+
+  $viewPlaceholder.classList.add('hidden');
+  $viewPlaceholder.style.display = 'none';
+  $viewActive.classList.add('visible');
+  $viewActive.style.cssText = 'display:flex;flex:1;flex-direction:column;overflow:hidden;min-height:0;';
+
+  $sbColl.textContent = c.name;
+
+  // Load points
+  $pointsBody.innerHTML = '<tr><td colspan="4" class="empty-cell">Loading…</td></tr>';
+  $pointsCount.textContent = '';
+  try {
+    const r = await fetch(`${API}/qdrant/points?collection=${encodeURIComponent(name)}`);
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error || 'API error');
+    pointsCache = d.points;
+    renderPoints();
+  } catch (e) {
+    $pointsBody.innerHTML = `<tr><td colspan="4" class="empty-cell">⚠ ${escHtml(e.message)}</td></tr>`;
+    $pointsCount.textContent = 'Error';
+  }
+}
+
+// ── Render points table ─────────────────────────
+function renderPoints() {
+  let items = pointsCache;
+  if (searchQuery) {
+    const q = searchQuery.toLowerCase();
+    items = items.filter(p =>
+      p.content.toLowerCase().includes(q) ||
+      (p.source || '').toLowerCase().includes(q) ||
+      p.id.toString().toLowerCase().includes(q) ||
+      JSON.stringify(p.metadata || {}).toLowerCase().includes(q)
+    );
+  }
+
+  $pointsCount.textContent = items.length + ' point' + (items.length !== 1 ? 's' : '');
+
+  const totalPages = Math.max(1, Math.ceil(items.length / PAGE_SIZE));
+  if (pointsPage >= totalPages) pointsPage = totalPages - 1;
+  const start = pointsPage * PAGE_SIZE;
+  const page  = items.slice(start, start + PAGE_SIZE);
+
+  if (page.length === 0) {
+    $pointsBody.innerHTML = '<tr><td colspan="4" class="empty-cell">No points in this collection</td></tr>';
+  } else {
+    $pointsBody.innerHTML = page.map(p => {
+      const meta    = p.metadata || {};
+      const agent   = meta.agent || '';
+      const metaStr = Object.entries(meta)
+        .filter(([k]) => k !== 'agent')
+        .map(([k, v]) => `${escHtml(k)}: ${escHtml(String(v))}`)
+        .join('\n');
+      const ts = p.timestamp ? `<div class="pt-meta" style="margin-top:3px;font-size:10px">${escHtml(p.timestamp.slice(0,16).replace('T',' '))}</div>` : '';
+      const preview = p.content.length > 240 ? escHtml(p.content.slice(0, 240)) + '…' : escHtml(p.content);
+      const idShort = String(p.id).length > 20 ? String(p.id).slice(0, 8) + '…' : p.id;
+      return `<tr>
+        <td class="pt-id" title="${escHtml(String(p.id))}">${escHtml(idShort)}</td>
+        <td class="pt-source">${escHtml(p.source) || '—'}${ts}</td>
+        <td>${preview}${agent ? '<div class="pt-meta">⬥ ' + escHtml(agent) + '</div>' : ''}</td>
+        <td class="pt-meta-cell">${metaStr || '—'}</td>
+      </tr>`;
+    }).join('');
+  }
+
+  $pageInfo.textContent = 'Page ' + (pointsPage + 1) + ' / ' + totalPages;
+  $btnPrev.disabled = pointsPage <= 0;
+  $btnNext.disabled = pointsPage >= totalPages - 1;
+}
+
+// ── Events ─────────────────────────────────────
+$btnPrev.addEventListener('click', () => { pointsPage--; renderPoints(); });
+$btnNext.addEventListener('click', () => { pointsPage++; renderPoints(); });
+
+let searchTimer;
+$pointsSearch.addEventListener('input', () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => {
+    searchQuery = $pointsSearch.value.trim();
+    pointsPage  = 0;
+    renderPoints();
+  }, 250);
+});
+
+// ── Boot ───────────────────────────────────────
+loadCollections();
+</script>
+</body>
+</html>
