@@ -1,0 +1,1813 @@
+<!-- 
+ https://buy.sssaham.com?kode=KODE&mode=TYPE
+ Version: 1.0.0
+    TYPE: swing | intraday
+-->
+<!DOCTYPE html>
+<html lang="id">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0b0b0e" />
+
+    <script>
+        (function () {
+            const STORAGE_KEY = 'ui:theme';
+            const root = document.documentElement;
+            try {
+                const saved = window.localStorage ? localStorage.getItem(STORAGE_KEY) : null;
+                const theme = saved || 'dark';
+                root.setAttribute('data-theme', theme);
+                root.style.colorScheme = theme === 'dark' ? 'dark' : 'light';
+            } catch (error) {
+                root.setAttribute('data-theme', 'dark');
+                root.style.colorScheme = 'dark';
+            }
+        })();
+    </script>
+
+    <title>SSSAHAM - Detail Emiten</title>
+
+    <!-- (opsional) samain dengan index.html -->
+    <link rel="manifest" href="/site.webmanifest" />
+    <link rel="apple-touch-icon" sizes="180x180" href="../img/apple-touch-icon.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="../img/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="../img/favicon-16x16.png">
+
+    <!-- Bootstrap & Font Awesome -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css" rel="stylesheet" />
+    <link rel="stylesheet" href="../../theme.css" />
+    <link href="../css/component.css" rel="stylesheet" />
+
+    <style>
+        :root {
+            --card-divider: rgba(148, 163, 184, 0.35);
+            --card-radius: 12px;
+            --table-header-text: var(--muted);
+            --table-hover-bg: #f1f5f9;
+        }
+
+        :root[data-theme="dark"] {
+            --table-hover-bg: rgba(255, 255, 255, 0.05);
+        }
+
+        .card-swing {
+            border-radius: var(--card-radius);
+            border: 1px solid var(--card-divider);
+            box-shadow: none;
+            background: transparent !important;
+        }
+
+        .card-swing-header,
+        .card-header {
+            background: transparent;
+            border-bottom: 1px solid var(--card-divider);
+            border-radius: var(--card-radius) var(--card-radius) 0 0;
+            padding: 0.5rem 0.75rem;
+        }
+
+        .card-body,
+        .card-header {
+            color: var(--text);
+        }
+
+        .quadrant-badge {
+            min-width: 28px;
+            text-align: center;
+            border-radius: 999px;
+            font-size: 0.8rem;
+        }
+
+        .stat-label {
+            font-size: 0.8rem;
+            color: #6b7280;
+        }
+
+        .stat-value {
+            font-size: 1rem;
+            font-weight: 600;
+        }
+
+        .table-orderflow {
+            font-size: 0.9rem;
+            white-space: nowrap;
+            color: var(--text);
+        }
+
+        .table-orderflow thead th {
+            text-transform: uppercase;
+            font-size: 0.9rem;
+            color: var(--table-header-text);
+            border-bottom-color: var(--border);
+        }
+
+        .table-orderflow tbody tr {
+            cursor: pointer;
+        }
+
+        .table-orderflow tbody tr:hover {
+            background-color: var(--table-hover-bg);
+        }
+
+        .table-orderflow thead th.sortable {
+            position: relative;
+            padding-right: 14px;
+        }
+
+        .sort-icon {
+            position: absolute;
+            right: 2px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: var(--table-header-text);
+        }
+
+        .sort-icon.active {
+            opacity: 1;
+        }
+
+        #timeseries-table td,
+        #timeseries-table th {
+            vertical-align: middle;
+            text-align: center;
+        }
+
+
+        @media (max-width: 576px) {
+            .page-title {
+                font-size: 1rem;
+            }
+        }
+
+        /* === AI Analysis === */
+        #ai-result-body {
+            font-size: 0.9rem;
+            line-height: 1.6;
+        }
+
+        #ai-result-body ul {
+            padding-left: 1.2rem;
+        }
+
+        #ai-result-body strong {
+            color: var(--ai-strong, inherit);
+        }
+
+        #btn-ai-analyze.analyzing {
+            pointer-events: none;
+            opacity: 0.7;
+        }
+
+        #ai-analysis-content details img {
+            height: 80px;
+            border-radius: 4px;
+            border: 1px solid var(--thumb-border, #ccc);
+            cursor: pointer;
+            transition: transform 0.15s, box-shadow 0.15s;
+            object-fit: cover;
+        }
+
+        #ai-analysis-content details img:hover {
+            transform: scale(1.5);
+            z-index: 10;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+        }
+
+        #ai-analysis-content .thumb-label {
+            font-size: 0.6rem;
+            text-align: center;
+            color: var(--muted, #6b7280);
+        }
+
+        #ai-analysis-content details>summary {
+            user-select: none;
+        }
+
+        /* === Date Navigator Bar === */
+        #date-nav-bar {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            flex-wrap: wrap;
+            border-radius: var(--card-radius);
+            border: 1px solid var(--card-divider);
+            background: transparent;
+            border-bottom:0px;
+            border-radius: 12px 12px 0 0;
+        }
+
+        #date-nav-bar .dnav-chip {
+            font-size: 0.75rem;
+            padding: 3px 10px;
+            border-radius: 999px;
+            border: 1px solid var(--card-divider);
+            background: transparent;
+            color: var(--text);
+            cursor: pointer;
+            white-space: nowrap;
+            transition: background 0.15s, border-color 0.15s;
+        }
+
+        #date-nav-bar .dnav-chip:hover {
+            border-color: #6366f1;
+            color: #6366f1;
+        }
+
+        #date-nav-bar .dnav-chip.active {
+            background: #6366f1;
+            border-color: #6366f1;
+            color: #fff;
+            font-weight: 600;
+        }
+
+        #date-nav-bar .dnav-sep {
+            width: 1px;
+            height: 20px;
+            background: var(--card-divider);
+            flex-shrink: 0;
+        }
+
+        .dnav-date-input {
+            border: 1px solid var(--card-divider);
+            border-radius: 8px;
+            background: transparent;
+            color: var(--text);
+            font-size: 0.8rem;
+            padding: 3px 8px;
+            cursor: pointer;
+            outline: none;
+        }
+
+        .dnav-date-input:focus {
+            border-color: #6366f1;
+        }
+
+        #dnav-apply {
+            font-size: 0.75rem;
+            padding: 3px 12px;
+            border-radius: 8px;
+            border: none;
+            background: #6366f1;
+            color: #fff;
+            cursor: pointer;
+            font-weight: 600;
+            transition: background 0.15s;
+        }
+
+        #dnav-apply:hover {
+            background: #4f46e5;
+        }
+
+        #date-nav-bar .dnav-arrow {
+            font-size: 0.7rem;
+            padding: 3px 8px;
+            border-radius: 6px;
+            border: 1px solid var(--card-divider);
+            background: transparent;
+            color: var(--text);
+            cursor: pointer;
+        }
+
+        #date-nav-bar .dnav-arrow:hover {
+            border-color: #6366f1;
+            color: #6366f1;
+        }
+
+        #date-nav-label {
+            font-size: 0.72rem;
+            color: var(--muted);
+            margin-left: auto;
+            white-space: nowrap;
+        }
+
+        #date-nav-loading {
+            font-size: 0.72rem;
+            color: #6366f1;
+            display: none;
+        }
+
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 999px;
+            display: inline-block;
+            box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.12);
+        }
+
+        .status-dot-ok {
+            background: #22c55e;
+        }
+
+        .status-dot-warn {
+            background: #f59e0b;
+            animation: status-pulse 1.2s ease-in-out infinite;
+        }
+
+        @keyframes status-pulse {
+            0% { transform: scale(1); opacity: 0.75; }
+            50% { transform: scale(1.18); opacity: 1; }
+            100% { transform: scale(1); opacity: 0.75; }
+        }
+    </style>
+</head>
+
+<body>
+    <!-- NAVBAR -->
+    <nav class="navbar sticky-top border-bottom py-3">
+        <div class="container d-flex align-items-center" style="max-width: 1440px;">
+            <a href="broker-summary.html" id="nav-back-link" class="d-flex align-items-center text-decoration-none me-2">
+                <i class="fa-solid fa-chevron-left"></i>
+                <span class="small d-none">Kembali</span>
+            </a>
+            <div class="flex-grow-1 text-center">
+                <span class="nav-title" id="nav-kode">Detail Emiten</span>
+            </div>
+            <div style="width:72px;" class="text-end d-flex justify-content-end align-items-center gap-2">
+                <i class="fa-solid fa-magnifying-glass" onclick="toggleSearch()"></i>
+            </div>
+        </div>
+    </nav>
+
+    <div id="app" class="container my-3">
+        <!-- NAVIGATION TABS -->
+        <ul class="nav nav-tabs mb-3" role="tablist">
+            <li class="nav-item" role="presentation">
+                <a class="nav-link" id="fundflow-link" href="#">Fund Flow</a>
+            </li>
+            <li class="nav-item" role="presentation">
+                <span class="nav-link active" id="intraday-tab">Chart</span>
+            </li>
+            <li class="nav-item" role="presentation">
+                <a class="nav-link" id="audit-link" href="#">Audit Trail</a>
+            </li>
+        </ul>
+
+        <!-- HEADER EMITEN -->
+        <div class="mb-3 d-none">
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <div class="page-title" id="title-kode">-</div>
+                </div>
+            </div>
+        </div>
+        <!-- AI Analytics Button -->
+        <div id="ai-analytics-bar" class="d-flex justify-content-center mb-4" style="display:none!important">
+            <button id="btn-ai-analyze" class="btn btn-sm btn-outline-primary" onclick="runAIAnalysisIntraday()">
+                <i class="fa-solid fa-wand-magic-sparkles me-1"></i> AI Analysis
+            </button>
+        </div>
+        <!-- SNAPSHOT STATS -->
+        <div class="row g-3 mb-4 text-center">
+            <div class="col-6 col-md-3">
+                <div class="stat-label">Close</div>
+                <div class="stat-value" id="stat-close">-</div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="stat-label">Range (L–H)</div>
+                <div class="stat-value" id="stat-range">-</div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="stat-label">Vol / Net</div>
+                <div class="stat-value" id="stat-vol-net">-</div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="stat-label">%Haka / Mom%</div>
+                <div class="stat-value" id="stat-haka-mom">/</div>
+            </div>
+        </div>
+        <!-- FALLBACK ALERT -->
+        <div id="fallback-alert" class="d-none alert alert-light border-warning shadow-sm py-2 px-3 mb-3"
+            style="font-size: 0.85rem;">
+            <i class="fa-solid fa-lightbulb text-warning me-2"></i>
+            <span class="text-dark">Menampilkan data cadangan (optimasi). Perbaikan data utama sedang berlangsung di
+                background.</span>
+        </div>
+
+        <!-- REPAIR STATUS (Dynamic) -->
+        <div id="repair-container" class="d-none mb-3">
+            <div class="card card-swing border-primary">
+                <div class="card-body text-center py-4">
+                    <div class="spinner-border text-primary mb-3" role="status"></div>
+                    <h5 class="fw-bold text-dark" id="repair-title">Update Data...</h5>
+                    <p class="text-muted small mb-2" id="repair-status-text">Mendeteksi data rusak, memulai perbaikan
+                        otomatis.</p>
+                    <div class="progress mx-auto" style="height: 10px; max-width: 400px; border-radius: 5px;">
+                        <div id="repair-progress-bar"
+                            class="progress-bar progress-bar-striped progress-bar-animated bg-primary"
+                            role="progressbar" style="width: 5%"></div>
+                    </div>
+                    <p class="text-primary fw-bold mt-2 small" id="repair-pct-text">5%</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- FOOTPRINT CHART -->
+        <div id="chart-container" class="card card-swing mb-4 border-0">
+            <div class="card-body p-0" style="height:55vh;">
+                <canvas id="footprintChart"></canvas>
+            </div>
+        </div>
+
+        <!-- DATE NAVIGATOR -->
+        <div id="date-nav-bar" class="p-4">
+            <button class="dnav-arrow" id="dnav-prev" title="Hari sebelumnya"><i class="fa-solid fa-chevron-left"></i></button>
+            <button class="dnav-chip" data-offset="0">Hari ini</button>
+            <button class="dnav-chip" data-offset="-1">Kemarin</button>
+            <button class="dnav-chip" data-offset="-2" id="dnav-d2">-2</button>
+            <button class="dnav-chip" data-offset="-3" id="dnav-d3">-3</button>
+            <div class="dnav-sep"></div>
+            <input type="date" id="date-picker-from" class="dnav-date-input" title="Dari tanggal" />
+            <input type="date" id="date-picker-to" class="dnav-date-input" title="Sampai tanggal" />
+            <button id="dnav-apply">Apply</button>
+            <button class="dnav-arrow" id="dnav-next" title="Hari berikutnya"><i class="fa-solid fa-chevron-right"></i></button>
+            <span id="date-nav-label"></span>
+            <span id="repair-status-dot" class="status-dot status-dot-ok" title="Data status: normal"></span>
+            <span id="date-nav-loading"><i class="fa-solid fa-spinner fa-spin me-1"></i>Memuat...</span>
+        </div>
+
+        <!-- RAW DETAIL (OPTIONAL) -->
+        <div class="card card-swing mb-4 d-none">
+            <div class="card-swing-header">
+                <div class="small text-muted">Detail Snapshot</div>
+            </div>
+            <div class="card-body">
+                <pre id="raw-json" class="mb-0"></pre>
+            </div>
+        </div>
+        <!-- TIME SERIES TABLE -->
+        <div id="table-container" class="card card-swing mb-4" style="border-radius: 0;">
+            <div class="table-responsive">
+                <table class="table table-hover mb-0 table-orderflow align-middle" id="timeseries-table">
+                    <thead>
+                        <tr>
+                            <th class="text-center">Date</th>
+                            <th class="text-center">Time</th>
+                            <th class="text-end">Harga</th>
+                            <th class="text-end">Δ Harga</th>
+                            <th class="text-end">Moment %</th>
+                            <th class="text-end">Absorb</th>
+                            <th class="text-end">CVD</th>
+                            <th class="text-end">Value (cum)</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </div>
+
+
+    </div>
+
+    <!-- AI Result Modal -->
+    <div class="modal fade" id="aiResultModal" tabindex="-1">
+        <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header py-2" style="border-bottom:0">
+                    <h6 class="modal-title">AI Intraday Analysis — <span id="ai-modal-symbol"></span></h6>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body" id="ai-result-body">
+                    <div id="ai-analysis-content">
+                        <div class="text-center py-5">
+                            <div class="spinner-border text-warning"></div>
+                            <p class="small text-muted mt-2">Menganalisis screenshot dengan AI...</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer py-1 d-none">
+                    <small class="text-muted me-auto" id="ai-token-info"></small>
+                    <button id="btn-ai-refresh" class="btn btn-sm btn-outline-secondary" style="display:none"
+                        onclick="runAIAnalysisIntraday(true)">
+                        <i class="fa-solid fa-rotate-right me-1"></i> Refresh
+                    </button>
+                    <button class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Tutup</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- SCRIPTS -->
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0"></script>
+    <!-- Add financial chart support -->
+    <script src="https://cdn.jsdelivr.net/npm/luxon@3.4.4/build/global/luxon.min.js"></script>
+    <script
+        src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon@1.3.1/dist/chartjs-adapter-luxon.umd.min.js"></script>
+    <script
+        src="https://cdn.jsdelivr.net/npm/chartjs-chart-financial@0.2.0/dist/chartjs-chart-financial.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+    <script src="../js/component.js"></script>
+    <script src="../js/ai-analysis.js"></script>
+
+    <script>
+        Chart.register(ChartDataLabels);
+
+        const isLocal = false; // Force remote for now
+        const API_BASE = isLocal
+            ? "http://127.0.0.1:8787"
+            : "https://api-saham.mkemalw.workers.dev";
+
+        // Alias for ai-analysis.js which uses WORKER_BASE_URL
+        const WORKER_BASE_URL = API_BASE;
+
+        let footprintChart = null;
+
+        // Garis silang 4 kuadran
+        const quadrantLinesPlugin = {
+            id: "quadrantLines",
+            afterDraw(chart) {
+                const { ctx, chartArea, scales } = chart;
+                const xScale = scales.x;
+                const yScale = scales.y;
+                const xZero = xScale.getPixelForValue(0);
+                const yZero = yScale.getPixelForValue(0);
+
+                ctx.save();
+                ctx.strokeStyle = "rgba(148,163,184,0.9)";
+                ctx.lineWidth = 1;
+                ctx.setLineDash([4, 3]);
+
+                ctx.beginPath();
+                ctx.moveTo(xZero, chartArea.top);
+                ctx.lineTo(xZero, chartArea.bottom);
+                ctx.stroke();
+
+                ctx.beginPath();
+                ctx.moveTo(chartArea.left, yZero);
+                ctx.lineTo(chartArea.right, yZero);
+                ctx.stroke();
+
+                ctx.restore();
+            }
+        };
+
+        function formatNum(n) {
+            if (n === null || n === undefined || isNaN(n)) return "-";
+            return n.toLocaleString("id-ID");
+        }
+
+        function getKodeFromURL() {
+            const params = new URLSearchParams(location.search);
+            return params.get("kode") || "BBCA";
+        }
+
+        function getModeFromURL() {
+            const params = new URLSearchParams(location.search);
+            return params.get("mode") || "swing";
+        }
+
+        function updateQuadrantBadge(q) {
+            const badge = document.getElementById("badge-quadrant");
+            if (!badge) return; // ⬅️ kalau belum ada badge di HTML, jangan bikin error
+
+            badge.textContent = q ? `Q${q}` : "Q-";
+            badge.className = "quadrant-badge";
+
+            if (q === 1) badge.classList.add("bg-success", "text-white");
+            else if (q === 2) badge.classList.add("bg-info", "text-dark");
+            else if (q === 3) badge.classList.add("bg-danger", "text-white");
+            else if (q === 4) badge.classList.add("bg-warning", "text-dark");
+            else badge.classList.add("bg-secondary", "text-white");
+        }
+
+
+        // Header + angka snapshot
+        function renderSnapshot(kode, mode, snapshot, state) {
+            $("#nav-kode").text(kode);
+            $("#title-kode").text(`${kode} · Swing Footprint`);
+            $("#subtitle-mode").text(`Mode: ${mode}`);
+
+            const { close, high, low, vol, net_vol, haka_pct, fluktuasi } = snapshot || {};
+
+            $("#stat-close").text(formatNum(close));
+            $("#stat-range").text(`${formatNum(low)} – ${formatNum(high)}`);
+            $("#stat-vol-net").text(`${formatNum(vol)} / ${formatNum(net_vol)}`);
+            $("#stat-haka-mom").text(
+                `${haka_pct != null ? Number(haka_pct).toFixed(0) : "-"}% / ${fluktuasi != null ? Number(fluktuasi).toFixed(2) : "-"}%`
+            );
+
+            updateQuadrantBadge(state?.quadrant);
+
+            const rawCombined = {
+                kode,
+                mode,
+                snapshot,
+                state,
+            };
+            $("#raw-json").text(JSON.stringify(rawCombined, null, 2));
+        }
+
+        function renderFootprintTrailFromHistory(kode, snapshot, history, tableData) {
+            const canvas = document.getElementById("footprintChart");
+            if (!canvas) return;
+
+            // Use tableData for base candlesticks (has all time points)
+            // Use history for absorption bubbles (where actual footprint data exists - bv/av)
+            const timeSeriesData = tableData || [];
+            // Filter bubbles: only show where actual bid/ask volume exists
+            const absorptionData = (history || []).filter(h => (h.bv > 0 || h.av > 0) && h.x > 0);
+
+            // Debug logging
+            console.log('[CHART] timeSeriesData:', timeSeriesData.length, 'rows', timeSeriesData.slice(0, 2));
+            console.log('[CHART] absorptionData:', absorptionData.length, 'bubbles', absorptionData.slice(0, 2));
+
+            if (!timeSeriesData.length && !absorptionData.length) {
+                console.warn('[CHART] No data to render - both timeSeriesData and absorptionData are empty');
+                if (footprintChart) {
+                    footprintChart.destroy();
+                    footprintChart = null;
+                }
+                return;
+            }
+
+            // Generate OHLC candles from tableData
+            // For sparse data, each row becomes a candle with O=H=L=C = price
+            const candleData = timeSeriesData.map(row => ({
+                x: row.x,
+                o: row.p,
+                h: row.p,
+                l: row.p,
+                c: row.p
+            }));
+
+            // Price analysis for Y-scale
+            const allPrices = timeSeriesData.map(r => r.p).filter(p => !isNaN(p) && p > 0);
+            if (!allPrices.length) {
+                if (footprintChart) {
+                    footprintChart.destroy();
+                    footprintChart = null;
+                }
+                return;
+            }
+
+            const minY = Math.min(...allPrices);
+            const maxY = Math.max(...allPrices);
+            const yRange = maxY - minY;
+            const yPadding = yRange * 0.1 || 5;
+
+            // ========================================
+            // 1. AGGREGATE ABSORPTION PER 30 MINUTES
+            // ========================================
+            const bucket30min = new Map(); // key: timestamp_30min -> { bv, av, totalV, prices: Set }
+            absorptionData.forEach(h => {
+                const t30 = Math.floor(h.x / (30 * 60 * 1000)) * (30 * 60 * 1000);
+                if (!bucket30min.has(t30)) {
+                    bucket30min.set(t30, { t0: t30, bv: 0, av: 0, totalV: 0, prices: new Set(), timestamps: [] });
+                }
+                const b = bucket30min.get(t30);
+                b.bv += (h.bv || 0);
+                b.av += (h.av || 0);
+                b.totalV += (h.v || 0);
+                b.prices.add(h.p);
+                b.timestamps.push(h.x); // Store timestamps for proper centering
+            });
+
+            // Convert to bubble points (only show significant bubbles)
+            const aggregatedBubbles = [];
+            const allVols30 = Array.from(bucket30min.values()).map(b => b.totalV);
+            const maxVol30 = allVols30.length ? Math.max(...allVols30) : 1;
+
+            bucket30min.forEach((b, t0) => {
+                if (b.totalV < maxVol30 * 0.1) return; // Skip small bubbles (< 10% of max)
+
+                const avgPrice = Array.from(b.prices).reduce((a, c) => a + c, 0) / b.prices.size;
+                const side = b.bv >= b.av ? 'buy' : 'sell';
+                const sizeNorm = b.totalV / maxVol30;
+                const r = 8 + sizeNorm * 20; // Bigger bubbles for aggregated data
+
+                // CORRECTED COLORS: 
+                // Green = Buy absorption (buyers defending, price tends to go UP)
+                // Red = Sell absorption (sellers defending, price tends to go DOWN)
+                const alpha = 0.6;
+                const bg = side === 'buy' ? `rgba(239,68,68,${alpha})` : `rgba(34,197,94,${alpha})`;
+                const border = side === 'buy' ? `rgba(185,28,28,0.9)` : `rgba(21,128,61,0.9)`;
+
+                // Position at center of actual timestamps in this bucket (not fixed +15min)
+                const timestamps = b.timestamps || [t0];
+                const centerTime = timestamps.length > 0
+                    ? timestamps.reduce((a, c) => a + c, 0) / timestamps.length
+                    : t0 + 15 * 60 * 1000;
+
+                aggregatedBubbles.push({
+                    x: centerTime,
+                    y: avgPrice,
+                    r,
+                    bg,
+                    border,
+                    time: new Date(t0).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Jakarta' }),
+                    v: b.totalV,
+                    bv: b.bv,
+                    av: b.av,
+                    side: side
+                });
+            });
+
+            // ========================================
+            // 2. BUILD VOLUME PROFILE (Price Levels)
+            // ========================================
+            const volumeByPrice = new Map(); // price -> { bv, av, totalV }
+            absorptionData.forEach(h => {
+                if (!volumeByPrice.has(h.p)) {
+                    volumeByPrice.set(h.p, { price: h.p, bv: 0, av: 0, totalV: 0 });
+                }
+                const vp = volumeByPrice.get(h.p);
+                vp.bv += (h.bv || 0);
+                vp.av += (h.av || 0);
+                vp.totalV += (h.v || 0);
+            });
+
+            // Sort by volume and get top levels
+            const volumeProfileData = Array.from(volumeByPrice.values())
+                .sort((a, b) => b.totalV - a.totalV)
+                .slice(0, 10); // Top 10 price levels
+
+            const maxVolProfile = volumeProfileData.length ? Math.max(...volumeProfileData.map(v => v.totalV)) : 1;
+
+            // ========================================
+            // 3. CREATE LINE CHART DATA
+            // ========================================
+            const lineChartData = timeSeriesData.map(row => ({
+                x: row.x,
+                y: row.p
+            }));
+
+            // Calculate time range for volume profile bar width
+            const timeMin = lineChartData.length > 0 ? lineChartData[0].x : 0;
+            const timeMax = lineChartData.length > 0 ? lineChartData[lineChartData.length - 1].x : 1;
+            const timeRange = timeMax - timeMin || 1;
+
+            // Create horizontal bar data for volume profile (rendered as annotations later)
+            const volumeProfileBars = volumeProfileData.map(vp => ({
+                x: timeMin,
+                y: vp.price,
+                barWidth: (vp.totalV / maxVolProfile) * timeRange * 0.2, // 20% of chart width max
+                totalV: vp.totalV,
+                bv: vp.bv,
+                av: vp.av,
+                side: vp.bv >= vp.av ? 'buy' : 'sell'
+            }));
+
+            // ========================================
+            // 4. BUILD DATASETS
+            // ========================================
+            const datasets = [
+                {
+                    label: "Price",
+                    type: 'line',
+                    data: lineChartData,
+                    borderColor: '#6366f1',
+                    backgroundColor: 'rgba(99, 102, 241, 0.1)',
+                    borderWidth: 2,
+                    fill: true,
+                    tension: 0.1,
+                    pointRadius: 0, // Remove point dots - pure line
+                    order: 2
+                }
+            ];
+
+            // ========================================
+            // 5. ADD CUMULATIVE VOLUME DELTA (CVD) LINE
+            // ========================================
+            let runningCVD = 0;
+            const cvdData = timeSeriesData.map(row => {
+                runningCVD += (row.a || 0); // 'a' is delta from tableData
+                return { x: row.x, y: runningCVD };
+            });
+
+            // Store CVD data for table rendering
+            window.cvdDataForTable = cvdData;
+
+            if (cvdData.length > 1) {
+                datasets.push({
+                    label: "CVD",
+                    type: 'line',
+                    data: cvdData,
+                    borderColor: '#f97316', // Orange
+                    borderWidth: 2,
+                    borderDash: [5, 5], // Dashed line
+                    fill: false,
+                    tension: 0.1,
+                    pointRadius: 0,
+                    order: 3,
+                    yAxisID: 'y1' // Use secondary right axis
+                });
+            }
+
+            // Add aggregated absorption bubbles
+            if (aggregatedBubbles.length > 0) {
+                datasets.unshift({
+                    label: "Absorption (30min)",
+                    type: 'bubble',
+                    data: aggregatedBubbles,
+                    backgroundColor: aggregatedBubbles.map(p => p.bg),
+                    borderWidth: 0, // No border
+                    order: 1
+                });
+            }
+
+            // Add Volume Profile bars as horizontal bars (using line segments)
+            if (volumeProfileBars.length > 0) {
+                const vpDataset = {
+                    label: "Volume Profile",
+                    type: 'line',
+                    data: [],
+                    borderWidth: 0,
+                    pointRadius: 0,
+                    showLine: false,
+                    order: 3
+                };
+
+                // Create horizontal bar for each price level
+                volumeProfileBars.forEach((vp, idx) => {
+                    const barColor = vp.side === 'buy' ? 'rgba(59, 130, 246, 0.6)' : 'rgba(239, 68, 68, 0.4)';
+                    datasets.push({
+                        label: idx === 0 ? "VP Level" : "",
+                        type: 'line',
+                        data: [
+                            { x: timeMin, y: vp.y },
+                            { x: timeMin + vp.barWidth, y: vp.y }
+                        ],
+                        borderColor: barColor,
+                        borderWidth: 8,
+                        pointRadius: 0,
+                        showLine: true,
+                        tension: 0,
+                        order: 4
+                    });
+                });
+            }
+
+            const data = { datasets };
+
+            const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+
+            const options = {
+                responsive: true,
+                maintainAspectRatio: false,
+                layout: {
+                    padding: { left: 0, right: 0, top: 20, bottom: 20 }
+                },
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            label: (ctx) => {
+                                const d = ctx.raw;
+                                // Handle bubble data (has v, time, bv, av)
+                                if (d.v !== undefined) {
+                                    return `${d.time || ''} | P: ${d.y} | Vol: ${d.v.toLocaleString()}`;
+                                }
+                                // Handle line chart data (only has x, y)
+                                const time = new Date(d.x).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Jakarta' });
+                                return `${time} | Harga: ${d.y}`;
+                            },
+                        },
+                    },
+                    datalabels: { display: false },
+                    axisTopLabels: {}
+                },
+                scales: {
+                    x: {
+                        type: 'time',
+                        time: {
+                            unit: 'minute',
+                            stepSize: 30,
+                            displayFormats: {
+                                minute: 'HH:mm'
+                            }
+                        },
+                        adapters: {
+                            date: {
+                                zone: 'Asia/Jakarta'
+                            }
+                        },
+                        title: { display: true, text: "Waktu (WIB)" },
+                        grid: {
+                            display: !isDark,
+                            color: isDark ? 'transparent' : 'rgba(241,245,249,1)'
+                        },
+                        border: {
+                            display: !isDark,
+                            color: isDark ? 'transparent' : 'rgba(226,232,240,1)'
+                        },
+                        ticks: {
+                            color: isDark ? '#94a3b8' : '#475569'
+                        }
+                    },
+                    y: {
+                        position: 'left',
+                        min: minY - yPadding,
+                        max: maxY + yPadding,
+                        title: { display: false },
+                        grid: {
+                            display: !isDark,
+                            color: isDark ? 'transparent' : 'rgba(241,245,249,1)'
+                        },
+                        border: {
+                            display: !isDark,
+                            color: isDark ? 'transparent' : 'rgba(226,232,240,1)'
+                        },
+                        ticks: {
+                            color: isDark ? '#94a3b8' : '#475569'
+                        }
+                    },
+                    y1: {
+                        position: 'right',
+                        title: { display: false },
+                        grid: { display: false },
+                        border: {
+                            display: !isDark,
+                            color: isDark ? 'transparent' : 'rgba(226,232,240,1)'
+                        },
+                        ticks: {
+                            color: '#fbbf24',
+                            callback: (v) => {
+                                const abs = Math.abs(v);
+                                if (abs >= 1_000_000) return (v / 1_000_000).toFixed(abs >= 10_000_000 ? 0 : 1).replace(/\.0$/, '') + 'M';
+                                if (abs >= 1_000) return (v / 1_000).toFixed(abs >= 10_000 ? 0 : 1).replace(/\.0$/, '') + 'k';
+                                return v;
+                            }
+                        }
+                    }
+                },
+            };
+
+            const axisTopLabelsPlugin = {
+                id: 'axisTopLabels',
+                afterDraw(chart) {
+                    const ctx = chart.ctx;
+                    const yAxis = chart.scales['y'];
+                    const y1Axis = chart.scales['y1'];
+                    const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+                    ctx.save();
+                    ctx.font = 'bold 11px sans-serif';
+                    ctx.textAlign = 'center';
+                    // Harga label (above left axis)
+                    if (yAxis) {
+                        ctx.fillStyle = isDark ? '#94a3b8' : '#475569';
+                        ctx.fillText('Harga', yAxis.left + yAxis.width / 2, yAxis.top - 20);
+                    }
+                    // CVD label (above right axis)
+                    if (y1Axis) {
+                        ctx.fillStyle = '#fbbf24';
+                        ctx.fillText('CVD', y1Axis.left + y1Axis.width / 2, y1Axis.top - 20);
+                    }
+                    ctx.restore();
+                }
+            };
+
+            if (footprintChart) footprintChart.destroy();
+            footprintChart = new Chart(canvas, {
+                data,
+                options,
+                plugins: [axisTopLabelsPlugin]
+            });
+        }
+
+
+        // Tabel time series (opsional – butuh <table id="timeseries-table"> di HTML)
+        function renderTimeSeriesTable(snapshot, history) {
+            const tbody = document.querySelector("#timeseries-table tbody");
+            if (!tbody) return;
+
+            tbody.innerHTML = "";
+
+            if (!history || !history.length) {
+                const tr = document.createElement("tr");
+                const td = document.createElement("td");
+                td.colSpan = 8;
+                td.className = "text-center text-muted py-3";
+                td.textContent = "Belum ada data history 5 menit.";
+                tr.appendChild(td);
+                tbody.appendChild(tr);
+                return;
+            }
+
+            // VWAP sementara: pakai snapshot.vwap kalau ada, kalau tidak pakai close
+            const vwap = (typeof snapshot.vwap === "number" && snapshot.vwap > 0)
+                ? snapshot.vwap
+                : snapshot.close || 0;
+
+            const sorted = [...history].sort((a, b) => {
+                const ax = Number(a?.x || 0);
+                const bx = Number(b?.x || 0);
+
+                // Prefer full timestamp when available (keeps each date block intact, then time inside date)
+                if (ax && bx) return ax - bx;
+
+                // Fallback: sort by date text first, then time text
+                const ad = a?.date || '';
+                const bd = b?.date || '';
+                if (ad !== bd) return ad.localeCompare(bd);
+
+                const at = a?.t || '';
+                const bt = b?.t || '';
+                return at.localeCompare(bt);
+            });
+
+            let prevPrice = null;
+
+            sorted.forEach((h) => {
+                const tr = document.createElement("tr");
+
+                const t = h.t || "-";
+                const price = h.p || 0;
+                const mom = (typeof h.m === "number") ? h.m : 0;
+                const absorb = (typeof h.abs === "number") ? h.abs : 0;
+                const val = (h.v || 0) * price * 100; // Value (cum) = Vol * Price * 100
+
+                let priceClass = "";
+                let deltaText = "-";
+
+                if (prevPrice !== null) {
+                    const diff = price - prevPrice;
+                    if (diff > 0) {
+                        priceClass = "text-success fw-semibold";
+                        deltaText = `+${diff}`;
+                    } else if (diff < 0) {
+                        priceClass = "text-danger fw-semibold";
+                        deltaText = `${diff}`;
+                    } else {
+                        // harga sama dengan bucket sebelumnya → cek VWAP
+                        if (vwap && price >= vwap) {
+                            priceClass = "text-success fw-semibold";
+                        } else {
+                            priceClass = "text-danger fw-semibold";
+                        }
+                        deltaText = "0";
+                    }
+                }
+
+                const tdDate = document.createElement("td");
+
+                // DATA DATE LOGIC:
+                // 1. Use snapshot.date if available.
+                // 2. Else, check if it's "Pre-Market" today (< 09:00). If so, data is likely from Yesterday.
+                // 3. Otherwise, assume Today.
+                let dateObj = new Date();
+                if (snapshot.date) {
+                    // If provided, assume it's parseable or just use text
+                    // But here we want a specific format, so let's stick to text if it's already formatted
+                    // Or if it is NOT provided:
+                } else {
+                    const now = new Date();
+                    if (now.getHours() < 9) {
+                        // Assume data is from previous day
+                        dateObj.setDate(now.getDate() - 1);
+                    }
+                    // else keep Today
+                }
+
+                const dateFromRow = (h && h.x)
+                    ? new Date(h.x).toLocaleDateString('id-ID', {
+                        day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'Asia/Jakarta'
+                    })
+                    : null;
+                const dateStr = dateFromRow || snapshot.date || dateObj.toLocaleDateString('id-ID', {
+                    day: '2-digit', month: '2-digit', year: 'numeric'
+                });
+                tdDate.textContent = dateStr;
+
+                const tdTime = document.createElement("td");
+                tdTime.textContent = t;
+
+                const tdPrice = document.createElement("td");
+                tdPrice.textContent = formatNum(price);
+                tdPrice.className = "text-end";
+                if (priceClass) tdPrice.classList.add(...priceClass.split(" "));
+
+                const tdDelta = document.createElement("td");
+                tdDelta.textContent = deltaText;
+                tdDelta.className = "text-end";
+                if (priceClass) tdDelta.classList.add(...priceClass.split(" "));
+
+                const tdMom = document.createElement("td");
+                tdMom.textContent = `${mom.toFixed(2)}%`;
+                tdMom.className = "text-end";
+
+                const tdAbs = document.createElement("td");
+                tdAbs.textContent = absorb.toLocaleString("id-ID", {
+                    minimumFractionDigits: 1,
+                    maximumFractionDigits: 1,
+                });
+                tdAbs.className = "text-end";
+
+                // CVD Cell - get from chart data if available
+                const cvdArr = window.cvdDataForTable || [];
+                const cvdEntry = cvdArr.find(c => c.x === h.x);
+                const cvdVal = cvdEntry ? cvdEntry.y : 0;
+
+                const tdCVD = document.createElement("td");
+                tdCVD.textContent = cvdVal.toLocaleString("id-ID");
+                tdCVD.className = "text-end";
+                tdCVD.style.color = cvdVal >= 0 ? '#22c55e' : '#ef4444';
+
+                const tdVal = document.createElement("td");
+                tdVal.textContent = val.toLocaleString("id-ID");
+                tdVal.className = "text-end";
+
+                tr.appendChild(tdDate);
+                tr.appendChild(tdTime);
+                tr.appendChild(tdPrice);
+                tr.appendChild(tdDelta);
+                tr.appendChild(tdMom);
+                tr.appendChild(tdAbs);
+                tr.appendChild(tdCVD);
+                tr.appendChild(tdVal);
+
+                tbody.appendChild(tr);
+                prevPrice = price;
+            });
+        }
+
+
+
+        function pollRepairStatus(kode, dateStr) {
+            // Show repair container, hide chart and table
+            $("#repair-container").removeClass("d-none");
+            $("#repair-title").text(`Update Data ${kode}`);
+            $("#chart-container").addClass("d-none");
+            $("#table-container").addClass("d-none");
+
+            let simulatedPct = 5;
+            let auditFailed = false;
+            const reloadAfter = 15000; // Auto-reload after 15 seconds
+            const startTime = Date.now();
+
+            // Progress simulation timer (runs regardless of audit-trail status)
+            const progressTimer = setInterval(() => {
+                const elapsed = Date.now() - startTime;
+                // Simulate progress: 5% -> 95% over 15 seconds
+                simulatedPct = Math.min(95, 5 + Math.floor((elapsed / reloadAfter) * 90));
+                $("#repair-progress-bar").css("width", `${simulatedPct}%`);
+                $("#repair-pct-text").text(`${simulatedPct}%`);
+
+                if (elapsed >= reloadAfter) {
+                    clearInterval(progressTimer);
+                    clearInterval(auditTimer);
+                    $("#repair-status-text").text("Update selesai! Memuat ulang...");
+                    $("#repair-progress-bar").css("width", "100%").removeClass("progress-bar-animated");
+                    $("#repair-pct-text").text("100%");
+                    setTimeout(() => location.reload(), 1000);
+                }
+            }, 1000);
+
+            // Audit-trail polling (optional - updates status text if available)
+            const auditTimer = setInterval(() => {
+                if (auditFailed) return; // Skip if already failed
+
+                $.getJSON(`${API_BASE}/audit-trail?symbol=${kode}&limit=5`, function (resp) {
+                    if (resp.ok && resp.entries && resp.entries.length > 0) {
+                        const latest = resp.entries.find(e => e.action === "REPAIR_FOOTPRINT" && e.data_date === dateStr);
+                        if (latest) {
+                            if (latest.status === "COMPLETED" || latest.status === "SUCCESS") {
+                                clearInterval(progressTimer);
+                                clearInterval(auditTimer);
+                                $("#repair-status-text").text("Perbaikan selesai! Memuat ulang data...");
+                                $("#repair-progress-bar").css("width", "100%").removeClass("progress-bar-animated");
+                                $("#repair-pct-text").text("100%");
+                                setTimeout(() => location.reload(), 1500);
+                            } else if (latest.status === "PROCESSING") {
+                                $("#repair-status-text").text(latest.detail || "Sedang memproses data...");
+                            }
+                        }
+                    }
+                }).fail(function () {
+                    auditFailed = true;
+                    $("#repair-status-text").text("Mengupdate data di background...");
+                });
+            }, 3000);
+        }
+
+        // ============================================================
+        // DATE NAVIGATOR STATE
+        // ============================================================
+        let _currentKode = null;
+        let _activeDate = null; // YYYY-MM-DD (single date mode)
+        let _enrichedSnapshotCache = null;
+        let _repairFlagFromSnapshot = false;
+        let _fallbackFlagFromSnapshot = false;
+
+        function updateRepairStatusDot({ isRepairing = false, isFallback = false, dataRowCount = 0 } = {}) {
+            const dot = document.getElementById('repair-status-dot');
+            if (!dot) return;
+
+            const sparseThreshold = 42;
+            const hasPotentialIssue = (isRepairing || isFallback) && Number(dataRowCount || 0) < sparseThreshold;
+
+            dot.classList.remove('status-dot-ok', 'status-dot-warn');
+            if (hasPotentialIssue) {
+                dot.classList.add('status-dot-warn');
+                dot.title = 'Data status: background repair/fallback terdeteksi';
+            } else {
+                dot.classList.add('status-dot-ok');
+                dot.title = 'Data status: normal';
+            }
+        }
+
+        // Indonesian public holidays 2026 (add as needed)
+        const INDONESIA_HOLIDAYS_2026 = [
+            '2026-01-01', // New Year
+            '2026-02-16', // Imlek
+            '2026-02-17', // Isra Mi'raj
+            '2026-03-11', // Nyepi
+            '2026-03-18', // Cuti Bersama Nyepi
+            '2026-03-19', // Nyepi (Hari Suci)
+            '2026-03-20', // Cuti Bersama Idul Fitri
+            '2026-03-23', // Cuti Bersama Idul Fitri
+            '2026-03-24', // Cuti Bersama Idul Fitri
+            '2026-04-01', // Idul Fitri
+            '2026-04-02', // Idul Fitri
+            '2026-04-03', // Idul Fitri (Cuti Bersama)
+            '2026-04-10', // Good Friday
+            '2026-05-01', // Labor Day
+            '2026-05-21', // Ascension Day
+            '2026-06-01', // Pancasila Day
+            '2026-06-08', // Idul Adha
+            '2026-06-29', // Islamic New Year
+            '2026-08-17', // Independence Day
+            '2026-09-08', // Prophet's Birthday
+            '2026-12-25', // Christmas
+            '2026-12-26'  // Boxing Day / Cuti Bersama
+        ];
+
+        function isWeekend(dateStr) {
+            const d = new Date(dateStr + 'T00:00:00');
+            const day = d.getDay();
+            return day === 0 || day === 6; // Sunday or Saturday
+        }
+
+        function isHoliday(dateStr) {
+            return INDONESIA_HOLIDAYS_2026.includes(dateStr);
+        }
+
+        function isTradingDay(dateStr) {
+            return !isWeekend(dateStr) && !isHoliday(dateStr);
+        }
+
+        // Get next/previous trading day (skip weekends & holidays)
+        function getNextTradingDay(dateStr, direction = 1) {
+            let d = new Date(dateStr + 'T00:00:00');
+            let attempts = 0;
+            while (attempts < 30) { // Safety limit
+                d.setDate(d.getDate() + direction);
+                const candidate = d.toISOString().split('T')[0];
+                if (isTradingDay(candidate)) return candidate;
+                attempts++;
+            }
+            return dateStr; // Fallback
+        }
+
+        function getOffsetDate(offset) {
+            const d = new Date();
+            d.setDate(d.getDate() + offset);
+            return d.toISOString().split('T')[0];
+        }
+
+        // Get Nth trading day before today (skip weekends & holidays)
+        function getNthTradingDay(n) {
+            if (n === 0) return getOffsetDate(0); // Today
+            let d = new Date();
+            let count = 0;
+            let attempts = 0;
+            while (count < Math.abs(n) && attempts < 100) {
+                d.setDate(d.getDate() - 1);
+                const candidate = d.toISOString().split('T')[0];
+                if (isTradingDay(candidate)) count++;
+                attempts++;
+            }
+            return d.toISOString().split('T')[0];
+        }
+
+        function formatDateLabel(dateStr) {
+            if (!dateStr) return '';
+            const d = new Date(dateStr + 'T00:00:00');
+            const days = ['Min', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab'];
+            const months = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+            return `${days[d.getDay()]}, ${d.getDate()} ${months[d.getMonth()]} ${d.getFullYear()}`;
+        }
+
+        function refreshChipLabels() {
+            document.querySelectorAll('#date-nav-bar .dnav-chip[data-offset]').forEach(btn => {
+                const offset = parseInt(btn.dataset.offset, 10);
+                let targetDate;
+                if (offset === 0) {
+                    targetDate = getOffsetDate(0);
+                    btn.textContent = 'Hari ini';
+                } else if (offset === -1) {
+                    targetDate = getNthTradingDay(1); // 1 trading day ago
+                    btn.textContent = 'Kemarin';
+                } else if (offset === -2) {
+                    targetDate = getNthTradingDay(2);
+                    const d = new Date(targetDate + 'T00:00:00');
+                    const days = ['Min', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab'];
+                    btn.textContent = `${days[d.getDay()]} ${d.getDate()}/${d.getMonth() + 1}`;
+                } else if (offset === -3) {
+                    targetDate = getNthTradingDay(3);
+                    const d = new Date(targetDate + 'T00:00:00');
+                    const days = ['Min', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab'];
+                    btn.textContent = `${days[d.getDay()]} ${d.getDate()}/${d.getMonth() + 1}`;
+                }
+                // Store computed date in data attribute for click handler
+                btn.dataset.targetDate = targetDate;
+            });
+        }
+
+        function syncNavUI(dateStr) {
+            _activeDate = dateStr;
+            const pickerFrom = document.getElementById('date-picker-from');
+            const pickerTo = document.getElementById('date-picker-to');
+            
+            // Set both pickers to the same date (single-day mode)
+            if (pickerFrom) pickerFrom.value = dateStr;
+            if (pickerTo) pickerTo.value = dateStr;
+
+            // Highlight matching chip (check if dateStr matches a chip's target date)
+            document.querySelectorAll('#date-nav-bar .dnav-chip').forEach(btn => {
+                const target = btn.dataset.targetDate;
+                btn.classList.toggle('active', target === dateStr);
+            });
+
+            const label = document.getElementById('date-nav-label');
+            if (label) label.textContent = formatDateLabel(dateStr);
+        }
+
+        function syncRangeUI(fromDate, toDate) {
+            const pickerFrom = document.getElementById('date-picker-from');
+            const pickerTo = document.getElementById('date-picker-to');
+            if (pickerFrom) pickerFrom.value = fromDate;
+            if (pickerTo) pickerTo.value = toDate;
+            _activeDate = toDate;
+
+            document.querySelectorAll('#date-nav-bar .dnav-chip').forEach(btn => {
+                const target = btn.dataset.targetDate;
+                btn.classList.toggle('active', target === toDate && fromDate === toDate);
+            });
+
+            const label = document.getElementById('date-nav-label');
+            if (label) {
+                label.textContent = fromDate === toDate
+                    ? formatDateLabel(toDate)
+                    : `${formatDateLabel(fromDate)} → ${formatDateLabel(toDate)}`;
+            }
+        }
+
+        function listTradingDatesInRange(fromDate, toDate) {
+            const out = [];
+            let d = new Date(fromDate + 'T00:00:00');
+            const end = new Date(toDate + 'T00:00:00');
+            while (d <= end) {
+                const s = d.toISOString().split('T')[0];
+                if (isTradingDay(s)) out.push(s);
+                d.setDate(d.getDate() + 1);
+            }
+            return out;
+        }
+
+        function fetchHistForDate(kode, dateStr) {
+            return new Promise((resolve, reject) => {
+                $.getJSON(`${API_BASE}/footprint-raw-hist?kode=${kode}&date=${dateStr}`)
+                    .done(resp => resolve({ dateStr, resp }))
+                    .fail(reject);
+            });
+        }
+
+        function loadDataForDate(kode, dateStr, snapshotBase) {
+            const loadingEl = document.getElementById('date-nav-loading');
+            if (loadingEl) loadingEl.style.display = '';
+
+            syncNavUI(dateStr);
+
+            try {
+                const url = new URL(window.location.href);
+                url.searchParams.set('date', dateStr);
+                history.replaceState(null, '', url.toString());
+            } catch (_) {}
+
+            $.getJSON(`${API_BASE}/footprint-raw-hist?kode=${kode}&date=${dateStr}`, function (histResp) {
+                const fullHistory = histResp.buckets || [];
+                const fullCandles = histResp.candles || [];
+                const tableData = histResp.tableData || fullHistory;
+                const snapshotForDate = { ...(snapshotBase || {}), date: dateStr, candles: fullCandles };
+
+                const dataRowCount = tableData.length || fullHistory.length;
+                const isRepairing = histResp.is_repairing === true || _repairFlagFromSnapshot;
+                const isFallback = histResp.is_fallback === true || _fallbackFlagFromSnapshot;
+                updateRepairStatusDot({ isRepairing, isFallback, dataRowCount });
+
+                renderFootprintTrailFromHistory(kode, snapshotForDate, fullHistory, tableData);
+                renderTimeSeriesTable(snapshotForDate, tableData);
+
+                // Debug logging
+                const isDebugMode = new URLSearchParams(window.location.search).get('debug') === 'true';
+                if (isDebugMode) {
+                    const now = new Date();
+                    const todayStr = now.toISOString().split("T")[0];
+                    console.log(`[DATE-NAV] Loaded date: ${dateStr} | candles: ${fullCandles.length} | rows: ${tableData.length} | bubbles: ${fullHistory.length}`);
+                    console.log(`[DATE-NAV] is_fallback: ${histResp.is_fallback} | is_repairing: ${histResp.is_repairing}`);
+                }
+            }).fail(function () {
+                console.warn("History fetch failed for date:", dateStr);
+                renderFootprintTrailFromHistory(kode, { date: dateStr }, [], []);
+                renderTimeSeriesTable({ date: dateStr }, []);
+            }).always(function () {
+                if (loadingEl) loadingEl.style.display = 'none';
+            });
+        }
+
+        async function loadDataForRange(kode, fromDate, toDate, snapshotBase) {
+            const loadingEl = document.getElementById('date-nav-loading');
+            if (loadingEl) loadingEl.style.display = '';
+
+            let start = fromDate;
+            let end = toDate;
+            if (start > end) {
+                const tmp = start;
+                start = end;
+                end = tmp;
+            }
+
+            syncRangeUI(start, end);
+
+            try {
+                const url = new URL(window.location.href);
+                url.searchParams.set('from', start);
+                url.searchParams.set('to', end);
+                url.searchParams.delete('date');
+                history.replaceState(null, '', url.toString());
+            } catch (_) {}
+
+            const tradingDates = listTradingDatesInRange(start, end);
+            if (!tradingDates.length) {
+                renderFootprintTrailFromHistory(kode, { date: end }, [], []);
+                renderTimeSeriesTable({ date: end }, []);
+                if (loadingEl) loadingEl.style.display = 'none';
+                return;
+            }
+
+            try {
+                const results = await Promise.all(tradingDates.map(d => fetchHistForDate(kode, d)));
+
+                const mergedHistory = [];
+                const mergedCandles = [];
+                const mergedTableData = [];
+                let hasRepairing = false;
+                let hasFallback = false;
+
+                results.forEach(({ resp }) => {
+                    const fullHistory = resp?.buckets || [];
+                    const fullCandles = resp?.candles || [];
+                    const tableData = resp?.tableData || fullHistory;
+                    mergedHistory.push(...fullHistory);
+                    mergedCandles.push(...fullCandles);
+                    mergedTableData.push(...tableData);
+                    hasRepairing = hasRepairing || resp?.is_repairing === true;
+                    hasFallback = hasFallback || resp?.is_fallback === true;
+                });
+
+                mergedHistory.sort((a, b) => (a.x || 0) - (b.x || 0));
+                mergedCandles.sort((a, b) => (a.x || 0) - (b.x || 0));
+                mergedTableData.sort((a, b) => (a.x || 0) - (b.x || 0));
+
+                const snapshotForRange = {
+                    ...(snapshotBase || {}),
+                    date: end,
+                    fromDate: start,
+                    toDate: end,
+                    candles: mergedCandles,
+                };
+
+                updateRepairStatusDot({
+                    isRepairing: hasRepairing || _repairFlagFromSnapshot,
+                    isFallback: hasFallback || _fallbackFlagFromSnapshot,
+                    dataRowCount: mergedTableData.length
+                });
+
+                renderFootprintTrailFromHistory(kode, snapshotForRange, mergedHistory, mergedTableData);
+                renderTimeSeriesTable(snapshotForRange, mergedTableData);
+            } catch (error) {
+                console.warn("History fetch failed for range:", start, end, error);
+                renderFootprintTrailFromHistory(kode, { date: end }, [], []);
+                renderTimeSeriesTable({ date: end }, []);
+            } finally {
+                if (loadingEl) loadingEl.style.display = 'none';
+            }
+        }
+
+        function loadSnapshotAndHistory() {
+            const kode = getKodeFromURL();
+            const mode = getModeFromURL();
+            _currentKode = kode;
+            $('#nav-back-link').attr('href', `broker-summary.html?kode=${kode}`);
+
+            $('#fundflow-link').attr('href', `broker-summary.html?kode=${kode}`);
+            $('#audit-link').attr('href', `broker-summary.html?kode=${kode}#audit`);
+
+            // 1. Load Snapshot (Lightweight Header)
+            $.getJSON(`${API_BASE}/symbol?kode=${encodeURIComponent(kode)}&mode=${encodeURIComponent(mode)}`, function (resp) {
+                const snapshot = resp.snapshot || {};
+                const state = resp.state || null;
+                const isRepairing = resp.is_repairing === true;
+                const isFallback = resp.is_fallback === true;
+                _repairFlagFromSnapshot = isRepairing;
+                _fallbackFlagFromSnapshot = isFallback;
+
+                // Keep UX non-blocking: we only expose repair/fallback as a top-right status dot.
+                $("#fallback-alert").addClass("d-none");
+                updateRepairStatusDot({ isRepairing, isFallback, dataRowCount: Number.MAX_SAFE_INTEGER });
+
+                // Enrich snapshot
+                let haka = snapshot.haka_pct;
+                if ((haka === undefined || haka === null) && typeof snapshot.money_flow === "number") {
+                    haka = Math.round((snapshot.money_flow + 1) * 50);
+                }
+                if (haka === undefined || haka === null || Number.isNaN(haka)) haka = 50;
+
+                let fluk = snapshot.fluktuasi;
+                if ((fluk === undefined || fluk === null) && typeof snapshot.momentum === "number") {
+                    fluk = Number(snapshot.momentum.toFixed(2));
+                }
+                if (fluk === undefined || fluk === null || Number.isNaN(fluk)) fluk = 0;
+
+                const enrichedSnapshot = { ...snapshot, haka_pct: haka, fluktuasi: fluk };
+                _enrichedSnapshotCache = enrichedSnapshot;
+
+                // Render Header immediately
+                renderSnapshot(kode, mode, enrichedSnapshot, state);
+
+                // Show AI button once we have a symbol
+                const aiBar = document.getElementById('ai-analytics-bar');
+                if (aiBar) { aiBar.style.cssText = ''; aiBar.classList.add('d-flex'); }
+
+                // no blocking alert here; the status dot will be validated against actual row count after hist load
+
+                // Determine initial date/range from URL, fallback to snapshot date
+                const urlDate = new URLSearchParams(window.location.search).get('date');
+                const urlFrom = new URLSearchParams(window.location.search).get('from');
+                const urlTo = new URLSearchParams(window.location.search).get('to');
+                const initialDate = urlDate || snapshot.date || new Date().toISOString().split("T")[0];
+
+                // Initialize date pickers with default range
+                const pickerFrom = document.getElementById('date-picker-from');
+                const pickerTo = document.getElementById('date-picker-to');
+                const initialFrom = urlFrom || initialDate;
+                const initialTo = urlTo || initialDate;
+                if (pickerFrom && !pickerFrom.value) pickerFrom.value = initialFrom;
+                if (pickerTo && !pickerTo.value) pickerTo.value = initialTo;
+                
+                console.log('[DATE-NAV] Initial date pickers set:', { from: pickerFrom?.value, to: pickerTo?.value, initialDate });
+
+                // 2. Load history for the initial date/range via date navigator
+                if (initialFrom && initialTo && initialFrom !== initialTo) {
+                    loadDataForRange(kode, initialFrom, initialTo, enrichedSnapshot);
+                } else {
+                    loadDataForDate(kode, initialTo, enrichedSnapshot);
+                }
+
+            }).fail(function (xhr) {
+                console.error("Failed load /symbol:", xhr.status, xhr.responseText);
+                renderFootprintTrailFromHistory(getKodeFromURL(), {}, [], []);
+                renderTimeSeriesTable({}, []);
+            });
+        }
+
+        // ============================================================
+        // DATE NAVIGATOR EVENT WIRING
+        // ============================================================
+        function initDateNav() {
+            console.log('[DATE-NAV] Initializing date navigator');
+            refreshChipLabels();
+
+            document.querySelectorAll('#date-nav-bar .dnav-chip').forEach(btn => {
+                btn.addEventListener('click', function () {
+                    const targetDate = this.dataset.targetDate;
+                    console.log('[DATE-NAV] Chip clicked:', targetDate);
+                    if (targetDate && _currentKode) loadDataForDate(_currentKode, targetDate, _enrichedSnapshotCache);
+                });
+            });
+
+            // Apply button for date range
+            const applyBtn = document.getElementById('dnav-apply');
+            console.log('[DATE-NAV] Apply button:', applyBtn);
+            
+            if (applyBtn) {
+                applyBtn.addEventListener('click', function () {
+                    const fromInput = document.getElementById('date-picker-from');
+                    const toInput = document.getElementById('date-picker-to');
+                    const from = fromInput?.value;
+                    const to = toInput?.value;
+                    
+                    console.log('[DATE-NAV] Apply clicked:', { from, to, kode: _currentKode });
+                    
+                    if (!_currentKode) {
+                        console.warn('[DATE-NAV] No kode loaded yet');
+                        return;
+                    }
+                    
+                    const fromDate = from || to || getOffsetDate(0);
+                    const toDate = to || from || getOffsetDate(0);
+                    console.log('[DATE-NAV] Loading range:', fromDate, toDate);
+
+                    if (fromDate === toDate) {
+                        loadDataForDate(_currentKode, toDate, _enrichedSnapshotCache);
+                    } else {
+                        loadDataForRange(_currentKode, fromDate, toDate, _enrichedSnapshotCache);
+                    }
+                });
+            }
+
+            // Prev / Next arrows (skip weekends & holidays)
+            document.getElementById('dnav-prev')?.addEventListener('click', function () {
+                if (!_activeDate) return;
+                const prevDate = getNextTradingDay(_activeDate, -1);
+                console.log('[DATE-NAV] Prev clicked:', prevDate);
+                if (_currentKode) loadDataForDate(_currentKode, prevDate, _enrichedSnapshotCache);
+            });
+
+            document.getElementById('dnav-next')?.addEventListener('click', function () {
+                if (!_activeDate) return;
+                const today = getOffsetDate(0);
+                if (_activeDate >= today) return; // Can't go to future
+                const nextDate = getNextTradingDay(_activeDate, 1);
+                if (nextDate > today) return; // Don't exceed today
+                console.log('[DATE-NAV] Next clicked:', nextDate);
+                if (_currentKode) loadDataForDate(_currentKode, nextDate, _enrichedSnapshotCache);
+            });
+        }
+
+        $(function () {
+            initDateNav();
+            loadSnapshotAndHistory();
+        });
+        Chart.register(ChartDataLabels);
+
+        /* ── AI Analysis for Intraday page ── */
+        async function runAIAnalysisIntraday(forceRefresh = false) {
+            const symbol = getKodeFromURL();
+            if (!symbol) return alert('Tidak ada emiten yang dipilih.');
+
+            const btn = document.getElementById('btn-ai-analyze');
+            const modal = bootstrap.Modal.getOrCreateInstance(document.getElementById('aiResultModal'));
+            const analysisContent = document.getElementById('ai-analysis-content');
+            const tokenInfo = document.getElementById('ai-token-info');
+            const refreshBtn = document.getElementById('btn-ai-refresh');
+
+            document.getElementById('ai-modal-symbol').textContent = symbol;
+
+            btn.classList.add('analyzing');
+            btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin me-1"></i> Capturing...';
+            refreshBtn.style.display = 'none';
+            tokenInfo.textContent = '';
+            analysisContent.innerHTML = `
+                <div class="text-center py-4">
+                    <div class="spinner-border text-warning" role="status"></div>
+                    <p class="small text-muted mt-2">Mengambil screenshot halaman...</p>
+                </div>
+            `;
+            modal.show();
+
+            try {
+                // Capture chart + table containers
+                const chartEl = document.getElementById('chart-container');
+                const tableEl = document.getElementById('table-container');
+                const captureEl = (chartEl && tableEl) ? document.getElementById('app') : (chartEl || tableEl);
+
+                console.log('[AI] Capturing intraday view...');
+                const blob = await captureElement(captureEl);
+                console.log(`[AI] Captured intraday: ${(blob.size / 1024).toFixed(0)}KB`);
+
+                analysisContent.innerHTML = `
+                    <div class="text-center py-4">
+                        <div class="spinner-border text-warning" role="status"></div>
+                        <p class="small text-muted mt-2">Mengunggah screenshot...</p>
+                    </div>
+                `;
+                btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin me-1"></i> Uploading...';
+
+                const uploaded = await uploadScreenshot(blob, symbol, 'intraday');
+                console.log(`[AI] Uploaded: ${uploaded.key} (${uploaded.size_kb}KB)`);
+
+                analysisContent.innerHTML = `
+                    <div class="text-center py-4">
+                        <div class="spinner-border text-warning" role="status"></div>
+                        <p class="small text-muted mt-2">AI sedang menganalisis...<br>Bisa memakan waktu 15-30 detik.</p>
+                    </div>
+                `;
+                btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin me-1"></i> Analyzing...';
+
+                const aiRebuild = new URLSearchParams(window.location.search).get('ai') === 'rebuild';
+                const forceAI = forceRefresh || aiRebuild;
+
+                const response = await fetch(`${WORKER_BASE_URL}/ai/analyze-broksum`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        symbol,
+                        image_keys: [{ key: uploaded.key, label: uploaded.label }],
+                        from: null,
+                        to: null,
+                        force: forceAI
+                    })
+                });
+
+                const result = await response.json();
+
+                if (!result.ok) {
+                    const errorMessage = result.error || 'AI analysis failed';
+                    const providerErrors = [result.openai, result.grok, result.claude].filter(Boolean);
+                    const providerDetail = providerErrors.length
+                        ? `<div class="small text-muted mt-1">${providerErrors.map(e => escapeHTML(e)).join(' → ')}</div>`
+                        : '';
+                    const rawOutput = result.raw_output
+                        ? `<details class="mt-3"><summary class="small text-muted">Output mentah</summary><pre class="small p-3 rounded">${escapeHTML(result.raw_output)}</pre></details>`
+                        : '';
+                    analysisContent.innerHTML = `
+                        <div class="alert alert-danger">
+                            <i class="fa-solid fa-circle-exclamation me-1"></i>
+                            <strong>Gagal menganalisis:</strong> ${escapeHTML(errorMessage)}
+                            ${providerDetail}
+                        </div>
+                        ${rawOutput}
+                    `;
+                    tokenInfo.textContent = '';
+                    refreshBtn.style.display = '';
+                    return;
+                }
+
+                let analysisData = result.analysis;
+                if (analysisData && typeof analysisData === 'string') {
+                    try { analysisData = JSON.parse(analysisData); } catch (_) { analysisData = null; }
+                }
+
+                if (analysisData && typeof analysisData === 'object') {
+                    analysisContent.innerHTML = renderAnalysisJSON(analysisData, result.screenshots);
+                } else {
+                    const rawOutput = result.analysis_raw || '';
+                    analysisContent.innerHTML = `
+                        <div class="alert alert-warning">
+                            <i class="fa-solid fa-triangle-exclamation me-1"></i>
+                            <strong>Analisis belum tersedia.</strong> Model tidak mengembalikan JSON valid.
+                        </div>
+                        ${rawOutput ? `<details class="mt-3"><summary class="small text-muted">Output mentah</summary><pre class="small p-3 rounded">${escapeHTML(rawOutput)}</pre></details>` : ''}
+                    `;
+                }
+
+                if (result.usage) {
+                    const _recData = analysisData?.recommendation || analysisData?.kesimpulan_rekomendasi || {};
+                    const rawC = _recData.confidence ?? _recData.tingkat_keyakinan ?? analysisData?.meta?.confidence ?? null;
+                    let confStr = '';
+                    if (rawC != null) {
+                        if (typeof rawC === 'number' && !isNaN(rawC) && rawC > 0) {
+                            confStr = ` | Confidence: ${(rawC > 1 ? rawC : rawC * 100).toFixed(0)}%`;
+                        } else if (typeof rawC === 'string') {
+                            const pct = parseFloat(rawC.replace('%', ''));
+                            confStr = !isNaN(pct) && pct > 0
+                                ? ` | Confidence: ${(pct > 1 ? pct : pct * 100).toFixed(0)}%`
+                                : rawC ? ` | Confidence: ${rawC}` : '';
+                        }
+                    }
+                    tokenInfo.textContent = `Model: ${result.model} | Tokens: ${result.usage.total_tokens?.toLocaleString() || 'N/A'}${confStr}`;
+                }
+
+                // Show footer
+                document.querySelector('#aiResultModal .modal-footer').classList.remove('d-none');
+                refreshBtn.style.display = '';
+
+            } catch (error) {
+                console.error('[AI] Error:', error);
+                analysisContent.innerHTML = `
+                    <div class="alert alert-danger">
+                        <i class="fa-solid fa-circle-exclamation me-1"></i>
+                        <strong>Gagal menganalisis:</strong> ${error.message}
+                    </div>
+                    <p class="text-muted small">Pastikan koneksi internet stabil dan coba lagi.</p>
+                `;
+            } finally {
+                btn.classList.remove('analyzing');
+                btn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles me-1"></i> AI Analysis';
+            }
+        }
+
+
+    </script>
+
+    <div id="search-panel">
+        <div class="mb-4">
+            <input type="text" id="search-input" class="search-input" placeholder="Masukkan Kode (e.g. BBRI)"
+                autocomplete="off">
+        </div>
+
+        <div>
+            <p class="small opacity-75 mb-2 fw-bold">RIWAYAT PENCARIAN</p>
+            <div id="search-history-list">
+                <!-- Populated by JS -->
+            </div>
+        </div>
+    </div>
+</body>
+
+</html>

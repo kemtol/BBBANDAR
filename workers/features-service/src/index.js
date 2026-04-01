@@ -37,6 +37,38 @@ const contextCache = {
     ttlMs: 5 * 60 * 1000  // Cache for 5 minutes
 };
 
+const PROTECTED_HTTP_PATHS = new Set([
+    "/aggregate",
+    "/aggregate-footprint",
+    "/trigger-all",
+    "/foreign-flow-scanner"
+]);
+
+function isLocalDebugHost(hostname = "") {
+    return hostname === "localhost" || hostname === "127.0.0.1";
+}
+
+function getBearerToken(req) {
+    const authHeader = String(req.headers.get("authorization") || "").trim();
+    if (!authHeader.toLowerCase().startsWith("bearer ")) return "";
+    return authHeader.slice(7).trim();
+}
+
+function isProtectedRequestAuthorized(req, env) {
+    const configuredToken = String(env.INTERNAL_API_TOKEN || "").trim();
+    let hostname = "";
+    try {
+        hostname = new URL(req.url).hostname;
+    } catch (_) { }
+
+    // Keep local/dev ergonomics, but fail-closed in non-local runtime when token is missing.
+    if (!configuredToken) return isLocalDebugHost(hostname);
+
+    const bearerToken = getBearerToken(req);
+    const headerToken = String(req.headers.get("x-internal-token") || "").trim();
+    return bearerToken === configuredToken || headerToken === configuredToken;
+}
+
 export default {
     async scheduled(event, env, ctx) {
         // CRON HANDLER
@@ -617,7 +649,8 @@ export default {
         '2025-06-01','2025-06-06','2025-06-27','2025-09-05',
         '2025-12-25','2025-12-26',
         // 2026
-        '2026-01-01','2026-02-16','2026-02-17','2026-03-11','2026-03-31',
+        '2026-01-01','2026-02-16','2026-02-17','2026-03-11',
+        '2026-03-18','2026-03-19','2026-03-20','2026-03-23','2026-03-24',
         '2026-04-01','2026-04-02','2026-04-03','2026-04-10','2026-05-01',
         '2026-05-21','2026-06-01','2026-06-08','2026-06-29','2026-08-17',
         '2026-09-08','2026-12-25','2026-12-26'
@@ -1971,6 +2004,17 @@ export default {
     async fetch(req, env, ctx) {
         try {
             const url = new URL(req.url);
+            const isProtectedPath = PROTECTED_HTTP_PATHS.has(url.pathname);
+            if (isProtectedPath && !isProtectedRequestAuthorized(req, env)) {
+                const hasConfiguredToken = String(env.INTERNAL_API_TOKEN || "").trim().length > 0;
+                if (!hasConfiguredToken) {
+                    return new Response("Protected endpoint disabled: configure INTERNAL_API_TOKEN", { status: 503 });
+                }
+                return new Response("Unauthorized", {
+                    status: 401,
+                    headers: { "WWW-Authenticate": 'Bearer realm="features-service"' }
+                });
+            }
 
             // Manual Trigger for Aggregation
             if (url.pathname === "/aggregate") {

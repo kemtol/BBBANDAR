@@ -130,6 +130,7 @@ async function initIndexMode() {
 
     if (intradayRefreshTimer) clearInterval(intradayRefreshTimer);
     intradayRefreshTimer = setInterval(async () => {
+        if (document.hidden) return;
         const totalRows = currentCandidates.length;
         if (!totalRows) return;
         const startIdx = (screenerPage - 1) * SCREENER_PAGE_SIZE;
@@ -152,7 +153,9 @@ const orderflowInFlight = new Set();
 let probRefreshTimer = null;
 let intradayRefreshTimer = null;
 const SCREENER_PAGE_SIZE = 100;
-const ORDERFLOW_CACHE_TTL_MS = 45 * 1000;
+const ORDERFLOW_CACHE_TTL_MS = 3 * 60 * 1000;
+const ORDERFLOW_HYDRATE_MAX_ROWS = 20;
+const ORDERFLOW_SNAPSHOT_BATCH_SIZE = 40;
 const TOM2_ORDERFLOW_MAX_AGE_MS = 15 * 60 * 1000;
 const SWG_SCREENER_MAX_AGE_MS = 72 * 60 * 60 * 1000;
 const PROB_MISSING_SORT_VALUE = -1;
@@ -386,12 +389,12 @@ async function loadScreenerData() {
         $('#loading-indicator').show();
         $('#tbody-index').html('');
 
-        const response = await fetch(`${WORKER_BASE_URL}/screener-accum?_ts=${Date.now()}`);
+        const response = await fetch(`${WORKER_BASE_URL}/screener-accum?include_orderflow=false`);
         if (!response.ok) {
             throw new Error(`screener-accum HTTP ${response.status}`);
         }
         const data = await response.json();
-        const generatedAtRaw = data?.generated_at || data?.updated_at || data?.ts || null;
+        const generatedAtRaw = data?.generatedAt || data?.generated_at || data?.updated_at || data?.ts || null;
         const generatedAtMs = Date.parse(generatedAtRaw || '');
         lastScreenerGeneratedAtMs = Number.isFinite(generatedAtMs) ? generatedAtMs : Date.now();
 
@@ -2496,41 +2499,71 @@ function renderScreenerTable(candidates) {
     hydrateOrderflowForVisibleRows(candidates);
 }
 
-async function fetchOrderflowSnapshotForSymbol(symbol) {
-    if (!symbol) return null;
-    const key = String(symbol).toUpperCase();
-    if (orderflowLiveCache.has(key)) {
-        const cached = orderflowLiveCache.get(key);
-        const ageMs = Date.now() - (cached?.ts || 0);
-        if (ageMs >= 0 && ageMs < ORDERFLOW_CACHE_TTL_MS) {
-            return cached?.snapshot ?? null;
-        }
+function getFreshOrderflowCache(symbol) {
+    const key = String(symbol || '').toUpperCase();
+    if (!key || !orderflowLiveCache.has(key)) return { hit: false, snapshot: null };
+    const cached = orderflowLiveCache.get(key);
+    const ageMs = Date.now() - (cached?.ts || 0);
+    if (ageMs >= 0 && ageMs < ORDERFLOW_CACHE_TTL_MS) {
+        return { hit: true, snapshot: cached?.snapshot ?? null };
     }
-    if (orderflowInFlight.has(key)) return null;
-
-    orderflowInFlight.add(key);
-    try {
-        const today = _getLastTradingDayString();
-        const url = `${WORKER_BASE_URL}/cache-summary?symbol=${encodeURIComponent(key)}&from=${today}&to=${today}&cache=default&_ts=${Date.now()}`;
-        const resp = await fetch(url);
-        if (!resp.ok) {
-            orderflowLiveCache.set(key, { snapshot: null, ts: Date.now() });
-            return null;
-        }
-        const data = await resp.json();
-        const snapshot = data?.orderflow || null;
-        orderflowLiveCache.set(key, { snapshot, ts: Date.now() });
-        return snapshot;
-    } catch (e) {
-        console.warn('[orderflow-hydrate] failed:', key, e);
-        orderflowLiveCache.set(key, { snapshot: null, ts: Date.now() });
-        return null;
-    } finally {
-        orderflowInFlight.delete(key);
-    }
+    return { hit: false, snapshot: null };
 }
 
-function applyOrderflowSnapshotToCandidate(item, snapshot) {
+async function fetchOrderflowSnapshotsForSymbols(symbols) {
+    const normalized = [...new Set(
+        (Array.isArray(symbols) ? symbols : [])
+            .map(symbol => String(symbol || '').trim().toUpperCase())
+            .filter(symbol => /^[A-Z]{2,6}$/.test(symbol))
+    )];
+    if (!normalized.length) return {};
+
+    const snapshots = {};
+    const pending = [];
+
+    for (const symbol of normalized) {
+        const cached = getFreshOrderflowCache(symbol);
+        if (cached.hit) {
+            snapshots[symbol] = cached.snapshot;
+            continue;
+        }
+        if (orderflowInFlight.has(symbol)) continue;
+        orderflowInFlight.add(symbol);
+        pending.push(symbol);
+    }
+
+    try {
+        for (let i = 0; i < pending.length; i += ORDERFLOW_SNAPSHOT_BATCH_SIZE) {
+            const chunk = pending.slice(i, i + ORDERFLOW_SNAPSHOT_BATCH_SIZE);
+            const url = `${WORKER_BASE_URL}/orderflow/snapshots?symbols=${encodeURIComponent(chunk.join(','))}`;
+            try {
+                const resp = await fetch(url);
+                const payload = resp.ok ? await resp.json() : null;
+                const snapshotMap = payload?.snapshots || {};
+                const now = Date.now();
+
+                for (const symbol of chunk) {
+                    const snapshot = snapshotMap[symbol] || null;
+                    orderflowLiveCache.set(symbol, { snapshot, ts: now });
+                    snapshots[symbol] = snapshot;
+                }
+            } catch (e) {
+                console.warn('[orderflow-bulk] failed:', chunk.join(','), e);
+                const now = Date.now();
+                for (const symbol of chunk) {
+                    orderflowLiveCache.set(symbol, { snapshot: null, ts: now });
+                    snapshots[symbol] = null;
+                }
+            }
+        }
+    } finally {
+        pending.forEach(symbol => orderflowInFlight.delete(symbol));
+    }
+
+    return snapshots;
+}
+
+function applyOrderflowSnapshotToCandidate(item, snapshot, opts = {}) {
     if (!item || !snapshot) return;
 
     // When snapshot is a fallback-day (yesterday's stale data) and market is open,
@@ -2600,7 +2633,9 @@ function applyOrderflowSnapshotToCandidate(item, snapshot) {
         if (snapshot.quadrant) item.order_quadrant = snapshot.quadrant;
         console.log(`[orderflow-hydrate] ${item.symbol}: stale fallback (${snapshot.trading_date}) — kept price/growth, applied metrics`);
     }
-    scheduleProbRefreshAfterOrderflow();
+    if (opts.scheduleProbRefresh !== false) {
+        scheduleProbRefreshAfterOrderflow();
+    }
 }
 
 function inferOrderQuadrant(deltaPct, momPct) {
@@ -3092,7 +3127,8 @@ const IDX_HOLIDAYS = new Set([
     '2025-06-01','2025-06-06','2025-06-27','2025-09-05',
     '2025-12-25','2025-12-26',
     // 2026
-    '2026-01-01','2026-02-16','2026-02-17','2026-03-11','2026-03-31',
+    '2026-01-01','2026-02-16','2026-02-17','2026-03-11',
+    '2026-03-18','2026-03-19','2026-03-20','2026-03-23','2026-03-24',
     '2026-04-01','2026-04-02','2026-04-03','2026-04-10','2026-05-01',
     '2026-05-21','2026-06-01','2026-06-08','2026-06-29','2026-08-17',
     '2026-09-08','2026-12-25','2026-12-26'
@@ -3188,7 +3224,7 @@ async function prefillIntradayFromFootprintSummary(candidates, options = {}) {
     if (!Array.isArray(candidates) || !candidates.length) return;
 
     try {
-        const resp = await fetch(`${WORKER_BASE_URL}/footprint/summary?_ts=${Date.now()}`);
+        const resp = await fetch(`${WORKER_BASE_URL}/footprint/summary`);
         if (!resp.ok) return;
         const payload = await resp.json();
         const items = Array.isArray(payload?.items) ? payload.items : [];
@@ -3322,9 +3358,12 @@ function updateOrderflowCells(symbol, item) {
 
 async function hydrateOrderflowForVisibleRows(candidates) {
     if (!Array.isArray(candidates) || !candidates.length) return;
+    if (document.hidden) return;
+    const visibleRows = candidates.slice(0, ORDERFLOW_HYDRATE_MAX_ROWS);
+    if (!visibleRows.length) return;
 
     const now = Date.now();
-    const targets = candidates.filter(c => {
+    const targets = visibleRows.filter(c => {
         if (!c || !c.symbol) return false;
         if (c.orderflow == null) return true;
         const fetchedAt = Number(c._orderflowFetchedAt || 0);
@@ -3332,25 +3371,23 @@ async function hydrateOrderflowForVisibleRows(candidates) {
     });
     if (!targets.length) return;
 
-    const concurrency = 6;
-    let cursor = 0;
+    const snapshotMap = await fetchOrderflowSnapshotsForSymbols(targets.map(item => item.symbol));
+    let changed = 0;
 
-    const worker = async () => {
-        while (cursor < targets.length) {
-            const i = cursor++;
-            const item = targets[i];
-            const symbol = String(item.symbol || '').toUpperCase();
-            if (!symbol) continue;
+    for (const item of targets) {
+        const symbol = String(item?.symbol || '').toUpperCase();
+        if (!symbol) continue;
+        const snapshot = snapshotMap[symbol];
+        if (!snapshot) continue;
 
-            const snapshot = await fetchOrderflowSnapshotForSymbol(symbol);
-            if (!snapshot) continue;
+        applyOrderflowSnapshotToCandidate(item, snapshot, { scheduleProbRefresh: false });
+        updateOrderflowCells(symbol, item);
+        changed += 1;
+    }
 
-            applyOrderflowSnapshotToCandidate(item, snapshot);
-            updateOrderflowCells(symbol, item);
-        }
-    };
-
-    await Promise.all(Array.from({ length: Math.min(concurrency, targets.length) }, () => worker()));
+    if (changed > 0) {
+        scheduleProbRefreshAfterOrderflow();
+    }
 }
 
 function applyColumnVisibility() {
@@ -3430,7 +3467,7 @@ async function loadZScoreFeatures(symbol) {
         const startDate = new Date();
         startDate.setDate(startDate.getDate() - 30);
         
-        const cacheUrl = `${WORKER_BASE_URL}/cache-summary?symbol=${symbol}&from=${startDate.toISOString().split('T')[0]}&to=${endDate.toISOString().split('T')[0]}`;
+        const cacheUrl = `${WORKER_BASE_URL}/cache-summary?symbol=${symbol}&from=${startDate.toISOString().split('T')[0]}&to=${endDate.toISOString().split('T')[0]}&include_orderflow=false`;
         console.log(`[ZScore] Fetching: ${cacheUrl}`);
         
         const cacheResp = await fetch(cacheUrl);
@@ -3467,7 +3504,7 @@ async function loadZScoreFeatures(symbol) {
 
 async function fetchAccumItemBySymbol(symbol) {
     try {
-        const resp = await fetch(`${WORKER_BASE_URL}/screener-accum`);
+        const resp = await fetch(`${WORKER_BASE_URL}/screener-accum?include_orderflow=false`);
         if (!resp.ok) return null;
         const data = await resp.json();
         if (!data || !Array.isArray(data.items)) return null;
@@ -3925,7 +3962,7 @@ async function loadDetailData(symbol, start, end, reload = false, retryCount = 0
     const toDate = end.toISOString().split('T')[0];
 
     try {
-        let url = `${WORKER_BASE_URL}/cache-summary?symbol=${symbol}&from=${fromDate}&to=${toDate}`;
+        let url = `${WORKER_BASE_URL}/cache-summary?symbol=${symbol}&from=${fromDate}&to=${toDate}&include_orderflow=true`;
         if (reload) url += '&reload=true';
 
         console.log(`[API] Fetching: ${url}`);
@@ -3938,10 +3975,8 @@ async function loadDetailData(symbol, start, end, reload = false, retryCount = 0
         console.log(`[API] history length: ${result.history ? result.history.length : 0}`);
 
         // 1. COMPLETENESS & BACKFILL CHECK (BEFORE RENDERING)
-        // Calculate expected trading days (rough estimate: 70% of days)
-        const diffTime = Math.abs(end - start);
-        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-        const expectedDays = Math.floor(diffDays * 0.7);
+        // Use backend's expected_days if available (more accurate with holidays), else calculate
+        const expectedDays = result.expected_days || Math.floor(Math.abs(end - start) / (1000 * 60 * 60 * 24) * 0.7);
         const actualDays = result.history ? result.history.length : 0;
 
         const completeness = expectedDays > 0 ? actualDays / expectedDays : 0;
@@ -4993,7 +5028,7 @@ async function fetchBrokerRange(symbol, days) {
     start.setDate(end.getDate() - days);
     const from = start.toISOString().split('T')[0];
     const to = end.toISOString().split('T')[0];
-    const resp = await fetch(`${WORKER_BASE_URL}/cache-summary?symbol=${symbol}&from=${from}&to=${to}`);
+    const resp = await fetch(`${WORKER_BASE_URL}/cache-summary?symbol=${symbol}&from=${from}&to=${to}&include_orderflow=true`);
     return resp.json();
 }
 

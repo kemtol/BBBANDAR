@@ -49,10 +49,10 @@
  * - Returns brokers table as ARRAY
  * - Reads: D1 brokers
  *
- * GET /cache-summary?symbol=BBRI&from=YYYY-MM-DD&to=YYYY-MM-DD[&cache=default|rebuild|off][&reload=true][&include_orderflow=false]
+ * GET /cache-summary?symbol=BBRI&from=YYYY-MM-DD&to=YYYY-MM-DD[&cache=default|rebuild|off][&reload=true][&include_orderflow=true]
  * - Range broker summary aggregation + top brokers + aggregated foreign/retail/local
- * - Cache read/write (R2): broker/summary/v4/{symbol}/{from}_{to}.json
- * - If include_orderflow (default true): attaches /orderflow snapshot (D1 temp_footprint_consolidate + daily_features)
+ * - Cache read/write (R2): broker/summary/v7/{symbol}/{from}_{to}.json
+ * - If include_orderflow=true: attaches /orderflow snapshot (D1 temp_footprint_consolidate + daily_features)
  * - TRIGGERS (indirect): if data empty/incomplete -> env.BROKSUM_SERVICE auto-backfill (fire-and-forget)
  * - Writes (derived): SSSAHAM_EMITEN cache
  *
@@ -162,6 +162,71 @@ function withCORS(resp) {
   });
 }
 
+const BROKERS_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
+const brokersReferenceCache = {
+  rows: null,
+  byCode: null,
+  fetchedAt: 0,
+  inFlight: null
+};
+
+function isBrokersReferenceFresh() {
+  return Array.isArray(brokersReferenceCache.rows)
+    && brokersReferenceCache.rows.length > 0
+    && (Date.now() - brokersReferenceCache.fetchedAt) < BROKERS_CACHE_TTL_MS
+    && brokersReferenceCache.byCode
+    && typeof brokersReferenceCache.byCode === "object";
+}
+
+function buildBrokersCodeMap(rows = []) {
+  const map = Object.create(null);
+  for (const row of rows) {
+    const code = String(row?.code || "").trim();
+    if (!code) continue;
+    map[code] = row;
+  }
+  return map;
+}
+
+async function loadBrokersReferenceFromD1(env) {
+  const { results } = await env.SSSAHAM_DB.prepare("SELECT * FROM brokers").all();
+  const rows = Array.isArray(results) ? results : [];
+  const byCode = buildBrokersCodeMap(rows);
+  brokersReferenceCache.rows = rows;
+  brokersReferenceCache.byCode = byCode;
+  brokersReferenceCache.fetchedAt = Date.now();
+  return { rows, byCode };
+}
+
+async function getBrokersReference(env) {
+  if (isBrokersReferenceFresh()) {
+    return {
+      rows: brokersReferenceCache.rows,
+      byCode: brokersReferenceCache.byCode
+    };
+  }
+
+  if (!env?.SSSAHAM_DB) return { rows: [], byCode: Object.create(null) };
+
+  if (!brokersReferenceCache.inFlight) {
+    brokersReferenceCache.inFlight = loadBrokersReferenceFromD1(env)
+      .finally(() => {
+        brokersReferenceCache.inFlight = null;
+      });
+  }
+  return brokersReferenceCache.inFlight;
+}
+
+async function getBrokersRowsCached(env) {
+  const { rows } = await getBrokersReference(env);
+  return rows;
+}
+
+async function getBrokersMapCached(env) {
+  const { byCode } = await getBrokersReference(env);
+  return Object.assign(Object.create(null), byCode || {});
+}
+
 function shouldRepairFootprint({ candles, dateStr, completion, missingSessionHours, brokenFound }) {
   const nowWIB = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Jakarta" }));
   const todayWIB = `${nowWIB.getFullYear()}-${String(nowWIB.getMonth() + 1).padStart(2, "0")}-${String(nowWIB.getDate()).padStart(2, "0")}`;
@@ -260,7 +325,8 @@ const IDX_HOLIDAYS = new Set([
   '2025-06-01','2025-06-06','2025-06-27','2025-09-05',
   '2025-12-25','2025-12-26',
   // 2026
-  '2026-01-01','2026-02-16','2026-02-17','2026-03-11','2026-03-31',
+  '2026-01-01','2026-02-16','2026-02-17','2026-03-11',
+  '2026-03-18','2026-03-19','2026-03-20','2026-03-23','2026-03-24',
   '2026-04-01','2026-04-02','2026-04-03','2026-04-10','2026-05-01',
   '2026-05-21','2026-06-01','2026-06-08','2026-06-29','2026-08-17',
   '2026-09-08','2026-12-25','2026-12-26'
@@ -1837,33 +1903,59 @@ async function calculateRangeData(env, ctx, symbol, startDate, endDate) {
   const errors = [];
 
   // 0. Fetch Brokers Mapping
-  let brokersMap = {};
+  let brokersMap = Object.create(null);
   try {
-    const { results } = await env.SSSAHAM_DB.prepare("SELECT * FROM brokers").all();
-    if (results) {
-      results.forEach(b => brokersMap[b.code] = b);
-    }
+    brokersMap = await getBrokersMapCached(env);
   } catch (e) {
     console.error("Error fetching brokers mapping:", e);
   }
 
   const start = new Date(startDate);
-  const end = new Date(endDate);
+  let end = new Date(endDate);
 
-  // Build list of trading days
-  const tradingDays = [];
-  for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-    const dateStr = d.toISOString().split('T')[0];
-    if (isNonTradingDayUTC(dateStr)) continue;
-    tradingDays.push(dateStr);
+  // ── EOD Availability Check: Data only available after 16:00 WIB (09:00 UTC) ──
+  // If end date is today and before EOD cutoff, adjust to previous trading day
+  const now = new Date();
+  const todayStr = now.toISOString().split('T')[0];
+  const endStr = end.toISOString().split('T')[0];
+  
+  if (endStr === todayStr) {
+    // WIB = UTC+7, so 16:00 WIB = 09:00 UTC
+    const currentHourUTC = now.getUTCHours();
+    const isBeforeEOD = currentHourUTC < 9; // Before 09:00 UTC = before 16:00 WIB
+    
+    if (isBeforeEOD) {
+      // Before market close, yesterday is the latest available EOD data
+      const prevTrading = prevTradingDayUTC(todayStr);
+      console.log(`[EOD CHECK] Before 16:00 WIB, adjusting end date: ${endStr} -> ${prevTrading}`);
+      end = new Date(prevTrading);
+    }
+  } else if (end > new Date(todayStr + 'T23:59:59Z')) {
+    // End date is in the future, cap to today
+    console.log(`[FUTURE DATE] Capping end date to today: ${endStr} -> ${todayStr}`);
+    end = new Date(todayStr);
   }
 
-  // ── Parallel R2 reads for all trading days ──
+  // Build weekday candidates first.
+  // Holiday filtering is applied later with data-aware override:
+  // if a date is marked holiday but has valid broker rows in R2, we still treat it as a trading day.
+  const candidateDays = [];
+  for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+    const dateStr = d.toISOString().split('T')[0];
+    if (isWeekendUTC(dateStr)) continue;
+    candidateDays.push(dateStr);
+  }
+
+  // ── Parallel R2 reads for all weekday candidates ──
   const r2Results = await Promise.all(
-    tradingDays.map(async (dateStr) => {
-      const key = `${symbol}/${dateStr}.json`;
+    candidateDays.map(async (dateStr) => {
+      const keyLegacy = `${symbol}/${dateStr}.json`;
+      const keyIpot = `${symbol}/ipot/${dateStr}.json`;
       try {
-        const object = await env.RAW_BROKSUM.get(key);
+        let object = await env.RAW_BROKSUM.get(keyLegacy);
+        if (!object) {
+          object = await env.RAW_BROKSUM.get(keyIpot);
+        }
         if (!object) return { dateStr, data: null };
         const fullOuter = await object.json();
         return { dateStr, data: fullOuter?.data || null };
@@ -1983,27 +2075,31 @@ async function calculateRangeData(env, ctx, symbol, startDate, endDate) {
     results.push({ date: r.dateStr, data: summary });
   }
 
-  // 6. On-Demand Backfill Trigger (If results empty)
-  // Logic: If user requests data < 30 days ago, and we have 0 results, trigger backfill.
   // 6. On-Demand Backfill Trigger (If data incomplete or empty)
-  // Calculate expected trading days (rough estimate: 70% of calendar days)
-  const diffTime = Math.abs(end - start);
-  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-  const expectedTradingDays = Math.floor(diffDays * 0.7); // ~5 days per week
+  // Data-aware expected trading day count:
+  // - regular weekdays are expected trading days
+  // - holiday dates are expected only if they actually have valid broker rows
+  const expectedTradingDays = r2Results.reduce((acc, r) => {
+    const hasRows = hasBrokerRows(r?.data?.broker_summary);
+    const shouldCount = !isHolidayUTC(r.dateStr) || hasRows;
+    return acc + (shouldCount ? 1 : 0);
+  }, 0);
   const actualDays = results.length;
   const completeness = expectedTradingDays > 0 ? actualDays / expectedTradingDays : 0;
+  const hasTradingExpectation = expectedTradingDays > 0;
 
-  console.log(`[DATA CHECK] ${symbol}: Expected ${expectedTradingDays}, Got ${actualDays}, Completeness: ${(completeness * 100).toFixed(1)}%`);
+  console.log(`[DATA CHECK] ${symbol}: Expected ${expectedTradingDays} trading days, Got ${actualDays}, Completeness: ${(completeness * 100).toFixed(1)}%`);
 
-  // Trigger backfill if EMPTY or INCOMPLETE
-  if (results.length === 0 || completeness < 0.7) { // Less than 70% complete
+  // Trigger backfill if EMPTY or severely INCOMPLETE (< 25%)
+  // Lowered threshold to 25% to handle holiday periods with missing data gracefully
+  if (hasTradingExpectation && (results.length === 0 || completeness < 0.25)) { // Less than 25% complete
     if (env.BROKSUM_SERVICE) {
       const reason = results.length === 0 ? 'empty' : `incomplete (${(completeness * 100).toFixed(1)}%)`;
       console.log(`[BACKFILL] Triggering for ${symbol}: ${reason}`);
 
       // Fire & Forget
       const p = env.BROKSUM_SERVICE.fetch(
-        `http://internal/auto-backfill?symbol=${encodeURIComponent(symbol)}&days=90&force=false`
+        `http://internal/auto-backfill?symbol=${encodeURIComponent(symbol)}&days=90&force=false&key=${env.INTERNAL_KEY || 'default'}`
       ).catch(e => console.error("Backfill Trigger Failed:", e));
 
       if (ctx?.waitUntil) ctx.waitUntil(p);
@@ -2069,7 +2165,7 @@ async function calculateRangeData(env, ctx, symbol, startDate, endDate) {
   aggLocal.net = aggLocal.buy - aggLocal.sell;
 
   // Determine backfill status for Partial Data
-  const isIncomplete = completeness < 0.7;
+  const isIncomplete = hasTradingExpectation && completeness < 0.25;
 
   return {
     backfill_active: isIncomplete ? true : false,
@@ -2644,7 +2740,7 @@ async function getOrderflowSnapshot(env, symbol) {
   }
 }
 
-async function getOrderflowSnapshotMap(env) {
+async function getOrderflowSnapshotMap(env, requestedSymbols = null) {
   if (!env?.SSSAHAM_DB) return {};
 
   const window = await resolveOrderflowWindow(env);
@@ -2653,14 +2749,45 @@ async function getOrderflowSnapshotMap(env) {
   const processedStatsMap = await fetchProcessedDailyStatsMap(env, dateStr);
   const prevDateStr = prevTradingDayUTC(dateStr);
   const prevProcessedStatsMap = await fetchProcessedDailyStatsMap(env, prevDateStr);
+  const normalizedSymbols = Array.isArray(requestedSymbols)
+    ? [...new Set(
+      requestedSymbols
+        .map(symbol => String(symbol || "").trim().toUpperCase())
+        .filter(symbol => /^[A-Z]{2,6}$/.test(symbol))
+    )]
+    : [];
+  const symbolFilterSet = normalizedSymbols.length ? new Set(normalizedSymbols) : null;
+  const QUERY_SYMBOL_CHUNK = 40;
 
   try {
-    const { results: rows = [] } = await env.SSSAHAM_DB.prepare(`
-      SELECT ticker, time_key, open, close, vol, delta, high, low
-      FROM temp_footprint_consolidate
-      WHERE date = ? AND time_key >= ? AND time_key <= ?
-      ORDER BY ticker ASC, time_key ASC
-    `).bind(dateStr, startTs, endTs).all();
+    let rows = [];
+    if (normalizedSymbols.length) {
+      for (let i = 0; i < normalizedSymbols.length; i += QUERY_SYMBOL_CHUNK) {
+        const chunk = normalizedSymbols.slice(i, i + QUERY_SYMBOL_CHUNK);
+        const placeholders = chunk.map(() => "?").join(",");
+        const { results: chunkRows = [] } = await env.SSSAHAM_DB.prepare(`
+          SELECT ticker, time_key, open, close, vol, delta, high, low
+          FROM temp_footprint_consolidate
+          WHERE date = ? AND time_key >= ? AND time_key <= ? AND ticker IN (${placeholders})
+          ORDER BY ticker ASC, time_key ASC
+        `).bind(dateStr, startTs, endTs, ...chunk).all();
+        rows.push(...chunkRows);
+      }
+      rows.sort((a, b) => {
+        const ta = String(a?.ticker || "");
+        const tb = String(b?.ticker || "");
+        if (ta === tb) return Number(a?.time_key || 0) - Number(b?.time_key || 0);
+        return ta.localeCompare(tb);
+      });
+    } else {
+      const { results: allRows = [] } = await env.SSSAHAM_DB.prepare(`
+        SELECT ticker, time_key, open, close, vol, delta, high, low
+        FROM temp_footprint_consolidate
+        WHERE date = ? AND time_key >= ? AND time_key <= ?
+        ORDER BY ticker ASC, time_key ASC
+      `).bind(dateStr, startTs, endTs).all();
+      rows = allRows;
+    }
 
     if (!rows.length) return {};
 
@@ -2706,17 +2833,38 @@ async function getOrderflowSnapshotMap(env) {
 
     const ctxMap = new Map();
     try {
-      const { results: ctxRows = [] } = await env.SSSAHAM_DB.prepare(`
-        SELECT d.ticker, d.state as hist_state, d.z_ngr as hist_z_ngr
-        FROM daily_features d
-        INNER JOIN (
-          SELECT ticker, MAX(date) as max_date
-          FROM daily_features
-          WHERE date < ?
-          GROUP BY ticker
-        ) m
-          ON d.ticker = m.ticker AND d.date = m.max_date
-      `).bind(dateStr).all();
+      let ctxRows = [];
+      if (normalizedSymbols.length) {
+        for (let i = 0; i < normalizedSymbols.length; i += QUERY_SYMBOL_CHUNK) {
+          const chunk = normalizedSymbols.slice(i, i + QUERY_SYMBOL_CHUNK);
+          const placeholders = chunk.map(() => "?").join(",");
+          const { results: ctxChunkRows = [] } = await env.SSSAHAM_DB.prepare(`
+            SELECT d.ticker, d.state as hist_state, d.z_ngr as hist_z_ngr
+            FROM daily_features d
+            INNER JOIN (
+              SELECT ticker, MAX(date) as max_date
+              FROM daily_features
+              WHERE date < ? AND ticker IN (${placeholders})
+              GROUP BY ticker
+            ) m
+              ON d.ticker = m.ticker AND d.date = m.max_date
+          `).bind(dateStr, ...chunk).all();
+          ctxRows.push(...ctxChunkRows);
+        }
+      } else {
+        const { results: allCtxRows = [] } = await env.SSSAHAM_DB.prepare(`
+          SELECT d.ticker, d.state as hist_state, d.z_ngr as hist_z_ngr
+          FROM daily_features d
+          INNER JOIN (
+            SELECT ticker, MAX(date) as max_date
+            FROM daily_features
+            WHERE date < ?
+            GROUP BY ticker
+          ) m
+            ON d.ticker = m.ticker AND d.date = m.max_date
+        `).bind(dateStr).all();
+        ctxRows = allCtxRows;
+      }
 
       for (const c of ctxRows) {
         const t = String(c?.ticker || "").toUpperCase();
@@ -2732,6 +2880,7 @@ async function getOrderflowSnapshotMap(env) {
 
     const out = {};
     for (const [ticker, agg] of aggMap.entries()) {
+      if (symbolFilterSet && !symbolFilterSet.has(ticker)) continue;
       if (!agg.total_vol || agg.total_vol <= 0 || !agg.open || !agg.close) continue;
 
       const hybrid = calculateHybridItem({
@@ -3442,7 +3591,7 @@ export default {
 
         // Normal case: return cached data
         const headers = new Headers();
-        headers.set("Cache-Control", "no-cache, no-store, must-revalidate"); // Force fresh on every request
+        headers.set("Cache-Control", "public, max-age=15, stale-while-revalidate=45");
         headers.set("Access-Control-Allow-Origin", "*");
         headers.set("Content-Type", "application/json");
 
@@ -4233,12 +4382,11 @@ export default {
 
           // Filter stocks by last 2 days foreign+local positive
           const filteredItems = [];
-          const brokersMap = {};
+          let brokersMap = Object.create(null);
 
           // Fetch brokers mapping
           try {
-            const { results } = await env.SSSAHAM_DB.prepare("SELECT * FROM brokers").all();
-            if (results) results.forEach(b => brokersMap[b.code] = b);
+            brokersMap = await getBrokersMapCached(env);
           } catch (e) { }
 
           const isRetail = (code) => {
@@ -4339,6 +4487,7 @@ export default {
       // Supports ?window=2|5|10|20 (default: 2) for server-side pre-filter
       if (url.pathname === "/screener-accum" && req.method === "GET") {
         try {
+          const includeOrderflow = url.searchParams.get("include_orderflow") !== "false";
           const cacheKey = "cache/screener-accum-latest.json";
           const obj = await env.SSSAHAM_EMITEN.get(cacheKey);
           if (!obj) {
@@ -4368,10 +4517,12 @@ export default {
 
           // Optional: attach live orderflow snapshot map (today)
           let orderflowMap = {};
-          try {
-            orderflowMap = await getOrderflowSnapshotMap(env);
-          } catch (e) {
-            console.error("[screener-accum] Failed to load orderflow map:", e);
+          if (includeOrderflow) {
+            try {
+              orderflowMap = await getOrderflowSnapshotMap(env);
+            } catch (e) {
+              console.error("[screener-accum] Failed to load orderflow map:", e);
+            }
           }
 
           // Build enriched items: ALL windows per ticker + z-score data
@@ -4404,6 +4555,39 @@ export default {
 
         } catch (e) {
           return json({ error: "Failed to fetch screener-accum", details: e.message }, 500);
+        }
+      }
+
+      // GET /orderflow/snapshots?symbols=BBRI,TLKM,...
+      if (url.pathname === "/orderflow/snapshots" && req.method === "GET") {
+        try {
+          const symbolsRaw = String(url.searchParams.get("symbols") || "").trim().toUpperCase();
+          if (!symbolsRaw) {
+            return json({ ok: false, error: "symbols query param required (comma-separated)" }, 400);
+          }
+
+          const symbols = [...new Set(
+            symbolsRaw.split(",").map(s => s.trim()).filter(s => /^[A-Z]{2,6}$/.test(s))
+          )].slice(0, 120);
+
+          if (!symbols.length) {
+            return json({ ok: false, error: "No valid symbols provided" }, 400);
+          }
+
+          const snapshots = await getOrderflowSnapshotMap(env, symbols);
+          const firstSnapshot = Object.values(snapshots || {})[0] || null;
+          return json({
+            ok: true,
+            requested: symbols.length,
+            count: Object.keys(snapshots || {}).length,
+            trading_date: firstSnapshot?.trading_date || null,
+            generated_at: new Date().toISOString(),
+            snapshots: snapshots || {}
+          }, 200, {
+            "Cache-Control": "public, max-age=15, stale-while-revalidate=45"
+          });
+        } catch (e) {
+          return json({ ok: false, error: "Failed to fetch orderflow snapshots", details: e.message }, 500);
         }
       }
 
@@ -4761,8 +4945,8 @@ export default {
 
       if (url.pathname === "/brokers" && req.method === "GET") {
         try {
-          const { results } = await env.SSSAHAM_DB.prepare("SELECT * FROM brokers").all();
-          return json({ brokers: results || [] }); // Return array or object? User snippet expects { brokers: map } or array?
+          const rows = await getBrokersRowsCached(env);
+          return json({ brokers: rows || [] }); // Return array or object? User snippet expects { brokers: map } or array?
           // User snippet: "if (d.brokers) brokersMap = d.brokers;" 
           // But normally brokers table is list.
           // However, calculateRangeData in line 46 does: results.forEach(b => brokersMap[b.code] = b);
@@ -4785,14 +4969,15 @@ export default {
         const symbol = url.searchParams.get("symbol");
         const from = url.searchParams.get("from");
         const to = url.searchParams.get("to");
-        const includeOrderflow = url.searchParams.get("include_orderflow") !== "false";
+        const includeOrderflowRaw = String(url.searchParams.get("include_orderflow") || "").toLowerCase();
+        const includeOrderflow = includeOrderflowRaw === "true" || includeOrderflowRaw === "1" || includeOrderflowRaw === "yes";
 
         let cacheMode = url.searchParams.get("cache") || "default";
         if (url.searchParams.get("reload") === "true") cacheMode = "rebuild";
 
         if (!symbol || !from || !to) return json({ error: "Missing params (symbol, from, to)" }, 400);
 
-        const key = `broker/summary/v5/${symbol}/${from}_${to}.json`;
+        const key = `broker/summary/v7/${symbol}/${from}_${to}.json`;
 
         // 1. READ CACHE (Only if mode is default)
         if (cacheMode === "default") {
@@ -4971,7 +5156,7 @@ export default {
         let cacheMode = url.searchParams.get("cache") || "default";
         if (url.searchParams.get("reload") === "true") cacheMode = "rebuild";
 
-        const cacheKey = `broker/daily/v1/${symbol}/${from}_${to}.json`;
+        const cacheKey = `broker/daily/v3/${symbol}/${from}_${to}.json`;
 
         // 1. Check R2 cache
         if (cacheMode === "default") {
@@ -5005,10 +5190,9 @@ export default {
         }
 
         // 2. Calculate per-broker daily data
-        let brokersMap = {};
+        let brokersMap = Object.create(null);
         try {
-          const { results } = await env.SSSAHAM_DB.prepare("SELECT * FROM brokers").all();
-          if (results) results.forEach(b => brokersMap[b.code] = b);
+          brokersMap = await getBrokersMapCached(env);
         } catch (e) { console.error("broker-daily: Error fetching brokers:", e); }
 
         const isRetail = (code) => {
@@ -5026,22 +5210,31 @@ export default {
         const start = new Date(from);
         const end = new Date(to);
         const dateList = [];
+        const candidateDateList = [];
         // perBroker[code] = { dailyNets: [net_day1, net_day2, ...], type: 'foreign'|'local'|'retail', ipotType: 'Asing' }
         const perBroker = {};
 
-        // Build list of trading days first
+        // Build weekday candidates first.
+        // Holiday filtering is applied after fetch with data-aware override:
+        // keep holiday dates only when broker rows are actually present.
         for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
           const dateStr = d.toISOString().split('T')[0];
-          if (isNonTradingDayUTC(dateStr)) continue;
-          dateList.push(dateStr);
+          if (isWeekendUTC(dateStr)) continue;
+          candidateDateList.push(dateStr);
         }
 
-        // ── Parallel R2 reads for all trading days ──
+        // ── Parallel R2 reads for all weekday candidates ──
         const bdR2Results = await Promise.all(
-          dateList.map(async (dateStr) => {
-            const key = `${symbol}/${dateStr}.json`;
+          candidateDateList.map(async (dateStr) => {
+            // Try legacy path first (without ipot/ prefix)
+            const keyLegacy = `${symbol}/${dateStr}.json`;
+            const keyIpot = `${symbol}/ipot/${dateStr}.json`;
             try {
-              const object = await env.RAW_BROKSUM.get(key);
+              let object = await env.RAW_BROKSUM.get(keyLegacy);
+              // If not found, try ipot path (broksum-scrapper stores here)
+              if (!object) {
+                object = await env.RAW_BROKSUM.get(keyIpot);
+              }
               if (!object) return { dateStr, data: null };
               const fullOuter = await object.json();
               return { dateStr, data: fullOuter?.data || null };
@@ -5051,13 +5244,26 @@ export default {
           })
         );
 
-        // Process each day's data
-        for (let dayIdx = 0; dayIdx < dateList.length; dayIdx++) {
-          const r = bdR2Results[dayIdx];
-          if (!r.data) continue;
+        // Process each day with data-aware holiday override
+        // (holiday dates are kept only when valid broker rows exist).
+        for (const r of bdR2Results) {
+          const bs = r?.data?.broker_summary;
+          const hasRows = hasBrokerRows(bs);
+          if (isHolidayUTC(r.dateStr) && !hasRows) {
+            continue;
+          }
+          dateList.push(r.dateStr);
+          const dayIdx = dateList.length - 1;
 
-          let bs = r.data.broker_summary;
-          if (!hasBrokerRows(bs)) continue;
+          if (!r.data || !hasRows) {
+            // Keep axis continuity: if a kept day has no data, pad existing brokers with 0.
+            for (const info of Object.values(perBroker)) {
+              while (info.dailyNets.length <= dayIdx) {
+                info.dailyNets.push(0);
+              }
+            }
+            continue;
+          }
 
             // Process each broker on this day
             const dayBrokerNet = {}; // code -> net

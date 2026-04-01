@@ -36,6 +36,7 @@ import { validateBroksum, hasValidBrokerData } from './validator.js';
 import { runHealthCheck, runBrokerActivityHealthCheck } from './health-check.js';
 import { aggregateAndStore, backfillFlowFromR2 } from './flow-aggregator.js';
 import { runAccumPreprocessor } from './accum-preprocessor.js';
+import { isNonTradingDayUTC } from './trading-calendar.js';
 
 // Helper: Check if R2 object exists
 async function objectExists(env, key) {
@@ -47,7 +48,46 @@ async function objectExists(env, key) {
     }
 }
 
-// Helper: Get trading days (skip weekends) for last N days - UTC-stable
+// Helper: Read broksum object from legacy or ipot path
+async function getBroksumObject(env, symbol, date) {
+    const keyLegacy = `${symbol}/${date}.json`;
+    const keyIpot = `${symbol}/ipot/${date}.json`;
+
+    let object = await env.RAW_BROKSUM.get(keyLegacy);
+    if (object) return { key: keyLegacy, object };
+
+    object = await env.RAW_BROKSUM.get(keyIpot);
+    if (object) return { key: keyIpot, object };
+
+    return { key: null, object: null };
+}
+
+// Helper: Check file health (exists + valid broker rows)
+async function getBroksumFileHealth(env, symbol, date) {
+    try {
+        const found = await getBroksumObject(env, symbol, date);
+        if (!found.object) {
+            return { exists: false, valid: false, key: null, reason: "not_found" };
+        }
+
+        try {
+            const raw = await found.object.json();
+            const valid = hasValidBrokerData(raw);
+            return {
+                exists: true,
+                valid,
+                key: found.key,
+                reason: valid ? "ok" : "invalid_broker_rows",
+            };
+        } catch {
+            return { exists: true, valid: false, key: found.key, reason: "invalid_json" };
+        }
+    } catch (e) {
+        return { exists: false, valid: false, key: null, reason: `error:${e.message || "unknown"}` };
+    }
+}
+
+// Helper: Get trading days (skip weekends + IDX holidays) for last N days - UTC-stable
 function getTradingDays(days, startDate = new Date(), startOffsetDays = 1) {
     const dates = [];
     const base = new Date(startDate);
@@ -62,8 +102,8 @@ function getTradingDays(days, startDate = new Date(), startOffsetDays = 1) {
         const d = new Date(base);
         d.setUTCDate(base.getUTCDate() - offset);
 
-        const dow = d.getUTCDay(); // 0 Sun, 6 Sat
-        if (dow !== 0 && dow !== 6) {
+        const ds = d.toISOString().slice(0, 10);
+        if (!isNonTradingDayUTC(ds)) {
             dates.push(d.toISOString().slice(0, 10));
             count++;
         }
@@ -72,7 +112,7 @@ function getTradingDays(days, startDate = new Date(), startOffsetDays = 1) {
     return dates;
 }
 
-// Helper: Get recent trading days including today if weekday
+// Helper: Get recent trading days including today if trading day
 function getRecentTradingDays(days) {
     const tradingDays = [];
     const now = new Date();
@@ -80,9 +120,9 @@ function getRecentTradingDays(days) {
     for (let i = 0; i < days * 2 && tradingDays.length < days; i++) {
         const d = new Date(now);
         d.setDate(d.getDate() - i);
-        const dow = d.getDay(); // 0 Sun, 6 Sat
-        if (dow !== 0 && dow !== 6) {
-            tradingDays.push(d.toISOString().split('T')[0]);
+        const ds = d.toISOString().split('T')[0];
+        if (!isNonTradingDayUTC(ds)) {
+            tradingDays.push(ds);
         }
     }
     return tradingDays;
@@ -635,13 +675,18 @@ export default {
                     });
                 }
                 const days = parseInt(url.searchParams.get("days") || "30");
-                const missingDates = await this.getMissingDatesForSymbol(env, symbol.toUpperCase(), days);
+                const report = await this.getRepairDatesForSymbol(env, symbol.toUpperCase(), days);
                 return new Response(JSON.stringify({
                     ok: true,
                     symbol: symbol.toUpperCase(),
                     days_checked: days,
-                    missing_dates: missingDates,
-                    missing_count: missingDates.length
+                    missing_dates: report.missingDates,
+                    invalid_dates: report.invalidDates,
+                    repair_dates: report.repairDates,
+                    missing_count: report.missingDates.length,
+                    invalid_count: report.invalidDates.length,
+                    repair_count: report.repairDates.length,
+                    validated_existing_days: report.validatedExistingDays
                 }), {
                     headers: withCors({ "Content-Type": "application/json" })
                 });
@@ -792,10 +837,9 @@ export default {
 
         console.log(`📅 UTC Hour: ${utcHour}, WIB Date: ${today}, WIB Hour: ${wibHour}`);
 
-        // Skip weekends (WIB)
-        const dow = wibDate.getUTCDay();
-        if (dow === 0 || dow === 6) {
-            console.log(`⏭️ Skipping weekend (day ${dow})`);
+        // Skip non-trading days (weekend + IDX holiday) by WIB date
+        if (isNonTradingDayUTC(today)) {
+            console.log(`⏭️ Skipping non-trading day (${today})`);
             return;
         }
 
@@ -901,25 +945,28 @@ export default {
             } else {
                 console.log("🧹 MODE: SWEEPING (Backfill Holes) - Last 90 Days (Excl. Today)");
 
-                // Sweeping Logic: Check missing dates 90 days back, EXCLUDING today
-                // overwrite=false
+                // Sweeping Logic: Check repair dates (missing + invalid recent) for 90 days back, EXCLUDING today
+                // overwrite=false (consumer will re-scrape invalid files if needed)
                 const lookbackDays = 90;
-                let totalMissingQueued = 0;
+                let totalRepairQueued = 0;
                 let processedSymbols = 0;
 
                 for (const symbol of watchlist) {
-                    // Check missing
-                    const missingDates = await this.getMissingDatesForSymbol(env, symbol, lookbackDays);
+                    const repairReport = await this.getRepairDatesForSymbol(env, symbol, lookbackDays);
+                    const repairDates = repairReport.repairDates;
 
-                    // Filter out TODAY if it slipped in (though getMissingDatesForSymbol logic might include it depending on "getTradingDays")
+                    // Filter out TODAY if it slipped in (though getTradingDays starts from yesterday)
                     // Verification: getTradingDays starts from "startDate", offset 1 (yesterday). 
                     // Let's ensure we are strict.
-                    const finalMissing = missingDates.filter(d => d !== today);
+                    const finalRepairDates = repairDates.filter(d => d !== today);
 
-                    if (finalMissing.length > 0) {
-                        console.log(`🔍 ${symbol} missing ${finalMissing.length} days. Queuing...`);
+                    if (finalRepairDates.length > 0) {
+                        console.log(
+                            `🔍 ${symbol} repair ${finalRepairDates.length} days ` +
+                            `(missing: ${repairReport.missingDates.length}, invalid_recent: ${repairReport.invalidDates.length}). Queuing...`
+                        );
 
-                        const messages = finalMissing.map(d => ({
+                        const messages = finalRepairDates.map(d => ({
                             body: { symbol, date: d, overwrite: false, attempt: 0 }
                         }));
 
@@ -928,7 +975,7 @@ export default {
                         for (let i = 0; i < messages.length; i += 50) {
                             await env.SSSAHAM_QUEUE.sendBatch(messages.slice(i, i + 50));
                         }
-                        totalMissingQueued += finalMissing.length;
+                        totalRepairQueued += finalRepairDates.length;
                     }
 
                     processedSymbols++;
@@ -976,8 +1023,8 @@ export default {
                     console.error(`🧹 BA Sweep error: ${e.message}`);
                 }
 
-                if (totalMissingQueued > 0 || baMissing > 0) {
-                    const msg = `🧹 **Sweeping Complete**\nStock broksum: ${totalMissingQueued} missing dates queued\nBroker activity: ${baMissing} missing files queued`;
+                if (totalRepairQueued > 0 || baMissing > 0) {
+                    const msg = `🧹 **Sweeping Complete**\nStock broksum: ${totalRepairQueued} repair dates queued (missing + invalid)\nBroker activity: ${baMissing} missing files queued`;
                     console.log(msg);
                     await this.sendWebhook(env, msg);
                 } else {
@@ -1332,7 +1379,7 @@ export default {
         };
     },
 
-    // Helper: list dates between from..to (inclusive), skip weekends
+    // Helper: list dates between from..to (inclusive), skip non-trading days
     dateRangeTradingDays(from, to) {
         const out = [];
         const start = new Date(from + "T00:00:00Z");
@@ -1341,8 +1388,8 @@ export default {
 
         const dir = start <= end ? 1 : -1;
         for (let d = new Date(start); dir > 0 ? d <= end : d >= end; d.setUTCDate(d.getUTCDate() + dir)) {
-            const dow = d.getUTCDay(); // 0 Sun, 6 Sat
-            if (dow !== 0 && dow !== 6) out.push(d.toISOString().slice(0, 10));
+            const ds = d.toISOString().slice(0, 10);
+            if (!isNonTradingDayUTC(ds)) out.push(ds);
         }
         return out;
     },
@@ -1364,9 +1411,11 @@ export default {
         const messages = [];
         for (const date of dates) {
             if (!overwrite) {
-                const key = `${symbol}/${date}.json`;
-                const exists = await objectExists(env, key);
-                if (exists) { skipped++; continue; }
+                const health = await getBroksumFileHealth(env, symbol, date);
+                if (health.exists && health.valid) {
+                    skipped++;
+                    continue;
+                }
             }
 
             messages.push({ body: { symbol, date, overwrite, attempt: 0 } });
@@ -1406,10 +1455,11 @@ export default {
         }
     },
 
-    // Helper: Get Missing Dates for a Symbol (Check R2)
-    async getMissingDatesForSymbol(env, symbol, days = 30) {
+    // Helper: Get repair dates for a symbol (missing + invalid recent files)
+    async getRepairDatesForSymbol(env, symbol, days = 30, validateRecentDays = 10) {
         const tradingDays = getTradingDays(days);
         const missingDates = [];
+        const invalidDates = [];
 
         // List existing files for this symbol
         const existingDates = new Set();
@@ -1447,7 +1497,43 @@ export default {
             }
         }
 
-        return missingDates;
+        // Validate recent existing files (only latest N days to keep cost bounded)
+        const recentDates = tradingDays
+            .slice(0, Math.max(0, Math.min(validateRecentDays, tradingDays.length)))
+            .filter(date => existingDates.has(date));
+
+        if (recentDates.length > 0) {
+            const checks = await Promise.all(
+                recentDates.map(async (date) => ({
+                    date,
+                    health: await getBroksumFileHealth(env, symbol, date),
+                }))
+            );
+
+            for (const row of checks) {
+                if (row.health.exists && !row.health.valid) {
+                    invalidDates.push(row.date);
+                }
+            }
+        }
+
+        const missingSet = new Set(missingDates);
+        const invalidSet = new Set(invalidDates);
+        const repairDates = tradingDays.filter(d => missingSet.has(d) || invalidSet.has(d));
+
+        return {
+            missingDates,
+            invalidDates,
+            repairDates,
+            checkedDays: tradingDays.length,
+            validatedExistingDays: recentDates.length,
+        };
+    },
+
+    // Backward-compatible helper name
+    async getMissingDatesForSymbol(env, symbol, days = 30) {
+        const report = await this.getRepairDatesForSymbol(env, symbol, days);
+        return report.repairDates;
     },
 
     // Helper: Auto Backfill All Symbols (via IPOT)
@@ -1479,40 +1565,45 @@ export default {
         }
 
         const details = [];
-        let totalMissingDates = 0;
+        let totalRepairDates = 0;
         let totalScraped = 0;
         let totalFailed = 0;
 
         for (const symbol of watchlist) {
-            let missingDates = [];
+            let repairDates = [];
+            let repairReport = null;
             if (force) {
-                // Force mode: Generate all dates for last N days (excluding weekends)
+                // Force mode: Generate all dates for last N days (excluding non-trading days)
                 const today = new Date();
                 for (let i = 0; i < days; i++) {
                     const d = new Date(today);
                     d.setDate(d.getDate() - i);
-                    if (d.getDay() !== 0 && d.getDay() !== 6) {
-                        missingDates.push(d.toISOString().split('T')[0]);
+                    const ds = d.toISOString().split('T')[0];
+                    if (!isNonTradingDayUTC(ds)) {
+                        repairDates.push(ds);
                     }
                 }
             } else {
-                missingDates = await this.getMissingDatesForSymbol(env, symbol, days);
+                repairReport = await this.getRepairDatesForSymbol(env, symbol, days);
+                repairDates = repairReport.repairDates;
             }
 
-            if (missingDates.length > 0) {
+            if (repairDates.length > 0) {
                 const symbolDetail = {
                     symbol,
-                    missing_count: missingDates.length,
-                    missing_dates: missingDates,
+                    missing_count: repairReport ? repairReport.missingDates.length : 0,
+                    invalid_count: repairReport ? repairReport.invalidDates.length : 0,
+                    repair_count: repairDates.length,
+                    repair_dates: repairDates,
                     scraped: 0,
                     failed: 0
                 };
 
-                totalMissingDates += missingDates.length;
+                totalRepairDates += repairDates.length;
 
                 // Scrape via IPOT if not dry run
                 if (!dryRun) {
-                    for (const date of missingDates) {
+                    for (const date of repairDates) {
                         try {
                             const result = await this.scrapeIpotBroksum(env, {
                                 symbol,
@@ -1553,8 +1644,8 @@ export default {
             timestamp,
             days_checked: days,
             total_symbols: watchlist.length,
-            symbols_with_missing: details.length,
-            total_missing_dates: totalMissingDates,
+            symbols_with_repair: details.length,
+            total_repair_dates: totalRepairDates,
             total_scraped: totalScraped,
             total_failed: totalFailed,
             dry_run: dryRun,
@@ -1566,10 +1657,10 @@ export default {
             : `Backfill completed: ${totalScraped} scraped, ${totalFailed} failed`;
 
         // Send notification if not dry run
-        if (!dryRun && totalMissingDates > 0) {
+        if (!dryRun && totalRepairDates > 0) {
             await this.sendWebhook(env, `🔄 **Auto Backfill Completed**\n` +
                 `• Total Symbols: ${watchlist.length}\n` +
-                `• Symbols with missing: ${details.length}\n` +
+                `• Symbols with repair: ${details.length}\n` +
                 `• Scraped: ${totalScraped}\n` +
                 `• Failed: ${totalFailed}`);
         }
@@ -1791,9 +1882,8 @@ export default {
 
             for (const symbol of watchlist) {
                 if (!overwrite) {
-                    const key = `${symbol}/${date}.json`;
-                    const exists = await objectExists(env, key);
-                    if (exists) {
+                    const health = await getBroksumFileHealth(env, symbol, date);
+                    if (health.exists && health.valid) {
                         totalSkipped++;
                         continue;
                     }
@@ -1902,7 +1992,8 @@ export default {
             }
 
             // ── DEFAULT: STOCK BROKSUM JOB ──
-            const { symbol, date, overwrite } = message.body;
+            const { symbol, date } = message.body;
+            let overwrite = message.body.overwrite ?? false;
 
             const startTime = Date.now();
             console.log(`[Queue] Processing ${symbol} for ${date} (overwrite: ${overwrite})`);
@@ -1912,14 +2003,20 @@ export default {
                 const key = `${symbol}/${date}.json`;
 
                 if (!overwrite) {
-                    const exists = await objectExists(env, key);
-                    if (exists) {
+                    const health = await getBroksumFileHealth(env, symbol, date);
+                    if (health.exists && health.valid) {
                         console.log(`Skipping ${key} - already exists`);
                         await env.SSSAHAM_DB.prepare("INSERT INTO scraping_logs (timestamp, symbol, date, status, duration_ms) VALUES (?, ?, ?, ?, ?)")
                             .bind(new Date().toISOString(), symbol, date, "SKIPPED", Date.now() - startTime)
                             .run();
                         message.ack();
                         continue;
+                    }
+                    if (health.exists && !health.valid) {
+                        // Existing file is present but unusable (empty broker rows / malformed).
+                        // Re-scrape and allow overwrite path.
+                        console.warn(`[Queue] Found invalid existing file for ${symbol}/${date} (${health.reason}). Re-scraping...`);
+                        overwrite = true;
                     }
                 }
 
@@ -1934,21 +2031,28 @@ export default {
                 });
 
                 const resultData = await result.json();
-                const status = resultData.ok !== false && !resultData.error ? "SUCCESS_IPOT" : "FAILED_IPOT";
+                const scrapeError = resultData.ok === false || !!resultData.error;
+                const validBrokerRows = hasValidBrokerData(resultData);
+                const status = (!scrapeError && validBrokerRows)
+                    ? "SUCCESS_IPOT"
+                    : (scrapeError ? "FAILED_IPOT" : "FAILED_IPOT_INVALID");
 
                 await env.SSSAHAM_DB.prepare("INSERT INTO scraping_logs (timestamp, symbol, date, status, duration_ms) VALUES (?, ?, ?, ?, ?)")
                     .bind(new Date().toISOString(), symbol, date, status, Date.now() - startTime)
                     .run();
 
-                if (status === "FAILED_IPOT") {
+                if (status !== "SUCCESS_IPOT") {
                     const attempt = (message.body.attempt ?? 0);
+                    const failReason = scrapeError
+                        ? (resultData.message || resultData.error || "Unknown")
+                        : "Invalid broker rows (empty buy/sell)";
                     if (attempt >= 2) {
-                        console.error(`[Queue] Max retries for ${symbol}/${date} via IPOT`);
-                        await this.sendWebhook(env, `⚠️ **IPOT Scrape Failed**\nMax retries for ${symbol} on ${date}.\nError: ${resultData.message || 'Unknown'}`);
+                        console.error(`[Queue] Max retries for ${symbol}/${date} via IPOT (${failReason})`);
+                        await this.sendWebhook(env, `⚠️ **IPOT Scrape Failed**\nMax retries for ${symbol} on ${date}.\nError: ${failReason}`);
                         message.ack();
                     } else {
-                        console.log(`[Queue] Retrying ${symbol} via IPOT (attempt ${attempt + 1})`);
-                        await env.SSSAHAM_QUEUE.send({ symbol, date, overwrite, attempt: attempt + 1 });
+                        console.log(`[Queue] Retrying ${symbol} via IPOT (attempt ${attempt + 1}) — ${failReason}`);
+                        await env.SSSAHAM_QUEUE.send({ symbol, date, overwrite: true, attempt: attempt + 1 });
                         message.ack();
                     }
                 } else {

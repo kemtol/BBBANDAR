@@ -5,6 +5,9 @@
     "observability": {
         "enabled": true
     },
+    "vars": {
+        "INTERNAL_KEY": "default"
+    },
     "r2_buckets": [
         {
             "binding": "SSSAHAM_EMITEN",

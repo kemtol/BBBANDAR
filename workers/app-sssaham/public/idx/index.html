@@ -1,0 +1,1466 @@
+<!DOCTYPE html>
+<html lang="id">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0b0b0e" />
+
+    <script>
+        (function () {
+            const STORAGE_KEY = 'ui:theme';
+            const root = document.documentElement;
+            try {
+                const saved = window.localStorage ? localStorage.getItem(STORAGE_KEY) : null;
+                const theme = saved || 'dark';
+                root.setAttribute('data-theme', theme);
+                root.style.colorScheme = theme === 'dark' ? 'dark' : 'light';
+            } catch (error) {
+                root.setAttribute('data-theme', 'dark');
+                root.style.colorScheme = 'dark';
+            }
+        })();
+    </script>
+
+    <title>SSSAHAM - Dashboard</title>
+
+    <link rel="apple-touch-icon" sizes="180x180" href="img/apple-touch-icon.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="img/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="img/favicon-16x16.png">
+
+    <!-- Bootstrap & Font Awesome -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css" rel="stylesheet" />
+    <link rel="stylesheet" href="../theme.css" />
+    <link rel="stylesheet" href="css/component.css" />
+    <link href="css/styles.css" rel="stylesheet" />
+
+    <script>
+        // ========================================
+        // DEV_MODE: Set to true to skip auth guard
+        // ========================================
+        const DEV_MODE = true;
+
+        // Auth Guard: Check if token exists
+        if (!DEV_MODE) {
+            const token = localStorage.getItem("qqquanta_token");
+            if (!token) {
+                window.location.href = "login.html";
+            }
+        }
+    </script>
+</head>
+
+<body>
+    <!-- Pull to Refresh Indicator -->
+    <div id="pull-indicator">
+        <i class="fa-solid fa-arrow-down"></i>
+        <span class="ms-2 small text-muted" id="pull-text">Tarik untuk refresh</span>
+    </div>
+
+    <!-- NAVBAR -->
+    <nav class="navbar sticky-top py-3">
+        <div class="container d-flex align-items-center justify-content-between" style="max-width: 1440px;position: relative;">
+            <div class="d-flex align-items-center gap-3" style="min-width: 140px;">
+            </div>
+            <div class="flex-grow-1 text-center">
+                <span class="nav-title" id="header-title">Dashboard</span>
+            </div>
+            <div style="width:72px;" class="text-end">
+                <i class="fa-solid fa-magnifying-glass" style="cursor: pointer;" onclick="toggleSearch()"></i>
+            </div>
+        </div>
+    </nav>
+
+    <div id="search-panel">
+        <div class="mb-4">
+            <input type="text" id="search-input" class="search-input" placeholder="Masukkan Kode (e.g. BBRI)"
+                autocomplete="off">
+        </div>
+
+        <div>
+            <p class="small opacity-75 mb-2 fw-bold">RIWAYAT PENCARIAN</p>
+            <div id="search-history-list">
+                <!-- Populated by JS -->
+            </div>
+        </div>
+    </div>
+
+    <div id="loading-indicator" class="text-center my-5">
+        <div class="spinner-border text-primary" role="status">
+            <span class="visually-hidden">Loading...</span>
+        </div>
+        <p class="small text-muted mt-2">Memuat data...</p>
+    </div>
+
+    <div id="app" class="container mb-3" style="display:none;">
+        <!-- VIEW 1: INDEX (DAFTAR EMITEN) -->
+        <div id="index-view">
+            <!-- DASHBOARD TABS -->
+            <ul class="nav nav-tabs mb-3" role="tablist">
+                <li class="nav-item" role="presentation">
+                    <a class="nav-link active" href="#">Feed</a>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <a class="nav-link" href="emiten/broker-summary.html">Orderflow</a>
+                </li>
+            </ul>
+
+            <section class="roster-card my-4" id="roster-card">
+                <div class="roster-head px-3 my-2">
+                    <div class="d-flex align-items-center gap-2">
+                        <span class="fw-bold d-none">Most Active</span>
+                        <span id="roster-ws-badge" class="ws-badge degraded">
+                            <span class="ws-dot"></span><span id="roster-ws-label">—</span>
+                        </span>
+                    </div>
+                    <span id="roster-last-update" class="text-secondary" style="font-size:11px;">—</span>
+                </div>
+                <div class="table-responsive">
+                    <table class="roster-table" id="roster-table">
+                        <thead>
+                            <tr>
+                                <th class="sortable" data-sort="rank_now" title="Rank berdasarkan |CHG%| terbesar (gabungan Top Gainer + Top Loser)"># <i class="sort-arrow fa-solid fa-sort"></i></th>
+                                <th title="Kode emiten saham">EMITEN</th>
+                                <th class="sortable" data-sort="last_price" title="Harga terakhir (real-time dari IPOT WS, fallback yfinance close)">LAST <i class="sort-arrow fa-solid fa-sort"></i></th>
+                                <th class="sortable" data-sort="change_pct" title="Perubahan harga hari ini (%) dari prev close&#10;Komponen M dalam Score (bobot 10%)">CHG% <i class="sort-arrow fa-solid fa-sort"></i></th>
+                                <th class="sortable" data-sort="value" title="Total nilai transaksi hari ini (Rp)&#10;Komponen V dalam Score (bobot 10%)&#10;Percentile vs seluruh roster">VALUE <i class="sort-arrow fa-solid fa-sort"></i></th>
+                                <th class="sortable" data-sort="cvd" title="Cumulative Volume Delta (lot)&#10;Positif = net buying, Negatif = net selling&#10;Komponen C dalam Score (bobot 20%)&#10;Slope 30m → komponen Cs (bobot 10%)">CVD <i class="sort-arrow fa-solid fa-sort"></i></th>
+                                <th title="Pressure Index: 0.40×BSS + 0.40×ATS + 0.20×spread_health&#10;Sparkline = trail full day (1-min buckets, 09:00–15:00)&#10;Komponen P dalam Score (bobot 20%)&#10;Slope 30m → komponen Ps (bobot 10%)">PRESSURE IDX</th>
+                                <th title="Bid Stack Score (BSS): seberapa kuat bid menumpuk&#10;Tinggi = bid menebal & naik konsisten&#10;Komponen B dalam Score (bobot 10%)&#10;Gate: B>60 diperlukan untuk Score>70">BID MENEBAL</th>
+                                <th title="Ask Thinning Score (ATS): seberapa cepat offer menipis&#10;Tinggi = offer dimakan / ditarik penjual&#10;Komponen O dalam Score (bobot 10%)&#10;Gate: O>60 diperlukan untuk Score>70">OFFER MENIPIS</th>
+                                <th class="sortable" data-sort="stage_score" title="Continuation Score v2.0&#10;Formula: 0.10M + 0.10V + 0.20P + 0.10Ps + 0.20C + 0.10Cs + 0.10B + 0.10O − 0.25Div − 0.10Ext&#10;M=CHG% pctl, V=Value pctl, P=Pressure pctl, Ps=P slope 30m&#10;C=CVD pctl, Cs=CVD slope 30m, B=BSS/100, O=ATS/100&#10;Div=penalti divergence, Ext=penalti extreme move&#10;Gate: Score>70 butuh P>0.6 & (B>0.6|O>0.6) & no divergence&#10;Hover cell untuk breakdown per komponen">SCORE <i class="sort-arrow fa-solid fa-sort"></i></th>
+                                <th title="Menguat (≥70) = kandidat continuation besok&#10;Pantau (50-69) = pantau, belum cukup sinyal&#10;Melemah (<50) = momentum melemah">STATUS</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr id="roster-loading-row">
+                                <td colspan="11" class="roster-loading-cell">
+                                    <div class="roster-loading">
+                                        <div class="roster-spinner"></div>
+                                        <span id="roster-loading-text">Mempersiapkan roster…</span>
+                                    </div>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+        </div>
+
+        <!-- Filter Section -->
+        <section id="content" class="content-section mt-0 pt-0">
+            <div class="container ps-0">
+                <div class="row">
+                    <!-- Feed Section (Left) -->
+                    <div class="col-md-6 mb-4">
+                        <strong class="section-heading my-3 d-block text-center">Feed</strong>
+                        <div class="timeline timeline-right" id="feed-timeline">
+                            <div class="timeline-line"></div>
+                        </div>
+                    </div>
+
+                    <!-- Catalyst Section (Right) -->
+                    <div class="col-md-6 mb-4">
+                        <strong class="section-heading my-3 d-block text-center">Catalyst</strong>
+                        <div class="timeline" id="catalyst-timeline">
+                            <div class="timeline-line"><!-- PRD 0013 — Feed Catalyst Scraper here --></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section id="feed-detail-section" class="content-section mt-0 pt-0 d-none">
+            <div class="container ps-0">
+                <div class="d-flex align-items-center justify-content-between mb-3">
+                    <button class="btn btn-sm btn-outline-secondary" onclick="backToFeedList()">
+                        <i class="fa-solid fa-arrow-left me-1"></i>Kembali ke Feed
+                    </button>
+                </div>
+                <div id="feed-detail-card" class="timeline-card">
+                    <p class="timeline-text mb-0">Memuat detail...</p>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <!-- Init Script to Simulate Loading -->
+    <script>
+        document.addEventListener("DOMContentLoaded", () => {
+            // Slight delay to smoother transition or immediate
+            setTimeout(() => {
+                const loader = document.getElementById("loading-indicator");
+                const app = document.getElementById("app");
+                if (loader) loader.style.display = "none";
+                if (app) app.style.display = "block";
+            }, 500); // 500ms delay for visual feedback
+        });
+    </script>
+
+    <script>
+        const WORKER_BASE_URL = "https://api-saham.mkemalw.workers.dev";
+
+        function escapeHtml(value) {
+            return String(value || '')
+                .replaceAll('&', '&amp;')
+                .replaceAll('<', '&lt;')
+                .replaceAll('>', '&gt;')
+                .replaceAll('"', '&quot;')
+                .replaceAll("'", '&#39;');
+        }
+
+        function relativeTimeFrom(dateStr) {
+            const ts = Date.parse(dateStr || '');
+            if (!Number.isFinite(ts)) return '-';
+            const delta = Date.now() - ts;
+            const mins = Math.round(delta / 60000);
+            if (mins < 1) return 'baru saja';
+            if (mins < 60) return `${mins} menit lalu`;
+            const hours = Math.round(mins / 60);
+            if (hours < 24) return `${hours} jam lalu`;
+            const days = Math.round(hours / 24);
+            return `${days} hari lalu`;
+        }
+
+        function upcomingLabel(dateStr, timeStr) {
+            const todayWib = getWibDateString();
+            const eventDate = String(dateStr || '').trim();
+            if (/^\d{4}-\d{2}-\d{2}$/.test(eventDate) && eventDate === todayWib) {
+                return 'hari ini';
+            }
+            const iso = `${dateStr || ''}T${(timeStr || '00:00')}:00+07:00`;
+            const ts = Date.parse(iso);
+            if (!Number.isFinite(ts)) return '-';
+            const delta = ts - Date.now();
+            if (delta <= 0) return 'sudah lewat';
+            const mins = Math.round(delta / 60000);
+            if (mins < 60) return `dalam ${mins} menit`;
+            const hrs = Math.round(mins / 60);
+            if (hrs < 24) return `dalam ${hrs} jam`;
+            const days = Math.round(hrs / 24);
+            return `dalam ${days} hari`;
+        }
+
+        function getWibDateString(date = new Date()) {
+            const parts = new Intl.DateTimeFormat('en-CA', {
+                timeZone: 'Asia/Jakarta',
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit'
+            }).formatToParts(date);
+            const get = (type) => parts.find((p) => p.type === type)?.value || '';
+            const yyyy = get('year');
+            const mm = get('month');
+            const dd = get('day');
+            return `${yyyy}-${mm}-${dd}`;
+        }
+
+        function getWibEndOfMonthString() {
+            const now = new Date();
+            const parts = new Intl.DateTimeFormat('en-CA', {
+                timeZone: 'Asia/Jakarta',
+                year: 'numeric',
+                month: '2-digit'
+            }).formatToParts(now);
+            const get = (type) => parts.find((p) => p.type === type)?.value || '';
+            const yyyy = Number(get('year'));
+            const mm = Number(get('month'));
+            const lastDay = new Date(yyyy, mm, 0).getDate();
+            return `${String(yyyy)}-${String(mm).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+        }
+
+        function filterCatalystCurrentMonthUpcoming(items) {
+            if (!Array.isArray(items)) return [];
+            const todayWib = getWibDateString();
+            const endMonthWib = getWibEndOfMonthString();
+            return items.filter((it) => {
+                const d = String(it?.event_date || '').trim();
+                if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return false;
+                return d >= todayWib && d <= endMonthWib;
+            });
+        }
+
+        let timelineLogoSyncTimer = null;
+
+        function syncTimelineLogoDots() {
+            const items = document.querySelectorAll('.timeline .timeline-item');
+            items.forEach((item) => {
+                const dot = item.querySelector('.timeline-dot.logo-dot');
+                const card = item.querySelector('.timeline-card');
+                if (!dot || !card) return;
+
+                const cardHeight = card.offsetHeight || 0;
+                if (!cardHeight) return;
+
+                const size = 36;
+                const timeEl = item.querySelector('.timeline-time');
+                const timeStyle = timeEl ? window.getComputedStyle(timeEl) : null;
+                const timeMarginBottom = timeStyle ? parseFloat(timeStyle.marginBottom || '0') : 0;
+                const timeBlockHeight = timeEl ? (timeEl.offsetHeight + (Number.isFinite(timeMarginBottom) ? timeMarginBottom : 0)) : 0;
+                const top = Math.max(0, timeBlockHeight + ((cardHeight - size) / 2));
+
+                item.style.setProperty('--logo-dot-size', `${size}px`);
+                item.style.setProperty('--logo-dot-top', `${top}px`);
+            });
+        }
+
+        function scheduleTimelineLogoDotSync() {
+            if (timelineLogoSyncTimer) window.clearTimeout(timelineLogoSyncTimer);
+            timelineLogoSyncTimer = window.setTimeout(() => {
+                timelineLogoSyncTimer = null;
+                syncTimelineLogoDots();
+            }, 0);
+        }
+
+        function timelineDotHtml(dotClass, symbol) {
+            const s = String(symbol || '').trim().toUpperCase();
+            if (!s) return `<div class="timeline-dot ${dotClass}"></div>`;
+            const logo = `${WORKER_BASE_URL}/logo?symbol=${encodeURIComponent(s)}`;
+            return `<div class="timeline-dot logo-dot ${dotClass}"><img src="${logo}" alt="${escapeHtml(s)}" onerror="this.parentElement.classList.remove('logo-dot'); this.parentElement.innerHTML='';"></div>`;
+        }
+
+        function slugifyText(v) {
+            return String(v || '')
+                .toLowerCase()
+                .replace(/[^a-z0-9]+/g, '-')
+                .replace(/^-+|-+$/g, '')
+                .replace(/-{2,}/g, '-');
+        }
+
+        function buildFeedDetailSlug(item) {
+            const created = new Date(item?.created_at || Date.now());
+            const y = created.getFullYear();
+            const m = String(created.getMonth() + 1).padStart(2, '0');
+            const d = String(created.getDate()).padStart(2, '0');
+            const symbol = String(item?.symbol || '').toUpperCase() || 'EMITEN';
+            const title = String(item?.title || 'update');
+            const titleWithoutSymbol = title
+                .replace(new RegExp(`^${symbol}\\s*`, 'i'), '')
+                .replace(/[•|:]/g, ' ')
+                .trim();
+            const reco = slugifyText(titleWithoutSymbol || 'update') || 'update';
+            return `${y}-${m}-${d}-${symbol}-${reco}`;
+        }
+
+        function openFeedDetail(item) {
+            // Deprecated: redirect to broker-summary page instead of inline feed detail
+            const symbol = String(item?.symbol || '').toUpperCase();
+            if (symbol) {
+                window.location.href = `/idx/emiten/broker-summary.html?kode=${encodeURIComponent(symbol)}`;
+                return;
+            }
+            // Fallback: try to extract symbol from slug
+            const slug = String(item?.slug || '').trim();
+            const m = slug.match(/^\d{4}-\d{2}-\d{2}-([A-Z0-9]+)-/i);
+            if (m) {
+                window.location.href = `/idx/emiten/broker-summary.html?kode=${encodeURIComponent(m[1].toUpperCase())}`;
+                return;
+            }
+            // Last resort: old behavior
+            const url = `${window.location.pathname}?feed=${encodeURIComponent(slug)}`;
+            window.location.href = url;
+        }
+
+        function backToFeedList() {
+            window.location.href = window.location.pathname;
+        }
+
+        function setFeedDetailMode(isDetail) {
+            const listSection = document.getElementById('content');
+            const detailSection = document.getElementById('feed-detail-section');
+            if (listSection) listSection.classList.toggle('d-none', !!isDetail);
+            if (detailSection) detailSection.classList.toggle('d-none', !isDetail);
+        }
+
+        function formatLocalDateTime(v) {
+            const ts = Date.parse(String(v || ''));
+            if (!Number.isFinite(ts)) return '-';
+            return new Date(ts).toLocaleString('id-ID', {
+                year: 'numeric', month: 'short', day: '2-digit',
+                hour: '2-digit', minute: '2-digit'
+            });
+        }
+
+        function renderFeedDetail(payload, slug) {
+            const root = document.getElementById('feed-detail-card');
+            if (!root) return;
+
+            if (!payload?.ok || !payload?.item) {
+                root.innerHTML = `<div class="timeline-title variant-red">Detail tidak ditemukan</div><p class="timeline-text mb-0">Feed dengan slug <strong>${escapeHtml(slug || '-')}</strong> tidak tersedia.</p>`;
+                return;
+            }
+
+            const item = payload.item || {};
+            const detail = payload.detail || {};
+            const analysis = detail.analysis || {};
+            const recID = analysis?.kesimpulan_rekomendasi || {};
+            const recEN = analysis?.recommendation || {};
+            const confidence = Number(item?.meta?.confidence ?? recID?.confidence ?? recEN?.confidence ?? 0) || 0;
+
+            const reasons = Array.isArray(recID?.alasan_rating)
+                ? recID.alasan_rating
+                : (typeof recEN?.rationale === 'string' && recEN.rationale.trim() ? [recEN.rationale.trim()] : []);
+
+            const screenshots = Array.isArray(detail?.screenshots) ? detail.screenshots : [];
+            const screenshotsHtml = screenshots.length
+                ? `<div class="timeline-tags mb-2">${screenshots.map((s, idx) => `<a href="${escapeHtml(s?.url || '#')}" target="_blank" rel="noopener noreferrer">Screenshot ${idx + 1}</a>`).join('')}</div>`
+                : '<p class="timeline-text mb-2">Tidak ada screenshot terkait.</p>';
+
+            const raw = typeof detail?.analysis_raw === 'string' ? detail.analysis_raw.trim() : '';
+            const rawHtml = raw
+                ? `<details class="mt-2"><summary class="timeline-time">Lihat output mentah AI</summary><pre class="small mt-2 mb-0" style="white-space: pre-wrap; color: var(--text-secondary);">${escapeHtml(raw)}</pre></details>`
+                : '';
+
+            root.innerHTML = `
+                <div class="d-flex align-items-center justify-content-between mb-2">
+                    <div class="primary mb-0">${escapeHtml(item?.title || 'AI Analysis')}</div>
+                    <div class="">${escapeHtml(formatLocalDateTime(item?.created_at))}</div>
+                </div>
+                <p class="mb-2">${escapeHtml(item?.body || '-')}</p>
+                <div class="timeline-tags mb-3">
+                    <span>#${escapeHtml(item?.symbol || '-')}</span>
+                    <span>#confidence-${Math.round(confidence)}%</span>
+                    <span>#${escapeHtml(detail?.provider || item?.meta?.provider || 'provider')}</span>
+                </div>
+                <div class="timeline-card variant-blue mb-3">
+                    <div class="variant-blue">Ringkasan Rekomendasi</div>
+                    <p class="timeline-text mb-1"><strong>Rating:</strong> ${escapeHtml(recID?.rating || recID?.rekomendasi || recEN?.position || '-')}</p>
+                    <p class="timeline-text mb-0"><strong>Rentang Data:</strong> ${escapeHtml(detail?.date_range?.from || item?.meta?.from || '-')} → ${escapeHtml(detail?.date_range?.to || item?.meta?.to || '-')}</p>
+                </div>
+                <div class="timeline-card variant-purple mb-3">
+                    <div class="variant-purple">Alasan Utama</div>
+                    ${reasons.length ? `<ul class="mb-0">${reasons.map((r) => `<li class="timeline-text mb-1">${escapeHtml(r)}</li>`).join('')}</ul>` : '<p class="timeline-text mb-0">Tidak ada alasan detail tersimpan.</p>'}
+                </div>
+                <div class="timeline-card mb-2">
+                    <div class="">Lampiran</div>
+                    ${screenshotsHtml}
+                    ${rawHtml}
+                </div>
+            `;
+        }
+
+        async function loadFeedDetail(slug) {
+            setFeedDetailMode(true);
+            const root = document.getElementById('feed-detail-card');
+            if (root) root.innerHTML = '<p class="timeline-text mb-0">Memuat detail...</p>';
+
+            try {
+                const resp = await fetch(`${WORKER_BASE_URL}/dashboard/feed/detail?slug=${encodeURIComponent(slug)}`);
+                const data = await resp.json().catch(() => ({ ok: false }));
+                renderFeedDetail(data, slug);
+            } catch (error) {
+                console.error('[dashboard] feed detail failed', error);
+                renderFeedDetail({ ok: false }, slug);
+            }
+        }
+
+        function renderFeed(items) {
+            const root = document.getElementById('feed-timeline');
+            if (!root) return;
+            const line = '<div class="timeline-line"></div>';
+
+            if (!Array.isArray(items) || items.length === 0) {
+                root.innerHTML = `${line}<div class="timeline-item"><div class="timeline-dot"></div><div class="timeline-time">-</div><div class="timeline-card"><div class="timeline-title">Feed</div><p class="timeline-text">Belum ada feed terbaru.</p></div></div>`;
+                return;
+            }
+
+            const recommendationTitleClass = (rawTitle) => {
+                const t = String(rawTitle || '');
+                if (/\bSELL\b/i.test(t)) return 'variant-red';
+                if (/\bHOLD\b/i.test(t)) return 'variant-blue';
+                if (/\bBUY\b/i.test(t)) return 'success';
+                return 'primary';
+            };
+
+            const html = items.map((it, i) => {
+                const dotClass = i === 0 ? 'primary' : 'success';
+                const rawTitle = String(it?.title || 'AI Analysis');
+                const titleClass = recommendationTitleClass(rawTitle);
+                const body = escapeHtml(it?.body || 'Analisis terbaru tersedia.');
+                const symbol = escapeHtml(it?.symbol || '');
+                const slug = encodeURIComponent(String(it?.slug || buildFeedDetailSlug(it)));
+                // Split title: "SYMBOL RATING: headline..." → colored prefix + white headline
+                const prefixMatch = rawTitle.match(/^([A-Z0-9]+\s+(?:STRONG[_ ])?(?:BUY|SELL|HOLD|AI Update))(?::\s*(.*))?$/i);
+                let titleHtml;
+                if (prefixMatch) {
+                    const prefix = escapeHtml(prefixMatch[1]);
+                    const headline = prefixMatch[2] ? escapeHtml(prefixMatch[2]) : '';
+                    titleHtml = `<span class="${titleClass}">${prefix}:</span>${headline ? ` ${headline}` : ''}`;
+                } else {
+                    titleHtml = `<span class="${titleClass}">${escapeHtml(rawTitle)}</span>`;
+                }
+                return `<div class="timeline-item">
+                    ${timelineDotHtml(dotClass, symbol)}
+                    <div class="timeline-time">${relativeTimeFrom(it?.created_at)}</div>
+                    <div class="timeline-card feed-clickable" data-feed-slug="${slug}" data-symbol="${symbol}" onclick="openFeedDetail({ slug: decodeURIComponent(this.dataset.feedSlug), symbol: this.dataset.symbol })">
+                        <div class="timeline-title">${titleHtml}</div>
+                        <p class="timeline-text">${body}</p>
+                        <div class="timeline-tags">${symbol ? `<span>#${symbol}</span>` : ''}<span>#AI</span></div>
+                    </div>
+                </div>`;
+            }).join('');
+
+            root.innerHTML = line + html;
+            scheduleTimelineLogoDotSync();
+        }
+
+        function formatCatalystDateHeader(dateIso) {
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(String(dateIso || ''))) return '-';
+            const ts = Date.parse(`${dateIso}T00:00:00+07:00`);
+            if (!Number.isFinite(ts)) return dateIso;
+            return new Date(ts).toLocaleDateString('en-GB', {
+                timeZone: 'Asia/Jakarta',
+                day: 'numeric',
+                month: 'long',
+                year: 'numeric'
+            });
+        }
+
+        function extractJamLabel(raw) {
+            const txt = String(raw || '');
+            const m = txt.match(/jam\s*\d{1,2}:\d{2}:\d{2}/i);
+            return m ? m[0].replace(/^jam/i, 'Jam') : null;
+        }
+
+        function normalizeCatalystTypeLabel(it) {
+            const type = String(it?.type || '').toLowerCase();
+            const desc = String(it?.description || '').trim();
+            const phase = String(it?.phase || '').toLowerCase();
+
+            if (type === 'rups') {
+                return {
+                    name: 'RUPS',
+                    tag: extractJamLabel(desc) || null
+                };
+            }
+
+            if (/public\s*expose/i.test(desc)) {
+                return { name: 'Public Expose', tag: 'Public Expose' };
+            }
+
+            if (/dividen/i.test(desc)) {
+                const phaseMap = {
+                    rec: 'Recording',
+                    start: 'Distribution',
+                    end: 'Distribution End',
+                    cum: 'Cum Date',
+                    ex: 'Ex Date',
+                    listend: 'Listed'
+                };
+                return {
+                    name: 'Cash Dividend',
+                    tag: phaseMap[phase] || null
+                };
+            }
+
+            if (/saham\s*bonus/i.test(desc)) {
+                return { name: 'Bonus Shares', tag: null };
+            }
+
+            return {
+                name: 'Corporate Action',
+                tag: it?.subtitle || null
+            };
+        }
+
+        function renderCatalyst(items) {
+            const root = document.getElementById('catalyst-timeline');
+            if (!root) return;
+            const line = '<div class="timeline-line"></div>';
+
+            if (!Array.isArray(items) || items.length === 0) {
+                root.innerHTML = `${line}<div class="timeline-item"><div class="timeline-dot"></div><div class="timeline-time">-</div><div class="timeline-card"><div class="timeline-title">Catalyst</div><p class="timeline-text">Belum ada catalyst event.</p></div></div>`;
+                return;
+            }
+
+            const sorted = [...items].sort((a, b) => {
+                const da = String(a?.event_date || '');
+                const db = String(b?.event_date || '');
+                if (da !== db) return da.localeCompare(db);
+                const sa = String(a?.symbol || '').localeCompare(String(b?.symbol || ''));
+                if (sa !== 0) return sa;
+                return String(a?.id || '').localeCompare(String(b?.id || ''));
+            });
+
+            const html = sorted.map((it, idx) => {
+                const n = normalizeCatalystTypeLabel(it);
+                const symbols = Array.isArray(it?.symbols) ? it.symbols.filter(Boolean) : [];
+                const mainSymbol = String(it?.symbol || symbols[0] || '').toUpperCase();
+                const extraSymbols = symbols
+                    .map((s) => String(s || '').toUpperCase())
+                    .filter((s) => s && s !== mainSymbol);
+                const d = String(it?.event_date || '').trim();
+                const dotClass = idx === 0 ? 'primary' : 'success';
+
+                return `<div class="timeline-item ${idx > 0 ? 'upcoming' : ''}">
+                    ${timelineDotHtml(dotClass, mainSymbol)}
+                    <div class="timeline-time">${upcomingLabel(d, it?.event_time_wib || '00:00')}</div>
+                    <div class="timeline-card">
+                        <div class="timeline-title ${dotClass}">${escapeHtml(formatCatalystDateHeader(d))}</div>
+                        <div class="timeline-text mb-0"><strong>${escapeHtml(mainSymbol || '-')}</strong></div>
+                        ${extraSymbols.length ? `<div class="timeline-text mb-0">${escapeHtml(extraSymbols.join(' '))}</div>` : ''}
+                        <div class="timeline-text mb-0">${escapeHtml(n.name)}${n.tag ? ` <span>[${escapeHtml(n.tag)}]</span>` : ''}</div>
+                    </div>
+                </div>`;
+            }).join('');
+
+            root.innerHTML = line + html;
+            scheduleTimelineLogoDotSync();
+        }
+
+        function renderTimelineLoading(rootId, title) {
+            const root = document.getElementById(rootId);
+            if (!root) return;
+            const safeTitle = escapeHtml(title || 'Memuat data');
+            root.innerHTML = `
+                <div class="timeline-line"></div>
+                <div class="timeline-item">
+                    <div class="timeline-dot primary"></div>
+                    <div class="timeline-time">...</div>
+                    <div class="timeline-card">
+                        <div class="d-flex align-items-center gap-2 mb-1">
+                            <div class="spinner-border spinner-border-sm text-primary" role="status" aria-hidden="true"></div>
+                            <div class="timeline-title">${safeTitle}</div>
+                        </div>
+                        <p class="timeline-text mb-0">Menyiapkan konten terbaru...</p>
+                    </div>
+                </div>
+            `;
+        }
+
+        // ===== Dashboard Cache (Feed + Catalyst) =====
+        const _FEED_LS_KEY     = 'dashboard_feed_v1';
+        const _CATALYST_LS_KEY = 'dashboard_catalyst_v1';
+        const _DASHBOARD_TTL   = 5 * 60 * 1000; // 5 min — short TTL
+
+        function _saveDashboardCache(key, items) {
+            try {
+                localStorage.setItem(key, JSON.stringify({ ts: Date.now(), items }));
+            } catch (e) { /* quota — non-fatal */ }
+        }
+
+        function _loadDashboardCache(key) {
+            try {
+                const raw = localStorage.getItem(key);
+                if (!raw) return null;
+                const obj = JSON.parse(raw);
+                if (!obj?.ts || !Array.isArray(obj.items)) return null;
+                if (Date.now() - obj.ts > _DASHBOARD_TTL) {
+                    localStorage.removeItem(key);
+                    return null; // expired
+                }
+                return obj;
+            } catch (e) { return null; }
+        }
+
+        async function loadDashboardData() {
+            setFeedDetailMode(false);
+
+            // --- instant render from cache (stale-while-revalidate) ---
+            const feedCache = _loadDashboardCache(_FEED_LS_KEY);
+            const catCache  = _loadDashboardCache(_CATALYST_LS_KEY);
+
+            if (feedCache) {
+                renderFeed(feedCache.items);
+                console.log(`[dashboard] feed from cache (${Math.round((Date.now() - feedCache.ts) / 1000)}s old)`);
+            } else {
+                renderTimelineLoading('feed-timeline', 'Memuat Feed');
+            }
+            if (catCache) {
+                renderCatalyst(catCache.items);
+                console.log(`[dashboard] catalyst from cache (${Math.round((Date.now() - catCache.ts) / 1000)}s old)`);
+            } else {
+                renderTimelineLoading('catalyst-timeline', 'Memuat Catalyst');
+            }
+
+            // --- fetch fresh data in background → re-render + update cache ---
+            try {
+                const [feedResp, catalystResp] = await Promise.all([
+                    fetch(`${WORKER_BASE_URL}/dashboard/feed?limit=30`),
+                    fetch(`${WORKER_BASE_URL}/dashboard/catalyst?limit=300`)
+                ]);
+
+                const feedJson = await feedResp.json().catch(() => ({ items: [] }));
+                const catJson  = await catalystResp.json().catch(() => ({ items: [] }));
+
+                const feedItems = feedJson?.items || [];
+                const filteredCatalyst = filterCatalystCurrentMonthUpcoming(catJson?.items || []);
+
+                renderFeed(feedItems);
+                renderCatalyst(filteredCatalyst);
+
+                // Update cache
+                _saveDashboardCache(_FEED_LS_KEY, feedItems);
+                _saveDashboardCache(_CATALYST_LS_KEY, filteredCatalyst);
+                console.log('[dashboard] fresh data cached');
+            } catch (e) {
+                console.error('[dashboard] load failed', e);
+                // If no cache was shown, render empty
+                if (!feedCache) renderFeed([]);
+                if (!catCache)  renderCatalyst([]);
+            }
+        }
+
+        // Page specific logic updates
+        const userStr = localStorage.getItem("qqquanta_user");
+        if (userStr) {
+            try {
+                const user = JSON.parse(userStr);
+                // Update Header Name
+                const userNameEl = document.getElementById("user-name");
+                if (userNameEl) userNameEl.textContent = user.name || "User";
+
+                // Update Page Details
+                const details = document.getElementById("user-details");
+                if (details) {
+                    details.innerHTML = `
+                    ${user.picture ? `<img src="${user.picture}" alt="Profile">` : ''}
+                    <div>
+                        <h5 class="mb-1">${user.name}</h5>
+                        <p class="mb-0 text-muted">${user.email}</p>
+                    </div>
+                `;
+                }
+            } catch (e) { console.error(e); }
+        } else {
+            // DEV_MODE: Show placeholder
+            const details = document.getElementById("user-details");
+            if (details) {
+                details.innerHTML = `
+                <img src="https://via.placeholder.com/64" alt="Profile">
+                <div>
+                    <h5 class="mb-1">Dev User</h5>
+                    <p class="mb-0 text-muted">dev@qqquanta.com</p>
+                </div>
+            `;
+            }
+            const userNameEl = document.getElementById("user-name");
+            if (userNameEl) userNameEl.textContent = "Dev User";
+        }
+
+        function logout() {
+            if (confirm("Are you sure you want to logout?")) {
+                localStorage.removeItem("qqquanta_token");
+                localStorage.removeItem("qqquanta_user");
+                window.location.href = "login.html";
+            }
+        }
+
+        function toggleMobileMenu() {
+            // TODO: Implement mobile menu
+            alert("Mobile menu coming soon!");
+        }
+
+        // Trading Hours Clock Logic
+        const tradingSessions = {
+            tokyo: { open: 9, close: 15, tz: 'Asia/Tokyo' },
+            london: { open: 8, close: 16, tz: 'Europe/London' },
+            newyork: { open: 9, close: 16, tz: 'America/New_York' }
+        };
+
+        function getTimeInTimezone(tz) {
+            const now = new Date();
+            const options = { timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false };
+            const timeStr = now.toLocaleTimeString('en-GB', options);
+            const [hours, minutes] = timeStr.split(':').map(Number);
+            return { hours, minutes, timeStr };
+        }
+
+        function isMarketOpen(session, hours) {
+            // Check if weekday (Mon-Fri)
+            const now = new Date();
+            const dayOptions = { timeZone: session.tz, weekday: 'short' };
+            const day = now.toLocaleDateString('en-US', dayOptions);
+            const isWeekday = !['Sat', 'Sun'].includes(day);
+
+            return isWeekday && hours >= session.open && hours < session.close;
+        }
+
+        function updateClocks() {
+            Object.keys(tradingSessions).forEach(city => {
+                const session = tradingSessions[city];
+                const { hours, minutes, timeStr } = getTimeInTimezone(session.tz);
+
+                // Update time display
+                const timeEl = document.getElementById(`${city}-time`);
+                if (timeEl) timeEl.textContent = timeStr;
+
+                // Update clock hands
+                const hourDeg = (hours % 12) * 30 + minutes * 0.5;
+                const minuteDeg = minutes * 6;
+
+                const hourEl = document.getElementById(`${city}-hour`);
+                const minuteEl = document.getElementById(`${city}-minute`);
+                if (hourEl) hourEl.style.transform = `rotate(${hourDeg}deg)`;
+                if (minuteEl) minuteEl.style.transform = `rotate(${minuteDeg}deg)`;
+
+                // Update market status
+                const statusEl = document.getElementById(`${city}-status`);
+                const isOpen = isMarketOpen(session, hours);
+                if (statusEl) {
+                    statusEl.textContent = isOpen ? 'OPEN' : 'CLOSED';
+                    statusEl.className = `clock-status ${isOpen ? 'open' : 'closed'}`;
+                }
+
+                // Update Wrapper Opacity
+                const wrapper = document.getElementById(`clock-wrapper-${city}`);
+                if (wrapper) {
+                    wrapper.style.opacity = isOpen ? '1' : '0.7';
+                }
+            });
+        }
+
+        // Initial update and set interval
+        updateClocks();
+        setInterval(updateClocks, 1000);
+
+        async function initializeDashboardRoute() {
+            const params = new URLSearchParams(window.location.search);
+            const feedSlug = String(params.get('feed') || '').trim();
+            if (feedSlug) {
+                await loadFeedDetail(feedSlug);
+                return;
+            }
+            await loadDashboardData();
+        }
+
+        // ===== Roster Live Pipeline =====
+
+        // Footprint summary data (CVD + value from features-service)
+        let _footprintMap = new Map(); // symbol → { cvd, nv, delta_pct, growth_pct, open_price, ... }
+        let _closePriceMap = new Map(); // symbol → { close, close_date, prev_close, prev_date }
+        let _sectorCvdMap = new Map(); // symbol → { cvd_lot, sector, freq_tx, price_last }
+
+        async function _fetchSectorCvd() {
+            try {
+                const resp = await fetch(`${WORKER_BASE_URL}/sector/cvd`);
+                if (!resp.ok) return;
+                const data = await resp.json();
+                if (!data?.ok || !data?.symbols) return;
+                _sectorCvdMap.clear();
+                for (const [sym, info] of Object.entries(data.symbols)) {
+                    _sectorCvdMap.set(sym.toUpperCase(), info);
+                }
+                console.log(`[SectorCVD] loaded ${_sectorCvdMap.size} symbols`);
+                // Re-render if roster has data
+                if (_rosterRows.length) renderRosterTable(_rosterRows, false);
+            } catch (e) {
+                console.warn('[SectorCVD] fetch failed:', e);
+            }
+        }
+
+        async function _fetchFootprintSummary() {
+            try {
+                const resp = await fetch(`${WORKER_BASE_URL}/footprint/summary`);
+                if (!resp.ok) return;
+                const payload = await resp.json();
+                const items = Array.isArray(payload?.items) ? payload.items : [];
+                _footprintMap.clear();
+                for (const it of items) {
+                    const sym = String(it?.t || '').toUpperCase();
+                    if (!sym) continue;
+                    _footprintMap.set(sym, {
+                        cvd:          it.cvd ?? it.net_delta ?? null,
+                        nv:           it.nv ?? it.notional_val ?? null,
+                        delta_pct:    it.d ?? null,
+                        growth_pct:   it.growth_pct ?? null,
+                        open_price:   it.open_price ?? null,   // prev_close (used as baseline)
+                        recent_price: it.recent_price ?? null, // current close
+                        freq_tx:      it.freq_tx ?? null,
+                    });
+                }
+                console.log(`[FootprintSummary] loaded ${_footprintMap.size} symbols`);
+
+                // Always fetch yfinance prev_close for all roster symbols.
+                // This ensures CHG% = (current_price - prev_close) / prev_close is always
+                // computed correctly, even when backend's processed/{today}.json is stale
+                // or when footprint open_price is incorrectly set to today's open.
+                if (_rosterRows.length) {
+                    const allCodes = _rosterRows.map(r => r.code);
+                    if (allCodes.length > 0) {
+                        _fetchPrevClose(allCodes);
+                    }
+                }
+
+                // Re-render if roster already has data
+                if (_rosterRows.length) renderRosterTable(_rosterRows, false);
+            } catch (e) {
+                console.warn('[FootprintSummary] fetch failed:', e);
+            }
+        }
+
+        /**
+         * Fetch close + prev_close from yfinance/D1 data.
+         * Populates _closePriceMap for LAST price display and CHG% computation.
+         */
+        async function _fetchPrevClose(symbols) {
+            if (!symbols.length) return;
+            try {
+                const symbolsQuery = encodeURIComponent(symbols.join(','));
+                const resp = await fetch(
+                    `${WORKER_BASE_URL}/prev-close?symbols=${symbolsQuery}`,
+                    { signal: AbortSignal.timeout(8000) }
+                );
+                if (!resp.ok) return;
+                const payload = await resp.json();
+                const data = payload?.data || {};
+                let enriched = 0;
+                for (const [sym, info] of Object.entries(data)) {
+                    // Store in _closePriceMap (authoritative source for LAST + CHG%)
+                    _closePriceMap.set(sym, {
+                        close:      info.close ?? null,
+                        close_date: info.close_date ?? null,
+                        prev_close: info.prev_close ?? null,
+                        prev_date:  info.prev_date ?? null,
+                    });
+
+                    // Also enrich _footprintMap for backward compat (CHG% fallback)
+                    const existing = _footprintMap.get(sym) || {};
+                    if (info.prev_close > 0) {
+                        existing.open_price = info.prev_close;
+                    }
+                    if (info.close > 0) {
+                        existing.recent_price = info.close;
+                    }
+                    // Recompute growth_pct from dual prices
+                    if (info.close > 0 && info.prev_close > 0) {
+                        existing.growth_pct = ((info.close - info.prev_close) / info.prev_close) * 100;
+                    }
+                    _footprintMap.set(sym, existing);
+                    enriched++;
+                }
+                if (enriched > 0) {
+                    console.log(`[PrevClose] enriched ${enriched} symbols with dual close prices`);
+                    if (_rosterRows.length) renderRosterTable(_rosterRows, false);
+                }
+            } catch (e) {
+                console.warn('[PrevClose] fetch failed:', e.message);
+            }
+        }
+
+        function formatCvd(v) {
+            if (v === null || v === undefined) return '<span style="opacity:0.35">—</span>';
+            const n = Number(v);
+            if (!Number.isFinite(n)) return '<span style="opacity:0.35">—</span>';
+            const abs = Math.abs(n);
+            let txt;
+            if (abs >= 1e6) txt = (n / 1e6).toFixed(1) + 'M';
+            else if (abs >= 1e3) txt = (n / 1e3).toFixed(1) + 'K';
+            else txt = n.toLocaleString('id-ID');
+            const color = n > 0 ? '#10b981' : n < 0 ? '#ef4444' : 'var(--text-secondary)';
+            const prefix = n > 0 ? '+' : '';
+            return `<span style="color:${color};font-weight:600">${prefix}${txt}</span>`;
+        }
+
+        function formatRosterValue(v) {
+            if (!v) return '-';
+            return Number(v).toLocaleString('id-ID');
+        }
+
+        function rosterColor(v) {
+            if (v >= 65) return '#10b981';
+            if (v >= 45) return '#f59e0b';
+            return '#ef4444';
+        }
+
+        function rosterStageFromLabel(label) {
+            if (label === 'Strong Continuation') return { label: 'Menguat', cls: 'on' };
+            if (label === 'Cooling')             return { label: 'Melemah', cls: 'cool' };
+            return { label: 'Pantau', cls: 'watch' };
+        }
+
+        /** Return CSS color for score value (matches status badge colors) */
+        function scoreColor(v) {
+            if (v >= 70) return '#10b981';
+            if (v >= 50) return '#f59e0b';
+            return '#ef4444';
+        }
+
+        /**
+         * Rank trail sparkline — inverted Y axis (rank 1 at top).
+         * Null points render as gaps.
+         */
+        function rosterSpark(trail) {
+            const arr = Array.isArray(trail) ? trail.slice(-20) : [];
+            const w = 124, h = 32;
+            if (!arr.length) return `<div class="roster-spark-wrap"><svg class="roster-spark" viewBox="0 0 ${w} ${h}"></svg></div>`;
+            const valid = arr.filter(v => v !== null);
+            if (!valid.length) return `<div class="roster-spark-wrap"><svg class="roster-spark" viewBox="0 0 ${w} ${h}"></svg></div>`;
+            const maxR = Math.max(...valid);
+            const minR = Math.min(...valid);
+            const span = Math.max(1, maxR - minR);
+            // Build segments; null breaks the path
+            let segments = [];
+            let current = [];
+            arr.forEach((v, i) => {
+                const x = (i / Math.max(1, arr.length - 1)) * (w - 2) + 1;
+                if (v === null) {
+                    if (current.length) { segments.push(current); current = []; }
+                } else {
+                    // Invert: rank 1 → top (y near 0), high rank → bottom
+                    const y = h - 2 - ((v - minR) / span) * (h - 4);
+                    current.push(`${x},${y}`);
+                }
+            });
+            if (current.length) segments.push(current);
+            const first = valid[0], last = valid[valid.length - 1];
+            const trendColor = last <= first ? '#22c55e' : '#f43f5e'; // lower rank = better
+            const lines = segments
+                .map(pts => `<polyline points="${pts.join(' ')}" fill="none" stroke="${trendColor}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>`)
+                .join('');
+            return `<div class="roster-spark-wrap"><svg class="roster-spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">${lines}</svg></div>`;
+        }
+
+        /**
+         * Pressure IDX — 1-minute sparkline (full trading day, max 360 nodes).
+         * Trail data is pre-aggregated into 1-min bucket averages by the pipeline.
+         * Renders as area-line chart. Green rising, red falling.
+         */
+        function pressureSpark(trail) {
+            const arr = Array.isArray(trail) ? trail : [];
+            const w = 140, h = 32;
+            const empty = `<div class="roster-spark-wrap"><svg class="roster-spark" viewBox="0 0 ${w} ${h}"><text x="${w/2}" y="${h/2 + 3}" text-anchor="middle" fill="rgba(255,255,255,0.2)" font-size="8">—</text></svg></div>`;
+            if (arr.length < 1) return empty;
+
+            // Auto-scale Y axis to min-max of data so fluctuations are clearly visible
+            const pad = 4;
+            let minV = Infinity, maxV = -Infinity;
+            arr.forEach(v => { if (v < minV) minV = v; if (v > maxV) maxV = v; });
+            // Ensure minimum range of 5 to avoid flat line when values are very close
+            const range = Math.max(maxV - minV, 5);
+            // Add 10% padding on each side
+            const yMin = minV - range * 0.1;
+            const yMax = maxV + range * 0.1;
+            const yRange = yMax - yMin;
+
+            const points = arr.map((v, i) => {
+                const x = pad + (i / Math.max(1, arr.length - 1)) * (w - pad * 2);
+                const normalized = (v - yMin) / yRange; // 0..1
+                const y = (h - pad) - normalized * (h - pad * 2);
+                return { x, y, v };
+            });
+            const first = arr[0], last = arr[arr.length - 1];
+            const trendColor = last >= first ? '#22c55e' : '#f43f5e';
+
+            let svg = '';
+
+            // Area fill (very low opacity)
+            if (points.length > 1) {
+                const linePts = points.map(p => `${p.x},${p.y}`).join(' ');
+                const areaPath = `M${points[0].x},${h - pad} L${linePts} L${points[points.length-1].x},${h - pad} Z`;
+                svg += `<path d="${areaPath}" fill="${trendColor}" fill-opacity="0.10"/>`;
+            }
+
+            // Connecting line
+            if (points.length > 1) {
+                const pts = points.map(p => `${p.x},${p.y}`).join(' ');
+                svg += `<polyline points="${pts}" fill="none" stroke="${trendColor}" stroke-width="1.2" stroke-opacity="0.7" stroke-linecap="round" stroke-linejoin="round"/>`;
+            }
+
+            // Dots: only show last dot to keep it clean with 60 nodes
+            const lastPt = points[points.length - 1];
+            svg += `<circle cx="${lastPt.x}" cy="${lastPt.y}" r="2.5" fill="${trendColor}" opacity="0.9"/>`;
+
+            // Last value label
+            const labelVal = Math.round(last);
+            svg += `<text x="${lastPt.x}" y="${lastPt.y - 5}" text-anchor="middle" fill="${trendColor}" font-size="7" font-weight="600">${labelVal}</text>`;
+
+            return `<div class="roster-spark-wrap"><svg class="roster-spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">${svg}</svg></div>`;
+        }
+
+        const REASON_POS = new Set([
+            'pressure_dominant','pressure_rising','cvd_dominant','cvd_accelerating',
+            'bid_stack_persistent','ask_thinning_consistent','high_value_institutional',
+            'strong_momentum','rank_improving_15m','continuation_candidate'
+        ]);
+        const REASON_NEG = new Set([
+            'divergence_detected','extreme_move_caution','pressure_weak','pressure_fading',
+            'cvd_weak','cvd_decelerating','bid_pullback_fast','ask_wall_reappearing',
+            'rank_deteriorating_5m'
+        ]);
+
+        function reasonChipsHtml(codes) {
+            if (!Array.isArray(codes) || !codes.length) return '';
+            return `<div class="reason-chips">${codes.slice(0,3).map(c => {
+                const cls = REASON_POS.has(c) ? 'pos' : REASON_NEG.has(c) ? 'neg' : 'neu';
+                return `<span class="reason-chip ${cls}">${c.replace(/_/g,' ')}</span>`;
+            }).join('')}</div>`;
+        }
+
+        /** Build score tooltip showing v2 component breakdown */
+        function _scoreTooltip(comp) {
+            if (!comp || typeof comp !== 'object') return '';
+            const lines = [
+                `M(CHG%)=${comp.M ?? '—'}`,
+                `V(Value)=${comp.V ?? '—'}`,
+                `P(Pressure)=${comp.P ?? '—'}`,
+                `Ps(P.slope)=${comp.Ps ?? '—'}`,
+                `C(CVD)=${comp.C ?? '—'}`,
+                `Cs(C.slope)=${comp.Cs ?? '—'}`,
+                `B(BSS)=${comp.B ?? '—'}`,
+                `O(ATS)=${comp.O ?? '—'}`,
+            ];
+            if (comp.Div)     lines.push('⚠ Divergence');
+            if (comp.Extreme) lines.push('⚠ ExtremeMove');
+            if (comp.gated)   lines.push('🔒 Gated (cap 69)');
+            lines.push(`Raw=${comp.raw ?? '—'}`);
+            return lines.join('&#10;');
+        }
+
+        // isStale flag for watermark
+        let _rosterIsStale = false;
+
+        // Sorting state
+        let _rosterSortKey = 'rank_now';
+        let _rosterSortAsc = true;
+
+        function _applySortUI() {
+            document.querySelectorAll('#roster-table th.sortable').forEach(th => {
+                const key = th.dataset.sort;
+                const arrow = th.querySelector('.sort-arrow');
+                if (!arrow) return;
+                if (key === _rosterSortKey) {
+                    arrow.classList.add('active');
+                    arrow.classList.remove('fa-sort');
+                    arrow.classList.add(_rosterSortAsc ? 'fa-sort-up' : 'fa-sort-down');
+                } else {
+                    arrow.classList.remove('active', 'fa-sort-up', 'fa-sort-down');
+                    arrow.classList.add('fa-sort');
+                }
+            });
+        }
+
+        function _getSortValue(r, key) {
+            if (key === 'cvd') {
+                const scCvd = _sectorCvdMap.get(r.code)?.cvd_lot;
+                return (scCvd != null) ? scCvd : (_footprintMap.get(r.code)?.cvd ?? 0);
+            }
+            if (key === 'value') {
+                return r.value ?? 0;
+            }
+            if (key === 'last_price') {
+                if (r.last_price > 0) return r.last_price;
+                const cp = _closePriceMap.get(r.code) || {};
+                return cp.close || 0;
+            }
+            if (key === 'change_pct') {
+                if (r.change_pct != null && r.change_pct !== 0) return r.change_pct;
+                const cp = _closePriceMap.get(r.code) || {};
+                if (cp.close > 0 && cp.prev_close > 0) return ((cp.close - cp.prev_close) / cp.prev_close) * 100;
+                const fp = _footprintMap.get(r.code) || {};
+                if (fp.growth_pct != null && Number.isFinite(fp.growth_pct)) return fp.growth_pct;
+                return 0;
+            }
+            return r[key] ?? 0;
+        }
+
+        function _sortRosterRows(rows) {
+            const key = _rosterSortKey;
+            const dir = _rosterSortAsc ? 1 : -1;
+            return [...rows].sort((a, b) => {
+                return (_getSortValue(a, key) - _getSortValue(b, key)) * dir;
+            });
+        }
+
+        // Attach click handlers to sortable headers (once)
+        document.addEventListener('DOMContentLoaded', () => {
+            document.querySelectorAll('#roster-table th.sortable').forEach(th => {
+                th.addEventListener('click', () => {
+                    const key = th.dataset.sort;
+                    if (_rosterSortKey === key) {
+                        _rosterSortAsc = !_rosterSortAsc;
+                    } else {
+                        _rosterSortKey = key;
+                        // Default direction: rank = asc, others = desc (highest first)
+                        _rosterSortAsc = (key === 'rank_now');
+                    }
+                    _applySortUI();
+                    if (_rosterRows.length) renderRosterTable(_rosterRows, false);
+                });
+            });
+        });
+
+        function renderRosterTable(rows, microOnly = false) {
+            const tbody = document.querySelector('#roster-table tbody');
+            if (!tbody) return;
+
+            if (!rows || !rows.length) {
+                // Don't overwrite if loading row is still showing
+                if (document.getElementById('roster-loading-row')) return;
+                tbody.innerHTML = `<tr><td colspan="11" class="text-center text-muted py-4">Menunggu data roster…</td></tr>`;
+                return;
+            }
+
+            // Remove loading row if still present
+            _hideRosterLoading();
+
+            const sorted = _sortRosterRows(rows);
+
+            if (microOnly) {
+                // Only update BSS/ATS cells without rebuilding the whole table
+                sorted.forEach(r => {
+                    const row = tbody.querySelector(`tr[data-code="${r.code}"]`);
+                    if (!row) return;
+                    const ob2 = r.ob2_indicator;
+                    const bss = ob2?.bss ?? 50;
+                    const ats = ob2?.ats ?? 50;
+                    const ob2Missing = ob2?.missing !== false;
+                    const bssCell = row.querySelector('.roster-bss-cell');
+                    const atsCell = row.querySelector('.roster-ats-cell');
+                    if (bssCell) bssCell.innerHTML = ob2Missing
+                        ? '<span class="roster-ob2-na" title="Menunggu data OB2…">—</span>'
+                        : `<div class="small">${bss}</div><div class="roster-mini-track"><div class="roster-mini-fill" style="width:${bss}%; background:${rosterColor(bss)}"></div></div>`;
+                    if (atsCell) atsCell.innerHTML = ob2Missing
+                        ? '<span class="roster-ob2-na" title="Menunggu data OB2…">—</span>'
+                        : `<div class="small">${ats}</div><div class="roster-mini-track"><div class="roster-mini-fill" style="width:${ats}%; background:${rosterColor(ats)}"></div></div>`;
+                    const scoreCell = row.querySelector('.roster-score-cell');
+                    if (scoreCell) {
+                        scoreCell.title = _scoreTooltip(r.components);
+                        scoreCell.innerHTML = `<strong style="color:${scoreColor(r.stage_score)}">${r.stage_score}</strong>`;
+                    }
+                    const stageCell = row.querySelector('.roster-stage-cell');
+                    if (stageCell) {
+                        const st = rosterStageFromLabel(r.stage_label);
+                        stageCell.innerHTML = `<span class="roster-stage ${st.cls}">${st.label}</span>`;
+                    }
+                    // Update pressure sparkline on micro tick
+                    const sparkCell = row.querySelector('.roster-spark-cell');
+                    if (sparkCell) sparkCell.innerHTML = pressureSpark(r.pressure_trail);
+                });
+                return;
+            }
+
+            // Full re-render (minute tick)
+            const html = sorted.map((r) => {
+                const ob2  = r.ob2_indicator ?? {};
+                const bss  = ob2.bss ?? 50;
+                const ats  = ob2.ats ?? 50;
+                const ob2Missing = ob2.missing !== false; // true when no OB2 data yet
+                const st   = rosterStageFromLabel(r.stage_label);
+                const logo = `${WORKER_BASE_URL}/logo?symbol=${encodeURIComponent(r.code)}`;
+                const staleClass = _rosterIsStale ? 'roster-stale-row' : '';
+                // Merge footprint data (CVD only)
+                const fp = _footprintMap.get(r.code) || {};
+                const cp = _closePriceMap.get(r.code) || {};
+                const sc = _sectorCvdMap.get(r.code) || {};
+                // VALUE = IPOT unsigned trading value (always positive).
+                const displayValue = r.value || 0;
+                // CVD: sector-scrapper TradedSummary primary (862 symbols), footprint as fallback
+                const displayCvd = (sc.cvd_lot != null) ? sc.cvd_lot : (fp.cvd ?? null);
+                // LAST PRICE: IPOT WS is primary (real-time), yfinance close as fallback
+                const displayLastPrice = (r.last_price > 0) ? r.last_price : (cp.close > 0 ? cp.close : 0);
+                // CHG%: IPOT WS is primary (same source as IPOT app screenshot)
+                // Fallback to yfinance close-to-close when IPOT has no data
+                let displayChgPct = 0;
+                if (r.change_pct != null && r.change_pct !== 0) {
+                    displayChgPct = r.change_pct;
+                } else if (cp.close > 0 && cp.prev_close > 0) {
+                    displayChgPct = ((cp.close - cp.prev_close) / cp.prev_close) * 100;
+                } else if (fp.growth_pct != null && Number.isFinite(fp.growth_pct)) {
+                    displayChgPct = fp.growth_pct;
+                }
+                // BID/OFFER cells: show "—" when OB2 data is missing
+                const bssHtml = ob2Missing
+                    ? '<span class="roster-ob2-na" title="Menunggu data OB2…">—</span>'
+                    : `<div class="small">${bss}</div><div class="roster-mini-track"><div class="roster-mini-fill" style="width:${bss}%; background:${rosterColor(bss)}"></div></div>`;
+                const atsHtml = ob2Missing
+                    ? '<span class="roster-ob2-na" title="Menunggu data OB2…">—</span>'
+                    : `<div class="small">${ats}</div><div class="roster-mini-track"><div class="roster-mini-fill" style="width:${ats}%; background:${rosterColor(ats)}"></div></div>`;
+                return `<tr data-code="${r.code}" class="${staleClass}" onclick="window.location.href='emiten/broker-summary.html?kode=${encodeURIComponent(r.code)}'">
+                    <td><strong>${r.rank_now}</strong></td>
+                    <td>
+                        <span class="roster-code">
+                            <img class="roster-logo" src="${logo}" alt="${escapeHtml(r.code)}" onerror="this.style.display='none'">
+                            <strong>${r.code}</strong>
+                        </span>
+                    </td>
+                    <td class="text-end" style="font-size:0.9rem" title="Close: ${cp.close_date || '—'}&#10;Prev: ${cp.prev_close ? Number(cp.prev_close).toLocaleString('id-ID') : '—'} (${cp.prev_date || '—'})">${displayLastPrice > 0 ? Number(displayLastPrice).toLocaleString('id-ID') : '—'}</td>
+                    <td class="${displayChgPct >= 0 ? 'text-success' : 'text-danger'}"><strong>${displayChgPct > 0 ? '+' : ''}${(displayChgPct || 0).toFixed(2)}%</strong></td>
+                    <td class="text-end" style="font-size:0.9rem">${formatRosterValue(displayValue)}</td>
+                    <td class="text-center">${formatCvd(displayCvd)}</td>
+                    <td class="roster-spark-cell">${pressureSpark(r.pressure_trail)}</td>
+                    <td class="roster-mini-ob2 roster-bss-cell">${bssHtml}</td>
+                    <td class="roster-mini-ob2 roster-ats-cell">${atsHtml}</td>
+                    <td class="roster-score-cell" title="${_scoreTooltip(r.components)}"><strong style="color:${scoreColor(r.stage_score)}">${r.stage_score}</strong></td>
+                    <td class="roster-stage-cell"><span class="roster-stage ${st.cls}">${st.label}</span></td>
+                </tr>`;
+            }).join('');
+            tbody.innerHTML = html;
+            _applySortUI();
+        }
+
+        function updateWsBadge(status) {
+            const badge = document.getElementById('roster-ws-badge');
+            const label = document.getElementById('roster-ws-label');
+            if (!badge || !label) return;
+            badge.className = `ws-badge ${status.toLowerCase()}`;
+            _rosterIsStale = (status === 'STALE');
+            const map = { LIVE: 'LIVE', DEGRADED: 'DEGRADED', STALE: 'STALE' };
+            label.textContent = map[status] ?? status;
+        }
+
+        function updateRosterTimestamp(ts) {
+            const el = document.getElementById('roster-last-update');
+            if (!el) return;
+            el.textContent = `Update: ${new Date(ts).toLocaleTimeString('id-ID')}`;
+        }
+
+        let _rosterRows = [];
+        let _rosterOrchestrator = null;
+        let _rosterTokenRefreshTimer = null;
+
+        function _rosterLoadingStatus(msg, isError = false) {
+            const row = document.getElementById('roster-loading-row');
+            const txt = document.getElementById('roster-loading-text');
+            if (!row) return;
+            row.style.display = '';
+            if (txt) {
+                txt.textContent = msg;
+                txt.className = isError ? 'roster-loading-error' : '';
+            }
+            // hide spinner on error
+            const spinner = row.querySelector('.roster-spinner');
+            if (spinner) spinner.style.display = isError ? 'none' : '';
+        }
+
+        function _hideRosterLoading() {
+            const row = document.getElementById('roster-loading-row');
+            if (row) row.remove();
+        }
+
+        async function startRosterLive() {
+            const { MostActiveOrchestrator, fetchWsToken } = window.MostActivePipeline || {};
+            if (!MostActiveOrchestrator) {
+                console.error('[startRosterLive] MostActivePipeline not loaded');
+                _rosterLoadingStatus('⚠ Pipeline module gagal dimuat.', true);
+                return;
+            }
+
+            updateWsBadge('DEGRADED');
+            _rosterLoadingStatus('Mengambil token WebSocket…');
+
+            const token = await fetchWsToken();
+            if (!token) {
+                console.warn('[startRosterLive] no WS token — roster will stay empty.');
+                _rosterLoadingStatus('⚠ Token WS tidak tersedia — set ipot_ws_token di localStorage lalu reload.', true);
+                return;
+            }
+
+            // Cleanup previous instance if any
+            if (_rosterOrchestrator) {
+                try { _rosterOrchestrator.stop(); } catch (e) { console.warn(e); }
+                _rosterOrchestrator = null;
+            }
+            if (_rosterTokenRefreshTimer) {
+                window.clearInterval(_rosterTokenRefreshTimer);
+                _rosterTokenRefreshTimer = null;
+            }
+
+            const wsUrl = `wss://ipotapp.ipot.id/socketcluster/?appsession=${encodeURIComponent(token)}`;
+
+            _rosterLoadingStatus('Menghubungkan ke IPOT WebSocket…');
+
+            let _firstRosterReceived = false;
+
+            const orchestrator = new MostActiveOrchestrator({
+                wsUrl,
+                topN: 10,
+                onUpdate: ({ type, rows, ts }) => {
+                    _rosterRows = rows;
+                    if (!_firstRosterReceived && rows.length) {
+                        _firstRosterReceived = true;
+                        _hideRosterLoading();
+                    }
+                    if (type === 'minute') {
+                        renderRosterTable(rows, false);
+                        updateRosterTimestamp(ts);
+                    } else {
+                        // 5s micro tick — partial update only
+                        renderRosterTable(rows, true);
+                    }
+                },
+                onStatus: (status) => {
+                    updateWsBadge(status);
+                    if (status === 'LIVE' && !_firstRosterReceived) {
+                        _rosterLoadingStatus('Terhubung — menunggu data pertama…');
+                    }
+                    if (status === 'STALE') {
+                        // Watermark existing rows
+                        const rows = document.querySelectorAll('#roster-table tbody tr:not(#roster-loading-row)');
+                        rows.forEach(r => r.classList.add('roster-stale-row'));
+                    } else if (status === 'LIVE') {
+                        const rows = document.querySelectorAll('#roster-table tbody tr:not(#roster-loading-row)');
+                        rows.forEach(r => r.classList.remove('roster-stale-row'));
+                    }
+                }
+            });
+
+            orchestrator.start();
+            _rosterOrchestrator = orchestrator;
+            window._rosterOrchestrator = orchestrator; // expose for dev console
+
+            // Wire external data provider: supplies CVD + divergence to scoring engine
+            orchestrator.setExternalDataProvider((code) => {
+                const sc = _sectorCvdMap.get(code) || {};
+                const fp = _footprintMap.get(code) || {};
+                const cp = _closePriceMap.get(code) || {};
+                const cvd = (sc.cvd_lot != null) ? sc.cvd_lot : (fp.cvd ?? null);
+                // Compute CHG% same as display logic
+                let chg_pct = 0;
+                const row = _rosterRows.find(r => r.code === code);
+                if (row?.change_pct != null && row.change_pct !== 0) {
+                    chg_pct = row.change_pct;
+                } else if (cp.close > 0 && cp.prev_close > 0) {
+                    chg_pct = ((cp.close - cp.prev_close) / cp.prev_close) * 100;
+                } else if (fp.growth_pct != null && Number.isFinite(fp.growth_pct)) {
+                    chg_pct = fp.growth_pct;
+                }
+                return {
+                    cvd: cvd ?? 0,
+                    div_detected: fp.div_detected ?? false,
+                    div_score:    fp.div_score ?? 0,
+                    div_type:     fp.div_type ?? null,
+                    chg_pct
+                };
+            });
+
+            // Fetch footprint summary for CVD + value (initial + every 2 min)
+            _fetchFootprintSummary();
+            setInterval(_fetchFootprintSummary, 120_000);
+
+            // Fetch sector-scrapper CVD as fallback (initial + every 3 min)
+            _fetchSectorCvd();
+            setInterval(_fetchSectorCvd, 180_000);
+
+            // Auto token refresh every 9 minutes (cache ttl is 10m on backend)
+            _rosterTokenRefreshTimer = window.setInterval(async () => {
+                try {
+                    const fresh = await fetchWsToken();
+                    if (!fresh || fresh === token) return;
+                    console.log('[startRosterLive] token rotated, reconnecting roster WS...');
+                    await startRosterLive();
+                } catch (err) {
+                    console.warn('[startRosterLive] token refresh check failed', err);
+                }
+            }, 9 * 60 * 1000);
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            initializeDashboardRoute();
+            scheduleTimelineLogoDotSync();
+            startRosterLive();
+        });
+
+        window.addEventListener('resize', scheduleTimelineLogoDotSync);
+    </script>
+
+    <!-- SCRIPTS -->
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="js/most-active-pipeline.js"></script>
+    <script src="js/component.js"></script>
+</body>
+
+</html>

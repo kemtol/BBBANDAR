@@ -1,0 +1,1481 @@
+<!DOCTYPE html>
+<html lang="id" data-theme="dark">
+
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<meta name="theme-color" content="#0a0a12" />
+	<!-- keep a single manifest file reference -->
+	<link rel="manifest" href="/site.webmanifest">
+	<link rel="apple-touch-icon" sizes="180x180" href="idx/img/apple-touch-icon.png">
+	<link rel="icon" type="image/png" sizes="32x32" href="idx/img/favicon-32x32.png">
+	<link rel="icon" type="image/png" sizes="16x16" href="idx/img/favicon-16x16.png">
+	<!-- Bootstrap CSS -->
+	<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+	<link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css" rel="stylesheet">
+	<script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+
+	<title>SSSAHAM - Bandar Saham Kolektif Untuk Para Ritel Saham</title>
+	<!-- Open Graph for WhatsApp / Link Previews -->
+	<meta property="og:title" content="SSSAHAM — Bandar Saham Kolektif">
+	<meta property="og:description"
+		content="Pantau rekomendasi saham berbasis data: skor, probabilitas Markov, dan feed real-time yang mudah dibaca.">
+	<meta property="og:type" content="website">
+	<meta property="og:url" content="https://contoh-domain-kamu.xyz/">
+	<meta property="og:site_name" content="SSSAHAM">
+	<meta property="og:image" content="https://contoh-domain-kamu.xyz/og/sssaham-1200x630.jpg">
+	<meta property="og:image:width" content="1200">
+	<meta property="og:image:height" content="630">
+
+	<!-- Optional: Twitter (aman buat platform lain) -->
+	<meta name="twitter:card" content="summary_large_image">
+	<meta name="twitter:title" content="SSSAHAM — Bandar Saham Kolektif">
+	<meta name="twitter:description"
+		content="Pantau rekomendasi saham berbasis data: skor, probabilitas Markov, dan feed real-time.">
+	<meta name="twitter:image" content="https://contoh-domain-kamu.xyz/og/sssaham-1200x630.jpg">
+
+	<!-- App CSS -->
+	<link rel="stylesheet" href="theme.css?v=1.7.1">
+	<link rel="stylesheet" href="style.css?v=1.7.1">
+<style>
+	/* ===== DIMENSION-INSPIRED DARK LANDING ===== */
+	body.dim-landing {
+		background: #0a0a12 !important;
+		color: #e0e0e8 !important;
+		overflow-x: hidden;
+		font-size: 0.9rem;
+	}
+
+	/* ---------- NAVBAR ---------- */
+	.dim-navbar {
+		position: sticky;
+		top: 0;
+		z-index: 100;
+		background: rgba(10, 10, 18, 0.85);
+		backdrop-filter: blur(16px);
+		-webkit-backdrop-filter: blur(16px);
+		border-bottom: 1px solid rgba(255,255,255,0.06);
+		padding: 0 24px;
+		height: 56px;
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+	}
+
+	.dim-navbar .brand {
+		font-size: 18px;
+		font-weight: 800;
+		color: #fff;
+		text-decoration: none;
+		letter-spacing: -0.02em;
+	}
+
+	.dim-nav-links {
+		display: flex;
+		gap: 28px;
+		align-items: center;
+	}
+
+	.dim-nav-links a {
+		color: rgba(255,255,255,0.6);
+		text-decoration: none;
+		font-size: 14px;
+		font-weight: 500;
+		transition: color 0.2s;
+	}
+
+	.dim-nav-links a:hover {
+		color: #fff;
+	}
+
+	.dim-nav-cta {
+		background: #fff !important;
+		color: #0a0a12 !important;
+		border: none !important;
+		border-radius: 8px !important;
+		padding: 7px 18px !important;
+		font-size: 13px !important;
+		font-weight: 700 !important;
+		transition: opacity 0.2s;
+	}
+
+	.dim-nav-cta:hover {
+		opacity: 0.85;
+	}
+
+	/* Burger */
+	.dim-burger {
+		display: none;
+		background: none;
+		border: none;
+		color: #fff;
+		font-size: 20px;
+		cursor: pointer;
+	}
+
+	@media (max-width: 768px) {
+		.dim-nav-links { display: none; }
+		.dim-burger { display: block; }
+	}
+
+	/* Mobile menu */
+	.dim-mobile-menu {
+		display: none;
+		position: fixed;
+		top: 56px;
+		right: 0;
+		width: 260px;
+		height: calc(100vh - 56px);
+		background: #111119;
+		border-left: 1px solid rgba(255,255,255,0.06);
+		z-index: 200;
+		padding: 16px 0;
+		overflow-y: auto;
+	}
+
+	.dim-mobile-menu.active { display: block; }
+
+	.dim-mobile-menu .menu-section {
+		padding: 10px 20px;
+		font-size: 11px;
+		font-weight: 700;
+		color: rgba(255,255,255,0.35);
+		text-transform: uppercase;
+		letter-spacing: 0.08em;
+	}
+
+	.dim-mobile-menu a {
+		display: block;
+		padding: 12px 20px;
+		color: rgba(255,255,255,0.7);
+		text-decoration: none;
+		font-size: 14px;
+		font-weight: 500;
+		transition: background 0.15s;
+	}
+
+	.dim-mobile-menu a:hover { background: rgba(255,255,255,0.04); }
+
+	.dim-overlay {
+		display: none;
+		position: fixed;
+		inset: 0;
+		top: 56px;
+		background: rgba(0,0,0,0.5);
+		z-index: 199;
+	}
+
+	.dim-overlay.active { display: block; }
+
+	/* ---------- HERO ---------- */
+	.dim-hero {
+		position: relative;
+		text-align: center;
+		padding: 2rem 1rem;
+		overflow: visible;
+	}
+
+	/* Glow orb behind hero */
+	.dim-hero::before {
+		content: '';
+		position: absolute;
+		width: 600px;
+		height: 600px;
+		top: -100px;
+		left: 50%;
+		transform: translateX(-50%);
+		background: radial-gradient(circle, rgba(168, 85, 247, 0.35) 0%, rgba(236, 72, 153, 0.18) 40%, transparent 70%);
+		border-radius: 50%;
+		filter: blur(80px);
+		pointer-events: none;
+		z-index: 0;
+		animation: glowPulse 6s ease-in-out infinite;
+	}
+
+	@keyframes glowPulse {
+		0%, 100% { opacity: 0.7; transform: translateX(-50%) scale(1); }
+		50% { opacity: 1; transform: translateX(-50%) scale(1.08); }
+	}
+
+	.dim-badge {
+		display: inline-block;
+		background: rgba(168, 85, 247, 0.15);
+		border: 1px solid rgba(168, 85, 247, 0.3);
+		color: #c084fc;
+		font-size: 13px;
+		font-weight: 600;
+		padding: 6px 18px;
+		border-radius: 999px;
+		margin-bottom: 28px;
+		position: relative;
+		z-index: 1;
+	}
+
+	.dim-hero h1 {
+		position: relative;
+		z-index: 1;
+		font-size: clamp(2.2rem, 5.5vw, 4rem);
+		font-weight: 800;
+		line-height: 1.1;
+		letter-spacing: -0.03em;
+		color: #fff;
+		margin-bottom: 20px;
+	}
+
+	.dim-hero h1 .gradient-text {
+		background: linear-gradient(135deg, #a855f7 0%, #ec4899 50%, #f97316 100%);
+		-webkit-background-clip: text;
+		-webkit-text-fill-color: transparent;
+		background-clip: text;
+	}
+
+	.dim-hero .subtitle {
+		position: relative;
+		z-index: 1;
+		font-size: clamp(1rem, 2vw, 1.15rem);
+		color: rgba(255,255,255,0.55);
+		max-width: 520px;
+		margin: 0 auto 36px;
+		line-height: 1.6;
+	}
+
+	/* CTA form */
+	.dim-cta-row {
+		position: relative;
+		z-index: 1;
+		display: flex;
+		gap: 10px;
+		max-width: 440px;
+		margin: 0 auto;
+		justify-content: center;
+	}
+
+	.dim-cta-row input {
+		flex: 1;
+		background: rgba(255,255,255,0.06);
+		border: 1px solid rgba(255,255,255,0.12);
+		border-radius: 10px;
+		padding: 12px 16px;
+		color: #fff;
+		font-size: 14px;
+		outline: none;
+		transition: border-color 0.2s;
+	}
+
+	.dim-cta-row input::placeholder {
+		color: rgba(255,255,255,0.35);
+	}
+
+	.dim-cta-row input:focus {
+		border-color: rgba(168, 85, 247, 0.5);
+	}
+
+	.dim-phone-wrap:focus-within {
+		border-color: rgba(168, 85, 247, 0.5) !important;
+	}
+
+	.dim-cta-btn {
+		background: linear-gradient(135deg, #a855f7, #ec4899) !important;
+		color: #fff !important;
+		border: none !important;
+		border-radius: 10px !important;
+		padding: 12px 24px !important;
+		font-weight: 700 !important;
+		font-size: 14px !important;
+		white-space: nowrap;
+		transition: opacity 0.2s;
+	}
+
+	.dim-cta-btn:hover { opacity: 0.9; }
+
+	/* ---------- PRODUCT SCREENSHOT ---------- */
+	.dim-screenshot-wrap {
+		position: relative;
+		max-width: 960px;
+		margin: 0 auto;
+		padding: 2rem;
+	}
+
+	.dim-screenshot-wrap::before {
+		content: '';
+		position: absolute;
+		width: 100%;
+		height: 60%;
+		bottom: 0;
+		left: 0;
+		background: linear-gradient(to top, #0a0a12, transparent);
+		pointer-events: none;
+		z-index: 2;
+	}
+
+	.dim-screenshot {
+		width: 100%;
+		border-radius: 16px;
+		border: 1px solid rgba(255,255,255,0.08);
+		box-shadow: 0 32px 80px rgba(0,0,0,0.6), 0 0 60px rgba(168, 85, 247, 0.12);
+		position: relative;
+		z-index: 1;
+	}
+
+	/* ---------- FEATURES SECTION ---------- */
+	.dim-features {
+		padding: 60px 20px 80px;
+		max-width: 960px;
+		margin: 0 auto;
+	}
+
+	.dim-features .section-label {
+		text-align: center;
+		font-size: 12px;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.12em;
+		color: #a855f7;
+		margin-bottom: 12px;
+	}
+
+	.dim-features .section-title {
+		text-align: center;
+		font-size: clamp(1.5rem, 3vw, 2.2rem);
+		font-weight: 800;
+		color: #fff;
+		margin-bottom: 48px;
+		letter-spacing: -0.02em;
+	}
+
+	.dim-feature-card {
+		background: rgba(255,255,255,0.03);
+		border: 1px solid rgba(255,255,255,0.06);
+		border-radius: 16px;
+		padding: 0;
+		overflow: hidden;
+		transition: border-color 0.25s, background 0.25s;
+		height: 100%;
+	}
+
+	.dim-feature-card:hover {
+		border-color: rgba(168, 85, 247, 0.25);
+		background: rgba(255,255,255,0.05);
+	}
+
+	.dim-feature-card .card-body {
+		padding: 24px 28px;
+		display: flex;
+		flex-direction: column;
+		justify-content: center;
+	}
+
+	.dim-feature-card .card-img {
+		width: 100%;
+		height: 180px;
+		object-fit: cover;
+		display: block;
+		opacity: 0.85;
+		transition: opacity 0.3s;
+	}
+
+	.dim-feature-card:hover .card-img {
+		opacity: 1;
+	}
+
+	.dim-feature-icon {
+		width: 40px;
+		height: 40px;
+		border-radius: 10px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		font-size: 18px;
+		margin-bottom: 12px;
+	}
+
+	.dim-feature-card h5 {
+		font-size: 16px;
+		font-weight: 700;
+		color: #fff;
+		margin-bottom: 6px;
+	}
+
+	.dim-feature-card p {
+		font-size: 13px;
+		color: rgba(255,255,255,0.5);
+		line-height: 1.55;
+		margin: 0;
+	}
+
+	.dim-feature-card .feature-badge {
+		display: inline-block;
+		font-size: 11px;
+		font-weight: 700;
+		padding: 3px 10px;
+		border-radius: 999px;
+		margin-top: 10px;
+		margin-bottom: 8px;
+	}
+
+	.dim-feature-card .feature-link {
+		display: inline-block;
+		margin-top: 6px;
+		font-size: 13px;
+		font-weight: 600;
+		color: #a855f7;
+		text-decoration: none;
+		transition: color 0.2s;
+	}
+
+	.dim-feature-card .feature-link:hover { color: #c084fc; }
+
+	/* ---------- LOGIN STEPS ---------- */
+	.dim-login-steps {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: 12px;
+		position: relative;
+		z-index: 1;
+	}
+
+	.dim-login-steps .step {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+	}
+
+	.dim-login-steps .step-num {
+		width: 26px;
+		height: 26px;
+		border-radius: 50%;
+		background: rgba(168,85,247,0.15);
+		border: 1px solid rgba(168,85,247,0.3);
+		color: #c084fc;
+		font-size: 11px;
+		font-weight: 700;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		flex-shrink: 0;
+	}
+
+	.dim-login-steps .step span {
+		font-size: 13px;
+		color: rgba(255,255,255,0.5);
+		font-weight: 500;
+	}
+
+	.dim-login-steps .step-arrow {
+		color: rgba(255,255,255,0.2);
+		font-size: 14px;
+	}
+
+	/* ---------- TRAINING SECTION ---------- */
+	.dim-training {
+		padding: 60px 20px 40px;
+		max-width: 700px;
+		margin: 0 auto;
+		text-align: center;
+	}
+
+	.dim-training h2 {
+		font-size: clamp(1.5rem, 3vw, 2rem);
+		font-weight: 800;
+		color: #fff;
+		margin-bottom: 16px;
+	}
+
+	.dim-training p {
+		color: rgba(255,255,255,0.5);
+		font-size: 15px;
+		line-height: 1.7;
+	}
+
+	.dim-tags {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 10px;
+		justify-content: center;
+		margin: 28px 0 36px;
+	}
+
+	.dim-tag {
+		padding: 6px 14px;
+		border-radius: 20px;
+		font-size: 13px;
+		font-weight: 600;
+		text-decoration: none;
+		color: #fff;
+		transition: transform 0.2s, opacity 0.2s;
+		border: 1px solid rgba(255,255,255,0.1);
+	}
+
+	.dim-tag:hover {
+		transform: scale(1.05);
+		opacity: 0.85;
+		color: #fff;
+	}
+
+	.dim-tag.blue { background: rgba(59,130,246,0.2); border-color: rgba(59,130,246,0.3); color: #93bbfd; }
+	.dim-tag.green { background: rgba(34,197,94,0.2); border-color: rgba(34,197,94,0.3); color: #86efac; }
+	.dim-tag.orange { background: rgba(249,115,22,0.2); border-color: rgba(249,115,22,0.3); color: #fdba74; }
+	.dim-tag.purple { background: rgba(168,85,247,0.2); border-color: rgba(168,85,247,0.3); color: #c4b5fd; }
+	.dim-tag.red { background: rgba(239,68,68,0.2); border-color: rgba(239,68,68,0.3); color: #fca5a5; }
+	.dim-tag.teal { background: rgba(20,184,166,0.2); border-color: rgba(20,184,166,0.3); color: #5eead4; }
+	.dim-tag.pink { background: rgba(236,72,153,0.2); border-color: rgba(236,72,153,0.3); color: #f9a8d4; }
+
+	/* ---------- HOW IT WORKS ---------- */
+	.dim-how {
+		max-width: 800px;
+		margin: 0 auto;
+		padding: 40px 20px 60px;
+		text-align: center;
+	}
+
+	.dim-how h2 {
+		font-size: clamp(1.4rem, 3vw, 1.8rem);
+		font-weight: 800;
+		color: #fff;
+		margin-bottom: 8px;
+	}
+
+	.dim-how > p {
+		color: rgba(255,255,255,0.5);
+		font-size: 15px;
+		margin-bottom: 32px;
+	}
+
+	.dim-about-embed {
+		border-radius: 16px;
+		overflow: hidden;
+		border: 1px solid rgba(255,255,255,0.06);
+		background: rgba(255,255,255,0.02);
+	}
+
+	.dim-about-embed iframe {
+		width: 100%;
+		min-height: 400px;
+		border: none;
+	}
+
+	/* ---------- SPLASH LAYOUT OVERRIDES ---------- */
+	#splash-page {
+		height: auto !important;
+		overflow: visible !important;
+		display: block !important;
+		align-items: initial !important;
+		justify-content: initial !important;
+	}
+
+	/* ---------- LOGIN / LIVENESS DARK OVERRIDES ---------- */
+	body.dim-landing .this-page {
+		background: #14141a !important;
+		border-color: rgba(255,255,255,0.06) !important;
+		color: #e0e0e8 !important;
+	}
+
+	body.dim-landing .form-control {
+		background: rgba(255,255,255,0.05);
+		border-color: rgba(255,255,255,0.1);
+		color: #fff;
+	}
+
+	body.dim-landing .form-label {
+		color: rgba(255,255,255,0.7) !important;
+	}
+
+	body.dim-landing .btn-primary {
+		background: linear-gradient(135deg, #a855f7, #ec4899) !important;
+		border: none !important;
+	}
+
+	body.dim-landing .btn-outline-primary {
+		border-color: #a855f7 !important;
+		color: #c084fc !important;
+	}
+
+	body.dim-landing .btn-outline-primary:hover {
+		background: #a855f7 !important;
+		color: #fff !important;
+	}
+
+	body.dim-landing #login-page small {
+		background-color: rgba(168, 85, 247, 0.1) !important;
+		color: #c084fc !important;
+	}
+
+	/* Container override for splash - full width */
+	body.dim-landing #app.container {
+		max-width: 100%;
+		padding: 0;
+	}
+
+	/* Keep login/liveness/error centered */
+	body.dim-landing #login-page .this-page,
+	body.dim-landing #liveness-check .this-page,
+	body.dim-landing #error-page .this-page {
+		max-width: 480px;
+		margin-left: auto;
+		margin-right: auto;
+	}
+
+	/* Price banner */
+	.dim-price-note {
+		position: relative;
+		z-index: 1;
+		margin-top: 16px;
+		font-size: 14px;
+		color: rgba(255,255,255,0.4);
+	}
+
+	.dim-price-note s { color: rgba(255,255,255,0.25); }
+	.dim-price-note strong { color: #4ade80; }
+
+	/* Footer area */
+	.dim-footer {
+		border-top: 1px solid rgba(255,255,255,0.06);
+		padding: 32px 20px;
+		text-align: center;
+		max-width: 960px;
+		margin: 0 auto;
+	}
+
+	.dim-footer p {
+		font-size: 13px;
+		color: rgba(255,255,255,0.3);
+		margin: 0;
+	}
+</style>
+</head>
+<body class="dim-landing">
+	<!-- ========== NAVBAR ========== -->
+	<nav class="dim-navbar">
+		<a href="/" class="brand">SSSAHAM</a>
+		<div class="dim-nav-links">
+			<a href="idx/emiten/broker-summary.html">Broker Summary</a>
+			<a href="idx/index.html">AI Recs</a>
+			<a href="idx/emiten/index.html">Real-Time API</a>
+			<a href="about-us.html">About</a>
+			<a href="register.html" class="btn dim-nav-cta d-none">Get Started</a>
+		</div>
+		<button class="dim-burger" onclick="toggleMobileMenu()">
+			<i class="fa-solid fa-bars"></i>
+		</button>
+	</nav>
+
+	<!-- Mobile Menu -->
+	<div class="dim-overlay" id="menuOverlay" onclick="toggleMobileMenu()"></div>
+	<div class="dim-mobile-menu" id="mobileMenu">
+		<div class="menu-section">Layanan</div>
+		<a href="idx/emiten/broker-summary.html">AI Broker Summary</a>
+		<a href="idx/index.html">AI Recommendation</a>
+		<a href="idx/emiten/index.html">Real-Time API</a>
+		<div class="menu-section">Komunitas</div>
+		<a href="register.html">Gabung Sekarang</a>
+	</div>
+
+	<div id="app" class="container">
+		<!-- ========== SPLASH PAGE ========== -->
+		<section id="splash-page">
+
+			<!-- HERO -->
+			<div class="dim-hero">
+				<div class="dim-badge">Platform Quant &middot; Saham Indonesia &middot; AI-Powered &middot; Gratis</div>
+				<h1>
+					AI platform SSSAHAM<br>
+					<span class="gradient-text">sahabat baru</span> investor retail
+				</h1>
+				<p class="subtitle">
+					Pantau rekomendasi saham berbasis data, skor, orderflow dan pergerakan asing yang mudah dibaca.
+				</p>
+				<div class="dim-cta-row" style="justify-content:center;">
+					<button onclick="joinViaTelegram()" class="btn dim-cta-btn" style="padding:14px 36px !important; font-size:15px !important; display:inline-flex; align-items:center; gap:9px;">
+						<svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+							<circle cx="12" cy="12" r="12" fill="#2AABEE"/>
+							<path d="M5.491 11.74l11.57-4.461c.537-.194 1.006.131.983.059l-1.97 9.28c-.145.658-.537.818-1.084.508l-3-2.21-1.447 1.394c-.16.16-.295.295-.605.295l.213-3.053 5.56-5.023c.242-.213-.054-.333-.373-.12L7.17 13.5l-2.965-.924c-.643-.204-.657-.643.136-.953l.15.117z" fill="white"/>
+						</svg>
+						Telegram Login
+					</button>
+				</div>
+				<div class="dim-price-note">
+					<s>Rp 15.000.000</s> &nbsp;
+					<strong>GRATIS SELAMANYA</strong>
+				</div>
+
+				<!-- Login Flow Steps -->
+				<div class="dim-login-steps mt-4">
+					<div class="step"><div class="step-num">1</div><span>Klik Telegram Login</span></div>
+					<div class="step-arrow">→</div>
+					<div class="step"><div class="step-num">2</div><span>Join Grup &amp; DM Bot</span></div>
+					<div class="step-arrow">→</div>
+					<div class="step"><div class="step-num">3</div><span>Tap Bagikan Nomor HP</span></div>
+				</div>
+			</div>
+
+			<!-- PRODUCT SCREENSHOT -->
+			<div class="dim-screenshot-wrap">
+				<img src="idx/img/landing.png" alt="SSSAHAM Dashboard" class="dim-screenshot" loading="lazy">
+			</div>
+
+			<!-- FEATURES -->
+			<div class="dim-features">
+				<div class="section-label">Fitur Utama</div>
+				<div class="section-title">Semua yang Anda butuhkan, satu platform.</div>
+
+				<div class="row g-4">
+					<!-- Feature 1: AI Broker Summary -->
+					<div class="col-md-4">
+						<div class="dim-feature-card">
+							<img src="idx/img/broker-summary.jpg" alt="AI Broker Summary" class="card-img">
+							<div class="card-body">
+								<div class="dim-feature-icon" style="background: rgba(168,85,247,0.15);">
+									<i class="fa-solid fa-chart-pie" style="color: #a855f7;"></i>
+								</div>
+								<h5>AI Broker Summary</h5>
+								<p>Analisis ringkasan broker berbasis AI untuk mengetahui pergerakan bandar secara real-time.</p>
+								<span class="feature-badge" style="background:rgba(168,85,247,0.15); border:1px solid rgba(168,85,247,0.3); color:#c4b5fd;">⚡ AI-POWERED</span>
+								<br>
+								<a href="idx/emiten/broker-summary.html?kode=AADI" class="feature-link">Biarkan AI Bekerja →</a>
+							</div>
+						</div>
+					</div>
+					<!-- Feature 2: AI Recommendation -->
+					<div class="col-md-4">
+						<div class="dim-feature-card">
+							<img src="idx/img/ai-recomendation.jpg" alt="AI Recommendation" class="card-img">
+							<div class="card-body">
+								<div class="dim-feature-icon" style="background: rgba(236,72,153,0.15);">
+									<i class="fa-solid fa-brain" style="color: #ec4899;"></i>
+								</div>
+								<h5>AI Recommendation</h5>
+								<p>Rekomendasi saham berbasis LSTM Machine Learning presisi tinggi dengan analisis sentimen dan Z-Score.</p>
+								<span class="feature-badge" style="background:rgba(236,72,153,0.15); border:1px solid rgba(236,72,153,0.3); color:#f9a8d4;">🧠 MACHINE LEARNING</span>
+								<br>
+								<a href="idx/index.html" class="feature-link">Entry Presisi →</a>
+							</div>
+						</div>
+					</div>
+					<!-- Feature 3: Real-Time API -->
+					<div class="col-md-4">
+						<div class="dim-feature-card">
+							<img src="idx/img/realtime-api.jpg" alt="Real-Time API" class="card-img">
+							<div class="card-body">
+								<div class="dim-feature-icon" style="background: rgba(249,115,22,0.15);">
+									<i class="fa-solid fa-bolt" style="color: #f97316;"></i>
+								</div>
+								<h5>Real-Time API</h5>
+								<p>Single API data pasar saham secara real-time. Live orderflow, pressure index, CVD dan lainnya.</p>
+								<span class="feature-badge" style="background:rgba(34,197,94,0.15); border:1px solid rgba(34,197,94,0.3); color:#4ade80;">● LIVE DATA</span>
+								<br>
+								<a href="idx/emiten/index.html" class="feature-link">Lihat Dokumentasi →</a>
+							</div>
+						</div>
+					</div>
+				</div>
+			</div>
+
+			<!-- TRAINING -->
+			<div class="dim-training">
+				<h2>Training & Syllabus</h2>
+				<p>
+					Alat tanpa pengetahuan bukanlah alat.<br>
+					Anda bisa saja memiliki palu, namun tanpa tahu cara menggunakannya,<br>
+					ia hanyalah sebongkah logam.
+				</p>
+				<div class="dim-tags">
+					<a href="/training-quant-finance-saham/index.html" class="dim-tag blue">#QuantitativeTrading</a>
+					<a href="/training-quant-finance-saham/index.html" class="dim-tag green">#MarkovChain</a>
+					<a href="/training-quant-finance-saham/index.html" class="dim-tag orange">#BSJP</a>
+					<a href="/training-quant-finance-saham/index.html" class="dim-tag purple">#BPJS</a>
+					<a href="/training-quant-finance-saham/index.html" class="dim-tag red">#RiskManagement</a>
+					<a href="/training-quant-finance-saham/index.html" class="dim-tag teal">#MachineLearning</a>
+					<a href="/training-quant-finance-saham/index.html" class="dim-tag pink">#DataDriven</a>
+				</div>
+				<div class="d-flex gap-3 justify-content-center">
+					<a href="#login-page" onclick="navigate('login-page'); return false;"
+						class="btn btn-primary px-4 py-2">Masuk</a>
+					<a href="#" onclick="joinViaTelegram(); return false;" id="start-onboard"
+						class="btn btn-outline-primary px-4 py-2">Gabung Komunitas</a>
+				</div>
+			</div>
+
+			<!-- HOW IT WORKS -->
+			<div class="dim-how">
+				<h2>Bagaimana SSSAHAM Bekerja?</h2>
+				<p>Menggunakan Pendekatan Machine Learning dan AI yang Auditable</p>
+				<div class="dim-about-embed">
+					<iframe id="about-us-embed" src="about-us.html#model" loading="lazy" scrolling="no"></iframe>
+				</div>
+			</div>
+
+			<!-- FOOTER -->
+			<div class="dim-footer">
+				<p>&copy; 2025 SSSAHAM — Bandar Saham Kolektif Untuk Para Ritel</p>
+			</div>
+
+		</section>
+
+		<!-- ========== LOGIN PAGE ========== -->
+		<section id="login-page">
+			<div class="this-page d-flex flex-column align-items-center p-4 my-4 w-100">
+				<h3 class="text-center mb-4 fw-700">Masuk</h3>
+				<small class="p-3 m-3 w-100 text-center" style="border-radius: 8px;">Masukkan nomor HP & password dari bot Telegram</small>
+				<form id="login-form-page-main" class="w-100">
+					<div class="mb-3">
+						<label class="form-label">Nomor HP <span style="color:rgba(255,255,255,0.4); font-size:12px;">(format 628xxx)</span></label>
+						<input type="tel" class="form-control" id="login-phone" required placeholder="628xxxxxxxxxx">
+					</div>
+					<div class="mb-3">
+						<label class="form-label">Password <span style="color:rgba(255,255,255,0.4); font-size:12px;">(dari bot @Sssaham_bot)</span></label>
+						<input type="password" class="form-control" id="login-pass" required placeholder="Password dari DM bot">
+					</div>
+					<div id="login-error" style="color:#f87171; font-size:13px; margin-bottom:12px; min-height:18px;"></div>
+					<button type="submit" class="btn btn-primary w-100">Masuk</button>
+					<p style="margin-top:14px; font-size:12px; text-align:center; color:rgba(255,255,255,0.4);">
+						Belum punya password? <a href="https://t.me/Sssaham_bot" target="_blank" style="color:#c084fc;">DM @Sssaham_bot</a>
+					</p>
+				</form>
+			</div>
+		</section>
+
+
+		<!-- liveness -->
+		<section id="liveness-check" class="w-100">
+			<div class="this-page d-flex flex-column align-items-center p-4 my-4">
+				<h3 class="text-center">Apakah Kamu Manusia</h3>
+				<span class="d-block">Ikuti Instuksi</span>
+				<div id="liveness-instruction" class="fs-4 my-3 text-center"></div>
+				<video id="liveness-preview" autoplay muted playsinline
+					style="width: 100%; max-width: 400px; border-radius: 8px; background: #000;"></video>
+
+				<div class="mt-3 w-100">
+					<button id="start-record" class="btn d-block btn-primary w-100 mb-2">Mulai Rekam</button>
+					<button id="stop-record" class="btn d-block btn-outline-danger w-100 mb-2">Stop Rekam</button>
+					<button id="skip-record" type="button" class="btn d-block btn-outline-primary w-100"
+						style="display:none;">
+						Lewati (Testing)
+					</button>
+				</div>
+				<div id="liveness-result" class="mt-3 text-center"></div>
+			</div>
+		</section>
+
+		<!-- halaman error -->
+		<section id="error-page">
+			<div class="this-page d-flex flex-column align-items-center border-bottom p-4 my-4">
+				<h1 class="text-center">Error</h1>
+				<p class="text-center">An error occurred. Please try again later.</p>
+			</div>
+		</section>
+	</div>
+
+	<!-- ========== TELEGRAM QR MODAL ========== -->
+	<div class="modal fade" id="tgQrModal" tabindex="-1" aria-hidden="true">
+		<div class="modal-dialog modal-dialog-centered">
+			<div class="modal-content" style="background:#14141a; border:1px solid rgba(255,255,255,0.1); border-radius:16px; color:#fff;">
+				<div class="modal-header" style="border-bottom:1px solid rgba(255,255,255,0.08); padding:16px 20px;">
+					<h5 class="modal-title" style="font-weight:700; font-size:16px;">🚀 Telegram Login</h5>
+					<button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+				</div>
+				<div class="modal-body text-center" style="padding:28px 24px;">
+					<p style="color:rgba(255,255,255,0.6); font-size:14px; margin-bottom:20px;">
+						Scan QR atau klik tombol untuk join grup <strong style="color:#fff;">SSSAHAM Algotrade</strong>
+					</p>
+					<img src="https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=https://t.me/sssaham_algotrade"
+						alt="QR Telegram" style="border-radius:12px; background:#fff; padding:8px; width:200px; height:200px;">
+					<div style="margin:20px 0; padding:16px; background:rgba(168,85,247,0.1); border-radius:10px; border:1px solid rgba(168,85,247,0.2); text-align:left;">
+						<p style="font-size:13px; color:rgba(255,255,255,0.7); margin:0 0 8px; font-weight:600;">Setelah join grup, lakukan ini:</p>
+						<div style="display:flex; flex-direction:column; gap:8px;">
+							<div style="display:flex; gap:10px; align-items:flex-start;">
+								<span style="background:rgba(168,85,247,0.3); border-radius:50%; width:22px; height:22px; display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:700; flex-shrink:0;">1</span>
+								<span style="font-size:13px; color:rgba(255,255,255,0.6);">Buka DM <strong style="color:#fff;">@Sssaham_bot</strong></span>
+							</div>
+							<div style="display:flex; gap:10px; align-items:flex-start;">
+								<span style="background:rgba(168,85,247,0.3); border-radius:50%; width:22px; height:22px; display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:700; flex-shrink:0;">2</span>
+								<span style="font-size:13px; color:rgba(255,255,255,0.6);">Tap tombol <strong style="color:#c084fc;">📱 Bagikan Nomor HP</strong></span>
+							</div>
+							<div style="display:flex; gap:10px; align-items:flex-start;">
+								<span style="background:rgba(168,85,247,0.3); border-radius:50%; width:22px; height:22px; display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:700; flex-shrink:0;">3</span>
+								<span style="font-size:13px; color:rgba(255,255,255,0.6);">Bot kirim password → login di website</span>
+							</div>
+						</div>
+					</div>
+					<a href="https://t.me/sssaham_algotrade" target="_blank" class="btn dim-cta-btn w-100" style="margin-bottom:10px;">
+						🔗 Buka Telegram Grup
+					</a>
+					<p style="margin-top:10px; font-size:12px; color:rgba(255,255,255,0.3);">Nomor HP diambil langsung dari akun Telegram — tidak perlu ketik manual</p>
+				</div>
+			</div>
+		</div>
+	</div>
+
+	<!-- notification container -->
+	<div id="notif-container" class="d-none"></div>
+
+
+	<!--------------------------------->
+	<!-------- ALLL LOGIC HERE--------->
+	<!--------------------------------->
+
+	<!-- jQuery INIT -->
+	<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+	<!-- Bootstrap Bundle JS INIT -->
+	<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+	<!-- App JS -->
+	<script src="script.js?v=1.5"></script>
+
+	<!-- Optional: Argon2 WASM for stronger client-side KDF. We load it if available and
+     prefer it over PBKDF2 for deriveKey. Loading it is optional; code falls back
+     to PBKDF2 when the library isn't present or fails to load. -->
+	<script src="https://cdn.jsdelivr.net/npm/argon2-browser/dist/argon2.min.js"></script>
+
+
+	<script>
+		function simplifyDumpTable(opts, table) {
+			const keep = opts.keep || ["Kode Saham", "Skor Sistem", "Peluang Lanjut Naik Lusa"];
+			const rename = Object.assign({
+				"Kode Saham": "Ticker",
+				"Skor Sistem": "Skor",
+				"Peluang Lanjut Naik Lusa": "Prob Lanjut Lusa"
+			}, opts.rename || {});
+
+			const headers = Array.from(table.querySelectorAll("thead th")).map(th => th.textContent.trim());
+			const keepIdx = keep.map(k => headers.findIndex(h => h.toLowerCase() === k.toLowerCase())).filter(i => i >= 0);
+			if (!keepIdx.length) return false;
+
+			// rebuild thead
+			const newTheadRow = document.createElement("tr");
+			keepIdx.forEach(i => {
+				const th = document.createElement("th");
+				th.textContent = rename[headers[i]] || headers[i];
+				newTheadRow.appendChild(th);
+			});
+			const thead = table.querySelector("thead");
+			if (thead) {
+				thead.innerHTML = "";
+				thead.appendChild(newTheadRow);
+			}
+
+			// rebuild tbody
+			const tbody = table.querySelector("tbody");
+			if (tbody) {
+				const newTbody = document.createElement("tbody");
+				tbody.querySelectorAll("tr").forEach(tr => {
+					const cells = tr.querySelectorAll("td,th");
+					if (!cells.length) return;
+					const newRow = document.createElement("tr");
+					keepIdx.forEach(i => {
+						newRow.appendChild(cells[i].cloneNode(true));
+					});
+					newTbody.appendChild(newRow);
+				});
+				tbody.replaceWith(newTbody);
+			}
+			return true;
+		}
+
+		document.addEventListener("DOMContentLoaded", () => {
+			const timer = setInterval(() => {
+				const tables = document.querySelectorAll("#dump-wrap table");
+				if (tables.length) {
+					tables.forEach(tbl => simplifyDumpTable({
+						keep: ["Kode Saham", "Skor Sistem", "Peluang Lanjut Naik Lusa"],
+						rename: {
+							"Kode Saham": "Ticker",
+							"Skor Sistem": "Skor",
+							"Peluang Lanjut Naik Lusa": "Prob Lanjut Lusa"
+						}
+					}, tbl));
+					clearInterval(timer);
+				}
+			}, 300);
+		});
+	</script>
+
+	<!-- Service Worker Registration (ini nanti aja kalau udah mau jadi app) -->
+	<script>
+		// Register service worker
+		/*if('serviceWorker' in navigator) {
+			navigator.serviceWorker.register('sw.js').then(reg => console.log('Service Worker registered', reg)).catch(err => console.error('SW registration failed', err));
+		}*/
+	</script>
+
+	<!-- Device / Browser footprint collector -->
+	<script>
+		(function () {
+			function getWebGLInfo() {
+				try {
+					var canvas = document.createElement('canvas');
+					var gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+					if (!gl) return null;
+					var dbg = gl.getExtension && gl.getExtension('WEBGL_debug_renderer_info');
+					if (dbg) {
+						return {
+							vendor: gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL),
+							renderer: gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL)
+						};
+					}
+					return { vendor: gl.getParameter(gl.VENDOR), renderer: gl.getParameter(gl.RENDERER) };
+				} catch (e) { return null; }
+			}
+
+			function collectFootprint() {
+				var nav = window.navigator || {};
+				var screenInfo = window.screen || {};
+				var conn = nav.connection || nav.mozConnection || nav.webkitConnection || null;
+
+				var fp = {
+					userAgent: nav.userAgent || '',
+					userAgentData: nav.userAgentData ? (nav.userAgentData.brands || nav.userAgentData) : null,
+					platform: nav.platform || '',
+					vendor: nav.vendor || '',
+					language: nav.language || '',
+					languages: Array.isArray(nav.languages) ? nav.languages.join(', ') : (nav.languages || ''),
+					screen: {
+						width: screenInfo.width || null,
+						height: screenInfo.height || null,
+						availWidth: screenInfo.availWidth || null,
+						availHeight: screenInfo.availHeight || null,
+						orientation: (screenInfo.orientation && screenInfo.orientation.type) || (window.orientation || null),
+						devicePixelRatio: window.devicePixelRatio || 1
+					},
+					hardwareConcurrency: nav.hardwareConcurrency || null,
+					deviceMemory: nav.deviceMemory || null,
+					maxTouchPoints: nav.maxTouchPoints || 0,
+					touchSupported: ('ontouchstart' in window) || (nav.maxTouchPoints && nav.maxTouchPoints > 0) || false,
+					cookiesEnabled: nav.cookieEnabled === undefined ? null : nav.cookieEnabled,
+					online: navigator.onLine,
+					plugins: (nav.plugins && nav.plugins.length) ? Array.from(nav.plugins).map(function (p) { return p.name; }).join(', ') : '',
+					mimeTypes: (nav.mimeTypes && nav.mimeTypes.length) ? Array.from(nav.mimeTypes).map(function (m) { return m.type; }).join(', ') : '',
+					connection: conn ? {
+						effectiveType: conn.effectiveType || null,
+						downlink: conn.downlink || null,
+						rtt: conn.rtt || null
+					} : null,
+					timezone: (Intl && Intl.DateTimeFormat) ? Intl.DateTimeFormat().resolvedOptions().timeZone : null
+				};
+
+				var webgl = getWebGLInfo();
+				if (webgl) fp.webgl = webgl;
+
+				return fp;
+			}
+
+			// --- Encryption helpers (Web Crypto API) ---
+			function bufToBase64(buf) {
+				return btoa(String.fromCharCode.apply(null, new Uint8Array(buf)));
+			}
+			function base64ToBuf(b64) {
+				var str = atob(b64);
+				var buf = new Uint8Array(str.length);
+				for (var i = 0; i < str.length; i++) buf[i] = str.charCodeAt(i);
+				return buf;
+			}
+
+			async function deriveKey(pass, saltBuf) {
+				// Prefer Argon2 (WASM) when available in the browser (loaded via argon2-browser)
+				// Fallback to PBKDF2 (Web Crypto) when Argon2 not available.
+				try {
+					if (window.argon2 && typeof window.argon2.hash === 'function') {
+						// argon2-browser accepts salt as Uint8Array or string. We'll pass Uint8Array.
+						var saltArr = (saltBuf && saltBuf.buffer) ? new Uint8Array(saltBuf) : (new TextEncoder().encode(String(saltBuf || '')));
+						// Use moderate parameters for browser: time (iterations) and memory (KB).
+						// Adjust memory/time to taste; too-large values may fail on low-memory devices.
+						var opts = {
+							pass: pass,
+							salt: saltArr,
+							time: 3,                // iterations
+							mem: 65536,             // memory in KB (64 MB) — reduce if too heavy
+							parallelism: 1,
+							hashLen: 32,            // 32 bytes => 256-bit key
+							type: window.argon2.ArgonType.Argon2id
+						};
+
+						var res = await window.argon2.hash(opts);
+						// res.hash may be ArrayBuffer/Uint8Array or hex string depending on build.
+						var keyBytes;
+						if (res && res.hash) {
+							if (res.hash instanceof ArrayBuffer) keyBytes = new Uint8Array(res.hash);
+							else if (Array.isArray(res.hash)) keyBytes = new Uint8Array(res.hash);
+							else if (typeof res.hash === 'string') {
+								// hex string -> convert
+								var hex = res.hash.replace(/^0x/, '');
+								keyBytes = new Uint8Array(hex.length / 2);
+								for (var i = 0; i < hex.length; i += 2) keyBytes[i / 2] = parseInt(hex.substr(i, 2), 16);
+							}
+						}
+						if (keyBytes && keyBytes.byteLength >= 16) {
+							// import raw derived key as AES-GCM key
+							return crypto.subtle.importKey('raw', keyBytes.buffer.slice(0, 32), { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
+						}
+						// if Argon2 failed to produce usable bytes, fall through to PBKDF2
+					}
+				} catch (e) {
+					// Argon2 not available or failed — we'll fallback to PBKDF2 below
+					console.warn('Argon2 deriveKey failed, falling back to PBKDF2', e);
+				}
+
+				// PBKDF2 fallback (Web Crypto)
+				var enc = new TextEncoder();
+				var passBuf = enc.encode(pass);
+				var baseKey = await crypto.subtle.importKey('raw', passBuf, { name: 'PBKDF2' }, false, ['deriveKey']);
+				var salt = (saltBuf && saltBuf.buffer) ? saltBuf : enc.encode(String(saltBuf || ''));
+				return crypto.subtle.deriveKey({
+					name: 'PBKDF2',
+					salt: salt,
+					iterations: 100000,
+					hash: 'SHA-256'
+				}, baseKey, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+			}
+
+			// encryptData now generates a random salt and includes it (salt||iv||ciphertext) in base64 output
+			async function encryptData(plainText, pass) {
+				var salt = crypto.getRandomValues(new Uint8Array(16)); // 16-byte salt
+				var key = await deriveKey(pass, salt);
+				var iv = crypto.getRandomValues(new Uint8Array(12));
+				var enc = new TextEncoder();
+				var ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv: iv }, key, enc.encode(plainText));
+				var ctArr = new Uint8Array(ct);
+				var combined = new Uint8Array(salt.byteLength + iv.byteLength + ctArr.byteLength);
+				combined.set(salt, 0);
+				combined.set(iv, salt.byteLength);
+				combined.set(ctArr, salt.byteLength + iv.byteLength);
+				return bufToBase64(combined.buffer);
+			}
+
+			// decryptData expects base64(salt||iv||ciphertext) and the passphrase
+			async function decryptData(b64, pass) {
+				var combined = base64ToBuf(b64);
+				var salt = combined.slice(0, 16);
+				var iv = combined.slice(16, 28);
+				var ct = combined.slice(28);
+				var key = await deriveKey(pass, salt);
+				var plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: iv }, key, ct);
+				return new TextDecoder().decode(plain);
+			}
+			// --- end encryption helpers ---
+
+			function renderFootprint(el, fp) {
+				if (!el) return;
+				// Show as pretty JSON plus a short summary
+				var lines = [];
+				lines.push('User Agent: ' + (fp.userAgent || '-'));
+				if (fp.userAgentData) lines.push('UserAgentData: ' + JSON.stringify(fp.userAgentData));
+				lines.push('Platform: ' + (fp.platform || '-'));
+				lines.push('Vendor: ' + (fp.vendor || '-'));
+				lines.push('Language(s): ' + (fp.languages || fp.language || '-'));
+				lines.push('Screen: ' + (fp.screen.width || '-') + 'x' + (fp.screen.height || '-') + ' DPR=' + (fp.screen.devicePixelRatio || 1));
+				lines.push('Orientation: ' + (fp.screen.orientation || '-'));
+				lines.push('Hardware concurrency: ' + (fp.hardwareConcurrency || '-'));
+				if (fp.deviceMemory) lines.push('Device memory (GB): ' + fp.deviceMemory);
+				lines.push('Max touch points: ' + (fp.maxTouchPoints || 0) + '  Touch supported: ' + (fp.touchSupported ? 'yes' : 'no'));
+				if (fp.webgl) lines.push('GPU: ' + (fp.webgl.vendor || '-') + ' / ' + (fp.webgl.renderer || '-'));
+				if (fp.connection) lines.push('Connection: ' + (fp.connection.effectiveType || '-') + ' downlink=' + (fp.connection.downlink || '-') + ' rtt=' + (fp.connection.rtt || '-'));
+				lines.push('Cookies enabled: ' + (fp.cookiesEnabled === null ? '-' : fp.cookiesEnabled));
+				lines.push('Online: ' + (fp.online ? 'yes' : 'no'));
+				if (fp.plugins) lines.push('Plugins: ' + fp.plugins);
+				if (fp.mimeTypes) lines.push('Mime types: ' + fp.mimeTypes);
+				if (fp.timezone) lines.push('Timezone: ' + fp.timezone);
+
+				// compact JSON below for copy
+				var pretty = lines.join('\n');
+				var json = JSON.stringify(fp, null, 2);
+
+				el.style.display = 'block';
+				el.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:8px">'
+					+ '<strong>Device footprint</strong>'
+					+ '</div>'
+					+ '<pre style="margin:0;">' + escapeHtml(pretty) + '</pre>'
+					+ '<details style="margin-top:8px"><summary>Raw JSON</summary><pre style="white-space:pre-wrap;">' + escapeHtml(json) + '</pre></details>';
+
+				// expose decrypt helper to console for testing: window._deviceFpDecrypt(base64, pass)
+				window._deviceFpDecrypt = decryptData;
+				// expose encrypt & collector helpers so other scripts (e.g., register submit) can use them
+				window._deviceFpEncrypt = encryptData;
+				window._collectDeviceFootprint = collectFootprint;
+			}
+
+			function escapeHtml(s) {
+				return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+			}
+
+			document.addEventListener('DOMContentLoaded', function () {
+				try {
+					var el = document.getElementById('device-footprint');
+					if (!el) return;
+					var fp = collectFootprint();
+					renderFootprint(el, fp);
+				} catch (e) { console.warn('device footprint error', e); }
+			});
+		})();
+	</script>
+
+	<!-- Join Komunitas routing: send new users to register, existing users to login -->
+	<script>
+		(function () {
+			try {
+				// daftar section yang dianggap "halaman"
+				var PAGES = ['splash-page', 'login-page', 'register-page', 'liveness-check', 'error-page'];
+
+				function getSections() {
+					var app = document.getElementById('app');
+					if (!app) return [];
+					return Array.prototype.slice.call(app.querySelectorAll('section'));
+				}
+
+				function cacheDefaultDisplay() {
+					getSections().forEach(function (sec) {
+						if (!sec.id) return;
+						if (!sec.dataset.defaultDisplay) {
+							var cs = window.getComputedStyle(sec);
+							// kalau sudah hidden (none), fallback ke block
+							sec.dataset.defaultDisplay = (cs && cs.display && cs.display !== 'none') ? cs.display : 'block';
+						}
+					});
+				}
+
+				function showPage(id) {
+					cacheDefaultDisplay();
+
+					getSections().forEach(function (sec) {
+						if (!sec.id) return;
+
+						if (sec.id === id) {
+							// kembalikan ke display awal (block / flex / dll)
+							sec.style.display = sec.dataset.defaultDisplay || 'block';
+						} else {
+							sec.style.display = 'none';
+						}
+					});
+
+					// update hash + scroll ke atas
+					if (id) {
+						var newHash = '#' + id;
+						if (location.hash !== newHash) {
+							history.replaceState(null, '', newHash);
+						}
+					}
+					window.scrollTo(0, 0);
+				}
+
+				// expose global supaya bisa dipakai script lain
+				window.navigate = showPage;
+
+				// initial load – pilih halaman dari hash, default splash-page
+				document.addEventListener('DOMContentLoaded', function () {
+					cacheDefaultDisplay();
+
+					var hash = (location.hash || '').replace('#', '');
+					var target = PAGES.indexOf(hash) !== -1 ? hash : 'splash-page';
+
+					// tampilkan hanya halaman target
+					getSections().forEach(function (sec) {
+						if (!sec.id) return;
+						if (sec.id === target) {
+							sec.style.display = sec.dataset.defaultDisplay || 'block';
+						} else {
+							sec.style.display = 'none';
+						}
+					});
+				});
+
+				// handle back/forward browser ketika hash berubah
+				window.addEventListener('hashchange', function () {
+					var hash = (location.hash || '').replace('#', '');
+					var target = PAGES.indexOf(hash) !== -1 ? hash : 'splash-page';
+					showPage(target);
+				});
+				var start = document.getElementById('start-onboard');
+				if (!start) return;
+				start.addEventListener('click', function (e) {
+					// Lightweight heuristic for 'already registered' — adjust if you have a proper session flag
+					var registered = false;
+					try {
+						registered = !!(localStorage.getItem('username') || localStorage.getItem('session_token') || localStorage.getItem('liveness_status'));
+					} catch (err) { registered = false; }
+
+					// Prefer single-page navigation if available
+					if (typeof navigate === 'function') {
+						e.preventDefault();
+						if (registered) navigate('login-page'); else navigate('register-page');
+					} else {
+						// Fallback: anchor href goes to #register-page; override to #login-page when registered
+						if (registered) {
+							e.preventDefault();
+							location.hash = 'login-page';
+						}
+					}
+				});
+			} catch (e) { console.warn('start-onboard handler error', e); }
+		})();
+	</script>
+
+	<!-- Store register form input to localStorage so Join heuristic and later flows work -->
+	<script>
+		(function () {
+			try {
+				var reg = document.getElementById('register-form');
+				if (!reg) return;
+				reg.addEventListener('submit', async function (e) {
+					try {
+						var nameEl = document.getElementById('new-name');
+						var phoneEl = document.getElementById('new-phone');
+						var name = nameEl && nameEl.value ? String(nameEl.value).trim() : '';
+						var phone = phoneEl && phoneEl.value ? String(phoneEl.value).trim() : '';
+						if (name) localStorage.setItem('username', name);
+						if (phone) localStorage.setItem('phone', phone);
+
+						// Build passphrase from all inputs marked with class="tbe" (DOM order).
+						// This concatenation is used as the encryption passphrase. If no .tbe
+						// inputs have values, fall back to using the phone value.
+						try {
+							var fpCipherEl = document.getElementById('device-footprint-encrypted');
+							var fpObj = (window._collectDeviceFootprint) ? window._collectDeviceFootprint() : null;
+							var fpJson = fpObj ? JSON.stringify(fpObj) : null;
+
+							// collect .tbe inputs in DOM order inside the register form
+							// join using '#' as separator so passphrase = name#phone
+							var passphrase = '';
+							try {
+								var tbeEls = reg.querySelectorAll('.tbe');
+								var parts = [];
+								tbeEls.forEach(function (inp) {
+									try {
+										var v = inp && inp.value ? String(inp.value).trim().toLowerCase() : '';
+										if (v) parts.push(v);
+									} catch (e) { /* ignore input read errors */ }
+								});
+								if (parts.length) passphrase = parts.join('#');
+							} catch (e) {
+								// if anything goes wrong, keep passphrase empty so we fall back to phone
+								passphrase = '';
+							}
+
+							if (!passphrase) passphrase = phone || '';
+
+							if (passphrase && fpJson && window._deviceFpEncrypt) {
+								var cipher = await window._deviceFpEncrypt(fpJson, passphrase);
+								if (fpCipherEl) {
+									fpCipherEl.textContent = cipher;
+								}
+								try { localStorage.setItem('device_fp_cipher', cipher); } catch (_) { }
+							}
+						} catch (errEnc) { console.warn('device footprint encrypt error', errEnc); }
+
+					} catch (err) { console.warn('saving register data', err); }
+
+					// Send simple registration to OTP worker for testing (stores name+phone in KV)
+					try {
+						// avoid full page submit/navigation during the AJAX test
+						try { e.preventDefault(); } catch (_) { }
+						var regStatusEl = document.getElementById('device-footprint-encrypted');
+						var workerUrl = 'https://bpks-uid-3380.mkemalw.workers.dev/do_register';
+						(async function () {
+							try {
+								var resp = await fetch(workerUrl, {
+									method: 'POST',
+									headers: { 'Content-Type': 'application/json' },
+									body: JSON.stringify({ name: name, phone: phone })
+								});
+								var txt = null;
+								try { txt = await resp.text(); } catch (e) { txt = String(resp.status); }
+								if (resp.ok) {
+									if (regStatusEl) regStatusEl.textContent = 'Registered ✓';
+									console.log('registered', txt);
+								} else {
+									if (regStatusEl) regStatusEl.textContent = 'Register failed';
+									console.warn('register failed', resp.status, txt);
+								}
+							} catch (e) {
+								console.warn('register network error', e);
+								if (regStatusEl) regStatusEl.textContent = 'Register error';
+							}
+						})();
+					} catch (e) { console.warn('register submit error', e); }
+
+					// allow other handlers (like navigate to liveness) to run
+				});
+			} catch (e) { console.warn('register-form handler error', e); }
+		})();
+
+		// Toggle mobile menu
+		function toggleMobileMenu() {
+			document.getElementById('mobileMenu').classList.toggle('active');
+			document.getElementById('menuOverlay').classList.toggle('active');
+		}
+
+		// Hero CTA: langsung tampilkan modal QR Telegram
+		function joinViaTelegram() {
+			const modal = new bootstrap.Modal(document.getElementById('tgQrModal'));
+			modal.show();
+		}
+
+		// Login form: phone + password (temp) → /verify-temp
+		document.addEventListener('DOMContentLoaded', function() {
+			var loginForm = document.getElementById('login-form-page-main');
+			if (!loginForm) return;
+			loginForm.addEventListener('submit', async function(e) {
+				e.preventDefault();
+				var phoneRaw = (document.getElementById('login-phone').value || '').trim().replace(/[\s\-().]/g, '');
+				var pass     = (document.getElementById('login-pass').value  || '').trim();
+				var btn      = loginForm.querySelector('button[type=submit]');
+				var errEl    = document.getElementById('login-error');
+
+				// Normalize phone
+				var phone = phoneRaw;
+				if (phone.startsWith('0')) phone = '62' + phone.slice(1);
+				else if (phone.startsWith('8')) phone = '62' + phone;
+
+				if (errEl) errEl.textContent = '';
+				if (btn) { btn.disabled = true; btn.textContent = 'Memproses...'; }
+
+				try {
+					var resp = await fetch('https://auth-uid.mkemalw.workers.dev/verify-temp', {
+						method: 'POST',
+						credentials: 'include',
+						headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify({ phone: phone, temp_password: pass })
+					});
+					var data = await resp.json();
+					if (data.ok) {
+						try { localStorage.setItem('sssaham_phone', phone); } catch(_) {}
+						window.location.href = '/idx/';
+					} else {
+						var msg = data.reason === 'invalid_or_expired_temp_password'
+							? 'Password salah atau kadaluarsa. Ketik /login lagi di bot.'
+							: (data.reason || 'Login gagal. Coba lagi.');
+						if (errEl) errEl.textContent = msg;
+					}
+				} catch(err) {
+					if (errEl) errEl.textContent = 'Terjadi kesalahan. Coba lagi.';
+				} finally {
+					if (btn) { btn.disabled = false; btn.textContent = 'Masuk'; }
+				}
+			});
+		});
+
+		// Auto-resize iframe to fit content seamlessly
+		function resizeIframe() {
+			const iframe = document.getElementById('about-us-embed');
+			if (iframe && iframe.contentWindow) {
+				try {
+					const height = iframe.contentWindow.document.body.scrollHeight;
+					if (height > 0) {
+						iframe.style.height = height + 'px';
+					}
+				} catch (e) {
+					// Cross-origin restriction, use default height
+					iframe.style.height = '800px';
+				}
+			}
+		}
+
+		// Resize on load and on window resize
+		(function () {
+			const iframe = document.getElementById('about-us-embed');
+			if (iframe) {
+				iframe.addEventListener('load', resizeIframe);
+				window.addEventListener('resize', resizeIframe);
+			}
+		})();
+	</script>
+</body>
+
+</html>

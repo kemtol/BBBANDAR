@@ -1,0 +1,670 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SSSAHAM – Doc Viewer</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #020617;
+      --bg-soft: #030712;
+      --fg: #e5e7eb;
+      --fg-muted: #9ca3af;
+      --accent: #38bdf8;
+      --accent-soft: rgba(56,189,248,0.15);
+      --border: #1f2937;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--fg);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    header {
+      padding: 0.8rem 1.1rem 0.7rem;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg-soft);
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+    .title {
+      font-size: 1rem;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .title span.badge {
+      font-size: 0.8rem;
+      padding: 0.08rem 0.45rem;
+      border-radius: 999px;
+      border: 0px solid var(--accent-soft);
+      background:none;
+      color: var(--accent);
+    }
+    .subtitle {
+      margin-top: 0.25rem;
+      font-size: 0.8rem;
+      color: var(--fg-muted);
+      max-width: 480px;
+    }
+    .query-hint {
+      margin-top: 0.35rem;
+      font-size: 0.78rem;
+      color: var(--fg-muted);
+    }
+    .query-hint code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 0.78rem;
+      padding: 0.08rem 0.3rem;
+      border-radius: 0.35rem;
+      background: rgba(15,23,42,0.9);
+      border: 1px solid #111827;
+      color: #e5e7eb;
+    }
+    main {
+      flex: 1;
+      padding: 0px;
+      max-width: 1600px;
+      width: 100%;
+      margin: 0 auto;
+    }
+    .card {
+      border-radius: 0.75rem;
+      border: 0px;
+      padding: 1rem;
+    }
+    .two-pane {
+      display: flex;
+      gap: 0.75rem;
+    }
+    .pane-left {
+      flex: 0 0 260px;
+      max-width: 320px;
+      display: flex;
+      flex-direction: column;
+      gap: 0.45rem;
+      border-right: 1px solid var(--border);
+      padding-right: 0.75rem;
+      margin-right: 0.1rem;
+    }
+    .pane-right {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+    }
+    .doc-meta {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+      margin-bottom: 0.7rem;
+      padding-bottom: 0.6rem;
+      border-bottom: 1px solid var(--border);
+    }
+    .doc-name {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 1rem;
+      padding: 0.15rem 0.5rem;
+      border: 0px;
+      background: transparent;
+      color: #e5e7eb;
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-weight: 900;
+      text-transform: uppercase;
+    }
+    .doc-status {
+      font-size: 0.78rem;
+      color: var(--fg-muted);
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+    }
+    .dot {
+      width: 0.45rem;
+      height: 0.45rem;
+      border-radius: 999px;
+      background: #22c55e;
+    }
+    .viewer {
+      flex: 1;
+      overflow: auto;
+      padding-right: 0.1rem;
+      -webkit-overflow-scrolling: touch;
+      margin-top: 0.5rem;
+    }
+    article.markdown {
+      font-size: 0.9rem;
+      line-height: 1.6;
+      color: var(--fg);
+    }
+    article.markdown h1,
+    article.markdown h2,
+    article.markdown h3 {
+      font-weight: 650;
+      letter-spacing: 0.02em;
+      margin: 0.85rem 0 0.3rem;
+    }
+    article.markdown h1 { font-size: 1.3rem; }
+    article.markdown h2 { font-size: 1.1rem; }
+    article.markdown h3 { font-size: 1rem; }
+    article.markdown p { margin: 0.35rem 0; }
+    article.markdown ul,
+    article.markdown ol {
+      padding-left: 1.15rem;
+      margin: 0.25rem 0 0.5rem;
+      margin-bottom:1rem;
+    }
+    article.markdown li { margin: 0.1rem 0; }
+    article.markdown code {
+      font-family: Courier, monospace;
+      font-size: 0.9rem;
+      padding: 0.05rem 0.25rem;
+
+    }
+    article.markdown hr {
+      border: 0;
+      border-top: 1px solid var(--border);
+      margin: 0.9rem 0;
+    }
+    article.markdown pre {
+      background: #010413;
+      border-radius: 0.35rem;
+      padding: 0.55rem 0.7rem;
+      overflow-x: auto;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 0.9rem;
+      border: 0px;
+      line-height: 1;
+    }
+    article.markdown table {
+      border-collapse: collapse;
+      width: 100%;
+      margin: 0.6rem 0;
+      font-size: 0.85rem;
+    }
+    article.markdown th,
+    article.markdown td {
+      border: 1px solid var(--border);
+      padding: 0.25rem 0.5rem;
+      text-align: left;
+    }
+    article.markdown thead {
+      background: #020617;
+    }
+    article.markdown th {
+      font-weight: 600;
+    }
+    article.markdown blockquote {
+      border-left: 2px solid rgba(56,189,248,0.8);
+      margin: 0;
+      padding: 0.25rem 0.7rem;
+      color: var(--fg-muted);
+      background: transparent;
+    }
+    .empty-state {
+      font-size: 0.86rem;
+      color: var(--fg-muted);
+      padding: 0.3rem 0.1rem 0.2rem;
+    }
+    .empty-state strong { color: #e5e7eb; }
+    .doc-list {
+      margin-top: 0.2rem;
+    }
+    .doc-list-title {
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--fg-muted);
+      margin-bottom: 0.35rem;
+    }
+    .doc-list-items {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0.2rem;
+      flex: 1;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+    .doc-item-btn {
+      width: 100%;
+      text-align: left;
+      background: transparent;
+      padding: 0.5rem 0.75rem;
+      color: #e5e7eb;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.4rem;
+      cursor: pointer;
+      border:none;
+    }
+    .doc-item-btn span.code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .doc-item-btn span.label {
+      font-size: 0.72rem;
+      color: var(--fg-muted);
+    }
+    .doc-item-btn.active {
+      border-color: rgba(56,189,248,0.85);
+      background: rgba(15,23,42,0.9);
+    }
+    .chip-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.35rem;
+      margin-top: 0.35rem;
+      font-size: 0.78rem;
+    }
+    .chip-row span {
+      padding: 0.08rem 0.45rem;
+      border-radius: 999px;
+      border: 1px dashed rgba(55,65,81,0.9);
+      background: rgba(15,23,42,0.6);
+    }
+    .error {
+      color: #f97373;
+      font-size: 0.86rem;
+      margin-top: 0.4rem;
+    }
+    .loading {
+      font-size: 0.84rem;
+      color: var(--fg-muted);
+      margin-top: 0.3rem;
+    }
+    @media (min-width: 720px) {
+      header { padding-inline: 1.8rem; }
+      main { padding-inline: 1.4rem; }
+    }
+    @media (max-width: 720px) {
+      .two-pane {
+        flex-direction: column;
+      }
+      .pane-left {
+        border-right: none;
+        padding-right: 0;
+        margin-right: 0;
+        border-bottom: 1px solid var(--border);
+        padding-bottom: 0.6rem;
+        margin-bottom: 0.5rem;
+      }
+      .viewer {
+        max-height: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="title">
+      <span>SSSAHAM Docs</span>
+      <span class="badge">Methodology</span>
+    </div>
+  </header>
+
+  <main>
+    <div class="card">
+      <div class="two-pane">
+        <aside class="pane-left">
+          <div class="doc-list" id="docList"></div>
+        </aside>
+
+        <section class="pane-right">
+          <div class="doc-meta">
+            <div class="doc-name" id="docName">(tidak ada file dipilih)</div>
+            <div class="doc-status" id="docStatus">
+              <span class="dot" id="statusDot"></span>
+              <span id="statusText">Idle</span>
+            </div>
+          </div>
+
+          <div class="empty-state" id="emptyState">
+            <strong>Petunjuk cepat:</strong> pilih dokumen di panel kiri atau tambahkan nama file markdown setelah tanda tanya di URL.
+            <div class="chip-row">
+              <span>?0010_idx_handler_emiten_sync.md</span>
+              <span>?0001_orderflow.md</span>
+              <span>?0006_prompt_service.md</span>
+            </div>
+          </div>
+
+          <div class="loading" id="loading" style="display:none;">Memuat dokumen…</div>
+          <div class="error" id="error" style="display:none;"></div>
+
+          <div class="viewer" id="viewer" style="display:none;">
+            <article class="markdown" id="markdown"></article>
+          </div>
+        </section>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    (function () {
+      // Daftar file dokumentasi yang tersedia di workers/_DOC
+      var DOC_FILES = [
+        "0001_orderflow.md",
+        "0002_detail_emiten.md",
+        "0003_brokersummary.md",
+        "0004_divergence_scoring.md",
+        "0005_features_list.md",
+        "0006_prompt_service.md",
+        "0006_ui_theme_features.md",
+        "0007_backfill_benchmark_api.md",
+        "0008_ai_screenshot_pipeline.md",
+        "0009_orderflow_brokerflow_migration.md",
+        "0010_idx_handler_emiten_sync.md"
+      ];
+
+      function getFilenameFromQuery() {
+        var search = window.location.search || "";
+        if (!search || search.length < 2) return null;
+        // Dukungan format: ?0001_orderflow.md (tanpa key)
+        var raw = search.slice(1);
+        if (!raw) return null;
+        // buang fragmen & params lain jika ada
+        var ampIdx = raw.indexOf("&");
+        if (ampIdx !== -1) raw = raw.slice(0, ampIdx);
+        raw = raw.trim();
+        if (!raw || raw.indexOf("..") !== -1 || raw.indexOf("/") !== -1 || raw.indexOf("\\") !== -1) {
+          return null;
+        }
+        return raw;
+      }
+
+      function escapeHtml(str) {
+        return str
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/\"/g, "&quot;")
+          .replace(/'/g, "&#39;");
+      }
+
+      function renderInline(text) {
+        // escape dulu supaya aman, lalu ganti pola markdown sederhana
+        var s = escapeHtml(text);
+        // inline code `code`
+        s = s.replace(/`([^`]+)`/g, "<code>$1</code>");
+        // bold **teks**
+        s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+        // italic *teks*
+        s = s.replace(/\*([^*]+)\*/g, "<em>$1</em>");
+        return s;
+      }
+
+      // Minimal markdown renderer: heading, list, code block, paragraph
+      function renderMarkdown(md) {
+        var lines = md.replace(/\r\n?/g, "\n").split("\n");
+        var html = [];
+        var inCode = false;
+        var listOpen = false;
+
+        function closeList() {
+          if (listOpen) {
+            html.push("</ul>");
+            listOpen = false;
+          }
+        }
+
+        for (var i = 0; i < lines.length; i++) {
+          var line = lines[i];
+
+          // code fence ```
+          if (line.trim().match(/^```/)) {
+            if (!inCode) {
+              closeList();
+              inCode = true;
+              html.push("<pre><code>");
+            } else {
+              inCode = false;
+              html.push("</code></pre>");
+            }
+            continue;
+          }
+
+          if (inCode) {
+            html.push(escapeHtml(line) + "\n");
+            continue;
+          }
+
+          var trimmed = line.trim();
+          if (!trimmed) {
+            closeList();
+            continue;
+          }
+
+          var m;
+          if (trimmed.match(/^---+$/)) {
+            closeList();
+            html.push("<hr>");
+            continue;
+          }
+
+          // markdown table: header + separator + rows
+          if (trimmed.charAt(0) === "|" && trimmed.indexOf("|", 1) !== -1) {
+            var next = (lines[i + 1] || "").trim();
+            if (/^\|?\s*:?-{3,}.*\|?$/.test(next)) {
+              var tableLines = [];
+              tableLines.push(trimmed); // header
+              var j = i + 2;
+              for (; j < lines.length; j++) {
+                var t = lines[j].trim();
+                if (!t || t.charAt(0) !== "|") break;
+                tableLines.push(t);
+              }
+
+              function splitRow(row) {
+                var parts = row.split("|");
+                var cells = [];
+                for (var k = 0; k < parts.length; k++) {
+                  var cell = parts[k].trim();
+                  if (k === 0 && cell === "") continue;
+                  if (k === parts.length - 1 && cell === "") continue;
+                  cells.push(cell);
+                }
+                return cells;
+              }
+
+              var headerCells = splitRow(tableLines[0]);
+              html.push("<table><thead><tr>");
+              for (var h = 0; h < headerCells.length; h++) {
+                html.push("<th>" + renderInline(headerCells[h]) + "</th>");
+              }
+              html.push("</tr></thead><tbody>");
+
+              for (var r = 2; r < tableLines.length; r++) {
+                var rowCells = splitRow(tableLines[r]);
+                html.push("<tr>");
+                for (var c = 0; c < headerCells.length; c++) {
+                  var val = rowCells[c] != null ? rowCells[c] : "";
+                  html.push("<td>" + renderInline(val) + "</td>");
+                }
+                html.push("</tr>");
+              }
+              html.push("</tbody></table>");
+
+              i = j - 1;
+              continue;
+            }
+          }
+
+          if ((m = trimmed.match(/^(#{1,3})\s+(.*)$/))) {
+            closeList();
+            var level = m[1].length;
+            var content = renderInline(m[2]);
+            html.push("<h" + level + ">" + content + "</h" + level + ">");
+            continue;
+          }
+
+          if ((m = trimmed.match(/^[-*]\s+(.*)$/))) {
+            if (!listOpen) {
+              closeList();
+              listOpen = true;
+              html.push("<ul>");
+            }
+            html.push("<li>" + renderInline(m[1]) + "</li>");
+            continue;
+          }
+
+          // blockquote
+          if ((m = trimmed.match(/^>\s?(.*)$/))) {
+            closeList();
+            html.push("<blockquote>" + renderInline(m[1]) + "</blockquote>");
+            continue;
+          }
+
+          closeList();
+          html.push("<p>" + renderInline(trimmed) + "</p>");
+        }
+
+        closeList();
+        if (inCode) {
+          html.push("</code></pre>");
+        }
+        return html.join("\n");
+      }
+
+      function setStatus(state, msg) {
+        var dot = document.getElementById("statusDot");
+        var text = document.getElementById("statusText");
+        if (!dot || !text) return;
+        if (state === "loading") {
+          dot.style.background = "#38bdf8";
+          dot.style.boxShadow = "none";
+          text.textContent = msg || "Loading";
+        } else if (state === "ok") {
+          dot.style.background = "#22c55e";
+          dot.style.boxShadow = "none";
+          text.textContent = msg || "OK";
+        } else if (state === "error") {
+          dot.style.background = "#f97373";
+          dot.style.boxShadow = "none";
+          text.textContent = msg || "Error";
+        } else {
+          dot.style.background = "#f97316";
+          dot.style.boxShadow = "none";
+          text.textContent = msg || "Idle";
+        }
+      }
+
+      function loadDoc(filename) {
+        var emptyState = document.getElementById("emptyState");
+        var loading = document.getElementById("loading");
+        var error = document.getElementById("error");
+        var viewer = document.getElementById("viewer");
+        var mdEl = document.getElementById("markdown");
+        var docName = document.getElementById("docName");
+
+        docName.textContent = filename || "(tidak ada file dipilih)";
+        error.style.display = "none";
+        viewer.style.display = "none";
+        mdEl.innerHTML = "";
+
+        if (!filename) {
+          emptyState.style.display = "block";
+          setStatus("idle", "Idle");
+          return;
+        }
+
+        emptyState.style.display = "none";
+        loading.style.display = "block";
+        setStatus("loading", "Memuat");
+
+        var url = "/workers/_DOC/" + encodeURIComponent(filename);
+
+        fetch(url, { cache: "no-store" })
+          .then(function (res) {
+            if (!res.ok) {
+              throw new Error("Gagal memuat (" + res.status + ")");
+            }
+            return res.text();
+          })
+          .then(function (text) {
+            var html = renderMarkdown(text);
+            mdEl.innerHTML = html;
+            viewer.style.display = "block";
+            setStatus("ok", "Live dari workers/_DOC");
+          })
+          .catch(function (err) {
+            error.textContent = "Tidak bisa memuat dokumen: " + err.message + ". Pastikan file ada di workers/_DOC.";
+            error.style.display = "block";
+            setStatus("error", "Error");
+          })
+          .finally(function () {
+            loading.style.display = "none";
+          });
+      }
+
+      function renderDocList(selected) {
+        var container = document.getElementById("docList");
+        if (!container) return;
+
+        if (!DOC_FILES || !DOC_FILES.length) {
+          container.innerHTML = "";
+          return;
+        }
+
+        var html = [];
+        html.push('<ul class="doc-list-items">');
+        for (var i = 0; i < DOC_FILES.length; i++) {
+          var f = DOC_FILES[i];
+          var isActive = selected && selected === f;
+          var display = f.replace(/\.md$/i, "").replace(/_/g, " ");
+          var cls = "doc-item-btn" + (isActive ? " active" : "");
+          html.push(
+            '<li><button type="button" class="' + cls + '" data-file="' + f + '">' +
+              '<span class="code">' + display + '</span>' +
+            '</button></li>'
+          );
+        }
+        html.push("</ul>");
+        container.innerHTML = html.join("");
+
+        var buttons = container.querySelectorAll(".doc-item-btn");
+        for (var j = 0; j < buttons.length; j++) {
+          buttons[j].addEventListener("click", function (ev) {
+            var file = this.getAttribute("data-file");
+            if (!file) return;
+            // Update URL tanpa reload penuh
+            if (window.history && history.replaceState) {
+              history.replaceState(null, "", "?" + encodeURIComponent(file));
+            } else {
+              window.location.search = "?" + encodeURIComponent(file);
+              return;
+            }
+            loadDoc(file);
+            renderDocList(file);
+          });
+        }
+      }
+
+      document.addEventListener("DOMContentLoaded", function () {
+        var file = getFilenameFromQuery();
+        loadDoc(file);
+        renderDocList(file);
+      });
+    })();
+  </script>
+</body>
+</html>

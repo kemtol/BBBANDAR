@@ -8,6 +8,7 @@
  */
 
 import { validateBroksum } from './validator.js';
+import { previousTradingDayUTC } from './trading-calendar.js';
 
 // LQ45 / IDX30 — always checked
 const MANDATORY_CHECK = [
@@ -254,27 +255,21 @@ async function triggerSelectiveRepair(env, dateStr, codes) {
 }
 
 /**
- * Get the previous trading day (skip weekends) from a date string or today.
+ * Get the previous trading day (skip weekends + holidays) from a date string or today.
  * @param {string} [fromDateStr] - ISO date string (YYYY-MM-DD). Defaults to today WIB.
  * @returns {string} ISO date string of previous trading day
  */
 function getPreviousTradingDay(fromDateStr) {
-    let d;
     if (fromDateStr) {
-        d = new Date(fromDateStr + 'T12:00:00Z'); // Noon UTC to avoid timezone edge
-    } else {
-        // Default: today in WIB
-        const now = new Date();
-        const wibOffset = 7 * 60 * 60 * 1000;
-        d = new Date(now.getTime() + wibOffset);
+        return previousTradingDayUTC(fromDateStr);
     }
 
-    // Go back 1 day, skip weekends
-    do {
-        d.setUTCDate(d.getUTCDate() - 1);
-    } while (d.getUTCDay() === 0 || d.getUTCDay() === 6);
-
-    return d.toISOString().split('T')[0];
+    // Default base date: today in WIB, then step back one trading day.
+    const now = new Date();
+    const wibOffset = 7 * 60 * 60 * 1000;
+    const wib = new Date(now.getTime() + wibOffset);
+    const todayWib = wib.toISOString().split('T')[0];
+    return previousTradingDayUTC(todayWib);
 }
 
 // ========================================
