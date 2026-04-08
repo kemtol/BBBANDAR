@@ -1,266 +1,1886 @@
 {
   "openapi": "3.0.3",
   "info": {
-    "title": "SSSAHAM API",
-    "description": "Real-time Indonesian stock microstructure API",
-    "version": "1.0.0"
+    "title": "SSSAHAM Real-Time API",
+    "version": "2026-04-03",
+    "description": "Unified API documentation for endpoints consumed by the SSSAHAM frontend application."
   },
   "servers": [
     {
       "url": "https://api-saham.mkemalw.workers.dev",
-      "description": "Dev"
+      "description": "Development"
     },
     {
       "url": "https://api.sssaham.com",
       "description": "Production"
     }
   ],
-  "components": {
-    "securitySchemes": {
-      "ApiKeyAuth": {
-        "type": "apiKey",
-        "in": "header",
-        "name": "X-API-KEY",
-        "description": "Gunakan API key yang diberikan oleh BBBANDAR"
-      }
+  "tags": [
+    {
+      "name": "Docs",
+      "description": "Documentation endpoints"
     },
+    {
+      "name": "System",
+      "description": "Health and runtime utilities"
+    },
+    {
+      "name": "Market Data",
+      "description": "Screener, summary, sector, and ticker APIs"
+    },
+    {
+      "name": "Orderflow",
+      "description": "Orderflow and footprint APIs"
+    },
+    {
+      "name": "Broker",
+      "description": "Broker profile, activity, and aggregation APIs"
+    },
+    {
+      "name": "Assets",
+      "description": "Static assets such as logo/image endpoints"
+    },
+    {
+      "name": "AI",
+      "description": "AI screenshot and scoring APIs"
+    },
+    {
+      "name": "Dashboard",
+      "description": "Dashboard feed and catalyst APIs"
+    }
+  ],
+  "components": {
     "schemas": {
-      "ErrorUnauthorized": {
+      "GenericObject": {
         "type": "object",
-        "properties": {
-          "error": { "type": "string", "example": "Unauthorized" },
-          "message": { "type": "string", "example": "Missing/invalid X-API-KEY" }
-        },
-        "required": ["error", "message"]
+        "additionalProperties": true
       },
-      "HealthResponse": {
+      "ErrorResponse": {
         "type": "object",
         "properties": {
-          "ok": { "type": "boolean", "example": true },
-          "service": { "type": "string", "example": "api-saham" },
-          "ts": { "type": "string", "example": "2025-12-14T10:00:00.000Z" }
-        },
-        "required": ["ok", "service", "ts"]
-      },
-      "MeResponse": {
-        "type": "object",
-        "properties": {
-          "authorized": { "type": "boolean", "example": true },
-          "plan": { "type": "string", "example": "dev" }
-        },
-        "required": ["authorized", "plan"]
-      },
-      "RosterResponse": {
-        "type": "object",
-        "properties": {
-          "count": { "type": "integer", "example": 5 },
-          "items": {
-            "type": "array",
-            "items": { "type": "string", "example": "BBCA" }
-          }
-        },
-        "required": ["count", "items"]
-      },
-      "SummaryItem": {
-        "type": "object",
-        "properties": {
-          "kode": { "type": "string", "example": "ADRO" },
-          "signal_side": {
-            "type": "string",
-            "enum": ["BUY", "SELL", "NONE"],
-            "example": "SELL"
+          "error": {
+            "type": "string"
           },
-          "last": { "type": "number", "example": 1840 }
-        },
-        "required": ["kode", "signal_side", "last"]
-      },
-      "SummaryResponse": {
-        "type": "object",
-        "properties": {
-          "mode": { "type": "string", "example": "intraday" },
-          "count": { "type": "integer", "example": 2 },
-          "items": {
-            "type": "array",
-            "items": { "$ref": "#/components/schemas/SummaryItem" }
-          }
-        },
-        "required": ["mode", "count", "items"]
-      },
-      "SignalResponse": {
-        "type": "object",
-        "properties": {
-          "kode": { "type": "string", "example": "ADRO" },
-          "mode": { "type": "string", "example": "intraday" },
-          "signal_side": {
-            "type": "string",
-            "enum": ["BUY", "SELL", "NONE"],
-            "example": "NONE"
+          "details": {
+            "type": "string"
           },
-          "confidence": { "type": "number", "example": 0.5 },
-          "last": { "type": "number", "example": 0 }
-        },
-        "required": ["kode", "mode", "signal_side", "confidence", "last"]
+          "ok": {
+            "type": "boolean"
+          }
+        }
+      },
+      "WatchlistSyncRequest": {
+        "type": "object",
+        "required": [
+          "symbols"
+        ],
+        "properties": {
+          "symbols": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Z]{2,6}$"
+            }
+          },
+          "source": {
+            "type": "string",
+            "example": "browser"
+          },
+          "ts": {
+            "type": "integer",
+            "format": "int64",
+            "example": 1760000000000
+          }
+        }
+      },
+      "AnalyzeBroksumRequest": {
+        "type": "object",
+        "required": [
+          "symbol"
+        ],
+        "properties": {
+          "symbol": {
+            "type": "string",
+            "description": "Ticker symbol (e.g. BBRI)",
+            "example": "BBRI"
+          },
+          "from": {
+            "type": "string",
+            "format": "date",
+            "example": "2026-03-01"
+          },
+          "to": {
+            "type": "string",
+            "format": "date",
+            "example": "2026-03-31"
+          },
+          "force": {
+            "type": "boolean",
+            "default": false
+          },
+          "image_keys": {
+            "type": "array",
+            "description": "Optional screenshot references from client side",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string"
+                },
+                "label": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "ClaudeScoreCandidate": {
+        "type": "object",
+        "required": [
+          "symbol"
+        ],
+        "properties": {
+          "symbol": {
+            "type": "string",
+            "example": "BBCA"
+          },
+          "growth_pct": {
+            "type": "number"
+          },
+          "freq": {
+            "type": "number"
+          },
+          "sm": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "fn": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "ln": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "flow": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "effort": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "vwap": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "ngr": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "rvol": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "cvd_multi": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "orderflow": {
+            "$ref": "#/components/schemas/GenericObject"
+          },
+          "quadrant": {
+            "type": "integer"
+          },
+          "state": {
+            "type": "string"
+          },
+          "trend": {
+            "$ref": "#/components/schemas/GenericObject"
+          }
+        }
+      },
+      "ClaudeScoreRequest": {
+        "type": "object",
+        "required": [
+          "candidates"
+        ],
+        "properties": {
+          "candidates": {
+            "type": "array",
+            "minItems": 10,
+            "maxItems": 1000,
+            "items": {
+              "$ref": "#/components/schemas/ClaudeScoreCandidate"
+            }
+          },
+          "symbols": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "filter_state": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "sort_key": {
+            "type": "string"
+          },
+          "sort_dir": {
+            "type": "string",
+            "enum": [
+              "asc",
+              "desc",
+              "ASC",
+              "DESC"
+            ]
+          }
+        }
       }
     }
   },
-  "tags": [
-    { "name": "System", "description": "Service health & meta" },
-    { "name": "Market", "description": "Market-wide endpoints" },
-    { "name": "Signals", "description": "Per-ticker signals" }
-  ],
-  "security": [
-    {
-      "ApiKeyAuth": []
-    }
-  ],
   "paths": {
+    "/": {
+      "get": {
+        "tags": [
+          "Docs"
+        ],
+        "summary": "Redirect to API docs",
+        "description": "Redirects to `/docs`.",
+        "responses": {
+          "302": {
+            "description": "Redirect response"
+          }
+        }
+      }
+    },
+    "/docs": {
+      "get": {
+        "tags": [
+          "Docs"
+        ],
+        "summary": "Swagger UI documentation page",
+        "description": "Interactive API docs (Swagger UI).",
+        "responses": {
+          "200": {
+            "description": "HTML documentation page",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/console": {
+      "get": {
+        "tags": [
+          "Docs"
+        ],
+        "summary": "Documentation console page",
+        "description": "Alias to the interactive docs page.",
+        "responses": {
+          "200": {
+            "description": "HTML documentation page",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/openapi.json": {
+      "get": {
+        "tags": [
+          "Docs"
+        ],
+        "summary": "OpenAPI specification document",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericObject"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/health": {
       "get": {
-        "tags": ["System"],
+        "tags": [
+          "System"
+        ],
         "summary": "Health check",
-        "security": [],
         "responses": {
           "200": {
-            "description": "OK",
+            "description": "Successful response",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/HealthResponse" }
+                "schema": {
+                  "$ref": "#/components/schemas/GenericObject"
+                }
               }
             }
           }
         }
       }
     },
-    "/me": {
+    "/ws-token": {
       "get": {
-        "tags": ["System"],
-        "summary": "Auth check",
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/MeResponse" }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/ErrorUnauthorized" }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/market/roster": {
-      "get": {
-        "tags": ["Market"],
-        "summary": "Active ticker roster",
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/RosterResponse" },
-                "example": { "count": 5, "items": ["BBCA", "BBRI", "BMRI", "ADRO", "TLKM"] }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/ErrorUnauthorized" }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/summary": {
-      "get": {
-        "tags": ["Market"],
-        "summary": "Market summary",
-        "description": "Ringkasan sinyal saham berbasis microstructure.",
+        "tags": [
+          "System"
+        ],
+        "summary": "Get WebSocket app session token",
         "parameters": [
           {
-            "name": "mode",
+            "name": "refresh",
             "in": "query",
-            "description": "Mode analisis",
+            "required": false,
+            "description": "Force token refresh from upstream source",
             "schema": {
-              "type": "string",
-              "enum": ["intraday", "swing"],
-              "default": "intraday"
+              "type": "boolean"
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "OK",
+            "description": "Successful response",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/SummaryResponse" },
-                "example": {
-                  "mode": "intraday",
-                  "count": 2,
-                  "items": [
-                    { "kode": "ADRO", "signal_side": "SELL", "last": 1840 },
-                    { "kode": "BBCA", "signal_side": "BUY", "last": 9450 }
-                  ]
+                "schema": {
+                  "$ref": "#/components/schemas/GenericObject"
                 }
               }
             }
           },
-          "401": {
-            "description": "Unauthorized",
+          "500": {
+            "description": "Error response",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/ErrorUnauthorized" }
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
               }
             }
           }
         }
       }
     },
-    "/signal/{kode}": {
+    "/ma-watchlist-sync": {
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Sync most-active watchlist from frontend",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WatchlistSyncRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Error response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ob2-seed": {
       "get": {
-        "tags": ["Signals"],
-        "summary": "Signal by ticker",
+        "tags": [
+          "Orderflow"
+        ],
+        "summary": "Fetch OB2 seed snapshots for multiple symbols",
         "parameters": [
           {
-            "name": "kode",
-            "in": "path",
-            "required": true,
-            "schema": { "type": "string" },
-            "description": "Ticker code (e.g., ADRO, BBCA)"
-          },
-          {
-            "name": "mode",
+            "name": "symbols",
             "in": "query",
+            "required": true,
+            "description": "Comma-separated symbols (max 50)",
             "schema": {
               "type": "string",
-              "enum": ["intraday", "swing"],
-              "default": "intraday"
+              "example": "BBRI,BBCA,TLKM"
+            }
+          },
+          {
+            "name": "count",
+            "in": "query",
+            "required": false,
+            "description": "Client hint for desired samples",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 30
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "OK",
+            "description": "Successful response",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/SignalResponse" }
+                "schema": {
+                  "$ref": "#/components/schemas/GenericObject"
+                }
               }
             }
           },
-          "401": {
-            "description": "Unauthorized",
+          "400": {
+            "description": "Error response",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/ErrorUnauthorized" }
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/prev-close": {
+      "get": {
+        "tags": [
+          "Market Data"
+        ],
+        "summary": "Get latest close and previous close for symbols",
+        "parameters": [
+          {
+            "name": "symbols",
+            "in": "query",
+            "required": true,
+            "description": "Comma-separated symbols (max 60)",
+            "schema": {
+              "type": "string",
+              "example": "BBRI,BBCA,TLKM"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Error response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/sector/cvd": {
+      "get": {
+        "tags": [
+          "Market Data"
+        ],
+        "summary": "Get sector CVD snapshot by symbol",
+        "parameters": [
+          {
+            "name": "date",
+            "in": "query",
+            "required": false,
+            "description": "Date in YYYY-MM-DD (WIB)",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericObject"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/footprint/summary": {
+      "get": {
+        "tags": [
+          "Orderflow"
+        ],
+        "summary": "Get footprint summary for scanner/overview",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericObject"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/footprint-raw-hist": {
+      "get": {
+        "tags": [
+          "Orderflow"
+        ],
+        "summary": "Get intraday footprint history for one ticker",
+        "parameters": [
+          {
+            "name": "kode",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "example": "BBRI"
+            }
+          },
+          {
+            "name": "date",
+            "in": "query",
+            "required": false,
+            "description": "Trading date (YYYY-MM-DD). Defaults to today WIB.",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Error response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/symbol": {
+      "get": {
+        "tags": [
+          "Market Data"
+        ],
+        "summary": "Get symbol snapshot/state for detail page",
+        "parameters": [
+          {
+            "name": "kode",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "example": "BBRI"
+            }
+          },
+          {
+            "name": "mode",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "example": "swing"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Error response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/screener": {
+      "get": {
+        "tags": [
+          "Market Data"
+        ],
+        "summary": "Get latest screener payload",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericObject"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/screener-accum": {
+      "get": {
+        "tags": [
+          "Market Data"
+        ],
+        "summary": "Get accumulation screener payload",
+        "parameters": [
+          {
+            "name": "include_orderflow",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": true
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericObject"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/orderflow/snapshots": {
+      "get": {
+        "tags": [
+          "Orderflow"
+        ],
+        "summary": "Get orderflow snapshots for symbols",
+        "parameters": [
+          {
+            "name": "symbols",
+            "in": "query",
+            "required": true,
+            "description": "Comma-separated symbols (max 120)",
+            "schema": {
+              "type": "string",
+              "example": "BBRI,BBCA,TLKM"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Error response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/foreign-sentiment": {
+      "get": {
+        "tags": [
+          "Market Data"
+        ],
+        "summary": "Get foreign sentiment aggregate data",
+        "parameters": [
+          {
+            "name": "days",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 90,
+              "default": 7
+            }
+          },
+          {
+            "name": "fresh",
+            "in": "query",
+            "required": false,
+            "description": "Bypass cache",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericObject"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/brokers": {
+      "get": {
+        "tags": [
+          "Broker"
+        ],
+        "summary": "Get brokers master list",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericObject"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/cache-summary": {
+      "get": {
+        "tags": [
+          "Broker"
+        ],
+        "summary": "Get broker flow summary for date range",
+        "parameters": [
+          {
+            "name": "symbol",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "example": "BBRI"
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "include_orderflow",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          {
+            "name": "cache",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "default",
+                "rebuild",
+                "off"
+              ],
+              "default": "default"
+            }
+          },
+          {
+            "name": "reload",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Error response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/cache-summary/broker-daily": {
+      "get": {
+        "tags": [
+          "Broker"
+        ],
+        "summary": "Get daily net-flow series for top brokers",
+        "parameters": [
+          {
+            "name": "symbol",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "example": "BBRI"
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "cache",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "default",
+                "rebuild",
+                "off"
+              ],
+              "default": "default"
+            }
+          },
+          {
+            "name": "reload",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Error response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/audit-trail": {
+      "get": {
+        "tags": [
+          "Broker"
+        ],
+        "summary": "Get audit entries for a symbol",
+        "parameters": [
+          {
+            "name": "symbol",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "example": "BBRI"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 500,
+              "default": 100
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Error response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/logo": {
+      "get": {
+        "tags": [
+          "Assets"
+        ],
+        "summary": "Get stock logo image",
+        "description": "Provide one of: `ticker` or `symbol` query parameter.",
+        "parameters": [
+          {
+            "name": "ticker",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "example": "BBRI"
+            }
+          },
+          {
+            "name": "symbol",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "example": "BBRI"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Logo image",
+            "content": {
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/jpeg": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/gif": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Error response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/broker/logo/{code}": {
+      "get": {
+        "tags": [
+          "Assets"
+        ],
+        "summary": "Get broker logo image",
+        "parameters": [
+          {
+            "name": "code",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Z0-9]{2,4}$",
+              "example": "YP"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Broker logo image",
+            "content": {
+              "image/jpeg": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/gif": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid broker code"
+          }
+        }
+      }
+    },
+    "/broker-activity": {
+      "get": {
+        "tags": [
+          "Broker"
+        ],
+        "summary": "Get broker activity overview or aggregated activity by broker",
+        "description": "If `broker` is provided, returns broker-specific payload. Without `broker`, returns available broker list.",
+        "parameters": [
+          {
+            "name": "broker",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Z0-9]{2,3}$",
+              "example": "YP"
+            }
+          },
+          {
+            "name": "days",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 20,
+              "default": 1
+            }
+          },
+          {
+            "name": "breakdown",
+            "in": "query",
+            "required": false,
+            "description": "Use `daily` for per-day breakdown in broker mode",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "daily"
+              ]
+            }
+          },
+          {
+            "name": "nocache",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericObject"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/broker-activity/trailing": {
+      "get": {
+        "tags": [
+          "Broker"
+        ],
+        "summary": "Get trailing per-stock series for one broker",
+        "parameters": [
+          {
+            "name": "broker",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Z0-9]{2,3}$",
+              "example": "YP"
+            }
+          },
+          {
+            "name": "days",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 30,
+              "default": 10
+            }
+          },
+          {
+            "name": "nocache",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Error response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ai/screenshot": {
+      "get": {
+        "tags": [
+          "AI"
+        ],
+        "summary": "Get AI screenshot image by object key",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "example": "ai-screenshots/BBRI/2026-04-03_intraday-footprint.jpg"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Screenshot image",
+            "content": {
+              "image/jpeg": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/webp": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Error response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Error response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ai/analyze-broksum": {
+      "post": {
+        "tags": [
+          "AI"
+        ],
+        "summary": "Run AI analysis for broker summary screenshots",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnalyzeBroksumRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Error response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Error response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ai/claude-score": {
+      "post": {
+        "tags": [
+          "AI"
+        ],
+        "summary": "Batch Claude scoring for screener candidates",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClaudeScoreRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Error response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Error response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Error response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ai/claude-score/verify": {
+      "get": {
+        "tags": [
+          "AI"
+        ],
+        "summary": "Verify Claude score cache artifacts",
+        "parameters": [
+          {
+            "name": "date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "hash",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericObject"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/dashboard/feed": {
+      "get": {
+        "tags": [
+          "Dashboard"
+        ],
+        "summary": "Get dashboard feed list",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 30
+            }
+          },
+          {
+            "name": "symbol",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "example": "BBRI"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericObject"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/dashboard/feed/detail": {
+      "get": {
+        "tags": [
+          "Dashboard"
+        ],
+        "summary": "Get dashboard feed detail item",
+        "description": "Provide `slug` (preferred) or `feed` query param.",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "example": "2026-04-03-BBRI-buy-signal"
+            }
+          },
+          {
+            "name": "feed",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericObject"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Error response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Error response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/dashboard/catalyst": {
+      "get": {
+        "tags": [
+          "Dashboard"
+        ],
+        "summary": "Get catalyst timeline data",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 300,
+              "default": 50
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericObject"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
               }
             }
           }

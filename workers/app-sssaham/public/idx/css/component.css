@@ -149,17 +149,43 @@ body, .card, .navbar, .dropdown-menu, .form-control, .modal-content {
 /* --- 6. Search Panel --- */
 #search-panel {
     position: fixed;
-    top: 0; right: -100%;
-    width: 100%; height: 100vh;
+    top: 0;
+    right: -74vw;
+    width: 74vw;
+    height: 100vh;
     background-color: var(--search-panel-bg);
     z-index: 2000;
     transition: right 0.3s ease-in-out;
     padding: 20px;
     color: var(--search-panel-text);
+    box-shadow: -12px 0 28px rgba(0, 0, 0, 0.35);
 }
 #search-panel.open { right: 0; }
 @media (min-width: 768px) {
     #search-panel { width: 350px; right: -350px; border-left: 1px solid rgba(255,255,255,0.1); }
+}
+.search-panel-header {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    margin-bottom: 0.75rem;
+}
+.search-panel-close-btn {
+    border: 1px solid var(--search-input-border);
+    background: var(--search-input-bg);
+    color: var(--search-panel-text);
+    width: 34px;
+    height: 34px;
+    border-radius: 8px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: background 0.2s ease, border-color 0.2s ease;
+}
+.search-panel-close-btn:hover {
+    background: var(--search-history-hover);
+    border-color: var(--primary);
 }
 .search-input {
     width: 100%;

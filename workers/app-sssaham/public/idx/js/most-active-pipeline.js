@@ -995,6 +995,24 @@ class MostActiveClient {
             const msgCmdid = Number(msg?.data?.cmdid ?? msg?.data?.data?.cmdid ?? -1);
 
             if (ev === 'record' && (msgCmdid === this._recordCmdid || msgCmdid === -1)) {
+                // Empty-sentinel from IPOT: record header with total=0 and no row payload.
+                // This commonly happens when market is closed/holiday for a given date.
+                const recno = Number(msg?.data?.recno ?? -999);
+                const total = Number(msg?.data?.total ?? -999);
+                const hasPayloadField = Object.prototype.hasOwnProperty.call(msg?.data || {}, 'data');
+                const isEmptySentinel = !hasPayloadField && recno === -1 && total === 0;
+                if (isEmptySentinel) {
+                    this._recordCmdid = null;
+                    this._recordBuffer = [];
+                    this._recordDebugCount = 0;
+                    clearTimeout(this._recordTimeout);
+                    console.log('[MostActiveClient] record-stream empty sentinel (total=0)');
+                    if (this._dualRosterPending > 0) {
+                        this._collectDualRoster([]);
+                    }
+                    return;
+                }
+
                 const payload = msg?.data?.data;
                 this._recordBuffer.push(payload);
                 return;

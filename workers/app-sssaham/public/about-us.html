@@ -22,7 +22,8 @@
         }
 
         .container {
-            max-width: 960px !important;
+            width: 100% !important;
+            max-width: 1024px !important;
         }
 
         .chart-container {
@@ -38,6 +39,13 @@
         @media (min-width: 768px) {
             .chart-container {
                 height: 350px;
+            }
+        }
+
+        @media (min-width: 1024px) {
+            main.container {
+                padding-left: 0 !important;
+                padding-right: 0 !important;
             }
         }
 
@@ -147,7 +155,7 @@
             <h2 style="font-family: georgia; color: #f0f0f5;" class="text-xl md:text-2xl">Research By</h2>
             <p class="mt-4 text-lg text-gray-600 max-w-3xl mx-auto">Kami menggunakan forward testing selama hampir 2.5
                 tahun dan research akan terus berlanjut untuk kemajuan qunat financing di Indonesia.</p>
-            <div class="grid md:grid-cols-2 items-center width: 85%;margin: auto;">
+            <div class="grid md:grid-cols-2 items-center mx-auto" style="width:min(100%, 1024px);">
                 <!-- Kiri -->
                 <div class="d-flex flex-column align-items-center p-4 m-4">
                     <img src="idx/img/rani.jpg" class="mb-2" style="margin: auto;width:20%;border-radius: 50%;">

@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SSSAHAM API Documentation</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui.css" />
+  <style>
+    :root {
+      --bg: #0b0b0e;
+      --surface: #14141a;
+      --surface-alt: #1f1f26;
+      --border: #2a2a33;
+      --text: #f5f5f7;
+      --text-muted: #9292a6;
+      --accent: #f2a900;
+      --blue: #3a8bff;
+      --green: #4ecb71;
+      --red: #ff5252;
+      --orange: #f59e0b;
+      --code-bg: #0f1117;
+    }
+
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100%;
+    }
+
+    .docs-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+      font-size: 14px;
+    }
+
+    .docs-title {
+      font-weight: 700;
+      color: var(--accent);
+      letter-spacing: 0.01em;
+    }
+
+    .docs-subtitle {
+      color: var(--text-muted);
+    }
+
+    .docs-link {
+      color: var(--blue);
+      text-decoration: none;
+      border: 1px solid var(--border);
+      background: var(--surface-alt);
+      border-radius: 8px;
+      padding: 6px 10px;
+      white-space: nowrap;
+    }
+
+    .docs-link:hover {
+      filter: brightness(1.08);
+    }
+
+    #swagger-ui {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 12px 0 32px;
+    }
+
+    .swagger-ui .topbar {
+      display: none;
+    }
+
+    .swagger-ui,
+    .swagger-ui .wrapper,
+    .swagger-ui div,
+    .swagger-ui span,
+    .swagger-ui p,
+    .swagger-ui li,
+    .swagger-ui td,
+    .swagger-ui th,
+    .swagger-ui label,
+    .swagger-ui h1,
+    .swagger-ui h2,
+    .swagger-ui h3,
+    .swagger-ui h4,
+    .swagger-ui h5,
+    .swagger-ui h6,
+    .swagger-ui small,
+    .swagger-ui button,
+    .swagger-ui a,
+    .swagger-ui code,
+    .swagger-ui pre {
+      color: var(--text) !important;
+    }
+
+    .swagger-ui a,
+    .swagger-ui .info a,
+    .swagger-ui .opblock-summary-path a {
+      color: var(--blue) !important;
+    }
+
+    .swagger-ui .parameter__type,
+    .swagger-ui .prop-type,
+    .swagger-ui .prop-format,
+    .swagger-ui .response-col_status {
+      color: var(--text-muted) !important;
+    }
+
+    .swagger-ui .scheme-container {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      box-shadow: none;
+    }
+
+    .swagger-ui .opblock-tag {
+      background: transparent;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .swagger-ui .opblock {
+      border-color: var(--border);
+      background: var(--surface-alt);
+      box-shadow: none;
+    }
+
+    .swagger-ui .opblock .opblock-summary {
+      border-color: var(--border);
+    }
+
+    .swagger-ui .opblock .opblock-summary-method {
+      color: #fff !important;
+      border-color: transparent;
+    }
+
+    .swagger-ui .opblock.opblock-get {
+      background: rgba(58, 139, 255, 0.14);
+      border-color: rgba(58, 139, 255, 0.55);
+    }
+
+    .swagger-ui .opblock.opblock-post {
+      background: rgba(78, 203, 113, 0.14);
+      border-color: rgba(78, 203, 113, 0.55);
+    }
+
+    .swagger-ui .opblock.opblock-put,
+    .swagger-ui .opblock.opblock-patch {
+      background: rgba(245, 158, 11, 0.14);
+      border-color: rgba(245, 158, 11, 0.55);
+    }
+
+    .swagger-ui .opblock.opblock-delete {
+      background: rgba(255, 82, 82, 0.14);
+      border-color: rgba(255, 82, 82, 0.55);
+    }
+
+    .swagger-ui .opblock .opblock-section-header,
+    .swagger-ui .opblock .opblock-section-header h4 {
+      background: var(--surface);
+      border-color: var(--border);
+    }
+
+    .swagger-ui .responses-table,
+    .swagger-ui .responses-table td,
+    .swagger-ui .responses-table th {
+      border-color: var(--border) !important;
+      background: transparent;
+    }
+
+    .swagger-ui section.models {
+      border-color: var(--border);
+      background: var(--surface);
+    }
+
+    .swagger-ui section.models .model-container,
+    .swagger-ui .model-box {
+      border-color: var(--border);
+      background: transparent !important;
+    }
+
+    .swagger-ui input[type=text],
+    .swagger-ui input[type=password],
+    .swagger-ui input[type=search],
+    .swagger-ui input[type=email],
+    .swagger-ui input[type=file],
+    .swagger-ui textarea,
+    .swagger-ui select {
+      background: var(--code-bg);
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+
+    .swagger-ui input::placeholder,
+    .swagger-ui textarea::placeholder {
+      color: var(--text-muted);
+    }
+
+    .swagger-ui .btn {
+      border-color: var(--border);
+      color: var(--text);
+      background: var(--surface);
+    }
+
+    .swagger-ui .btn.try-out__btn {
+      border-color: var(--blue);
+      color: var(--blue);
+      background: transparent;
+    }
+
+    .swagger-ui .btn.execute {
+      background: var(--blue);
+      border-color: var(--blue);
+      color: #fff;
+    }
+
+    .swagger-ui .btn.cancel {
+      border-color: var(--red);
+      color: var(--red);
+      background: transparent;
+    }
+
+    .swagger-ui .highlight-code,
+    .swagger-ui pre,
+    .swagger-ui .microlight {
+      background: var(--code-bg) !important;
+      color: #e5e7eb !important;
+      border-color: var(--border);
+    }
+
+    .swagger-ui .microlight *,
+    .swagger-ui pre *,
+    .swagger-ui code * {
+      color: #e5e7eb !important;
+    }
+  </style>
+</head>
+<body>
+  <div class="docs-header">
+    <div>
+      <div class="docs-title">SSSAHAM API Documentation</div>
+      <div class="docs-subtitle">OpenAPI source: <code>https://api-saham.mkemalw.workers.dev/openapi.json</code></div>
+    </div>
+    <a class="docs-link" href="/" aria-label="Back to homepage">Kembali ke Beranda</a>
+  </div>
+
+  <div id="swagger-ui"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+  <script>
+    window.ui = SwaggerUIBundle({
+      url: "https://api-saham.mkemalw.workers.dev/openapi.json",
+      dom_id: "#swagger-ui",
+      deepLinking: true,
+      displayRequestDuration: true,
+      persistAuthorization: true,
+      tryItOutEnabled: true,
+      docExpansion: "list",
+      defaultModelsExpandDepth: 1
+    });
+  </script>
+</body>
+</html>

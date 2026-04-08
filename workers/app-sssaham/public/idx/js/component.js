@@ -113,8 +113,15 @@ $(document).ready(function () {
         // If panel is open and click is not on panel and not on magnifying glass trigger
         if (panel.hasClass('open')) {
             if (!$(e.target).closest('#search-panel').length && !$(e.target).closest('.fa-magnifying-glass').length) {
-                toggleSearch();
+                toggleSearch(false);
             }
+        }
+    });
+
+    // Close Search Panel with Escape
+    $(document).on('keydown', function (e) {
+        if (e.key === 'Escape') {
+            toggleSearch(false);
         }
     });
 });
@@ -122,17 +129,38 @@ $(document).ready(function () {
 // =========================================
 // SEARCH FUNCTIONALITY
 // =========================================
-function toggleSearch() {
+function toggleSearch(forceOpen) {
     const panel = document.getElementById('search-panel');
     if (!panel) return;
-    panel.classList.toggle('open');
-    if (panel.classList.contains('open')) {
+    const shouldOpen = typeof forceOpen === 'boolean'
+        ? forceOpen
+        : !panel.classList.contains('open');
+
+    panel.classList.toggle('open', shouldOpen);
+
+    if (shouldOpen) {
         setTimeout(() => document.getElementById('search-input').focus(), 100);
         loadSearchHistory();
     }
 }
 
 function initSearch() {
+    const panel = document.getElementById('search-panel');
+    if (panel && !panel.querySelector('.search-panel-close-btn')) {
+        const header = document.createElement('div');
+        header.className = 'search-panel-header';
+
+        const closeBtn = document.createElement('button');
+        closeBtn.type = 'button';
+        closeBtn.className = 'search-panel-close-btn';
+        closeBtn.setAttribute('aria-label', 'Tutup pencarian');
+        closeBtn.innerHTML = '<i class="fa-solid fa-xmark"></i>';
+        closeBtn.addEventListener('click', () => toggleSearch(false));
+
+        header.appendChild(closeBtn);
+        panel.prepend(header);
+    }
+
     const input = document.getElementById('search-input');
     if (!input) return;
 

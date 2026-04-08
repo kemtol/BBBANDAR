@@ -198,6 +198,53 @@ Dengan evidence static + sample parity + runtime check + e2e suite:
 2. **Tidak ditemukan indikasi perubahan nilai agregasi broker summary utama**.
 3. Risiko yang tersisa bersifat freshness/operasional, bukan kerusakan integritas data.
 
+## 1.3) Eksekusi Langkah 1-2-3 (Deploy + Secret + Post-Deploy Verify)
+
+### 1.3.1 Eksekusi Deployment
+
+Deploy berhasil dilakukan ke 3 service target:
+
+1. `features-service`  
+   - URL: `https://features-service.mkemalw.workers.dev`
+   - Version ID: `87afa1f5-17d2-45b4-aa7e-4d400e81ded8`
+2. `api-saham`  
+   - URL: `https://api-saham.mkemalw.workers.dev`
+   - Version ID: `d7a06ebe-62f7-49a4-b417-25d31732df2e`
+3. `app-sssaham`  
+   - URL: `https://app-sssaham.mkemalw.workers.dev`
+   - Version ID: `22888fef-fce0-4c57-8025-530724dacbb5`
+
+### 1.3.2 Secret Internal Endpoint
+
+`INTERNAL_API_TOKEN` sudah diset pada `features-service` dan diverifikasi via:
+
+1. `wrangler secret list` menampilkan `INTERNAL_API_TOKEN`
+2. akses tanpa token ke endpoint protected (`/aggregate`) memberi `401 Unauthorized`
+
+### 1.3.3 Verifikasi T0 (Immediately Post-Deploy)
+
+Hasil smoke check langsung setelah deploy:
+
+1. `api-saham /health` -> `200 OK`
+2. `app-sssaham /idx/emiten/broker-summary.html` -> `200 OK`
+3. `features-service /diag/status` -> `200 OK`
+4. `cache-summary`:
+   - `include_orderflow=false` -> `orderflow` tidak ter-attach
+   - `include_orderflow=true` -> `orderflow` ter-attach
+   - panjang `history` konsisten
+5. Runtime browser tracing:
+   - detail page request kini membawa `include_orderflow=true`
+   - screener request kini `screener-accum?include_orderflow=false` (tanpa `_ts`)
+   - initial screener tidak fan-out ke `/cache-summary` per symbol
+
+### 1.3.4 E2E Post-Deploy
+
+Playwright post-deploy dijalankan terhadap environment live:
+
+1. final run: `6 passed (49.8s)`
+2. sempat ada 1 kegagalan transien pada run awal, lalu rerun skenario yang sama lulus.
+3. indikasi saat ini lebih mengarah ke flake timing UI, bukan regresi integritas data.
+
 ---
 
 ## 2) Scope Audit

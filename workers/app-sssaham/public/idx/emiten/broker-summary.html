@@ -263,6 +263,14 @@
                 overflow-x: auto;
                 -webkit-overflow-scrolling: touch;
                 scrollbar-width: none;
+                position: relative;
+                z-index: 20;
+                touch-action: pan-x;
+            }
+            #filter-row.dropdown-open,
+            #filter-row-2.dropdown-open {
+                overflow: visible !important;
+                z-index: 1100;
             }
             #filter-row::-webkit-scrollbar,
             #filter-row-2::-webkit-scrollbar {
@@ -367,6 +375,50 @@
                 padding-left: 4px !important;
                 padding-right: 4px !important;
             }
+
+            #filter-row .dropdown,
+            #filter-row-2 .dropdown {
+                position: relative;
+                z-index: 30;
+            }
+            #filter-row .dropdown.show,
+            #filter-row-2 .dropdown.show {
+                z-index: 1150;
+            }
+            #filter-row .dropdown-menu,
+            #filter-row-2 .dropdown-menu {
+                z-index: 1200;
+            }
+
+            /* Keep screener fields consistent with desktop on mobile (horizontal scroll). */
+            #screener-table .sticky-col-no {
+                display: table-cell !important;
+            }
+            #screener-table .sticky-col-symbol {
+                left: 52px !important;
+            }
+            #screener-table .hide-mobile,
+            #screener-table th[data-sort="order_mom_pct"],
+            #screener-table th[data-sort="order_absorb"],
+            #screener-table th[data-sort="state"],
+            #screener-table th[data-sort="order_net_value"],
+            #screener-table th[data-sort="order_quadrant"],
+            #screener-table .of-mom,
+            #screener-table .of-absorb,
+            #screener-table .of-cvd,
+            #screener-table .of-state,
+            #screener-table .of-value,
+            #screener-table .of-q,
+            #screener-table .col-cvdm,
+            #screener-table .col-fflw,
+            #screener-table .col-lflw,
+            #screener-table .col-smny,
+            #screener-table .col-rvol,
+            #screener-table .col-vwp,
+            #screener-table .col-flow,
+            #screener-table .col-eff {
+                display: table-cell !important;
+            }
         }
 
         @media (max-width: 576px) {
@@ -429,6 +481,32 @@
         #filter-row-2 button {
             font-size: 0.9rem;
             border-radius: 0px;
+        }
+
+        #filter-row,
+        #filter-row-2 {
+            position: relative;
+            z-index: 20;
+        }
+
+        #filter-row.dropdown-open,
+        #filter-row-2.dropdown-open {
+            z-index: 1400;
+        }
+
+        #filter-row .dropdown,
+        #filter-row-2 .dropdown {
+            position: relative;
+        }
+
+        #filter-row .dropdown.show,
+        #filter-row-2 .dropdown.show {
+            z-index: 1450;
+        }
+
+        #filter-row .dropdown-menu,
+        #filter-row-2 .dropdown-menu {
+            z-index: 1500;
         }
 
         #active-pills {
@@ -972,6 +1050,9 @@
                 </li>
                 <li class="nav-item" role="presentation">
                     <span class="nav-link active">Orderflow</span>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <a class="nav-link" href="shareholder.html">Shareholder</a>
                 </li>
             </ul>
             <!-- TOP CHART CAROUSEL (FOREIGN + BUBBLE) -->
@@ -1925,10 +2006,10 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0"></script>
     <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
-    <script src="../js/component.js?v=73"></script>
+    <script src="../js/component.js?v=74"></script>
 
     <!-- MAIN APP LOGIC -->
-    <script src="../js/broker-summary.js?v=102"></script>
+    <script src="../js/broker-summary.js?v=104"></script>
     <script defer
         src="https://static.cloudflareinsights.com/beacon.min.js/vcd15cbe7772f49c399c6a5babf22c1241717689176015"
         data-cf-beacon='{"version":"2024.11.0","token":"0e06ac31f3fc47b3ab72d7670102e368","r":1,"server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}'></script>

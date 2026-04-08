@@ -56,6 +56,16 @@
     $("#" + id).fadeIn();
   }
   function navigate(id) {
+    // Keep default splash route hashless (clean URL: / instead of /#splash-page)
+    if (id === "splash-page") {
+      if (location.hash) {
+        history.replaceState(null, "", location.pathname + location.search);
+      }
+      showPageNoHistory(id);
+      triggerIfHome();
+      return;
+    }
+
     if (location.hash !== "#" + id) {
       location.hash = id;
     } else {
@@ -80,7 +90,11 @@
       } catch (e) { }
     }
 
-    if ($("#" + page).length) showPageNoHistory(page);
+    if ($("#" + page).length) {
+      showPageNoHistory(page);
+    } else if (!page && $("#splash-page").length) {
+      showPageNoHistory("splash-page");
+    }
     triggerIfHome();
   });
 
@@ -89,7 +103,8 @@
   if (first && $("#" + first).length) {
     showPageNoHistory(first);
   } else {
-    navigate("splash-page");
+    // Default first render should not force #splash-page in URL
+    showPageNoHistory("splash-page");
   }
 
 

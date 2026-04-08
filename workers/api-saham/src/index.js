@@ -370,6 +370,283 @@ function json(data, status = 200, extraHeaders = {}) {
   );
 }
 
+function html(content, status = 200, extraHeaders = {}) {
+  return withCORS(
+    new Response(content, {
+      status,
+      headers: {
+        "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": "no-store",
+        ...extraHeaders
+      }
+    })
+  );
+}
+
+function buildOpenApiSpec(origin) {
+  let spec;
+  try {
+    spec = JSON.parse(JSON.stringify(openapi));
+  } catch (_) {
+    spec = {};
+  }
+
+  const cleanOrigin = String(origin || "").replace(/\/+$/, "");
+  const existing = Array.isArray(spec.servers) ? spec.servers : [];
+  const filtered = existing.filter((srv) => String(srv?.url || "").replace(/\/+$/, "") !== cleanOrigin);
+  spec.servers = [
+    ...(cleanOrigin ? [{ url: cleanOrigin, description: "Current origin" }] : []),
+    ...filtered
+  ];
+  return spec;
+}
+
+function renderSwaggerDocsPage({ title = "SSSAHAM API Documentation", specPath = "/openapi.json" } = {}) {
+  const safeTitle = String(title);
+  const safeSpec = String(specPath);
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>${safeTitle}</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui.css" />
+  <style>
+    :root {
+      --docs-bg: #0b0b0e;
+      --docs-surface: #14141a;
+      --docs-surface-alt: #1f1f26;
+      --docs-border: #2a2a33;
+      --docs-text: #f5f5f7;
+      --docs-text-muted: #9292a6;
+      --docs-accent: #f2a900;
+      --docs-blue: #3a8bff;
+      --docs-green: #4ecb71;
+      --docs-red: #ff5252;
+      --docs-orange: #f59e0b;
+      --docs-code-bg: #0f1117;
+    }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: var(--docs-bg);
+      color: var(--docs-text);
+    }
+    .docs-header {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--docs-border);
+      background: var(--docs-surface);
+      color: var(--docs-text);
+      font-size: 14px;
+    }
+    .docs-header strong { color: var(--docs-accent); }
+    .docs-header code {
+      background: var(--docs-surface-alt);
+      color: var(--docs-blue);
+      padding: 2px 6px;
+      border-radius: 6px;
+      border: 1px solid var(--docs-border);
+    }
+    #swagger-ui {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 12px 0 32px;
+    }
+    .swagger-ui .topbar { display: none; }
+    .swagger-ui,
+    .swagger-ui .wrapper,
+    .swagger-ui div,
+    .swagger-ui span,
+    .swagger-ui p,
+    .swagger-ui li,
+    .swagger-ui td,
+    .swagger-ui th,
+    .swagger-ui label,
+    .swagger-ui h1,
+    .swagger-ui h2,
+    .swagger-ui h3,
+    .swagger-ui h4,
+    .swagger-ui h5,
+    .swagger-ui h6,
+    .swagger-ui small,
+    .swagger-ui button,
+    .swagger-ui a,
+    .swagger-ui code,
+    .swagger-ui pre {
+      color: var(--docs-text) !important;
+    }
+    .swagger-ui .parameter__type,
+    .swagger-ui .prop-type,
+    .swagger-ui .prop-format,
+    .swagger-ui .response-col_status {
+      color: var(--docs-text-muted) !important;
+    }
+    .swagger-ui a,
+    .swagger-ui .info a,
+    .swagger-ui .opblock-summary-path__deprecated,
+    .swagger-ui .opblock-summary-path a {
+      color: var(--docs-blue) !important;
+    }
+    .swagger-ui .scheme-container {
+      background: var(--docs-surface);
+      border: 1px solid var(--docs-border);
+      box-shadow: none;
+    }
+    .swagger-ui .opblock-tag {
+      background: transparent;
+      border-bottom: 1px solid var(--docs-border);
+    }
+    .swagger-ui .opblock {
+      border-color: var(--docs-border);
+      background: var(--docs-surface-alt);
+      box-shadow: none;
+    }
+    .swagger-ui .opblock .opblock-summary {
+      border-color: var(--docs-border);
+    }
+    .swagger-ui .opblock .opblock-summary-method {
+      color: #fff !important;
+      border-color: transparent;
+    }
+    .swagger-ui .opblock.opblock-get {
+      background: rgba(58, 139, 255, 0.14);
+      border-color: rgba(58, 139, 255, 0.55);
+    }
+    .swagger-ui .opblock.opblock-post {
+      background: rgba(78, 203, 113, 0.14);
+      border-color: rgba(78, 203, 113, 0.55);
+    }
+    .swagger-ui .opblock.opblock-put,
+    .swagger-ui .opblock.opblock-patch {
+      background: rgba(245, 158, 11, 0.14);
+      border-color: rgba(245, 158, 11, 0.55);
+    }
+    .swagger-ui .opblock.opblock-delete {
+      background: rgba(255, 82, 82, 0.14);
+      border-color: rgba(255, 82, 82, 0.55);
+    }
+    .swagger-ui .opblock .opblock-section-header,
+    .swagger-ui .opblock .opblock-section-header h4 {
+      background: var(--docs-surface);
+      color: var(--docs-text);
+      border-color: var(--docs-border);
+    }
+    .swagger-ui .responses-table,
+    .swagger-ui .responses-table td,
+    .swagger-ui .responses-table th {
+      border-color: var(--docs-border) !important;
+      background: transparent;
+    }
+    .swagger-ui .model-box {
+      background: var(--docs-surface) !important;
+      border-color: var(--docs-border);
+    }
+    .swagger-ui section.models {
+      border-color: var(--docs-border);
+      background: var(--docs-surface);
+    }
+    .swagger-ui section.models .model-container {
+      background: transparent;
+      border-color: var(--docs-border);
+    }
+    .swagger-ui input[type=text],
+    .swagger-ui input[type=password],
+    .swagger-ui input[type=search],
+    .swagger-ui input[type=email],
+    .swagger-ui input[type=file],
+    .swagger-ui textarea,
+    .swagger-ui select {
+      background: var(--docs-code-bg);
+      color: var(--docs-text);
+      border: 1px solid var(--docs-border);
+    }
+    .swagger-ui input::placeholder,
+    .swagger-ui textarea::placeholder {
+      color: var(--docs-text-muted);
+    }
+    .swagger-ui .btn {
+      border-color: var(--docs-border);
+      color: var(--docs-text);
+      background: var(--docs-surface);
+    }
+    .swagger-ui .btn.try-out__btn {
+      border-color: var(--docs-blue);
+      color: var(--docs-blue);
+      background: transparent;
+    }
+    .swagger-ui .btn.execute {
+      background: var(--docs-blue);
+      border-color: var(--docs-blue);
+      color: #fff;
+    }
+    .swagger-ui .btn.cancel {
+      border-color: var(--docs-red);
+      color: var(--docs-red);
+      background: transparent;
+    }
+    .swagger-ui .highlight-code,
+    .swagger-ui pre,
+    .swagger-ui .microlight {
+      background: var(--docs-code-bg) !important;
+      color: #e5e7eb !important;
+      border-color: var(--docs-border);
+    }
+    .swagger-ui .microlight *,
+    .swagger-ui pre *,
+    .swagger-ui code * {
+      color: #e5e7eb !important;
+    }
+    .swagger-ui .renderedMarkdown code,
+    .swagger-ui .markdown code {
+      color: #e2e8f0;
+      background: var(--docs-code-bg);
+    }
+    .swagger-ui .copy-to-clipboard {
+      background: var(--docs-surface-alt);
+      border-color: var(--docs-border);
+    }
+    .swagger-ui .download-url-wrapper {
+      background: transparent;
+    }
+    .swagger-ui .download-url-wrapper .select-label select {
+      border-color: var(--docs-border);
+      background: var(--docs-surface-alt);
+      color: var(--docs-text);
+    }
+    .swagger-ui .servers-title,
+    .swagger-ui .servers > label,
+    .swagger-ui .servers .computed-url {
+      color: var(--docs-text);
+    }
+    .swagger-ui .servers .computed-url code {
+      background: var(--docs-code-bg);
+      color: #e2e8f0;
+      border: 1px solid var(--docs-border);
+    }
+  </style>
+</head>
+<body>
+  <div class="docs-header"><strong>SSSAHAM API</strong> · Interactive documentation sourced from <code>${safeSpec}</code></div>
+  <div id="swagger-ui"></div>
+  <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+  <script>
+    window.ui = SwaggerUIBundle({
+      url: "${safeSpec}",
+      dom_id: "#swagger-ui",
+      deepLinking: true,
+      displayRequestDuration: true,
+      persistAuthorization: true,
+      tryItOutEnabled: true,
+      docExpansion: "list",
+      defaultModelsExpandDepth: 1
+    });
+  </script>
+</body>
+</html>`;
+}
+
 async function readJsonlTailFromR2(bucket, key, tailCount = 1) {
   const obj = await bucket.get(key);
   if (!obj) return [];
@@ -932,8 +1209,8 @@ async function runIpotCatalystSync(env, { fromDate, toDate, includeDetail = true
 
   const now = new Date();
   const today = now.toISOString().slice(0, 10);
-  const from = normalizeIsoDate(fromDate) || new Date(now.getTime() - 7 * 86400000).toISOString().slice(0, 10);
-  const to = normalizeIsoDate(toDate) || new Date(now.getTime() + 30 * 86400000).toISOString().slice(0, 10);
+  const from = normalizeIsoDate(fromDate) || new Date(now.getTime() - 30 * 86400000).toISOString().slice(0, 10);
+  const to = normalizeIsoDate(toDate) || new Date(now.getTime() + 180 * 86400000).toISOString().slice(0, 10);
 
   let ws;
   try {
@@ -1395,6 +1672,15 @@ function requireIdxAdmin(req, env) {
   }
 
   return { ok: false, response: json({ error: "Unauthorized" }, 401) };
+}
+
+function hasInternalKeyAccess(req, env, url) {
+  const expected = normalizeTokenHeader(env?.INTERNAL_KEY);
+  if (!expected) return false;
+  const viaHeader = normalizeTokenHeader(req.headers.get("x-api-key"));
+  const viaQuery = normalizeTokenHeader(url?.searchParams?.get("key"));
+  const provided = viaHeader || viaQuery;
+  return !!(provided && provided === expected);
 }
 
 function normalizeTokenHeader(value) {
@@ -3008,6 +3294,24 @@ export default {
 
       // CORS
       if (req.method === "OPTIONS") return withCORS(new Response(null, { status: 204 }));
+
+      // Public API docs routes
+      if (url.pathname === "/" && req.method === "GET") {
+        return withCORS(Response.redirect(`${url.origin}/docs`, 302));
+      }
+      if (url.pathname === "/openapi.json" && req.method === "GET") {
+        return json(buildOpenApiSpec(url.origin), 200, { "Cache-Control": "public, max-age=300" });
+      }
+      if ((url.pathname === "/docs" || url.pathname === "/console") && req.method === "GET") {
+        return html(
+          renderSwaggerDocsPage({
+            title: "SSSAHAM API Docs",
+            specPath: "/openapi.json"
+          }),
+          200,
+          { "Cache-Control": "public, max-age=300" }
+        );
+      }
 
       if (url.pathname === "/admin/emiten/sync" && req.method === "POST") {
         const auth = requireIdxAdmin(req, env);
@@ -7097,8 +7401,11 @@ export default {
 
       // 7.35 POST /dashboard/catalyst/sync-ipot
       if (url.pathname === "/dashboard/catalyst/sync-ipot" && req.method === "POST") {
-        const auth = requireIdxAdmin(req, env);
-        if (!auth.ok) return auth.response;
+        const internalAccess = hasInternalKeyAccess(req, env, url);
+        if (!internalAccess) {
+          const auth = requireIdxAdmin(req, env);
+          if (!auth.ok) return auth.response;
+        }
 
         const body = await req.json().catch(() => ({}));
         const result = await runIpotCatalystSync(env, {
@@ -7132,113 +7439,157 @@ export default {
       if (url.pathname === "/dashboard/catalyst" && req.method === "GET") {
         await ensureDashboardTables(env);
         const limit = Math.min(Math.max(Number(url.searchParams.get("limit") || 50), 1), 300);
+        const qFrom = normalizeIsoDate(String(url.searchParams.get("from") || ""));
+        const qTo = normalizeIsoDate(String(url.searchParams.get("to") || ""));
+        const hasExplicitWindow = !!(qFrom || qTo);
 
-        const { results: catalystRows } = await env.SSSAHAM_DB.prepare(
-          `SELECT
-              e.id,
-              e.event_type,
-              e.event_subtype,
-              e.seq,
-              e.event_date,
-              e.event_time_wib,
-              e.symbol_primary,
-              e.symbols_json,
-              e.status,
-              e.phase,
-              e.label,
-              e.sector_primary,
-              e.created_at,
-              d.description_text
-           FROM catalyst_events e
-           LEFT JOIN catalyst_ca_detail d ON d.seq = e.seq
-           ORDER BY e.event_date ASC, COALESCE(e.event_time_wib, '23:59') ASC, e.id DESC
-           LIMIT ?`
-        ).bind(limit).all();
+        const todayWib = getRecentWibDates(1)[0];
+        const defaultFrom = getRecentWibDates(15).at(-1) || todayWib; // today - 14 (WIB)
+        const defaultTo = new Date(Date.now() + (180 * 86400000)).toISOString().slice(0, 10); // today + 180
+        const from = qFrom || (hasExplicitWindow ? null : defaultFrom);
+        const to = qTo || (hasExplicitWindow ? null : defaultTo);
 
-        const { results: pubexRows } = await env.SSSAHAM_DB.prepare(
-          `SELECT id, kode_emiten, nama_perusahaan, tanggal, pukul_wib, lokasi, agenda, sumber, created_at
-           FROM pubex
-           ORDER BY tanggal ASC, COALESCE(pukul_wib, '23:59') ASC, id DESC
-           LIMIT ?`
-        ).bind(limit).all();
+        const loadCatalystBundle = async ({ fromDate, toDate, orderDir }) => {
+          const dir = orderDir === "DESC" ? "DESC" : "ASC";
 
-        const { results: ipoRows } = await env.SSSAHAM_DB.prepare(
-          `SELECT id, company_code, company_name, event_name, event_date, event_time_wib, location, source, created_at
-           FROM ipo_events
-            WHERE COALESCE(source, '') != 'manual-mvp' AND COALESCE(company_code, '') != 'TEST'
-           ORDER BY event_date ASC, COALESCE(event_time_wib, '23:59') ASC, id DESC
-           LIMIT ?`
-        ).bind(limit).all();
+          const { results: catalystRows } = await env.SSSAHAM_DB.prepare(
+            `SELECT
+                e.id,
+                e.event_type,
+                e.event_subtype,
+                e.seq,
+                e.event_date,
+                e.event_time_wib,
+                e.symbol_primary,
+                e.symbols_json,
+                e.status,
+                e.phase,
+                e.label,
+                e.sector_primary,
+                e.created_at,
+                d.description_text
+             FROM catalyst_events e
+             LEFT JOIN catalyst_ca_detail d ON d.seq = e.seq
+             WHERE (? IS NULL OR e.event_date >= ?)
+               AND (? IS NULL OR e.event_date <= ?)
+             ORDER BY e.event_date ${dir}, COALESCE(e.event_time_wib, '23:59') ${dir}, e.id DESC
+             LIMIT ?`
+          ).bind(fromDate, fromDate, toDate, toDate, limit).all();
 
-        const catalystItems = (catalystRows || []).map((r) => {
-          const isRups = String(r.event_type || "").toUpperCase() === "RUPS";
-          const symbol = r.symbol_primary || null;
-          const subtitle = calcCatalystSubtitle(r);
-          const parsedSymbols = (() => {
-            try {
-              const arr = JSON.parse(r.symbols_json || "[]");
-              return Array.isArray(arr) ? arr : [];
-            } catch {
-              return [];
-            }
-          })();
+          const { results: pubexRows } = await env.SSSAHAM_DB.prepare(
+            `SELECT id, kode_emiten, nama_perusahaan, tanggal, pukul_wib, lokasi, agenda, sumber, created_at
+             FROM pubex
+             WHERE (? IS NULL OR tanggal >= ?)
+               AND (? IS NULL OR tanggal <= ?)
+             ORDER BY tanggal ${dir}, COALESCE(pukul_wib, '23:59') ${dir}, id DESC
+             LIMIT ?`
+          ).bind(fromDate, fromDate, toDate, toDate, limit).all();
 
-          return {
-            type: isRups ? "rups" : "ca",
-            id: `ipot-${r.id}`,
-            seq: r.seq || null,
-            symbol,
-            symbols: parsedSymbols,
-            title: isRups ? `RUPS ${symbol || "Emiten"}` : `Corporate Action ${symbol || "Emiten"}`,
-            subtitle: subtitle || (r.event_subtype || null),
-            description: r.description_text || r.label || (isRups ? "Jadwal RUPS" : "Corporate Action"),
-            phase: r.phase || null,
-            status: r.status || null,
-            sector: r.sector_primary || null,
-            source: "ipot_calca",
+          const { results: ipoRows } = await env.SSSAHAM_DB.prepare(
+            `SELECT id, company_code, company_name, event_name, event_date, event_time_wib, location, source, created_at
+             FROM ipo_events
+             WHERE COALESCE(source, '') != 'manual-mvp'
+               AND COALESCE(company_code, '') != 'TEST'
+               AND (? IS NULL OR event_date >= ?)
+               AND (? IS NULL OR event_date <= ?)
+             ORDER BY event_date ${dir}, COALESCE(event_time_wib, '23:59') ${dir}, id DESC
+             LIMIT ?`
+          ).bind(fromDate, fromDate, toDate, toDate, limit).all();
+
+          const catalystItems = (catalystRows || []).map((r) => {
+            const isRups = String(r.event_type || "").toUpperCase() === "RUPS";
+            const symbol = r.symbol_primary || null;
+            const subtitle = calcCatalystSubtitle(r);
+            const parsedSymbols = (() => {
+              try {
+                const arr = JSON.parse(r.symbols_json || "[]");
+                return Array.isArray(arr) ? arr : [];
+              } catch {
+                return [];
+              }
+            })();
+
+            return {
+              type: isRups ? "rups" : "ca",
+              id: `ipot-${r.id}`,
+              seq: r.seq || null,
+              symbol,
+              symbols: parsedSymbols,
+              title: isRups ? `RUPS ${symbol || "Emiten"}` : `Corporate Action ${symbol || "Emiten"}`,
+              subtitle: subtitle || (r.event_subtype || null),
+              description: r.description_text || r.label || (isRups ? "Jadwal RUPS" : "Corporate Action"),
+              phase: r.phase || null,
+              status: r.status || null,
+              sector: r.sector_primary || null,
+              source: "ipot_calca",
+              event_date: r.event_date,
+              event_time_wib: r.event_time_wib || null,
+              event_ts: toEventTimestamp(r.event_date, r.event_time_wib),
+              created_at: r.created_at
+            };
+          });
+
+          const pubexItems = (pubexRows || []).map((r) => ({
+            type: "pubex",
+            id: `pubex-${r.id}`,
+            symbol: r.kode_emiten,
+            title: `Public Expose ${r.kode_emiten}`,
+            subtitle: r.nama_perusahaan || null,
+            description: r.agenda || "Public Expose Emiten",
+            location: r.lokasi || null,
+            source: r.sumber || null,
+            event_date: r.tanggal,
+            event_time_wib: r.pukul_wib || null,
+            event_ts: toEventTimestamp(r.tanggal, r.pukul_wib),
+            created_at: r.created_at
+          }));
+
+          const ipoItems = (ipoRows || []).map((r) => ({
+            type: "ipo",
+            id: `ipo-${r.id}`,
+            symbol: r.company_code || null,
+            title: r.event_name || "IPO Event",
+            subtitle: r.company_name || null,
+            description: r.company_code ? `Jadwal IPO ${r.company_code}` : "Jadwal IPO",
+            location: r.location || null,
+            source: r.source || null,
             event_date: r.event_date,
             event_time_wib: r.event_time_wib || null,
             event_ts: toEventTimestamp(r.event_date, r.event_time_wib),
             created_at: r.created_at
-          };
+          }));
+
+          const mergedRaw = [...catalystItems, ...pubexItems, ...ipoItems];
+          const sortAsc = (a, b) => (a.event_ts - b.event_ts) || (String(a.created_at).localeCompare(String(b.created_at)));
+          const sortDesc = (a, b) => (b.event_ts - a.event_ts) || (String(b.created_at).localeCompare(String(a.created_at)));
+
+          // Default window: nearest timeline (ASC).
+          // Fallback historical: ambil event terbaru dulu (DESC), lalu balikan ke ASC untuk render timeline.
+          const trimmed = dir === "DESC"
+            ? mergedRaw.sort(sortDesc).slice(0, limit).sort(sortAsc)
+            : mergedRaw.sort(sortAsc).slice(0, limit);
+
+          const merged = trimmed.map(({ event_ts, ...rest }) => rest);
+
+          return merged;
+        };
+
+        let items = await loadCatalystBundle({ fromDate: from, toDate: to, orderDir: "ASC" });
+        let fallbackUsed = false;
+
+        // Fallback saat window default kosong (mis. sync terlambat):
+        // tampilkan event historis terbaru agar panel Catalyst tidak terlihat "hilang total".
+        if (!items.length && !hasExplicitWindow) {
+          items = await loadCatalystBundle({ fromDate: null, toDate: null, orderDir: "DESC" });
+          fallbackUsed = true;
+        }
+
+        return json({
+          ok: true,
+          items,
+          total: items.length,
+          window: { from, to, explicit: hasExplicitWindow, fallback_used: fallbackUsed }
         });
-
-        const pubexItems = (pubexRows || []).map((r) => ({
-          type: "pubex",
-          id: `pubex-${r.id}`,
-          symbol: r.kode_emiten,
-          title: `Public Expose ${r.kode_emiten}`,
-          subtitle: r.nama_perusahaan || null,
-          description: r.agenda || "Public Expose Emiten",
-          location: r.lokasi || null,
-          source: r.sumber || null,
-          event_date: r.tanggal,
-          event_time_wib: r.pukul_wib || null,
-          event_ts: toEventTimestamp(r.tanggal, r.pukul_wib),
-          created_at: r.created_at
-        }));
-
-        const ipoItems = (ipoRows || []).map((r) => ({
-          type: "ipo",
-          id: `ipo-${r.id}`,
-          symbol: r.company_code || null,
-          title: r.event_name || "IPO Event",
-          subtitle: r.company_name || null,
-          description: r.company_code ? `Jadwal IPO ${r.company_code}` : "Jadwal IPO",
-          location: r.location || null,
-          source: r.source || null,
-          event_date: r.event_date,
-          event_time_wib: r.event_time_wib || null,
-          event_ts: toEventTimestamp(r.event_date, r.event_time_wib),
-          created_at: r.created_at
-        }));
-
-        const items = [...catalystItems, ...pubexItems, ...ipoItems]
-          .sort((a, b) => (a.event_ts - b.event_ts) || (String(a.created_at).localeCompare(String(b.created_at))))
-          .slice(0, limit)
-          .map(({ event_ts, ...rest }) => rest);
-
-        return json({ ok: true, items, total: items.length });
       }
 
 
@@ -7601,6 +7952,36 @@ export default {
 
     } catch (err) {
       return json({ error: "Worker Error", details: err.stack || String(err) }, 500);
+    }
+  },
+  async scheduled(event, env, ctx) {
+    try {
+      const now = Date.now();
+      const fromDate = new Date(now - (30 * 86400000)).toISOString().slice(0, 10);
+      const toDate = new Date(now + (180 * 86400000)).toISOString().slice(0, 10);
+
+      // Scheduled catalyst sync keeps long-horizon months (May/Jun/Jul+) populated.
+      ctx.waitUntil(
+        runIpotCatalystSync(env, {
+          fromDate,
+          toDate,
+          includeDetail: true,
+          detailLimit: 120
+        }).then((result) => {
+          console.log("[catalyst][scheduled] ok", JSON.stringify({
+            cron: event?.cron || null,
+            fromDate,
+            toDate,
+            parsed_events: result?.parsed_events || 0,
+            upserted_events: result?.upserted_events || 0,
+            detail_fetched: result?.detail_fetched || 0
+          }));
+        }).catch((err) => {
+          console.error("[catalyst][scheduled] failed", err?.stack || String(err));
+        })
+      );
+    } catch (err) {
+      console.error("[catalyst][scheduled] setup failed", err?.stack || String(err));
     }
   }
 }

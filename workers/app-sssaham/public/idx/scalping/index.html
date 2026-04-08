@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Scalping Side by Side - 2 Emiten</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="scalping-container">
+        <!-- Header -->
+        <div class="scalping-header d-flex align-items-center justify-content-between">
+            <div class="scalping-pills" id="scalpingPills">
+                <div class="pill-list" id="pillList">
+                    <!-- Pills populated by JS -->
+                </div>
+            </div>
+            <div class="d-flex align-items-center gap-2">
+                <button class="btn-reconnect-icon" id="btnReconnect" title="Reconnect">&#x21bb;</button>
+                <span class="connection-status connected">● Connected</span>
+            </div>
+        </div>
+
+        <!-- Main Content - 2 Emiten Side by Side -->
+        <div class="scalping-main">
+            <!-- Emiten 1 Panel -->
+            <div class="emiten-panel" id="emiten1Panel">
+                <div class="panel-header">
+                    <div class="d-flex align-items-center justify-content-between">
+                        <div class="emiten-info">
+                            <span class="emiten-code" id="code1">EMITEN1</span>
+                            <span class="emiten-name" id="name1">Nama Emiten 1</span>
+                        </div>
+                        <div class="price-info text-end">
+                            <span class="last-price" id="price1">0</span>
+                            <span class="price-change" id="change1">0 (0%)</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="panel-body">
+                    <!-- DOM Section -->
+                    <div class="dom-section">
+                        <div class="dom-header d-flex">
+                            <span class="col-bid text-end">BID LOT</span>
+                            <span class="col-price text-center">PRICE</span>
+                            <span class="col-ask">ASK LOT</span>
+                        </div>
+                        <div class="dom-content" id="dom1">
+                            <!-- DOM rows will be populated by JS -->
+                        </div>
+                    </div>
+
+                    <!-- Footprint Section -->
+                    <div class="footprint-section">
+                        <div class="footprint-content" id="footprint1">
+                            <!-- Footprint rows will be populated by JS -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Emiten 2 Panel -->
+            <div class="emiten-panel" id="emiten2Panel">
+                <div class="panel-header">
+                    <div class="d-flex align-items-center justify-content-between">
+                        <div class="emiten-info">
+                            <span class="emiten-code" id="code2">EMITEN2</span>
+                            <span class="emiten-name" id="name2">Nama Emiten 2</span>
+                        </div>
+                        <div class="price-info text-end">
+                            <span class="last-price" id="price2">0</span>
+                            <span class="price-change" id="change2">0 (0%)</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="panel-body">
+                    <!-- DOM Section -->
+                    <div class="dom-section">
+                        <div class="dom-header d-flex">
+                            <span class="col-bid text-end">BID LOT</span>
+                            <span class="col-price text-center">PRICE</span>
+                            <span class="col-ask">ASK LOT</span>
+                        </div>
+                        <div class="dom-content" id="dom2">
+                            <!-- DOM rows will be populated by JS -->
+                        </div>
+                    </div>
+
+                    <!-- Footprint Section -->
+                    <div class="footprint-section">
+                        <div class="footprint-content" id="footprint2">
+                            <!-- Footprint rows will be populated by JS -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="index.js"></script>
+</body>
+</html>

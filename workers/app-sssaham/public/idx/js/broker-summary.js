@@ -26,13 +26,12 @@ if (typeof Chart !== 'undefined' && typeof ChartDataLabels !== 'undefined') {
 }
 
 $(document).ready(function () {
-    // Fix mobile thead: reduce colspan for visible groups
+    // Keep table group headers consistent across desktop/mobile.
     function fixMobileColspan() {
-        const isMobile = window.innerWidth < 768;
         const fflw = document.getElementById('th-fflw-group');
         const smny = document.getElementById('th-smny-group');
-        if (fflw) fflw.colSpan = isMobile ? 2 : 4;
-        if (smny) smny.colSpan = isMobile ? 2 : 4;
+        if (fflw) fflw.colSpan = 4;
+        if (smny) smny.colSpan = 4;
     }
     fixMobileColspan();
     window.addEventListener('resize', fixMobileColspan);
@@ -1830,6 +1829,21 @@ $(document).on('click', '#foreign-range-selector a', function(e) {
     loadForeignSentiment(days);
 });
 
+function syncScreenerFilterRowsDropdownState() {
+    ['#filter-row', '#filter-row-2'].forEach((sel) => {
+        const $row = $(sel);
+        if (!$row.length) return;
+        const hasOpen = $row.find('.dropdown-menu.show').length > 0;
+        $row.toggleClass('dropdown-open', hasOpen);
+    });
+}
+
+$(document).on(
+    'show.bs.dropdown shown.bs.dropdown hide.bs.dropdown hidden.bs.dropdown',
+    '#filter-row .dropdown, #filter-row-2 .dropdown',
+    () => setTimeout(syncScreenerFilterRowsDropdownState, 0)
+);
+
 // ========== PRESET SELECTOR ==========
 $(document).on('click', '#preset-selector a', function(e) {
     e.preventDefault();
@@ -3151,6 +3165,38 @@ function _getLastTradingDayString() {
 }
 
 /**
+ * Returns the default end date string (YYYY-MM-DD) for broker‑summary requests.
+ * - If before 18:00 WIB and today is a trading day → returns previous trading day.
+ * - If after 18:00 WIB and today is a trading day → returns today.
+ * - If today is not a trading day (weekend/holiday) → returns previous trading day.
+ * Used to avoid requesting today's data before the daily retrieval process completes.
+ */
+function _getDefaultEndDateString() {
+    const now = new Date();
+    const wib = new Date(now.getTime() + 7 * 60 * 60 * 1000); // WIB = UTC+7
+    const hour = wib.getUTCHours();
+    const cutoffHour = 18; // 18:00 WIB
+    const isBeforeCutoff = hour < cutoffHour;
+    
+    const todayStr = _getWibDateString();
+    
+    console.log(`[default-end-date] WIB hour=${hour}, today=${todayStr}, isBeforeCutoff=${isBeforeCutoff}`);
+    
+    // If before cutoff, use yesterday (calendar day)
+    if (isBeforeCutoff) {
+        // Compute yesterday in WIB
+        const yesterday = new Date(wib);
+        yesterday.setUTCDate(yesterday.getUTCDate() - 1);
+        const yesterdayStr = `${yesterday.getUTCFullYear()}-${String(yesterday.getUTCMonth()+1).padStart(2,'0')}-${String(yesterday.getUTCDate()).padStart(2,'0')}`;
+        console.log(`[default-end-date] using yesterday (before cutoff): ${yesterdayStr}`);
+        return yesterdayStr;
+    }
+    // After cutoff, use today
+    console.log(`[default-end-date] using today (after cutoff)`);
+    return todayStr;
+}
+
+/**
  * Returns true if IDX market is likely open right now (weekday, 09:00-16:30 WIB, not a holiday).
  * Used to decide whether to force per-symbol live hydration or trust bulk summary data.
  */
@@ -3915,9 +3961,9 @@ async function initDetailMode(symbol) {
     // Load AI Recommendation panel (non-blocking)
     loadAIRecommendation(symbol);
 
-    let endDate = endParam ? new Date(endParam) : new Date();
-    let startDate = startParam ? new Date(startParam) : new Date();
-    if (!startParam) startDate.setDate(endDate.getDate() - 20); // Default 20 days
+    let endDate = endParam ? new Date(endParam) : new Date(_getDefaultEndDateString());
+    let startDate = startParam ? new Date(startParam) : new Date(endDate);
+    if (!startParam) startDate.setDate(startDate.getDate() - 20); // Default 20 days
 
     $('#date-from').val(startDate.toISOString().split('T')[0]);
     $('#date-to').val(endDate.toISOString().split('T')[0]);
@@ -3964,6 +4010,8 @@ async function loadDetailData(symbol, start, end, reload = false, retryCount = 0
     try {
         let url = `${WORKER_BASE_URL}/cache-summary?symbol=${symbol}&from=${fromDate}&to=${toDate}&include_orderflow=true`;
         if (reload) url += '&reload=true';
+        // daily cache-busting (changes at midnight UTC)
+        url += `&_=${new Date().toISOString().split('T')[0]}`;
 
         console.log(`[API] Fetching: ${url}`);
         const response = await fetch(url);
@@ -3987,13 +4035,14 @@ async function loadDetailData(symbol, start, end, reload = false, retryCount = 0
         // C. Backfill active → show spinner + retry loop
         const isBackfillActive = result.backfill_active === true;
         const isEmptyData = !result.history || result.history.length === 0;
+        const hasOrderflow = result.orderflow && result.orderflow.ticker;
         const hasMinimalData = isEmptyData || completeness < 0.7;
 
         console.log(`[DATA COMPLETENESS] Expected: ${expectedDays}, Actual: ${actualDays}, Completeness: ${(completeness * 100).toFixed(1)}%`);
         console.log(`[BACKFILL CHECK] isEmptyData: ${isEmptyData}, hasMinimalData: ${hasMinimalData}, isBackfillActive: ${isBackfillActive}`);
 
         // CASE: Empty data + backfill NOT active → IPO or new ticker with no history yet
-        if (isEmptyData && !isBackfillActive) {
+        if (isEmptyData && !isBackfillActive && !hasOrderflow) {
             console.log(`[NO DATA] ${symbol} has no history and backfill is not active. Treating as IPO/new ticker.`);
             $('#loading-indicator').hide();
             $('#app').fadeIn();

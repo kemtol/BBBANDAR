@@ -274,12 +274,37 @@
         function filterCatalystCurrentMonthUpcoming(items) {
             if (!Array.isArray(items)) return [];
             const todayWib = getWibDateString();
-            const endMonthWib = getWibEndOfMonthString();
-            return items.filter((it) => {
+            const validItems = items.filter((it) => {
                 const d = String(it?.event_date || '').trim();
                 if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return false;
-                return d >= todayWib && d <= endMonthWib;
+                return true;
             });
+
+            // Show longer horizon so month+1..+3 (Mei/Juni/Juli) tetap tampil.
+            const upcoming180d = new Date(Date.now() + (180 * 86400000)).toISOString().slice(0, 10);
+            const upcoming = validItems
+                .filter((it) => {
+                    const d = String(it?.event_date || '').trim();
+                    return d >= todayWib && d <= upcoming180d;
+                })
+                .sort((a, b) => {
+                    const da = String(a?.event_date || '');
+                    const db = String(b?.event_date || '');
+                    if (da !== db) return da.localeCompare(db);
+                    return String(a?.symbol || '').localeCompare(String(b?.symbol || ''));
+                });
+
+            if (upcoming.length) return upcoming;
+
+            // Fallback: tampilkan histori terbaru 60 hari supaya tidak blank.
+            const recent60d = new Date(Date.now() - (60 * 86400000)).toISOString().slice(0, 10);
+            return validItems
+                .filter((it) => {
+                    const d = String(it?.event_date || '').trim();
+                    return d < todayWib && d >= recent60d;
+                })
+                .sort((a, b) => String(b?.event_date || '').localeCompare(String(a?.event_date || '')))
+                .slice(0, 24);
         }
 
         let timelineLogoSyncTimer = null;
@@ -1310,6 +1335,7 @@
         let _rosterRows = [];
         let _rosterOrchestrator = null;
         let _rosterTokenRefreshTimer = null;
+        let _rosterFirstDataTimeout = null;
 
         function _rosterLoadingStatus(msg, isError = false) {
             const row = document.getElementById('roster-loading-row');
@@ -1353,6 +1379,10 @@
                 try { _rosterOrchestrator.stop(); } catch (e) { console.warn(e); }
                 _rosterOrchestrator = null;
             }
+            if (_rosterFirstDataTimeout) {
+                window.clearTimeout(_rosterFirstDataTimeout);
+                _rosterFirstDataTimeout = null;
+            }
             if (_rosterTokenRefreshTimer) {
                 window.clearInterval(_rosterTokenRefreshTimer);
                 _rosterTokenRefreshTimer = null;
@@ -1364,6 +1394,17 @@
 
             let _firstRosterReceived = false;
 
+            // Guard: avoid infinite "menunggu data pertama" when upstream returns empty records
+            // (e.g. market holiday / outside session / temporary upstream issue).
+            _rosterFirstDataTimeout = window.setTimeout(() => {
+                if (_firstRosterReceived) return;
+                updateWsBadge('DEGRADED');
+                _rosterLoadingStatus(
+                    'Belum ada data live. Jika hari ini libur nasional / di luar jam bursa, ini normal. Coba refresh setelah sesi pasar berikutnya.',
+                    true
+                );
+            }, 25000);
+
             const orchestrator = new MostActiveOrchestrator({
                 wsUrl,
                 topN: 10,
@@ -1371,6 +1412,10 @@
                     _rosterRows = rows;
                     if (!_firstRosterReceived && rows.length) {
                         _firstRosterReceived = true;
+                        if (_rosterFirstDataTimeout) {
+                            window.clearTimeout(_rosterFirstDataTimeout);
+                            _rosterFirstDataTimeout = null;
+                        }
                         _hideRosterLoading();
                     }
                     if (type === 'minute') {

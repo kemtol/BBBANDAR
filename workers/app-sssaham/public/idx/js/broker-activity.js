@@ -83,8 +83,8 @@ async function loadBrokersFromDB() {
     }
 }
 
-// Default broker list to scan
-const DEFAULT_BROKER_LIST = [
+// "Popular" broker list (default scope on first load)
+const POPULAR_BROKER_LIST = [
     'ZP', 'YU', 'KZ', 'RX', 'ML', 'CC', 'CS', 'DB', 'MS', 'YP', 'MG', 'LG', 'BK', 'AK', 'CG', 'DX', 'HP',
     'NI', 'EP', 'IF', 'PD', 'AI', 'DR', 'KI', 'TP', 'BZ', 'DH', 'AZ', 'XA', 'IB', 'GI',
     'YO', 'PG', 'AP', 'GL', 'SH', 'CP'
@@ -99,6 +99,11 @@ let activeDays = 5;
 let activePreset = 'all';
 let isLoading = false;
 let forceRebuild = false;
+let brokerScopeMode = 'popular';      // 'popular' | 'all'
+let knownBrokerCodes = [];            // complete broker master list (from /brokers)
+let popularBrokerCodes = [];          // popular list intersect known brokers
+let fetchedBrokerCodes = new Set();   // brokers already requested in this browser session
+let brokerButtonSignature = '';
 // ── Filter State ──
 let activeFilteredBrokers = new Set(); // empty = all; affects both chart AND table
 let filterNetDir = 'any';              // 'any' | 'buy' | 'sell'
@@ -179,6 +184,7 @@ function updateCacheStatus(fromCache, ts) {
 function pushUrlParams() {
     const params = new URLSearchParams();
     if (activeDays !== 5) params.set('days', activeDays);
+    if (brokerScopeMode !== 'popular') params.set('scope', brokerScopeMode);
     if (activePreset !== 'all') params.set('preset', activePreset);
     if (activeFilteredBrokers.size > 0) params.set('brokers', [...activeFilteredBrokers].join(','));
     if (sortState.key !== 'net_val' || !sortState.desc) params.set('sort', `${sortState.key}:${sortState.desc ? 'd' : 'a'}`);
@@ -197,9 +203,10 @@ function readUrlParams() {
     const params = new URLSearchParams(window.location.search);
     if (params.get('cache') === 'rebuild') return;
     if (params.has('days')) activeDays = parseInt(params.get('days')) || 5;
+    if (params.has('scope')) brokerScopeMode = params.get('scope') === 'all' ? 'all' : 'popular';
     if (params.has('preset')) activePreset = params.get('preset') || 'all';
     if (params.has('brokers')) {
-        const b = params.get('brokers').split(',').filter(Boolean);
+        const b = params.get('brokers').split(',').map(s => s.toUpperCase()).filter(Boolean);
         activeFilteredBrokers = new Set(b);
     }
     if (params.has('sort')) {
@@ -217,9 +224,8 @@ function syncDomToState() {
     // Timeframe
     $('#broker-range-selector a').removeClass('active');
     $(`#broker-range-selector a[data-days="${activeDays}"]`).addClass('active');
-    // Preset
-    $('#preset-selector a').removeClass('active');
-    $(`#preset-selector a[data-preset="${activePreset}"]`).addClass('active');
+    // Preset (merged scope + category)
+    syncMergedPresetButtons();
     // Sort icon
     if (sortState.key !== 'net_val' || !sortState.desc) {
         $('#broker-table thead th[data-sort] i').attr('class', 'fa-solid fa-sort small text-muted');
@@ -237,6 +243,49 @@ function syncDomToState() {
     // Search
     const qParam = new URLSearchParams(window.location.search).get('q');
     if (qParam) $('#broker-search').val(qParam);
+}
+
+function resolveMergedPresetKey() {
+    if (activePreset === 'all') return brokerScopeMode === 'all' ? 'all' : 'popular';
+    if (activePreset === 'foreign' || activePreset === 'local' || activePreset === 'retail') return activePreset;
+    return null;
+}
+
+function syncMergedPresetButtons() {
+    const $btns = $('#preset-selector a[data-merged-preset]');
+    if (!$btns.length) return;
+    const key = resolveMergedPresetKey();
+    $btns.removeClass('active');
+    if (key) {
+        $(`#preset-selector a[data-merged-preset="${key}"]`).addClass('active');
+    }
+}
+
+function prepareBrokerScopes() {
+    const allFromMaster = Object.keys(brokersMap || {})
+        .map(code => String(code || '').toUpperCase())
+        .filter(Boolean);
+    const fallback = [...POPULAR_BROKER_LIST];
+    knownBrokerCodes = [...new Set(allFromMaster.length > 0 ? allFromMaster : fallback)].sort();
+
+    const knownSet = new Set(knownBrokerCodes);
+    popularBrokerCodes = POPULAR_BROKER_LIST.filter(code => knownSet.has(code));
+    if (popularBrokerCodes.length === 0) popularBrokerCodes = [...knownBrokerCodes];
+
+    // If URL passed explicit brokers outside popular list, auto-switch to ALL scope.
+    if (activeFilteredBrokers.size > 0) {
+        for (const code of activeFilteredBrokers) {
+            if (!knownSet.has(code)) knownBrokerCodes.push(code);
+            if (!popularBrokerCodes.includes(code)) brokerScopeMode = 'all';
+        }
+        knownBrokerCodes = [...new Set(knownBrokerCodes)].sort();
+    }
+}
+
+function getBrokerButtonsForScope() {
+    const base = brokerScopeMode === 'all' ? knownBrokerCodes : popularBrokerCodes;
+    if (activeFilteredBrokers.size === 0) return base;
+    return [...new Set([...base, ...activeFilteredBrokers])];
 }
 
 // ── Helpers ──
@@ -537,56 +586,35 @@ async function fetchBrokerDaily(brokerCode, days) {
 const CVD_WINDOWS = [2, 5, 10, 20];
 let brokerDailyData = {}; // { "MG": [{date, net_val, total_val, breadth}, ...], ... }
 
-async function loadAllBrokers() {
-    if (isLoading) return;
+async function loadBrokerRowsForCodes(codes, { append = false, progressLabel = 'Memuat broker...' } = {}) {
+    const brokers = [...new Set((codes || [])
+        .map(code => String(code || '').toUpperCase())
+        .filter(Boolean))];
+    if (brokers.length === 0) return { loaded: 0, failed: 0 };
 
-    // ── Load broker classification from D1 (if not loaded yet) ──
-    if (!brokersLoaded) await loadBrokersFromDB();
-
-    // ── Cache check ──
-    if (!forceRebuild) {
-        const cached = getCache();
-        if (cached) {
-            allRows = cached.allRows || [];
-            brokerDailyData = cached.brokerDailyData || {};
-            hideLoading();
-            computeZScores();
-            renderMeteorBubble();
-            applyFilters();
-            updateCacheStatus(true, cached.ts);
-            console.log(`[broker-activity] Loaded from cache: ${allRows.length} rows`);
-            return;
-        }
+    if (!append) {
+        allRows = [];
+        brokerDailyData = {};
+        fetchedBrokerCodes.clear();
     }
-    forceRebuild = false;
-    isLoading = true;
-
-    // Always fetch all brokers; preset filtering done in applyFilters()
-    const brokers = DEFAULT_BROKER_LIST;
-
-    showLoading(`Memuat ${brokers.length} broker (${activeDays}D + CVD)...`);
-    allRows = [];
-    brokerDailyData = {};
 
     let loaded = 0;
     let failed = 0;
-
-    // For each broker: fetch activeDays for main columns + 4 CVD windows for net_vol
+    const windowsToFetch = [...new Set([activeDays, ...CVD_WINDOWS])];
     const batchSize = 4;
+
     for (let i = 0; i < brokers.length; i += batchSize) {
         const batch = brokers.slice(i, i + batchSize);
-
         const results = await Promise.allSettled(
             batch.map(async (code) => {
-                // Fetch all windows in parallel per broker
-                const windowsToFetch = [...new Set([activeDays, ...CVD_WINDOWS])];
+                if (fetchedBrokerCodes.has(code)) return { code, skipped: true };
                 const fetches = await Promise.allSettled(
-                    windowsToFetch.map(d => fetchBrokerActivity(code, d))
+                    windowsToFetch.map(days => fetchBrokerActivity(code, days))
                 );
                 const dataByDays = {};
-                windowsToFetch.forEach((d, idx) => {
+                windowsToFetch.forEach((days, idx) => {
                     if (fetches[idx].status === 'fulfilled' && fetches[idx].value.ok) {
-                        dataByDays[d] = fetches[idx].value;
+                        dataByDays[days] = fetches[idx].value;
                     }
                 });
                 return { code, dataByDays };
@@ -595,9 +623,12 @@ async function loadAllBrokers() {
 
         results.forEach((result) => {
             if (result.status !== 'fulfilled') { failed++; return; }
-            const { code, dataByDays } = result.value;
+            const { code, dataByDays, skipped } = result.value || {};
+            if (!code || skipped) return;
+
+            fetchedBrokerCodes.add(code);
             const mainData = dataByDays[activeDays];
-            if (!mainData) { failed++; return; }
+            if (!mainData || !Array.isArray(mainData.stocks)) { failed++; return; }
 
             // Build CVD lookup: stock → { cvd_2d, cvd_5d, cvd_10d, cvd_20d, streak }
             const cvdMap = {};
@@ -614,7 +645,7 @@ async function loadAllBrokers() {
                 }
             }
 
-            for (const s of (mainData.stocks || [])) {
+            for (const s of mainData.stocks) {
                 const cvd = cvdMap[s.stock_code] || {};
                 const bv = Number(s.buy_val) || 0;
                 const sv = Number(s.sell_val) || 0;
@@ -644,8 +675,96 @@ async function loadAllBrokers() {
             loaded++;
         });
 
-        showLoading(`Memuat broker... ${loaded}/${brokers.length} (${failed} gagal)`);
+        const processed = Math.min(i + batch.length, brokers.length);
+        showLoading(`${progressLabel} ${processed}/${brokers.length} (${loaded} sukses, ${failed} gagal)`);
     }
+
+    return { loaded, failed };
+}
+
+function applyInitialBrokerScopeIfNeeded() {
+    const popularSet = new Set(popularBrokerCodes);
+    if (activeFilteredBrokers.size > 0) {
+        for (const code of activeFilteredBrokers) {
+            if (!popularSet.has(code)) {
+                brokerScopeMode = 'all';
+                break;
+            }
+        }
+        return;
+    }
+    if (brokerScopeMode !== 'all') brokerScopeMode = 'popular';
+}
+
+async function ensureAllBrokerRowsLoaded() {
+    if (isLoading) {
+        const start = Date.now();
+        while (isLoading && (Date.now() - start) < 45000) {
+            await new Promise(resolve => setTimeout(resolve, 120));
+        }
+    }
+    if (isLoading) return { loaded: 0, failed: 0 };
+    const missing = knownBrokerCodes.filter(code => !fetchedBrokerCodes.has(code));
+    if (missing.length === 0) return { loaded: 0, failed: 0 };
+
+    isLoading = true;
+    try {
+        const result = await loadBrokerRowsForCodes(missing, {
+            append: true,
+            progressLabel: 'Memuat broker ALL...'
+        });
+        computeZScores();
+        await loadMeteorData();
+        setCache(allRows, brokerDailyData);
+        updateCacheStatus(false);
+        console.log(`[broker-activity] ALL scope loaded: +${result.loaded} broker (${result.failed} gagal)`);
+        return result;
+    } finally {
+        isLoading = false;
+        hideLoading();
+    }
+}
+
+async function loadAllBrokers() {
+    if (isLoading) return;
+
+    // ── Load broker classification from D1 (if not loaded yet) ──
+    if (!brokersLoaded) await loadBrokersFromDB();
+    prepareBrokerScopes();
+    applyInitialBrokerScopeIfNeeded();
+    syncMergedPresetButtons();
+
+    // ── Cache check ──
+    if (!forceRebuild) {
+        const cached = getCache();
+        if (cached) {
+            allRows = cached.allRows || [];
+            brokerDailyData = cached.brokerDailyData || {};
+            fetchedBrokerCodes = new Set(allRows.map(r => r.broker));
+            hideLoading();
+            computeZScores();
+            renderMeteorBubble();
+            applyFilters();
+            updateCacheStatus(true, cached.ts);
+            console.log(`[broker-activity] Loaded from cache: ${allRows.length} rows`);
+            if (brokerScopeMode === 'all') {
+                await ensureAllBrokerRowsLoaded();
+                applyFilters();
+            }
+            return;
+        }
+    }
+    forceRebuild = false;
+    isLoading = true;
+
+    // Default bootstrap = popular brokers (fast first paint)
+    const brokers = popularBrokerCodes.length > 0 ? popularBrokerCodes : [...POPULAR_BROKER_LIST];
+
+    showLoading(`Memuat ${brokers.length} broker populer (${activeDays}D + CVD)...`);
+    const { loaded, failed } = await loadBrokerRowsForCodes(brokers, {
+        append: false,
+        progressLabel: 'Memuat broker populer...'
+    });
 
     isLoading = false;
     hideLoading();
@@ -655,6 +774,10 @@ async function loadAllBrokers() {
 
     // Load per-day data for meteor chart (async, after table renders)
     await loadMeteorData();
+    if (brokerScopeMode === 'all') {
+        await ensureAllBrokerRowsLoaded();
+        applyFilters();
+    }
     setCache(allRows, brokerDailyData);
     updateCacheStatus(false);
 }
@@ -665,6 +788,7 @@ async function loadAllBrokers() {
 
 function applyFilters() {
     const search = ($('#broker-search').val() || '').toUpperCase().trim();
+    const popularSet = new Set(popularBrokerCodes);
 
     // Pre-compute broker-level quadrant if needed
     let brokerQuadrantMap = {};
@@ -691,6 +815,8 @@ function applyFilters() {
     }
 
     filteredRows = allRows.filter(r => {
+        // Scope mode
+        if (brokerScopeMode === 'popular' && !popularSet.has(r.broker)) return false;
         // Category / Preset
         if (activePreset !== 'all' && getBrokerCategory(r.broker) !== activePreset) return false;
         // Broker filter (affects chart AND table)
@@ -1089,11 +1215,15 @@ async function loadMeteorData() {
  * Clicking isolates that broker; clicking the only active one clears all (back to all).
  */
 function populateBrokerButtonRow(allBrokers) {
+    const brokers = [...new Set((allBrokers || []).filter(Boolean))];
     const $group = $('#broker-btn-group');
-    if ($group.find('a[data-broker]').length > 0) {
+    const signature = brokers.join('|');
+    if (brokerButtonSignature === signature && $group.find('a[data-broker]').length > 0) {
         syncBrokerButtonState();
         return;
     }
+    brokerButtonSignature = signature;
+
     const catBtnClass = (code) => {
         const c = getBrokerCategory(code);
         if (c === 'foreign') return 'btn-outline-primary';
@@ -1101,14 +1231,14 @@ function populateBrokerButtonRow(allBrokers) {
         if (c === 'retail')  return 'btn-outline-warning';
         return 'btn-outline-secondary';
     };
-    const html = allBrokers.map(b =>
+    const html = brokers.map(b =>
         `<a href="#" class="btn ${catBtnClass(b)} btn-sm active" data-broker="${b}"
             style="font-size:0.82rem;border-radius:0;padding:2px 10px;">${b}</a>`
     ).join('');
     $group.html(html);
     syncBrokerButtonState();
 
-    $group.find('a[data-broker]').on('click', function (e) {
+    $group.off('click', 'a[data-broker]').on('click', 'a[data-broker]', function (e) {
         e.preventDefault();
         const broker = $(this).data('broker');
         if (activeFilteredBrokers.size === 0) {
@@ -1151,6 +1281,9 @@ function syncBrokerButtonState() {
  * Trail: oldest → newest. Head = most recent day (largest bubble).
  */
 function renderMeteorBubble() {
+    populateBrokerButtonRow(getBrokerButtonsForScope());
+    syncMergedPresetButtons();
+
     const brokerCodes = Object.keys(brokerDailyData).filter(b => brokerDailyData[b].length >= 2);
 
     if (brokerCodes.length === 0) {
@@ -1172,8 +1305,11 @@ function renderMeteorBubble() {
         .slice(0, 15);
     let topBrokers = ranked.map(r => r.broker);
 
-    // Populate broker button row (all ranked brokers before filter)
-    populateBrokerButtonRow(ranked.map(r => r.broker));
+    // Scope filter
+    if (brokerScopeMode === 'popular') {
+        const popularSet = new Set(popularBrokerCodes);
+        topBrokers = topBrokers.filter(b => popularSet.has(b));
+    }
 
     // Filter by selected brokers (if any selected, show only those; otherwise show all)
     if (activeFilteredBrokers.size > 0) {
@@ -1465,27 +1601,62 @@ $(function () {
         '</td></tr>'
     );
 
-    // ── Preset selector ──
-    $('#preset-selector a').on('click', function (e) {
+    const syncFilterRowDropdownState = () => {
+        const $row = $('#filter-row');
+        if (!$row.length) return;
+        const hasOpen = $row.find('.dropdown-menu.show').length > 0;
+        $row.toggleClass('dropdown-open', hasOpen);
+    };
+    $(document).on(
+        'show.bs.dropdown shown.bs.dropdown hide.bs.dropdown hidden.bs.dropdown',
+        '#filter-row .dropdown',
+        () => setTimeout(syncFilterRowDropdownState, 0)
+    );
+
+    // ── Preset selector (merged: ALL / POPULAR / FOREIGN / LOKAL / RETAIL) ──
+    $('#preset-selector').on('click', 'a[data-merged-preset]', function (e) {
         e.preventDefault();
-        $('#preset-selector a').removeClass('active');
-        $(this).addClass('active');
-        activePreset = $(this).data('preset');
-        // Also sync category dropdown label
+        const target = String($(this).data('mergedPreset') || '').toLowerCase();
+        if (!target) return;
+
+        if (target === 'all') {
+            activePreset = 'all';
+            brokerScopeMode = 'all';
+        } else if (target === 'popular') {
+            activePreset = 'all';
+            brokerScopeMode = 'popular';
+        } else if (target === 'foreign' || target === 'local' || target === 'retail') {
+            activePreset = target;
+            brokerScopeMode = 'all';
+        }
+
         $('#dd-category').text(`Category: ${activePreset === 'all' ? 'Any' : activePreset}`);
-        // Clear individual broker selection so preset takes effect visually
         activeFilteredBrokers.clear();
-        syncBrokerButtonState();
-        if (allRows.length > 0) {
-            applyFilters();
-            pushUrlParams();
-        } else {
+        syncMergedPresetButtons();
+
+        if (allRows.length === 0) {
             loadAllBrokers();
+            return;
+        }
+
+        brokerButtonSignature = '';
+        syncBrokerButtonState();
+        renderMeteorBubble();
+        applyFilters();
+        pushUrlParams();
+
+        if (brokerScopeMode === 'all') {
+            ensureAllBrokerRowsLoaded().then(() => {
+                brokerButtonSignature = '';
+                renderMeteorBubble();
+                applyFilters();
+                pushUrlParams();
+            });
         }
     });
 
     // ── Filter dropdowns ──
-    $(document).on('click', '[data-filter]', function (e) {
+    $(document).on('click', '[data-filter]', async function (e) {
         e.preventDefault();
         const filter = $(this).data('filter');
         const val = $(this).data('val');
@@ -1498,8 +1669,12 @@ $(function () {
         else if (filter === 'category') {
             $('#dd-category').text(`Category: ${val === 'any' ? 'Any' : val}`);
             activePreset = val === 'any' ? 'all' : val;
-            $('#preset-selector a').removeClass('active');
-            $(`#preset-selector a[data-preset="${activePreset}"]`).addClass('active');
+            // Category filtering should use full broker universe
+            brokerScopeMode = 'all';
+            if (allRows.length > 0) {
+                await ensureAllBrokerRowsLoaded();
+            }
+            syncMergedPresetButtons();
             activeFilteredBrokers.clear();
             syncBrokerButtonState();
         } else {
@@ -1537,6 +1712,8 @@ $(function () {
         // Reset broker filter when switching timeframe (different top brokers)
         activeFilteredBrokers.clear();
         $('#broker-btn-group').empty();
+        brokerButtonSignature = '';
+        fetchedBrokerCodes.clear();
         loadAllBrokers();
         pushUrlParams();
     });
@@ -1584,9 +1761,9 @@ $(function () {
         filterTotalValMin = 0;
         filterQuadrant    = 'any';
         activeCvdTrend    = 'any';
+        brokerScopeMode   = 'popular';
         activeFilteredBrokers.clear();
-        $('#preset-selector a').removeClass('active');
-        $('#preset-selector a[data-preset="all"]').addClass('active');
+        syncMergedPresetButtons();
         $('#broker-search').val('');
         $('#dd-category').text('Category: Any');
         $('#dd-netdir').text('Net: Any');
@@ -1595,7 +1772,9 @@ $(function () {
         $('#dd-quadrant').text('Quadrant: Any');
         $('#dd-cvdtrend').text('CVD: Any');
         $('[data-nf]').val('');
+        brokerButtonSignature = '';
         syncBrokerButtonState();
+        renderMeteorBubble();
         applyFilters();
         pushUrlParams();
     });

@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>pompom.ai</title>
+  <!-- Bootstrap 5 CSS -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <!-- Custom CSS -->
+  <link rel="stylesheet" href="style.css">
+  <!-- Google Fonts -->
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;700;800&family=JetBrains+Mono:wght@400;700&family=DM+Sans:wght@300;400&display=swap" rel="stylesheet">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⬡</text></svg>">
+</head>
+<body>
+  <div class="container-pompom">
+
+    <!-- Screen: Dashboard -->
+    <section id="screen-dashboard" class="screen active">
+      <div class="glow-amber" style="position: absolute; top: -60px; right: -60px; width: 280px; height: 280px;"></div>
+
+
+      <!-- Countdown Card -->
+      <div class="card-pompom mb-3">
+        <div class="card-glow"></div>
+        <div class="position-relative">
+          <div class="d-flex justify-content-between align-items-center mb-3">
+            <span class="text-mono small">FRONTRUN DALAM:</span>
+          </div>
+          <div class="countdown-timer mb-1">
+            <span id="countdown-hours">16</span>:<span id="countdown-minutes">59</span>:<span id="countdown-seconds">00</span>
+          </div>
+          <div class="text-mono x-small text-muted mb-3">menuju reveal serentak</div>
+          <div class="row g-2">
+            <div class="col">
+              <div class="ticket-frontrun bg-blue-dim border-blue rounded p-2" data-time="09:05" data-token="0">
+                <div class="text-mono x-small text-muted mb-1">Beli frontrun</div>
+                <div class="text-display fs-5 text-blue">FREE</div>
+                <div class="text-mono x-small text-blue">09:05</div>
+              </div>
+            </div>
+            <div class="col">
+              <div class="ticket-frontrun bg-amber-dim border-amber rounded p-2" data-time="09:00" data-token="5000">
+                <div class="text-mono x-small text-muted mb-1">Beli frontrun</div>
+                <div class="text-display fs-5 text-amber">5.000</div>
+                <div class="text-mono x-small text-amber">token · 09:00</div>
+              </div>
+            </div>
+            <div class="col">
+              <div class="ticket-frontrun bg-green-dim border-green rounded p-2" data-time="08:55" data-token="10000">
+                <div class="text-mono x-small text-muted mb-1">Beli frontrun</div>
+                <div class="text-display fs-5 text-green">10.000</div>
+                <div class="text-mono x-small text-green">token · 08:55</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Live Candidates Preview -->
+      <div class="mb-3">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <div class="text-mono x-small text-muted letter-spacing-wide">Kandidat (tersembunyi)</div>
+          <span class="badge-pompom badge-green">● Live Vote</span>
+        </div>
+        <div class="candidate-list">
+          <div class="card-pompom mb-2 opacity-100">
+            <div class="d-flex align-items-center gap-3">
+              <div class="candidate-icon bg-gradient-border d-flex align-items-center justify-content-center">?</div>
+              <div class="flex-grow-1">
+                <div class="text-display fs-6 text-white">████</div>
+                <div class="text-mono x-small text-muted">642 votes · Score 87</div>
+              </div>
+              <div class="text-mono fs-6 text-green">▲</div>
+            </div>
+          </div>
+          <div class="card-pompom mb-2 opacity-70">
+            <div class="d-flex align-items-center gap-3">
+              <div class="candidate-icon bg-gradient-border d-flex align-items-center justify-content-center">?</div>
+              <div class="flex-grow-1">
+                <div class="text-display fs-6 text-white">████</div>
+                <div class="text-mono x-small text-muted">431 votes · Score 74</div>
+              </div>
+              <div class="text-mono fs-6 text-green">▲</div>
+            </div>
+          </div>
+          <div class="card-pompom opacity-45">
+            <div class="d-flex align-items-center gap-3">
+              <div class="candidate-icon bg-gradient-border d-flex align-items-center justify-content-center">?</div>
+              <div class="flex-grow-1">
+                <div class="text-display fs-6 text-white">████</div>
+                <div class="text-mono x-small text-muted">289 votes · Score 61</div>
+              </div>
+              <div class="text-mono fs-6 text-red">▽</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- CTA -->
+      <button id="dashboard-cta" class="btn-pompom btn-pompom-amber w-100" data-screen="quiz">
+        VOTE TO KNOW →
+      </button>
+    </section>
+
+    <!-- Screen: Paywall -->
+    <section id="screen-paywall" class="screen">
+      <div id="paywall-selection">
+        <div class="glow-amber" style="position: absolute; top: 0; left: 0; right: 0; height: 200px;"></div>
+        <div class="text-mono x-small text-muted letter-spacing-wide mb-1">Beli Tiket Sesi Ini</div>
+        <div class="text-display fs-4 text-white mb-1">Pilih tier<span class="text-amber">.</span></div>
+        <div class="text-mono small text-muted mb-4">
+          Window tutup dalam <span class="text-amber">16:42:11</span>
+        </div>
+
+        <!-- Tier Cards -->
+        <div class="paywall-tier-card mb-3 card-pompom" data-tier="starter" id="paywall-tier-starter">
+          <div class="d-flex justify-content-between align-items-start mb-3">
+            <div>
+              <div class="text-mono x-small text-muted mb-1">STARTER</div>
+              <div class="text-display fs-4 text-blue">Rp 5.000</div>
+              <div class="text-mono x-small text-muted">per sesi</div>
+            </div>
+            <div class="bg-blue-dim border-blue rounded p-2 text-end">
+              <div class="text-mono x-small text-muted">REVEAL</div>
+              <div class="text-mono fs-5 text-blue fw-bold">09:10</div>
+            </div>
+          </div>
+          <ul class="list-unstyled mb-0">
+            <li class="d-flex align-items-center gap-2 mb-1">
+              <span class="text-blue fs-6">◆</span>
+              <span class="text-mono small text-muted-light">Top 5 kandidat</span>
+            </li>
+            <li class="d-flex align-items-center gap-2 mb-1">
+              <span class="text-blue fs-6">◆</span>
+              <span class="text-mono small text-muted-light">Voting result</span>
+            </li>
+            <li class="d-flex align-items-center gap-2">
+              <span class="text-blue fs-6">◆</span>
+              <span class="text-mono small text-muted-light">Reveal 09:10</span>
+            </li>
+          </ul>
+        </div>
+
+        <div class="paywall-tier-card mb-3 card-pompom selected" data-tier="pro" id="paywall-tier-pro">
+          <div class="position-absolute top-0 end-0">
+            <span class="badge-pompom badge-amber">POPULER</span>
+          </div>
+          <div class="d-flex justify-content-between align-items-start mb-3">
+            <div>
+              <div class="text-mono x-small text-muted mb-1">PRO</div>
+              <div class="text-display fs-4 text-amber">Rp 10.000</div>
+              <div class="text-mono x-small text-muted">per sesi</div>
+            </div>
+            <div class="bg-amber-dim border-amber rounded p-2 text-end">
+              <div class="text-mono x-small text-muted">REVEAL</div>
+              <div class="text-mono fs-5 text-amber fw-bold">09:05</div>
+            </div>
+          </div>
+          <ul class="list-unstyled mb-0">
+            <li class="d-flex align-items-center gap-2 mb-1">
+              <span class="text-amber fs-6">◆</span>
+              <span class="text-mono small text-muted-light">Top 5 + detail scoring</span>
+            </li>
+            <li class="d-flex align-items-center gap-2 mb-1">
+              <span class="text-amber fs-6">◆</span>
+              <span class="text-mono small text-muted-light">5 mnt lebih awal</span>
+            </li>
+            <li class="d-flex align-items-center gap-2">
+              <span class="text-amber fs-6">◆</span>
+              <span class="text-mono small text-muted-light">Priority reveal 09:05</span>
+            </li>
+          </ul>
+        </div>
+
+        <!-- Trust Badges -->
+        <div class="d-flex flex-wrap gap-2 mb-4">
+          <span class="badge-pompom badge-blue">✓ Audit trail</span>
+          <span class="badge-pompom badge-blue">✓ Midtrans</span>
+          <span class="badge-pompom badge-blue">✓ No lock-in</span>
+        </div>
+
+        <button id="paywall-buy-btn" class="btn-pompom btn-pompom-amber w-100">
+          Beli Tiket PRO →
+        </button>
+      </div>
+
+      <!-- Success Screen -->
+      <div id="paywall-success" class="d-none flex-column align-items-center justify-content-center text-center py-5">
+        <div class="success-icon bg-green rounded-circle d-flex align-items-center justify-content-center mb-3">✓</div>
+        <div class="text-display fs-4 text-white mb-2">
+          Tiket <span class="text-amber">PRO</span> aktif!
+        </div>
+        <div class="text-mono small text-muted mb-4">
+          Reveal jam 09:05 · Window aktif sampai besok pagi
+        </div>
+        <div class="card-pompom border-green mb-4 w-100 text-center">
+          <div class="text-mono x-small text-muted mb-2">AKTIVITAS SAMBIL NUNGGU</div>
+          <div class="text-mono small text-green">Quiz · Vote · Briefing AI</div>
+        </div>
+        <button class="btn-pompom btn-pompom-green w-100" data-screen="quiz">
+          Main Quiz Sekarang →
+        </button>
+      </div>
+    </section>
+
+    <!-- Screen: Quiz -->
+    <section id="screen-quiz" class="screen">
+      <!-- Quiz Screen -->
+      <div id="quiz-screen">
+        <!-- Header -->
+        <div class="d-flex justify-content-between align-items-center mb-4">
+          <div>
+            <div class="text-mono x-small text-muted letter-spacing-wide">AI Questionnaire</div>
+            <div class="text-display fs-5 text-white">Soal <span id="quiz-question-counter">1/3</span></div>
+          </div>
+          <div class="text-end">
+            <div class="text-mono x-small text-muted">XP HARI INI</div>
+            <div id="quiz-score" class="text-mono fs-5 text-amber fw-bold">+0</div>
+          </div>
+        </div>
+
+        <!-- Progress Bar -->
+        <div class="progress-pompom mb-4">
+          <div id="quiz-progress-bar" class="progress-bar" style="width: 0%"></div>
+        </div>
+
+        <!-- Streak Alert -->
+        <div id="quiz-streak" class="d-none bg-amber-dim border-amber rounded p-3 mb-3 d-flex align-items-center gap-2">
+          <span>🔥</span>
+          <span class="text-mono small text-amber">Streak 0x! Bonus XP aktif</span>
+        </div>
+
+        <!-- Question Card -->
+        <div class="card-pompom mb-3">
+          <div class="position-absolute top-0 start-0 end-0" style="height: 3px; background: linear-gradient(90deg, var(--color-amber), #f97316);"></div>
+          <div class="text-mono x-small text-amber letter-spacing-wide mb-2">◆ <span id="quiz-xp">50</span> XP</div>
+          <div id="quiz-question-text" class="text-body fs-6 text-white lh-base">
+            Saham dengan rasio utang/ekuitas di bawah 0.5 umumnya dianggap...
+          </div>
+        </div>
+
+        <!-- Options -->
+        <div id="quiz-options" class="mb-3">
+          <!-- Options will be inserted by JS -->
+        </div>
+
+        <!-- Explanation -->
+        <div id="quiz-explanation" class="bg-green-dim border-green rounded p-3 mb-3 d-none">
+          <div class="text-mono x-small text-green mb-1">◆ Insight</div>
+          <div id="quiz-explanation-text" class="text-body small text-muted-light lh-base">
+            D/E rasio rendah artinya perusahaan tidak terlalu bergantung pada hutang. Ini sinyal kesehatan finansial jangka panjang.
+          </div>
+        </div>
+
+        <!-- Next Button -->
+        <button id="quiz-next-btn" class="btn-pompom btn-pompom-amber w-100 d-none">
+          Soal Berikutnya →
+        </button>
+      </div>
+
+      <!-- Quiz Result Screen -->
+      <div id="quiz-result-screen" class="d-none text-center">
+        <div class="fs-1 mb-3">🏆</div>
+        <div class="text-display fs-3 text-amber mb-2">Sesi Selesai!</div>
+        <div class="text-mono small text-muted mb-3">Skor hari ini</div>
+        <div id="quiz-result-score" class="text-mono display-1 text-amber fw-bold mb-4">+225</div>
+        <div class="card-pompom mb-4">
+          <div class="text-mono x-small text-muted text-uppercase mb-3">Akurasi hari ini</div>
+          <div class="row text-center">
+            <div class="col">
+              <div class="text-display fs-4 text-green">3/3</div>
+              <div class="text-mono x-small text-muted text-uppercase">Benar</div>
+            </div>
+            <div class="col">
+              <div id="quiz-result-streak" class="text-display fs-4 text-amber">3🔥</div>
+              <div class="text-mono x-small text-muted text-uppercase">Streak</div>
+            </div>
+            <div class="col">
+              <div class="text-display fs-4 text-blue">#142</div>
+              <div class="text-mono x-small text-muted text-uppercase">Rank</div>
+            </div>
+          </div>
+        </div>
+        <button id="quiz-result-continue" class="btn-pompom btn-pompom-amber w-100">
+          Lanjut: Vote Saham →
+        </button>
+      </div>
+    </section>
+
+    <!-- Screen: Sentiment -->
+    <section id="screen-sentiment" class="screen">
+      <!-- Header -->
+      <div class="mb-4">
+        <div class="text-mono x-small text-muted letter-spacing-wide mb-1">Sentiment Battle</div>
+        <div class="text-display fs-4 text-white">Vote <span class="text-amber">kandidat</span></div>
+        <div class="text-mono small text-muted">
+          Vote dilock saat reveal jam 08:59 · Hasil transparan
+        </div>
+      </div>
+
+      <!-- Candidate Selector -->
+      <div id="sentiment-candidate-buttons" class="d-flex gap-2 mb-4">
+        <!-- Buttons will be inserted by JS -->
+      </div>
+
+      <!-- Stock Card -->
+      <div class="card-pompom mb-4">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <div id="sentiment-stock-code" class="text-display fs-4 text-white">BBYB</div>
+          <span id="sentiment-stock-sector" class="badge-pompom badge-blue">Perbankan</span>
+        </div>
+        <div id="sentiment-stock-name" class="text-body small text-muted mb-3">
+          Bank Bisnis Indonesia
+        </div>
+
+        <!-- Battle Bar -->
+        <div class="mb-3">
+          <div class="d-flex justify-content-between mb-2">
+            <span id="sentiment-bull-percent" class="text-mono small text-green">▲ BULL 76%</span>
+            <span id="sentiment-bear-percent" class="text-mono small text-red">BEAR 24% ▽</span>
+          </div>
+          <div class="battle-bar">
+            <div id="sentiment-battle-fill" class="battle-fill" style="width: 76%"></div>
+          </div>
+          <div id="sentiment-total-votes" class="text-mono x-small text-muted text-center mt-2">
+            840 total votes · Hasil locked saat reveal
+          </div>
+        </div>
+      </div>
+
+      <!-- Vote Buttons -->
+      <div id="sentiment-vote-buttons" class="row g-3 mb-4">
+        <div class="col">
+          <button id="sentiment-vote-bull" class="btn-pompom btn-pompom-green w-100 py-3">▲ BULL</button>
+        </div>
+        <div class="col">
+          <button id="sentiment-vote-bear" class="btn-pompom btn-pompom-red w-100 py-3">▽ BEAR</button>
+        </div>
+      </div>
+
+      <!-- Vote Recorded -->
+      <div id="sentiment-vote-recorded" class="bg-green-dim border-green rounded p-3 text-center d-none">
+        <div class="text-mono small text-green">
+          Vote lo tercatat: ▲ BULL · Locked saat reveal
+        </div>
+      </div>
+
+      <!-- Community Activity Feed -->
+      <div class="card-pompom bg-surface">
+        <div class="text-mono x-small text-muted letter-spacing-wide mb-3">Aktivitas komunitas</div>
+        <div class="activity-feed">
+          <div class="d-flex justify-content-between border-bottom border-color-border pb-2 mb-2">
+            <span class="text-mono small text-muted-light"><span class="text-amber">R***a</span> vote BULL BBYB</span>
+            <span class="text-mono x-small text-muted">2m</span>
+          </div>
+          <div class="d-flex justify-content-between border-bottom border-color-border pb-2 mb-2">
+            <span class="text-mono small text-muted-light"><span class="text-amber">D***i</span> quiz +100 XP</span>
+            <span class="text-mono x-small text-muted">4m</span>
+          </div>
+          <div class="d-flex justify-content-between border-bottom border-color-border pb-2 mb-2">
+            <span class="text-mono small text-muted-light"><span class="text-amber">S***o</span> vote BEAR WIFI</span>
+            <span class="text-mono x-small text-muted">5m</span>
+          </div>
+          <div class="d-flex justify-content-between">
+            <span class="text-mono small text-muted-light"><span class="text-amber">A***n</span> vote BULL UCID</span>
+            <span class="text-mono x-small text-muted">7m</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Screen: Reveal -->
+    <section id="screen-reveal" class="screen">
+      <!-- Pre‑reveal -->
+      <div id="reveal-pre" class="text-center">
+        <div class="py-5" style="background: radial-gradient(ellipse at 50% 30%, rgba(245,158,11,0.15), transparent 70%);">
+          <div class="text-mono x-small text-muted letter-spacing-wide mb-4">Reveal Serentak</div>
+          <div class="text-display display-1 text-amber mb-3">08:59</div>
+          <div class="text-mono small text-muted mb-5">1,284 voter menunggu hasil yang sama</div>
+          <div class="d-flex flex-wrap gap-2 justify-content-center mb-5">
+            <span class="badge-pompom badge-green">🟢 642 BULL BBYB</span>
+            <span class="badge-pompom badge-blue">🔵 431 BULL UCID</span>
+            <span class="badge-pompom badge-red">🔴 401 BEAR WIFI</span>
+          </div>
+          <!-- Card Stack -->
+          <div class="position-relative mx-auto mb-5" style="width: 200px; height: 120px;">
+            <div class="position-absolute start-0 top-0" style="width: 140px; height: 90px; background: linear-gradient(135deg, #1a1a2e, #0f0f1c); border: 1px solid var(--color-border); border-radius: 10px; display: flex; align-items: center; justify-content: center; font-family: var(--font-display); font-size: 28px; color: rgba(245,158,11,0.6);">?</div>
+            <div class="position-absolute" style="left: 8px; top: 4px; width: 140px; height: 90px; background: linear-gradient(135deg, #1a1a2e, #0f0f1c); border: 1px solid var(--color-border); border-radius: 10px; display: flex; align-items: center; justify-content: center; font-family: var(--font-display); font-size: 28px; color: rgba(245,158,11,0.5);">?</div>
+            <div class="position-absolute" style="left: 16px; top: 8px; width: 140px; height: 90px; background: linear-gradient(135deg, #1a1a2e, #0f0f1c); border: 1px solid var(--color-border); border-radius: 10px; display: flex; align-items: center; justify-content: center; font-family: var(--font-display); font-size: 28px; color: rgba(245,158,11,0.4);">?</div>
+            <div class="position-absolute" style="left: 24px; top: 12px; width: 140px; height: 90px; background: linear-gradient(135deg, #1a1a2e, #0f0f1c); border: 1px solid var(--color-border); border-radius: 10px; display: flex; align-items: center; justify-content: center; font-family: var(--font-display); font-size: 28px; color: rgba(245,158,11,0.3);">?</div>
+            <div class="position-absolute" style="left: 32px; top: 16px; width: 140px; height: 90px; background: linear-gradient(135deg, #1a1a2e, #0f0f1c); border: 1px solid var(--color-border); border-radius: 10px; display: flex; align-items: center; justify-content: center; font-family: var(--font-display); font-size: 28px; color: rgba(245,158,11,0.2);">?</div>
+          </div>
+        </div>
+        <button id="reveal-start-btn" class="btn-pompom btn-pompom-amber w-100 mb-3">
+          🃏 REVEAL SEKARANG
+        </button>
+        <div class="text-mono x-small text-muted text-center">
+          Semua 1,284 user melihat hasil yang sama saat ini
+        </div>
+      </div>
+
+      <!-- Reveal List -->
+      <div id="reveal-list" class="d-none">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <div class="text-display fs-4 text-white">Top <span class="text-amber">5</span> Picks</div>
+          <span class="badge-pompom badge-green">● Teraudit</span>
+        </div>
+        <div class="text-mono small text-muted mb-4">
+          Sesi 06/04/2026 · 1,284 voter
+        </div>
+        <div id="reveal-picks">
+          <!-- Picks will be inserted by JS -->
+        </div>
+        <!-- Audit Trail -->
+        <div id="reveal-audit" class="d-none bg-green-dim border-green rounded p-3 mt-3 d-flex align-items-center gap-3">
+          <span>🔏</span>
+          <div>
+            <div class="text-mono x-small text-green text-uppercase mb-1">Audit trail aktif</div>
+            <div class="text-mono x-small text-muted">Hash: a3f9...cc12 · 1,284 vote verified</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Bottom Navigation Bar -->
+    <div class="bottom-nav">
+      <button class="nav-item active" data-screen="dashboard">
+        <span class="nav-icon">⬡</span>
+        <span class="nav-label">Home</span>
+      </button>
+      <button class="nav-item" data-screen="quiz">
+        <span class="nav-icon">◈</span>
+        <span class="nav-label">Quiz</span>
+      </button>
+      <button class="nav-item" data-screen="sentiment">
+        <span class="nav-icon">◉</span>
+        <span class="nav-label">Vote</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- jQuery & Bootstrap JS -->
+  <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+  <!-- Custom JS -->
+  <script src="index.js"></script>
+</body>
+</html>
